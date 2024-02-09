@@ -34,20 +34,17 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 
 class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     private static final Log LOG = LogFactory.getLog(AsyncGroupByNotKeyedRecordCursor.class);
-    private final GroupByAllocator allocator;
+    private final Allocator allocator;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
     private int frameLimit;
@@ -60,7 +57,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             CairoConfiguration configuration,
             ObjList<GroupByFunction> groupByFunctions
     ) {
-        this.allocator = new GroupByAllocator(configuration);
+        this.allocator = AllocatorFactory.createThreadSafeAllocator(configuration);
         this.groupByFunctions = groupByFunctions;
         GroupByUtils.setAllocator(groupByFunctions, allocator);
         this.recordA = new VirtualRecord(groupByFunctions);

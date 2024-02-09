@@ -25,15 +25,12 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.Hash;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 
 /**
  * Specialized flyweight hash set used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
  * <p>
- * Uses provided {@link GroupByAllocator} to allocate the underlying buffer. Grows the buffer when needed.
+ * Uses provided {@link Allocator} to allocate the underlying buffer. Grows the buffer when needed.
  * <p>
  * Buffer layout is the following:
  * <pre>
@@ -51,7 +48,7 @@ public class GroupByLongHashSet {
     private final int initialCapacity;
     private final double loadFactor;
     private final long noKeyValue;
-    private GroupByAllocator allocator;
+    private Allocator allocator;
     private int mask;
     private long ptr;
 
@@ -159,7 +156,7 @@ public class GroupByLongHashSet {
         ptr = 0;
     }
 
-    public void setAllocator(GroupByAllocator allocator) {
+    public void setAllocator(Allocator allocator) {
         this.allocator = allocator;
     }
 

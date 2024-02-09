@@ -29,10 +29,7 @@ import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.std.Chars;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.LongList;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -849,7 +846,14 @@ public class MapTest extends AbstractCairoTest {
             case UNORDERED_4_MAP:
                 return new Unordered4Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
             case UNORDERED_8_MAP:
-                return new Unordered8Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
+                return new Unordered8Map(
+                        AllocatorFactory.createThreadUnsafeAllocator(configuration),
+                        keyTypes,
+                        valueTypes,
+                        keyCapacity,
+                        loadFactor,
+                        maxResizes
+                );
             case UNORDERED_16_MAP:
                 return new Unordered16Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
             default:

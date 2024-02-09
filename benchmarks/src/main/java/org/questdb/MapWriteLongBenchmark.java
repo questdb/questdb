@@ -27,6 +27,8 @@ package org.questdb;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.*;
+import io.questdb.std.AllocatorArena;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -46,7 +48,7 @@ public class MapWriteLongBenchmark {
     private static final HashMap<Long, Long> hmap = new HashMap<>(64, (float) loadFactor);
     private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
     private static final Unordered16Map unordered16map = new Unordered16Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
-    private static final Unordered8Map unordered8map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
+    private static final Unordered8Map unordered8map = new Unordered8Map(new AllocatorArena(64 * 1024, Numbers.SIZE_1GB), new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
     private final Rnd rnd = new Rnd();
     // aim for L1, L2, L3, RAM
     @Param({"5000", "50000", "500000", "5000000"})

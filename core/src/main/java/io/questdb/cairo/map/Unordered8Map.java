@@ -52,24 +52,26 @@ import org.jetbrains.annotations.Nullable;
  * The hash table is organized into the following parts:
  * <ul>
  * <li>1. Off-heap memory for writing new keys</li>
- * <li>2. Off-heap memory for zero key and value</li>
+ * <li>2. Off-heap memory for zero key and value pointer</li>
  * <li>3. Off-heap memory for key-value pairs, i.e. the hash table with open addressing</li>
  * </ul>
  * The hash table uses linear probing.
  * <p>
- * Key-value pairs stored in the hash table may have the following layout:
+ * Key-value pairs stored in the hash table have the following layout:
  * <pre>
- * |   Key columns 0..K   | Optional padding | Value columns 0..V |
- * +----------------------+------------------+--------------------+
- * |    up to 8 bytes     |        -         |         -          |
- * +----------------------+------------------+--------------------+
+ * |   Key columns 0..K   | Optional padding | Value pointer |
+ * +----------------------+------------------+---------------+
+ * |    up to 8 bytes     |        -         |    8 bytes    |
+ * +----------------------+------------------+---------------+
  * </pre>
+ * Values are allocated with {@link Allocator} and stored separately.
  */
 public class Unordered8Map implements Map, Reopenable {
 
     static final long KEY_SIZE = Long.BYTES;
     private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     private static final int MIN_KEY_CAPACITY = 16;
+    private final Allocator allocator;
     private final Unordered8MapCursor cursor;
     private final long entrySize;
     private final Key key;
@@ -93,16 +95,18 @@ public class Unordered8Map implements Map, Reopenable {
     private long zeroMemStart; // Zero key-value pair memory start pointer.
 
     public Unordered8Map(
+            Allocator allocator,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
             double loadFactor,
             int maxResizes
     ) {
-        this(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP);
+        this(allocator, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP);
     }
 
     Unordered8Map(
+            Allocator allocator,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes,
             int keyCapacity,
@@ -112,6 +116,7 @@ public class Unordered8Map implements Map, Reopenable {
     ) {
         assert loadFactor > 0 && loadFactor < 1d;
 
+        this.allocator = allocator;
         this.memoryTag = memoryTag;
         this.loadFactor = loadFactor;
         this.keyCapacity = (int) (keyCapacity / loadFactor);
@@ -185,10 +190,12 @@ public class Unordered8Map implements Map, Reopenable {
         Vect.memset(memStart, memLimit - memStart, 0);
         Unsafe.getUnsafe().putLong(keyMemStart, 0);
         Vect.memset(zeroMemStart, entrySize, 0);
+        Misc.free(allocator);
     }
 
     @Override
     public final void close() {
+        Misc.free(allocator);
         if (memStart != 0) {
             memLimit = memStart = Unsafe.free(memStart, memLimit - memStart, memoryTag);
             keyMemStart = Unsafe.free(keyMemStart, KEY_SIZE, memoryTag);

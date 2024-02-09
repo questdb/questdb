@@ -32,6 +32,8 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.Allocator;
+import io.questdb.std.AllocatorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -52,7 +54,8 @@ public class Unordered8MapTest extends AbstractCairoTest {
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
 
             HashMap<Long, Long> oracle = new HashMap<>();
-            try (Unordered8Map map = new Unordered8Map(keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
+            Allocator allocator = AllocatorFactory.createThreadUnsafeAllocator(configuration);
+            try (Unordered8Map map = new Unordered8Map(allocator, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
@@ -83,7 +86,8 @@ public class Unordered8MapTest extends AbstractCairoTest {
 
     @Test
     public void testSingleZeroKey() {
-        try (Unordered8Map map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
+        Allocator allocator = AllocatorFactory.createThreadUnsafeAllocator(configuration);
+        try (Unordered8Map map = new Unordered8Map(allocator, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
             MapKey key = map.withKey();
             key.putLong(0);
             MapValue value = key.createValue();
@@ -107,7 +111,8 @@ public class Unordered8MapTest extends AbstractCairoTest {
 
     @Test
     public void testTwoKeysIncludingZero() {
-        try (Unordered8Map map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
+        Allocator allocator = AllocatorFactory.createThreadUnsafeAllocator(configuration);
+        try (Unordered8Map map = new Unordered8Map(allocator, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 16, 0.8, 24)) {
             MapKey key = map.withKey();
             key.putLong(0);
             MapValue value = key.createValue();
@@ -153,7 +158,8 @@ public class Unordered8MapTest extends AbstractCairoTest {
         };
         for (short columnType : columnTypes) {
             TestUtils.assertMemoryLeak(() -> {
-                try (Unordered8Map ignore = new Unordered8Map(new SingleColumnType(columnType), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
+                Allocator allocator = AllocatorFactory.createThreadUnsafeAllocator(configuration);
+                try (Unordered8Map ignore = new Unordered8Map(allocator, new SingleColumnType(columnType), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
                     Assert.fail();
                 } catch (CairoException e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "unexpected key size"));

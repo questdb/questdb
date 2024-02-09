@@ -27,7 +27,9 @@ package org.questdb;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.*;
+import io.questdb.std.AllocatorArena;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -74,7 +76,7 @@ public class MapReadLongBenchmark {
 
         hmap = new HashMap<>(size, (float) loadFactor);
         orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
-        unordered8map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
+        unordered8map = new Unordered8Map(new AllocatorArena(64 * 1024, Numbers.SIZE_1GB), new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
         unordered16map = new Unordered16Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
 
         for (long i = 0; i < size; i++) {

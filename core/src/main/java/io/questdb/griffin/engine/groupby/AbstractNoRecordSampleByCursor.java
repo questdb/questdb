@@ -34,6 +34,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.Allocator;
+import io.questdb.std.AllocatorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -42,7 +44,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected final ObjList<GroupByFunction> groupByFunctions;
     protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
     protected final int timestampIndex;
-    private final GroupByAllocator allocator;
+    private final Allocator allocator;
     private final ObjList<Function> recordFunctions;
     protected RecordCursor baseCursor;
     protected Record baseRecord;
@@ -75,7 +77,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
         this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-        this.allocator = new GroupByAllocator(configuration);
+        this.allocator = AllocatorFactory.createThreadUnsafeAllocator(configuration);
         GroupByUtils.setAllocator(groupByFunctions, allocator);
     }
 

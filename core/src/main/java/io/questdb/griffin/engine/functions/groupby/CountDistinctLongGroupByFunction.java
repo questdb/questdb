@@ -32,8 +32,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
+import io.questdb.std.Allocator;
 import io.questdb.std.Numbers;
 
 public class CountDistinctLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
@@ -160,7 +160,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     }
 
     @Override
-    public void setAllocator(GroupByAllocator allocator) {
+    public void setAllocator(Allocator allocator) {
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
     }

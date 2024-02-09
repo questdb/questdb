@@ -33,8 +33,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByCharSink;
+import io.questdb.std.Allocator;
 import io.questdb.std.Chars;
 import org.jetbrains.annotations.NotNull;
 
@@ -145,7 +145,7 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public void setAllocator(GroupByAllocator allocator) {
+    public void setAllocator(Allocator allocator) {
         sinkA.setAllocator(allocator);
         sinkB.setAllocator(allocator);
     }

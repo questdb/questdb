@@ -35,10 +35,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -144,7 +141,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
-        private final GroupByAllocator allocator;
+        private final Allocator allocator;
         private final Map dataMap;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -162,7 +159,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             super(functions);
             this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-            this.allocator = new GroupByAllocator(configuration);
+            this.allocator = AllocatorFactory.createThreadUnsafeAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
             this.isOpen = true;
         }

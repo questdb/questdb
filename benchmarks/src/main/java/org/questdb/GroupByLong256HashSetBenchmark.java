@@ -25,12 +25,12 @@
 package org.questdb;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.OrderedMap;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLong256HashSet;
+import io.questdb.std.Allocator;
+import io.questdb.std.AllocatorArena;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
@@ -45,30 +45,15 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class GroupByLong256HashSetBenchmark {
+    private static final Allocator allocator = new AllocatorArena(128 * 1024, 8 * Numbers.SIZE_1GB);
     private static final double loadFactor = 0.7;
+    private static final GroupByLong256HashSet groupByLong256HashSet = new GroupByLong256HashSet(64, loadFactor, 0);
     private static final int orderedMapPageSize = 1024 * 1024;
-    private static final long groupByAllocatorDefaultChunkSize = 128 * 1024;
-    private static final long groupByAllocatorMaxChunkSize = Numbers.SIZE_1GB * 8;
-
+    private static final OrderedMap orderedMap = new OrderedMap(orderedMapPageSize, new SingleColumnType(ColumnType.LONG256), null, 64, loadFactor, Integer.MAX_VALUE);
     private static final Rnd rnd = new Rnd();
-
+    private static long ptr = 0;
     @Param({"1250", "12500", "125000", "1250000"})
     public int size;
-
-    private static final GroupByAllocator allocator = new GroupByAllocator(new DefaultCairoConfiguration(null) {
-        @Override
-        public long getGroupByAllocatorDefaultChunkSize() {
-            return groupByAllocatorDefaultChunkSize;
-        }
-
-        @Override
-        public long getGroupByAllocatorMaxChunkSize() {
-            return groupByAllocatorMaxChunkSize;
-        }
-    });
-    private static final OrderedMap orderedMap = new OrderedMap(orderedMapPageSize, new SingleColumnType(ColumnType.LONG256), null, 64, loadFactor, Integer.MAX_VALUE);
-    private static final GroupByLong256HashSet groupByLong256HashSet = new GroupByLong256HashSet(64, loadFactor, 0);
-    private static long ptr = 0;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -91,13 +76,6 @@ public class GroupByLong256HashSetBenchmark {
     }
 
     @Benchmark
-    public void testOrderedMap() {
-        MapKey key = orderedMap.withKey();
-        key.putLong256(rnd.nextLong(size), rnd.nextLong(size), rnd.nextLong(size), rnd.nextLong(size));
-        key.createValue();
-    }
-
-    @Benchmark
     public void testGroupByLong256HashSet() {
         long l0 = rnd.nextLong(size);
         long l1 = rnd.nextLong(size);
@@ -108,5 +86,12 @@ public class GroupByLong256HashSetBenchmark {
             groupByLong256HashSet.addAt(index, l0, l1, l2, l3);
             ptr = groupByLong256HashSet.ptr();
         }
+    }
+
+    @Benchmark
+    public void testOrderedMap() {
+        MapKey key = orderedMap.withKey();
+        key.putLong256(rnd.nextLong(size), rnd.nextLong(size), rnd.nextLong(size), rnd.nextLong(size));
+        key.createValue();
     }
 }

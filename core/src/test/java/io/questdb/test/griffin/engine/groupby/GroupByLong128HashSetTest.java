@@ -24,30 +24,31 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
-import io.questdb.std.Numbers;
-import io.questdb.std.Rnd;
-import io.questdb.std.Uuid;
+import io.questdb.std.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import java.util.HashSet;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.HashSet;
 
 public class GroupByLong128HashSetTest extends AbstractCairoTest {
 
     @Test
+    public void testFuzzWithLongNullAsNoKeyValue() throws Exception {
+        testFuzz(Numbers.LONG_NaN);
+    }
+
+    @Test
+    public void testFuzzWithZeroAsNoKeyValue() throws Exception {
+        testFuzz(0);
+    }
+
+    @Test
     public void testMerge() throws Exception {
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         TestUtils.assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (Allocator allocator = new AllocatorArena(64, Numbers.SIZE_1GB)) {
                 GroupByLong128HashSet setA = new GroupByLong128HashSet(16, 0.5, -1);
                 setA.setAllocator(allocator);
                 setA.of(0);
@@ -78,28 +79,11 @@ public class GroupByLong128HashSetTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testFuzzWithLongNullAsNoKeyValue() throws Exception {
-        testFuzz(Numbers.LONG_NaN);
-    }
-
-    @Test
-    public void testFuzzWithZeroAsNoKeyValue() throws Exception {
-        testFuzz(0);
-    }
-
     private void testFuzz(long noKeyValue) throws Exception {
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
-
             HashSet<Uuid> oracle = new HashSet<>();
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (Allocator allocator = new AllocatorArena(64, Numbers.SIZE_1GB)) {
                 GroupByLong128HashSet set = new GroupByLong128HashSet(64, 0.7, noKeyValue);
                 set.setAllocator(allocator);
                 set.of(0);

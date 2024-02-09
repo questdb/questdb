@@ -27,11 +27,15 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.std.AllocatorFactory;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class MapFactory {
+
+    private MapFactory() {
+    }
 
     /**
      * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
@@ -117,6 +121,7 @@ public class MapFactory {
                 );
             } else if (keySize <= Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
                 return new Unordered8Map(
+                        AllocatorFactory.createThreadUnsafeAllocator(configuration),
                         keyTypes,
                         valueTypes,
                         keyCapacity,

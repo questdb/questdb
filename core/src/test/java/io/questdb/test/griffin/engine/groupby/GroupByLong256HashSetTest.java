@@ -24,31 +24,35 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLong256HashSet;
+import io.questdb.std.Allocator;
+import io.questdb.std.AllocatorArena;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import java.util.HashSet;
-import java.util.Objects;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.HashSet;
+import java.util.Objects;
 
 public class GroupByLong256HashSetTest extends AbstractCairoTest {
 
     @Test
+    public void testFuzzWithLongNullAsNoKeyValue() throws Exception {
+        testFuzz(Numbers.LONG_NaN);
+    }
+
+    @Test
+    public void testFuzzWithZeroAsNoKeyValue() throws Exception {
+        testFuzz(0);
+    }
+
+    @Test
     public void testMerge() throws Exception {
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         TestUtils.assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (Allocator allocator = new AllocatorArena(64, Numbers.SIZE_1GB)) {
                 GroupByLong256HashSet setA = new GroupByLong256HashSet(16, 0.5, -1);
                 setA.setAllocator(allocator);
                 setA.of(0);
@@ -79,28 +83,11 @@ public class GroupByLong256HashSetTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testFuzzWithLongNullAsNoKeyValue() throws Exception {
-        testFuzz(Numbers.LONG_NaN);
-    }
-
-    @Test
-    public void testFuzzWithZeroAsNoKeyValue() throws Exception {
-        testFuzz(0);
-    }
-
     private void testFuzz(long noKeyValue) throws Exception {
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
-
             HashSet<Long256Tuple> oracle = new HashSet<>();
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (Allocator allocator = new AllocatorArena(64, Numbers.SIZE_1GB)) {
                 GroupByLong256HashSet set = new GroupByLong256HashSet(64, 0.7, noKeyValue);
                 set.setAllocator(allocator);
                 set.of(0);

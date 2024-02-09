@@ -218,7 +218,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     private class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
 
         protected final Map recordKeyMap;
-        private final GroupByAllocator allocator;
+        private final Allocator allocator;
         private final Map dataMap;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long hiSample = -1;
@@ -244,7 +244,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // data map will contain rounded timestamp value as last key column
             keyTypes.add(ColumnType.TIMESTAMP);
             dataMap = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
-            allocator = new GroupByAllocator(configuration);
+            allocator = AllocatorFactory.createThreadUnsafeAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
             isOpen = true;
         }

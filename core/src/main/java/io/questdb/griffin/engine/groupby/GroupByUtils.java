@@ -294,7 +294,7 @@ public class GroupByUtils {
         }
     }
 
-    public static void setAllocator(ObjList<GroupByFunction> functions, GroupByAllocator allocator) {
+    public static void setAllocator(ObjList<GroupByFunction> functions, Allocator allocator) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).setAllocator(allocator);
         }

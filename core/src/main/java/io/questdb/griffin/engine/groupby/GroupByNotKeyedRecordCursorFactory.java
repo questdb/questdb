@@ -33,10 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -150,7 +147,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         private static final int INIT_DONE = 2;
         private static final int INIT_FIRST_RECORD_DONE = 1;
         private static final int INIT_PENDING = 0;
-        private final GroupByAllocator allocator;
+        private final Allocator allocator;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
         // hold on to reference of base cursor here
         // because we use it as symbol table source for the functions
@@ -165,7 +162,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 GroupByFunctionsUpdater groupByFunctionsUpdater
         ) {
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-            this.allocator = new GroupByAllocator(configuration);
+            this.allocator = AllocatorFactory.createThreadUnsafeAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
         }
 

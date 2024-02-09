@@ -24,10 +24,9 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
+import io.questdb.std.Allocator;
+import io.questdb.std.AllocatorArena;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -39,14 +38,8 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
 
     @Test
     public void testMerge() throws Exception {
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         TestUtils.assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (Allocator allocator = new AllocatorArena(64, Numbers.SIZE_1GB)) {
                 GroupByIntHashSet setA = new GroupByIntHashSet(16, 0.5, -1);
                 setA.setAllocator(allocator);
                 setA.of(0);
@@ -88,15 +81,9 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
     }
 
     private void testSmoke(int noKeyValue) throws Exception {
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (Allocator allocator = new AllocatorArena(64, Numbers.SIZE_1GB)) {
                 GroupByIntHashSet set = new GroupByIntHashSet(16, 0.7, noKeyValue);
                 set.setAllocator(allocator);
                 set.of(0);

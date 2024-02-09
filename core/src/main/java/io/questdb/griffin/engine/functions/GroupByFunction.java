@@ -28,7 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.std.Allocator;
 import io.questdb.std.Mutable;
 
 public interface GroupByFunction extends Function, Mutable {
@@ -94,7 +94,7 @@ public interface GroupByFunction extends Function, Mutable {
 
     void pushValueTypes(ArrayColumnTypes columnTypes);
 
-    default void setAllocator(GroupByAllocator allocator) {
+    default void setAllocator(Allocator allocator) {
     }
 
     default void setByte(MapValue mapValue, byte value) {
