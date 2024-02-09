@@ -529,7 +529,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Sort light lo: 10 partiallySorted: true\n" +
                             "      keys: [ts, key]\n" +
-                            "        Async Filter workers: 1\n" +
+                            "        Async JIT Filter workers: 1\n" +
                             "          filter: key is not null\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +

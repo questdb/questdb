@@ -55,6 +55,8 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.List;
 
+import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
+
 public class SqlParserTest extends AbstractSqlParserTest {
 
     private final static List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
@@ -625,7 +627,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testACShorthandExprPreceding() throws Exception {
-        assertWindowQuery("select-window a, b, f(c) f over (partition by b order by ts #FRAME between 12 #UNIT preceding and current row exclude no others) " +
+        assertWindowQuery(
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 12 #UNIT preceding and current row exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME 12 preceding) from xyz",
                 modelOf("xyz")
@@ -8699,7 +8702,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
             String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            TableToken tableToken = new TableToken("tab", dirName, 1 + getSystemTablesCount(), false, false, false);
+            TableToken tableToken = new TableToken("tab", dirName, 1 + getSystemTablesCount(engine), false, false, false);
             CharSequence lockedReason = engine.lockAll(tableToken, "testing", true);
             Assert.assertNull(lockedReason);
             try {
@@ -9434,10 +9437,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 },
                 tableModels
         );
-    }
-
-    protected int getSystemTablesCount() {
-        return 0;
     }
 
     @FunctionalInterface

@@ -1219,6 +1219,19 @@ public final class TestUtils {
         };
     }
 
+    public static int getSystemTablesCount(CairoEngine engine) {
+        final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
+        engine.getTableTokens(tableBucket, false);
+        int systemTableCount = 0;
+        for (int i = 0, n = tableBucket.size(); i < n; i++) {
+            final TableToken tt = tableBucket.get(i);
+            if (tt.isSystem()) {
+                systemTableCount++;
+            }
+        }
+        return systemTableCount;
+    }
+
     public static String getTestResourcePath(String resourceName) {
         URL resource = TestUtils.class.getResource(resourceName);
         assertNotNull("Someone accidentally deleted test resource " + resourceName + "?", resource);

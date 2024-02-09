@@ -377,8 +377,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
+    private boolean allowTableRegistrySharedWrite;
     protected long walSegmentRolloverSize;
     private long cairoSqlCopyMaxIndexChunkSize;
+    private boolean enableTestFactories;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private int forceRecvFragmentationChunkSize;
@@ -491,7 +493,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public PropServerConfiguration(
             String root,
             Properties properties,
-            @Nullable Map<String, String> env,
+            @Nullable    Map<String, String> env,
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
@@ -503,7 +505,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 buildInformation,
                 FilesFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
-                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE
+                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
+                true
         );
     }
 
@@ -516,6 +519,30 @@ public class PropServerConfiguration implements ServerConfiguration {
             FilesFacade filesFacade,
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf
+    ) throws ServerConfigurationException, JsonException {
+        this(
+                root,
+                properties,
+                env,
+                log,
+                buildInformation,
+                filesFacade,
+                microsecondClock,
+                fpf,
+                true
+        );
+    }
+
+    public PropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Map<String, String> env,
+            Log log,
+            final BuildInformation buildInformation,
+            FilesFacade filesFacade,
+            MicrosecondClock microsecondClock,
+            FactoryProviderFactory fpf,
+            boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.filesFacade = filesFacade;
@@ -752,7 +779,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
             this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
 
-            if (httpServerEnabled) {
+            if (loadAdditionalConfigurations && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
                 this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
                 this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
@@ -969,7 +996,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.writerFileOpenOpts = lopts;
 
-            this.writerMixedIOEnabled = ff.allowMixedIO(this.root);
+            this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.root));
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -1023,7 +1050,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3CopyQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY, 128);
             this.o3LagCalculationWindowsSize = getIntSize(properties, env, PropertyKey.CAIRO_O3_LAG_CALCULATION_WINDOW_SIZE, 4);
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128));
-            this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 8 * Numbers.SIZE_1MB));
+            int debugO3MemSize = getInt(properties, env, PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, 0);
+            if (debugO3MemSize != 0) {
+                this.o3ColumnMemorySize = debugO3MemSize;
+            } else {
+                this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 8 * Numbers.SIZE_1MB));
+            }
             this.systemO3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_SYSTEM_O3_COLUMN_MEMORY_SIZE, 256 * 1024));
             this.maxUncommittedRows = getInt(properties, env, PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
 
@@ -1223,6 +1255,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
         }
+        this.allowTableRegistrySharedWrite = getBoolean(properties, env, PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE, false);
+        this.enableTestFactories = getBoolean(properties, env, PropertyKey.DEBUG_ENABLE_TEST_FACTORIES, false);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -1510,7 +1544,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
 
-        allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, false));
+        if (!key.isDebug()) {
+            allPairs.put(key, new ConfigPropertyValueImpl(result, valueSource, false));
+        }
         return result;
     }
 
@@ -1838,7 +1874,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean enableTestFactories() {
-            return false;
+            return enableTestFactories;
         }
 
         @Override
@@ -1848,7 +1884,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean getAllowTableRegistrySharedWrite() {
-            return false;
+            return allowTableRegistrySharedWrite;
         }
 
         @Override

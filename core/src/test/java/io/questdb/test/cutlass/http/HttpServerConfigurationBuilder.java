@@ -52,6 +52,7 @@ public class HttpServerConfigurationBuilder {
     private long multipartIdleSpinCount = -1;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private boolean pessimisticHealthCheck = false;
+    private int port = -1;
     private int receiveBufferSize = 1024 * 1024;
     private int rerunProcessingQueueSize = 4096;
     private int sendBufferSize = 1024 * 1024;
@@ -61,6 +62,11 @@ public class HttpServerConfigurationBuilder {
 
     public DefaultHttpServerConfiguration build() {
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+            @Override
+            public int getBindPort() {
+                return port != -1 ? port : super.getBindPort();
+            }
+
             @Override
             public NetworkFacade getNetworkFacade() {
                 return nf;
@@ -311,6 +317,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withPessimisticHealthCheck(boolean pessimisticHealthCheck) {
         this.pessimisticHealthCheck = pessimisticHealthCheck;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withPort(int port) {
+        this.port = port;
         return this;
     }
 

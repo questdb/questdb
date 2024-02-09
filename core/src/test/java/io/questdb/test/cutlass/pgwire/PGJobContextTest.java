@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -83,6 +84,8 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
+import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
@@ -164,13 +167,12 @@ public class PGJobContextTest extends BasePGTest {
                 .$(", recvBufferSize=").$(recvBufferSize)
                 .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
                 .I$();
-        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
     }
 
     @After
     public void tearDown() throws Exception {
         super.tearDown();
-        configOverrideDefaultTableWriteMode(-1);
     }
 
     @Test
@@ -7448,15 +7450,15 @@ nodejs code:
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 1_000;
-            writerAsyncCommandMaxTimeout = 30_000;
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 1000);
+            node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
                     if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
-                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout());
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() * 2);
                     }
                     return super.openRW(name, opts);
                 }
@@ -7470,7 +7472,10 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             skipOnWalRun(); // Alters do not wait for WAL tables
-            writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 1000);
+            long writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
+            Assert.assertEquals(1000, writerAsyncCommandMaxTimeout);
+            node1.setProperty(CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, writerAsyncCommandMaxTimeout);
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
                 @Override
@@ -7491,7 +7496,7 @@ nodejs code:
     public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 1;
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 1);
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
@@ -7508,7 +7513,7 @@ nodejs code:
     @Test
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        writerAsyncCommandBusyWaitTimeout = 10_000;
+        node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 10_000);
         assertMemoryLeak(() -> testAddColumnBusyWriter(true, new SOCountDownLatch()));
     }
 
@@ -10269,10 +10274,10 @@ create table tab as (
              )
         ) {
             Assert.assertNotNull(server);
-            pool.start(LOG);
             int iteration = 0;
 
             do {
+                pool.start(LOG);
                 final String tableName = "xyz" + iteration++;
                 ddl("create table " + tableName + " (a int)");
 

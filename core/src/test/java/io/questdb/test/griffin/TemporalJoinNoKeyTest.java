@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -55,6 +56,12 @@ public class TemporalJoinNoKeyTest extends AbstractCairoTest {
                 {JoinType.ASOF},
                 {JoinType.LT},
         });
+    }
+
+    @Override
+    public void setUp() {
+        super.setUp();
+        node1.setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 3);
     }
 
     @Test

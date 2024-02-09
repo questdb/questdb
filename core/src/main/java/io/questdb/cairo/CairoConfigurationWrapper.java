@@ -42,948 +42,952 @@ import java.util.function.LongSupplier;
 public class CairoConfigurationWrapper implements CairoConfiguration {
     private final CairoConfiguration delegate;
 
+    protected CairoConfigurationWrapper() {
+        delegate = null;
+    }
+
     public CairoConfigurationWrapper(@NotNull CairoConfiguration delegate) {
         this.delegate = delegate;
     }
 
     @Override
     public boolean attachPartitionCopy() {
-        return delegate.attachPartitionCopy();
+        return getDelegate().attachPartitionCopy();
     }
 
     @Override
     public boolean enableTestFactories() {
-        return delegate.enableTestFactories();
+        return getDelegate().enableTestFactories();
     }
 
     @Override
     public @Nullable ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> getAllPairs() {
-        return delegate.getAllPairs();
+        return getDelegate().getAllPairs();
     }
 
     @Override
     public boolean getAllowTableRegistrySharedWrite() {
-        return delegate.getAllowTableRegistrySharedWrite();
+        return getDelegate().getAllowTableRegistrySharedWrite();
     }
 
     @Override
     public @NotNull String getAttachPartitionSuffix() {
-        return delegate.getAttachPartitionSuffix();
+        return getDelegate().getAttachPartitionSuffix();
     }
 
     @Override
     public DateFormat getBackupDirTimestampFormat() {
-        return delegate.getBackupDirTimestampFormat();
+        return getDelegate().getBackupDirTimestampFormat();
     }
 
     @Override
     public int getBackupMkDirMode() {
-        return delegate.getBackupMkDirMode();
+        return getDelegate().getBackupMkDirMode();
     }
 
     @Override
     public CharSequence getBackupRoot() {
-        return delegate.getBackupRoot();
+        return getDelegate().getBackupRoot();
     }
 
     @Override
     public @NotNull CharSequence getBackupTempDirName() {
-        return delegate.getBackupTempDirName();
+        return getDelegate().getBackupTempDirName();
     }
 
     @Override
     public int getBinaryEncodingMaxLength() {
-        return delegate.getBinaryEncodingMaxLength();
+        return getDelegate().getBinaryEncodingMaxLength();
     }
 
     @Override
     public int getBindVariablePoolSize() {
-        return delegate.getBindVariablePoolSize();
+        return getDelegate().getBindVariablePoolSize();
     }
 
     @Override
     public @NotNull BuildInformation getBuildInformation() {
-        return delegate.getBuildInformation();
+        return getDelegate().getBuildInformation();
     }
 
     @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-        return delegate.getCircuitBreakerConfiguration();
+        return getDelegate().getCircuitBreakerConfiguration();
     }
 
     @Override
     public int getColumnCastModelPoolCapacity() {
-        return delegate.getColumnCastModelPoolCapacity();
+        return getDelegate().getColumnCastModelPoolCapacity();
     }
 
     @Override
     public int getColumnIndexerQueueCapacity() {
-        return delegate.getColumnIndexerQueueCapacity();
+        return getDelegate().getColumnIndexerQueueCapacity();
     }
 
     @Override
     public int getColumnPurgeQueueCapacity() {
-        return delegate.getColumnPurgeQueueCapacity();
+        return getDelegate().getColumnPurgeQueueCapacity();
     }
 
     @Override
     public long getColumnPurgeRetryDelay() {
-        return delegate.getColumnPurgeRetryDelay();
+        return getDelegate().getColumnPurgeRetryDelay();
     }
 
     @Override
     public long getColumnPurgeRetryDelayLimit() {
-        return delegate.getColumnPurgeRetryDelayLimit();
+        return getDelegate().getColumnPurgeRetryDelayLimit();
     }
 
     @Override
     public double getColumnPurgeRetryDelayMultiplier() {
-        return delegate.getColumnPurgeRetryDelayMultiplier();
+        return getDelegate().getColumnPurgeRetryDelayMultiplier();
     }
 
     @Override
     public int getColumnPurgeTaskPoolCapacity() {
-        return delegate.getColumnPurgeTaskPoolCapacity();
+        return getDelegate().getColumnPurgeTaskPoolCapacity();
     }
 
     @Override
     public int getCommitMode() {
-        return delegate.getCommitMode();
+        return getDelegate().getCommitMode();
     }
 
     @Override
     public @NotNull CharSequence getConfRoot() {
-        return delegate.getConfRoot();
+        return getDelegate().getConfRoot();
     }
 
     @Override
     public @NotNull LongSupplier getCopyIDSupplier() {
-        return delegate.getCopyIDSupplier();
+        return getDelegate().getCopyIDSupplier();
     }
 
     @Override
     public int getCopyPoolCapacity() {
-        return delegate.getCopyPoolCapacity();
+        return getDelegate().getCopyPoolCapacity();
     }
 
     @Override
     public int getCountDistinctCapacity() {
-        return delegate.getCountDistinctCapacity();
+        return getDelegate().getCountDistinctCapacity();
     }
 
     @Override
     public double getCountDistinctLoadFactor() {
-        return delegate.getCountDistinctLoadFactor();
+        return getDelegate().getCountDistinctLoadFactor();
     }
 
     @Override
     public int getCreateAsSelectRetryCount() {
-        return delegate.getCreateAsSelectRetryCount();
+        return getDelegate().getCreateAsSelectRetryCount();
     }
 
     @Override
     public int getCreateTableModelPoolCapacity() {
-        return delegate.getCreateTableModelPoolCapacity();
+        return getDelegate().getCreateTableModelPoolCapacity();
     }
 
     @Override
     public long getDataAppendPageSize() {
-        return delegate.getDataAppendPageSize();
+        return getDelegate().getDataAppendPageSize();
     }
 
     @Override
     public long getDataIndexKeyAppendPageSize() {
-        return delegate.getDataIndexKeyAppendPageSize();
+        return getDelegate().getDataIndexKeyAppendPageSize();
     }
 
     @Override
     public long getDataIndexValueAppendPageSize() {
-        return delegate.getDataIndexValueAppendPageSize();
+        return getDelegate().getDataIndexValueAppendPageSize();
     }
 
     @Override
     public long getDatabaseIdHi() {
-        return delegate.getDatabaseIdHi();
+        return getDelegate().getDatabaseIdHi();
     }
 
     @Override
     public long getDatabaseIdLo() {
-        return delegate.getDatabaseIdLo();
+        return getDelegate().getDatabaseIdLo();
     }
 
     @Override
     public @NotNull CharSequence getDbDirectory() {
-        return delegate.getDbDirectory();
+        return getDelegate().getDbDirectory();
     }
 
     @Override
     public @NotNull DateLocale getDefaultDateLocale() {
-        return delegate.getDefaultDateLocale();
+        return getDelegate().getDefaultDateLocale();
     }
 
     @Override
     public boolean getDefaultSymbolCacheFlag() {
-        return delegate.getDefaultSymbolCacheFlag();
+        return getDelegate().getDefaultSymbolCacheFlag();
     }
 
     @Override
     public int getDefaultSymbolCapacity() {
-        return delegate.getDefaultSymbolCapacity();
+        return getDelegate().getDefaultSymbolCapacity();
     }
 
     @Override
     public int getDetachedMkDirMode() {
-        return delegate.getDetachedMkDirMode();
+        return getDelegate().getDetachedMkDirMode();
     }
 
     @Override
     public int getDoubleToStrCastScale() {
-        return delegate.getDoubleToStrCastScale();
+        return getDelegate().getDoubleToStrCastScale();
     }
 
     @Override
     public int getExplainPoolCapacity() {
-        return delegate.getExplainPoolCapacity();
+        return getDelegate().getExplainPoolCapacity();
     }
 
     @Override
     public @NotNull FactoryProvider getFactoryProvider() {
-        return delegate.getFactoryProvider();
+        return getDelegate().getFactoryProvider();
     }
 
     @Override
     public int getFileOperationRetryCount() {
-        return delegate.getFileOperationRetryCount();
+        return getDelegate().getFileOperationRetryCount();
     }
 
     @Override
     public @NotNull FilesFacade getFilesFacade() {
-        return delegate.getFilesFacade();
+        return getDelegate().getFilesFacade();
     }
 
     @Override
     public int getFloatToStrCastScale() {
-        return delegate.getFloatToStrCastScale();
+        return getDelegate().getFloatToStrCastScale();
     }
 
     @Override
     public long getGroupByAllocatorDefaultChunkSize() {
-        return delegate.getGroupByAllocatorDefaultChunkSize();
+        return getDelegate().getGroupByAllocatorDefaultChunkSize();
     }
 
     @Override
     public long getGroupByAllocatorMaxChunkSize() {
-        return delegate.getGroupByAllocatorMaxChunkSize();
+        return getDelegate().getGroupByAllocatorMaxChunkSize();
     }
 
     @Override
     public int getGroupByMapCapacity() {
-        return delegate.getGroupByMapCapacity();
+        return getDelegate().getGroupByMapCapacity();
     }
 
     @Override
     public int getGroupByMergeShardQueueCapacity() {
-        return delegate.getGroupByMergeShardQueueCapacity();
+        return getDelegate().getGroupByMergeShardQueueCapacity();
     }
 
     @Override
     public int getGroupByPoolCapacity() {
-        return delegate.getGroupByPoolCapacity();
+        return getDelegate().getGroupByPoolCapacity();
     }
 
     @Override
     public int getGroupByShardingThreshold() {
-        return delegate.getGroupByShardingThreshold();
+        return getDelegate().getGroupByShardingThreshold();
     }
 
     @Override
     public long getIdleCheckInterval() {
-        return delegate.getIdleCheckInterval();
+        return getDelegate().getIdleCheckInterval();
     }
 
     @Override
     public int getInactiveReaderMaxOpenPartitions() {
-        return delegate.getInactiveReaderMaxOpenPartitions();
+        return getDelegate().getInactiveReaderMaxOpenPartitions();
     }
 
     @Override
     public long getInactiveReaderTTL() {
-        return delegate.getInactiveReaderTTL();
+        return getDelegate().getInactiveReaderTTL();
     }
 
     @Override
     public long getInactiveWalWriterTTL() {
-        return delegate.getInactiveWalWriterTTL();
+        return getDelegate().getInactiveWalWriterTTL();
     }
 
     @Override
     public long getInactiveWriterTTL() {
-        return delegate.getInactiveWriterTTL();
+        return getDelegate().getInactiveWriterTTL();
     }
 
     @Override
     public int getIndexValueBlockSize() {
-        return delegate.getIndexValueBlockSize();
+        return getDelegate().getIndexValueBlockSize();
     }
 
     @Override
     public int getInsertPoolCapacity() {
-        return delegate.getInsertPoolCapacity();
+        return getDelegate().getInsertPoolCapacity();
     }
 
     @Override
     public int getLatestByQueueCapacity() {
-        return delegate.getLatestByQueueCapacity();
+        return getDelegate().getLatestByQueueCapacity();
     }
 
     @Override
     public int getMaxCrashFiles() {
-        return delegate.getMaxCrashFiles();
+        return getDelegate().getMaxCrashFiles();
     }
 
     @Override
     public int getMaxFileNameLength() {
-        return delegate.getMaxFileNameLength();
+        return getDelegate().getMaxFileNameLength();
     }
 
     @Override
     public int getMaxSqlRecompileAttempts() {
-        return delegate.getMaxSqlRecompileAttempts();
+        return getDelegate().getMaxSqlRecompileAttempts();
     }
 
     @Override
     public int getMaxSwapFileCount() {
-        return delegate.getMaxSwapFileCount();
+        return getDelegate().getMaxSwapFileCount();
     }
 
     @Override
     public int getMaxSymbolNotEqualsCount() {
-        return delegate.getMaxSymbolNotEqualsCount();
+        return getDelegate().getMaxSymbolNotEqualsCount();
     }
 
     @Override
     public int getMaxUncommittedRows() {
-        return delegate.getMaxUncommittedRows();
+        return getDelegate().getMaxUncommittedRows();
     }
 
     @Override
     public int getMetadataPoolCapacity() {
-        return delegate.getMetadataPoolCapacity();
+        return getDelegate().getMetadataPoolCapacity();
     }
 
     @Override
     public @NotNull MicrosecondClock getMicrosecondClock() {
-        return delegate.getMicrosecondClock();
+        return getDelegate().getMicrosecondClock();
     }
 
     @Override
     public @NotNull MillisecondClock getMillisecondClock() {
-        return delegate.getMillisecondClock();
+        return getDelegate().getMillisecondClock();
     }
 
     @Override
     public long getMiscAppendPageSize() {
-        return delegate.getMiscAppendPageSize();
+        return getDelegate().getMiscAppendPageSize();
     }
 
     @Override
     public int getMkDirMode() {
-        return delegate.getMkDirMode();
+        return getDelegate().getMkDirMode();
     }
 
     @Override
     public int getO3CallbackQueueCapacity() {
-        return delegate.getO3CallbackQueueCapacity();
+        return getDelegate().getO3CallbackQueueCapacity();
     }
 
     @Override
     public int getO3ColumnMemorySize() {
-        return delegate.getO3ColumnMemorySize();
+        return getDelegate().getO3ColumnMemorySize();
     }
 
     @Override
     public int getO3CopyQueueCapacity() {
-        return delegate.getO3CopyQueueCapacity();
+        return getDelegate().getO3CopyQueueCapacity();
     }
 
     @Override
     public int getO3LagCalculationWindowsSize() {
-        return delegate.getO3LagCalculationWindowsSize();
+        return getDelegate().getO3LagCalculationWindowsSize();
     }
 
     @Override
     public int getO3LastPartitionMaxSplits() {
-        return delegate.getO3LastPartitionMaxSplits();
+        return getDelegate().getO3LastPartitionMaxSplits();
     }
 
     @Override
     public long getO3MaxLag() {
-        return delegate.getO3MaxLag();
+        return getDelegate().getO3MaxLag();
     }
 
     @Override
     public int getO3MemMaxPages() {
-        return delegate.getO3MemMaxPages();
+        return getDelegate().getO3MemMaxPages();
     }
 
     @Override
     public long getO3MinLag() {
-        return delegate.getO3MinLag();
+        return getDelegate().getO3MinLag();
     }
 
     @Override
     public int getO3OpenColumnQueueCapacity() {
-        return delegate.getO3OpenColumnQueueCapacity();
+        return getDelegate().getO3OpenColumnQueueCapacity();
     }
 
     @Override
     public int getO3PartitionQueueCapacity() {
-        return delegate.getO3PartitionQueueCapacity();
+        return getDelegate().getO3PartitionQueueCapacity();
     }
 
     @Override
     public int getO3PurgeDiscoveryQueueCapacity() {
-        return delegate.getO3PurgeDiscoveryQueueCapacity();
+        return getDelegate().getO3PurgeDiscoveryQueueCapacity();
     }
 
     @Override
     public int getPageFrameReduceColumnListCapacity() {
-        return delegate.getPageFrameReduceColumnListCapacity();
+        return getDelegate().getPageFrameReduceColumnListCapacity();
     }
 
     @Override
     public int getPageFrameReduceQueueCapacity() {
-        return delegate.getPageFrameReduceQueueCapacity();
+        return getDelegate().getPageFrameReduceQueueCapacity();
     }
 
     @Override
     public int getPageFrameReduceRowIdListCapacity() {
-        return delegate.getPageFrameReduceRowIdListCapacity();
+        return getDelegate().getPageFrameReduceRowIdListCapacity();
     }
 
     @Override
     public int getPageFrameReduceShardCount() {
-        return delegate.getPageFrameReduceShardCount();
+        return getDelegate().getPageFrameReduceShardCount();
     }
 
     @Override
     public int getParallelIndexThreshold() {
-        return delegate.getParallelIndexThreshold();
+        return getDelegate().getParallelIndexThreshold();
     }
 
     @Override
     public long getPartitionO3SplitMinSize() {
-        return delegate.getPartitionO3SplitMinSize();
+        return getDelegate().getPartitionO3SplitMinSize();
     }
 
     @Override
     public int getPartitionPurgeListCapacity() {
-        return delegate.getPartitionPurgeListCapacity();
+        return getDelegate().getPartitionPurgeListCapacity();
     }
 
     @Override
     public int getQueryRegistryPoolSize() {
-        return delegate.getQueryRegistryPoolSize();
+        return getDelegate().getQueryRegistryPoolSize();
     }
 
     @Override
     public int getReaderPoolMaxSegments() {
-        return delegate.getReaderPoolMaxSegments();
+        return getDelegate().getReaderPoolMaxSegments();
     }
 
     @Override
     public int getRenameTableModelPoolCapacity() {
-        return delegate.getRenameTableModelPoolCapacity();
+        return getDelegate().getRenameTableModelPoolCapacity();
     }
 
     @Override
     public int getRepeatMigrationsFromVersion() {
-        return delegate.getRepeatMigrationsFromVersion();
+        return getDelegate().getRepeatMigrationsFromVersion();
     }
 
     @Override
     public int getRndFunctionMemoryMaxPages() {
-        return delegate.getRndFunctionMemoryMaxPages();
+        return getDelegate().getRndFunctionMemoryMaxPages();
     }
 
     @Override
     public int getRndFunctionMemoryPageSize() {
-        return delegate.getRndFunctionMemoryPageSize();
+        return getDelegate().getRndFunctionMemoryPageSize();
     }
 
     @Override
     public @NotNull String getRoot() {
-        return delegate.getRoot();
+        return getDelegate().getRoot();
     }
 
     @Override
     public int getSampleByIndexSearchPageSize() {
-        return delegate.getSampleByIndexSearchPageSize();
+        return getDelegate().getSampleByIndexSearchPageSize();
     }
 
     @Override
     public boolean getSimulateCrashEnabled() {
-        return delegate.getSimulateCrashEnabled();
+        return getDelegate().getSimulateCrashEnabled();
     }
 
     @Override
     public @NotNull CharSequence getSnapshotInstanceId() {
-        return delegate.getSnapshotInstanceId();
+        return getDelegate().getSnapshotInstanceId();
     }
 
     @Override
     public @NotNull CharSequence getSnapshotRoot() {
-        return delegate.getSnapshotRoot();
+        return getDelegate().getSnapshotRoot();
     }
 
     @Override
     public long getSpinLockTimeout() {
-        return delegate.getSpinLockTimeout();
+        return getDelegate().getSpinLockTimeout();
     }
 
     @Override
     public int getSqlAsOfJoinLookAhead() {
-        return delegate.getSqlAsOfJoinLookAhead();
+        return getDelegate().getSqlAsOfJoinLookAhead();
     }
 
     @Override
     public int getSqlCharacterStoreCapacity() {
-        return delegate.getSqlCharacterStoreCapacity();
+        return getDelegate().getSqlCharacterStoreCapacity();
     }
 
     @Override
     public int getSqlCharacterStoreSequencePoolCapacity() {
-        return delegate.getSqlCharacterStoreSequencePoolCapacity();
+        return getDelegate().getSqlCharacterStoreSequencePoolCapacity();
     }
 
     @Override
     public int getSqlColumnPoolCapacity() {
-        return delegate.getSqlColumnPoolCapacity();
+        return getDelegate().getSqlColumnPoolCapacity();
     }
 
     @Override
     public int getSqlCompilerPoolCapacity() {
-        return delegate.getSqlCompilerPoolCapacity();
+        return getDelegate().getSqlCompilerPoolCapacity();
     }
 
     @Override
     public int getSqlCopyBufferSize() {
-        return delegate.getSqlCopyBufferSize();
+        return getDelegate().getSqlCopyBufferSize();
     }
 
     @Override
     public CharSequence getSqlCopyInputRoot() {
-        return delegate.getSqlCopyInputRoot();
+        return getDelegate().getSqlCopyInputRoot();
     }
 
     @Override
     public CharSequence getSqlCopyInputWorkRoot() {
-        return delegate.getSqlCopyInputWorkRoot();
+        return getDelegate().getSqlCopyInputWorkRoot();
     }
 
     @Override
     public int getSqlCopyLogRetentionDays() {
-        return delegate.getSqlCopyLogRetentionDays();
+        return getDelegate().getSqlCopyLogRetentionDays();
     }
 
     @Override
     public long getSqlCopyMaxIndexChunkSize() {
-        return delegate.getSqlCopyMaxIndexChunkSize();
+        return getDelegate().getSqlCopyMaxIndexChunkSize();
     }
 
     @Override
     public int getSqlCopyQueueCapacity() {
-        return delegate.getSqlCopyQueueCapacity();
+        return getDelegate().getSqlCopyQueueCapacity();
     }
 
     @Override
     public int getSqlDistinctTimestampKeyCapacity() {
-        return delegate.getSqlDistinctTimestampKeyCapacity();
+        return getDelegate().getSqlDistinctTimestampKeyCapacity();
     }
 
     @Override
     public double getSqlDistinctTimestampLoadFactor() {
-        return delegate.getSqlDistinctTimestampLoadFactor();
+        return getDelegate().getSqlDistinctTimestampLoadFactor();
     }
 
     @Override
     public int getSqlExpressionPoolCapacity() {
-        return delegate.getSqlExpressionPoolCapacity();
+        return getDelegate().getSqlExpressionPoolCapacity();
     }
 
     @Override
     public double getSqlFastMapLoadFactor() {
-        return delegate.getSqlFastMapLoadFactor();
+        return getDelegate().getSqlFastMapLoadFactor();
     }
 
     @Override
     public int getSqlHashJoinLightValueMaxPages() {
-        return delegate.getSqlHashJoinLightValueMaxPages();
+        return getDelegate().getSqlHashJoinLightValueMaxPages();
     }
 
     @Override
     public int getSqlHashJoinLightValuePageSize() {
-        return delegate.getSqlHashJoinLightValuePageSize();
+        return getDelegate().getSqlHashJoinLightValuePageSize();
     }
 
     @Override
     public int getSqlHashJoinValueMaxPages() {
-        return delegate.getSqlHashJoinValueMaxPages();
+        return getDelegate().getSqlHashJoinValueMaxPages();
     }
 
     @Override
     public int getSqlHashJoinValuePageSize() {
-        return delegate.getSqlHashJoinValuePageSize();
+        return getDelegate().getSqlHashJoinValuePageSize();
     }
 
     @Override
     public int getSqlJitBindVarsMemoryMaxPages() {
-        return delegate.getSqlJitBindVarsMemoryMaxPages();
+        return getDelegate().getSqlJitBindVarsMemoryMaxPages();
     }
 
     @Override
     public int getSqlJitBindVarsMemoryPageSize() {
-        return delegate.getSqlJitBindVarsMemoryPageSize();
+        return getDelegate().getSqlJitBindVarsMemoryPageSize();
     }
 
     @Override
     public int getSqlJitIRMemoryMaxPages() {
-        return delegate.getSqlJitIRMemoryMaxPages();
+        return getDelegate().getSqlJitIRMemoryMaxPages();
     }
 
     @Override
     public int getSqlJitIRMemoryPageSize() {
-        return delegate.getSqlJitIRMemoryPageSize();
+        return getDelegate().getSqlJitIRMemoryPageSize();
     }
 
     @Override
     public int getSqlJitMode() {
-        return delegate.getSqlJitMode();
+        return getDelegate().getSqlJitMode();
     }
 
     @Override
     public int getSqlJitPageAddressCacheThreshold() {
-        return delegate.getSqlJitPageAddressCacheThreshold();
+        return getDelegate().getSqlJitPageAddressCacheThreshold();
     }
 
     @Override
     public int getSqlJoinContextPoolCapacity() {
-        return delegate.getSqlJoinContextPoolCapacity();
+        return getDelegate().getSqlJoinContextPoolCapacity();
     }
 
     @Override
     public int getSqlJoinMetadataMaxResizes() {
-        return delegate.getSqlJoinMetadataMaxResizes();
+        return getDelegate().getSqlJoinMetadataMaxResizes();
     }
 
     @Override
     public int getSqlJoinMetadataPageSize() {
-        return delegate.getSqlJoinMetadataPageSize();
+        return getDelegate().getSqlJoinMetadataPageSize();
     }
 
     @Override
     public long getSqlLatestByRowCount() {
-        return delegate.getSqlLatestByRowCount();
+        return getDelegate().getSqlLatestByRowCount();
     }
 
     @Override
     public int getSqlLexerPoolCapacity() {
-        return delegate.getSqlLexerPoolCapacity();
+        return getDelegate().getSqlLexerPoolCapacity();
     }
 
     @Override
     public int getSqlMapMaxPages() {
-        return delegate.getSqlMapMaxPages();
+        return getDelegate().getSqlMapMaxPages();
     }
 
     @Override
     public int getSqlMapMaxResizes() {
-        return delegate.getSqlMapMaxResizes();
+        return getDelegate().getSqlMapMaxResizes();
     }
 
     @Override
     public int getSqlMaxNegativeLimit() {
-        return delegate.getSqlMaxNegativeLimit();
+        return getDelegate().getSqlMaxNegativeLimit();
     }
 
     @Override
     public int getSqlModelPoolCapacity() {
-        return delegate.getSqlModelPoolCapacity();
+        return getDelegate().getSqlModelPoolCapacity();
     }
 
     @Override
     public int getSqlPageFrameMaxRows() {
-        return delegate.getSqlPageFrameMaxRows();
+        return getDelegate().getSqlPageFrameMaxRows();
     }
 
     @Override
     public int getSqlPageFrameMinRows() {
-        return delegate.getSqlPageFrameMinRows();
+        return getDelegate().getSqlPageFrameMinRows();
     }
 
     @Override
     public int getSqlSmallMapKeyCapacity() {
-        return delegate.getSqlSmallMapKeyCapacity();
+        return getDelegate().getSqlSmallMapKeyCapacity();
     }
 
     @Override
     public int getSqlSmallMapPageSize() {
-        return delegate.getSqlSmallMapPageSize();
+        return getDelegate().getSqlSmallMapPageSize();
     }
 
     @Override
     public int getSqlSortKeyMaxPages() {
-        return delegate.getSqlSortKeyMaxPages();
+        return getDelegate().getSqlSortKeyMaxPages();
     }
 
     @Override
     public long getSqlSortKeyPageSize() {
-        return delegate.getSqlSortKeyPageSize();
+        return getDelegate().getSqlSortKeyPageSize();
     }
 
     @Override
     public int getSqlSortLightValueMaxPages() {
-        return delegate.getSqlSortLightValueMaxPages();
+        return getDelegate().getSqlSortLightValueMaxPages();
     }
 
     @Override
     public long getSqlSortLightValuePageSize() {
-        return delegate.getSqlSortLightValuePageSize();
+        return getDelegate().getSqlSortLightValuePageSize();
     }
 
     @Override
     public int getSqlSortValueMaxPages() {
-        return delegate.getSqlSortValueMaxPages();
+        return getDelegate().getSqlSortValueMaxPages();
     }
 
     @Override
     public int getSqlSortValuePageSize() {
-        return delegate.getSqlSortValuePageSize();
+        return getDelegate().getSqlSortValuePageSize();
     }
 
     @Override
     public int getSqlUnorderedMapMaxEntrySize() {
-        return delegate.getSqlUnorderedMapMaxEntrySize();
+        return getDelegate().getSqlUnorderedMapMaxEntrySize();
     }
 
     @Override
     public int getSqlWindowInitialRangeBufferSize() {
-        return delegate.getSqlWindowInitialRangeBufferSize();
+        return getDelegate().getSqlWindowInitialRangeBufferSize();
     }
 
     @Override
     public int getSqlWindowMaxRecursion() {
-        return delegate.getSqlWindowMaxRecursion();
+        return getDelegate().getSqlWindowMaxRecursion();
     }
 
     @Override
     public int getSqlWindowRowIdMaxPages() {
-        return delegate.getSqlWindowRowIdMaxPages();
+        return getDelegate().getSqlWindowRowIdMaxPages();
     }
 
     @Override
     public int getSqlWindowRowIdPageSize() {
-        return delegate.getSqlWindowRowIdPageSize();
+        return getDelegate().getSqlWindowRowIdPageSize();
     }
 
     @Override
     public int getSqlWindowStoreMaxPages() {
-        return delegate.getSqlWindowStoreMaxPages();
+        return getDelegate().getSqlWindowStoreMaxPages();
     }
 
     @Override
     public int getSqlWindowStorePageSize() {
-        return delegate.getSqlWindowStorePageSize();
+        return getDelegate().getSqlWindowStorePageSize();
     }
 
     @Override
     public int getSqlWindowTreeKeyMaxPages() {
-        return delegate.getSqlWindowTreeKeyMaxPages();
+        return getDelegate().getSqlWindowTreeKeyMaxPages();
     }
 
     @Override
     public int getSqlWindowTreeKeyPageSize() {
-        return delegate.getSqlWindowTreeKeyPageSize();
+        return getDelegate().getSqlWindowTreeKeyPageSize();
     }
 
     @Override
     public int getStrFunctionMaxBufferLength() {
-        return delegate.getStrFunctionMaxBufferLength();
+        return getDelegate().getStrFunctionMaxBufferLength();
     }
 
     @Override
     public long getSystemDataAppendPageSize() {
-        return delegate.getSystemDataAppendPageSize();
+        return getDelegate().getSystemDataAppendPageSize();
     }
 
     @Override
     public int getSystemO3ColumnMemorySize() {
-        return delegate.getSystemO3ColumnMemorySize();
+        return getDelegate().getSystemO3ColumnMemorySize();
     }
 
     @Override
     public @NotNull CharSequence getSystemTableNamePrefix() {
-        return delegate.getSystemTableNamePrefix();
+        return getDelegate().getSystemTableNamePrefix();
     }
 
     @Override
     public long getSystemWalDataAppendPageSize() {
-        return delegate.getSystemWalDataAppendPageSize();
+        return getDelegate().getSystemWalDataAppendPageSize();
     }
 
     @Override
     public long getTableRegistryAutoReloadFrequency() {
-        return delegate.getTableRegistryAutoReloadFrequency();
+        return getDelegate().getTableRegistryAutoReloadFrequency();
     }
 
     @Override
     public int getTableRegistryCompactionThreshold() {
-        return delegate.getTableRegistryCompactionThreshold();
+        return getDelegate().getTableRegistryCompactionThreshold();
     }
 
     @Override
     public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
-        return delegate.getTelemetryConfiguration();
+        return getDelegate().getTelemetryConfiguration();
     }
 
     @Override
     public CharSequence getTempRenamePendingTablePrefix() {
-        return delegate.getTempRenamePendingTablePrefix();
+        return getDelegate().getTempRenamePendingTablePrefix();
     }
 
     @Override
     public @NotNull TextConfiguration getTextConfiguration() {
-        return delegate.getTextConfiguration();
+        return getDelegate().getTextConfiguration();
     }
 
     @Override
     public int getTxnScoreboardEntryCount() {
-        return delegate.getTxnScoreboardEntryCount();
+        return getDelegate().getTxnScoreboardEntryCount();
     }
 
     @Override
     public int getVectorAggregateQueueCapacity() {
-        return delegate.getVectorAggregateQueueCapacity();
+        return getDelegate().getVectorAggregateQueueCapacity();
     }
 
     @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
-        return delegate.getVolumeDefinitions();
+        return getDelegate().getVolumeDefinitions();
     }
 
     @Override
     public int getWalApplyLookAheadTransactionCount() {
-        return delegate.getWalApplyLookAheadTransactionCount();
+        return getDelegate().getWalApplyLookAheadTransactionCount();
     }
 
     @Override
     public long getWalApplyTableTimeQuota() {
-        return delegate.getWalApplyTableTimeQuota();
+        return getDelegate().getWalApplyTableTimeQuota();
     }
 
     @Override
     public long getWalDataAppendPageSize() {
-        return delegate.getWalDataAppendPageSize();
+        return getDelegate().getWalDataAppendPageSize();
     }
 
     @Override
     public boolean getWalEnabledDefault() {
-        return delegate.getWalEnabledDefault();
+        return getDelegate().getWalEnabledDefault();
     }
 
     @Override
     public long getWalMaxLagSize() {
-        return delegate.getWalMaxLagSize();
+        return getDelegate().getWalMaxLagSize();
     }
 
     @Override
     public int getWalMaxLagTxnCount() {
-        return delegate.getWalMaxLagTxnCount();
+        return getDelegate().getWalMaxLagTxnCount();
     }
 
     @Override
     public int getWalMaxSegmentFileDescriptorsCache() {
-        return delegate.getWalMaxSegmentFileDescriptorsCache();
+        return getDelegate().getWalMaxSegmentFileDescriptorsCache();
     }
 
     @Override
     public long getWalPurgeInterval() {
-        return delegate.getWalPurgeInterval();
+        return getDelegate().getWalPurgeInterval();
     }
 
     @Override
     public int getWalPurgeWaitBeforeDelete() {
-        return delegate.getWalPurgeWaitBeforeDelete();
+        return getDelegate().getWalPurgeWaitBeforeDelete();
     }
 
     @Override
     public int getWalRecreateDistressedSequencerAttempts() {
-        return delegate.getWalRecreateDistressedSequencerAttempts();
+        return getDelegate().getWalRecreateDistressedSequencerAttempts();
     }
 
     @Override
     public long getWalSegmentRolloverRowCount() {
-        return delegate.getWalSegmentRolloverRowCount();
+        return getDelegate().getWalSegmentRolloverRowCount();
     }
 
     @Override
     public long getWalSegmentRolloverSize() {
-        return delegate.getWalSegmentRolloverSize();
+        return getDelegate().getWalSegmentRolloverSize();
     }
 
     @Override
     public double getWalSquashUncommittedRowsMultiplier() {
-        return delegate.getWalSquashUncommittedRowsMultiplier();
+        return getDelegate().getWalSquashUncommittedRowsMultiplier();
     }
 
     @Override
     public int getWalTxnNotificationQueueCapacity() {
-        return delegate.getWalTxnNotificationQueueCapacity();
+        return getDelegate().getWalTxnNotificationQueueCapacity();
     }
 
     @Override
     public int getWalWriterPoolMaxSegments() {
-        return delegate.getWalWriterPoolMaxSegments();
+        return getDelegate().getWalWriterPoolMaxSegments();
     }
 
     @Override
     public int getWindowColumnPoolCapacity() {
-        return delegate.getWindowColumnPoolCapacity();
+        return getDelegate().getWindowColumnPoolCapacity();
     }
 
     @Override
     public int getWithClauseModelPoolCapacity() {
-        return delegate.getWithClauseModelPoolCapacity();
+        return getDelegate().getWithClauseModelPoolCapacity();
     }
 
     @Override
     public long getWorkStealTimeoutNanos() {
-        return delegate.getWorkStealTimeoutNanos();
+        return getDelegate().getWorkStealTimeoutNanos();
     }
 
     @Override
     public long getWriterAsyncCommandBusyWaitTimeout() {
-        return delegate.getWriterAsyncCommandBusyWaitTimeout();
+        return getDelegate().getWriterAsyncCommandBusyWaitTimeout();
     }
 
     @Override
     public long getWriterAsyncCommandMaxTimeout() {
-        return delegate.getWriterAsyncCommandMaxTimeout();
+        return getDelegate().getWriterAsyncCommandMaxTimeout();
     }
 
     @Override
     public int getWriterCommandQueueCapacity() {
-        return delegate.getWriterCommandQueueCapacity();
+        return getDelegate().getWriterCommandQueueCapacity();
     }
 
     @Override
     public long getWriterCommandQueueSlotSize() {
-        return delegate.getWriterCommandQueueSlotSize();
+        return getDelegate().getWriterCommandQueueSlotSize();
     }
 
     @Override
     public long getWriterFileOpenOpts() {
-        return delegate.getWriterFileOpenOpts();
+        return getDelegate().getWriterFileOpenOpts();
     }
 
     @Override
@@ -993,85 +997,89 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
 
     @Override
     public int getWriterTickRowsCountMod() {
-        return delegate.getWriterTickRowsCountMod();
+        return getDelegate().getWriterTickRowsCountMod();
     }
 
     @Override
     public boolean isIOURingEnabled() {
-        return delegate.isIOURingEnabled();
+        return getDelegate().isIOURingEnabled();
     }
 
     @Override
     public boolean isMultiKeyDedupEnabled() {
-        return delegate.isMultiKeyDedupEnabled();
+        return getDelegate().isMultiKeyDedupEnabled();
     }
 
     @Override
     public boolean isO3QuickSortEnabled() {
-        return delegate.isO3QuickSortEnabled();
+        return getDelegate().isO3QuickSortEnabled();
     }
 
     @Override
     public boolean isParallelIndexingEnabled() {
-        return delegate.isParallelIndexingEnabled();
+        return getDelegate().isParallelIndexingEnabled();
     }
 
     @Override
     public boolean isReadOnlyInstance() {
-        return delegate.isReadOnlyInstance();
+        return getDelegate().isReadOnlyInstance();
     }
 
     @Override
     public boolean isSnapshotRecoveryEnabled() {
-        return delegate.isSnapshotRecoveryEnabled();
+        return getDelegate().isSnapshotRecoveryEnabled();
     }
 
     @Override
     public boolean isSqlJitDebugEnabled() {
-        return delegate.isSqlJitDebugEnabled();
+        return getDelegate().isSqlJitDebugEnabled();
     }
 
     @Override
     public boolean isSqlParallelFilterEnabled() {
-        return delegate.isSqlParallelFilterEnabled();
+        return getDelegate().isSqlParallelFilterEnabled();
     }
 
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
-        return delegate.isSqlParallelFilterPreTouchEnabled();
+        return getDelegate().isSqlParallelFilterPreTouchEnabled();
     }
 
     @Override
     public boolean isSqlParallelGroupByEnabled() {
-        return delegate.isSqlParallelGroupByEnabled();
+        return getDelegate().isSqlParallelGroupByEnabled();
     }
 
     @Override
     public boolean isTableTypeConversionEnabled() {
-        return delegate.isTableTypeConversionEnabled();
+        return getDelegate().isTableTypeConversionEnabled();
     }
 
     @Override
     public boolean isWalApplyEnabled() {
-        return delegate.isWalApplyEnabled();
+        return getDelegate().isWalApplyEnabled();
     }
 
     public boolean isWalSupported() {
-        return delegate.isWalSupported();
+        return getDelegate().isWalSupported();
     }
 
     @Override
     public boolean isWriterMixedIOEnabled() {
-        return delegate.isWriterMixedIOEnabled();
+        return getDelegate().isWriterMixedIOEnabled();
     }
 
     @Override
     public boolean mangleTableDirNames() {
-        return delegate.mangleTableDirNames();
+        return getDelegate().mangleTableDirNames();
     }
 
     @Override
     public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-        delegate.populateSettings(settings);
+        getDelegate().populateSettings(settings);
+    }
+
+    protected CairoConfiguration getDelegate() {
+        return delegate;
     }
 }

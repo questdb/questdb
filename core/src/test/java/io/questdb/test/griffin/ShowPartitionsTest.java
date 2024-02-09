@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlException;
@@ -59,7 +60,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     public ShowPartitionsTest(WalMode walMode, String tableNameSuffix) {
         isWal = walMode == WalMode.WITH_WAL;
         this.tableNameSuffix = tableNameSuffix;
-        node1.getConfigurationOverrides().setDefaultTableWriteMode(isWal ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, isWal);
     }
 
     @Parameterized.Parameters(name = "{0}-{1}")

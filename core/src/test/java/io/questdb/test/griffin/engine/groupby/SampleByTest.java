@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -1337,7 +1338,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByBufferExceeded() throws Exception {
-        configOverrideSampleByIndexSearchPageSize(16);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 16);
 
         assertQuery(
                 "k\ts\tlat\tlon\n",
@@ -1720,7 +1721,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByMicro() throws Exception {
-        configOverrideSampleByIndexSearchPageSize(256);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 256);
 
         assertSampleByIndexQuery(
                 "k\tfirst\n" +

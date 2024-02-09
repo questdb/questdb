@@ -582,7 +582,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             // open _meta file
             openMetaFile(ff, path, rootLen, metaMem);
-
             // remove _todo
             clearTodoLog();
         } catch (CairoException e) {
@@ -1917,6 +1916,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (seq > -1) {
                 TableWriterTask task = commandQueue.get(seq);
                 asyncWriterCommand.serialize(task);
+                assert task.getInstance() == asyncWriterCommand.getCorrelationId();
                 commandPubSeq.done(seq);
                 return;
             } else if (seq == -1) {
@@ -5864,9 +5864,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 processingQueue = true;
                 long cursor;
-                while ((cursor = commandSubSeq.next()) > -1) {
-                    TableWriterTask cmd = commandQueue.get(cursor);
-                    processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
+                while ((cursor = commandSubSeq.next()) != -1) {
+                    if (cursor > -1) {
+                        TableWriterTask cmd = commandQueue.get(cursor);
+                        processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
+                    } else {
+                        Os.pause();
+                    }
                 }
             } finally {
                 processingQueue = false;
