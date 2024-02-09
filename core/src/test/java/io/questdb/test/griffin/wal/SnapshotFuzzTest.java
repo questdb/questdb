@@ -28,10 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
@@ -49,13 +46,15 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
     public void testFullFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
         fullFuzz(rnd);
-        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
+        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
         runFuzzWithSnapshot(rnd);
     }
 
     @Test
     public void testFullFuzzEjectedTransactions() throws Exception {
-        Rnd rnd = generateRandom(LOG, 325343665726833L, 1707412038195L);
+//        Rnd rnd = generateRandom(LOG, 325343665726833L, 1707412038195L);
+//        Rnd rnd = generateRandom(LOG, 340841609689625L, 1707478153175L);
+        Rnd rnd = generateRandom(LOG);
         fuzzer.setFuzzProbabilities(
                 0,
                 0,
@@ -81,7 +80,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
                 5 + rnd.nextInt(10)
         );
 
-        setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
+        setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
         runFuzzWithSnapshot(rnd);
     }
 
@@ -210,7 +209,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
             // Write same data to non-wal table
             fuzzer.applyNonWal(transactions, tableNameNonWal, rnd);
 
-            String limit = " limit 136700, 136800";
+            String limit = "";
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableNameNonWal + limit, tableNameWal + limit, LOG);
             fuzzer.assertRandomIndexes(tableNameNonWal, tableNameWal, rnd);
         });

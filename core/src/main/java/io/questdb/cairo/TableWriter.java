@@ -1692,32 +1692,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean copyToLagOnly = commitToTimestamp < newMinLagTs
                         || (commitToTimestamp != WalTxnDetails.FORCE_FULL_COMMIT && totalUncommitted < maxLagRows);
 
-                if (copyToLagOnly && totalUncommitted <= maxLagRows) {
-                    // Don't commit anything, move everything to memory instead.
-                    // This usually happens when WAL transactions are very small, so it's faster
-                    // to squash several of them together before writing anything to disk.
-                    LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
-
-                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
-                    // This will copy data from mmap files to memory.
-                    // Symbols are already mapped to the correct destination.
-                    o3ShiftLagRowsUp(timestampIndex, o3Hi - o3Lo, o3Lo, walLagRowCount, true, this.o3MoveWalFromFilesToLastPartitionRef);
-                    walLagRowCount += commitRowCount;
-                    txWriter.setLagRowCount((int) walLagRowCount);
-                    txWriter.setLagOrdered(!isDeduplicationEnabled() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin);
-                    txWriter.setLagMinTimestamp(newMinLagTs);
-                    txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
-
-                    // Try to fast apply records from LAG to last partition which are before commitToTimestamp
-                    return applyFromWalLagToLastPartition(commitToTimestamp, true);
-                }
+//                if (copyToLagOnly && totalUncommitted <= maxLagRows) {
+//                    // Don't commit anything, move everything to memory instead.
+//                    // This usually happens when WAL transactions are very small, so it's faster
+//                    // to squash several of them together before writing anything to disk.
+//                    LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
+//
+//                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+//                    // This will copy data from mmap files to memory.
+//                    // Symbols are already mapped to the correct destination.
+//                    o3ShiftLagRowsUp(timestampIndex, o3Hi - o3Lo, o3Lo, walLagRowCount, true, this.o3MoveWalFromFilesToLastPartitionRef);
+//                    walLagRowCount += commitRowCount;
+//                    txWriter.setLagRowCount((int) walLagRowCount);
+//                    txWriter.setLagOrdered(!isDeduplicationEnabled() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin);
+//                    txWriter.setLagMinTimestamp(newMinLagTs);
+//                    txWriter.setLagMaxTimestamp(Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp()));
+//
+//                    // Try to fast apply records from LAG to last partition which are before commitToTimestamp
+//                    return applyFromWalLagToLastPartition(commitToTimestamp, true);
+//                }
 
                 // Try to fast apply records from LAG to last partition which are before o3TimestampMin and commitToTimestamp.
                 // This application will not include the current transaction data, only what's already in WAL lag.
-                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp), false) != Long.MIN_VALUE) {
-                    walLagRowCount = txWriter.getLagRowCount();
-                    totalUncommitted = walLagRowCount + commitRowCount;
-                }
+//                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp), false) != Long.MIN_VALUE) {
+//                    walLagRowCount = txWriter.getLagRowCount();
+//                    totalUncommitted = walLagRowCount + commitRowCount;
+//                }
 
                 // Re-valuate WAL lag min/max with impact of the current transaction.
                 txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
@@ -1802,7 +1802,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 //  If lag size is limited to 75M and the limit is reached, 50M will be committed
                 //  and 25M will be kept in the lag.
-                final long trimmedLagSize = maxLagRows / 3;
+                final long trimmedLagSize = 0;//maxLagRows / 3;
                 if (commitToTimestamp < txWriter.getLagMaxTimestamp() && trimmedLagSize > 0) {
                     final long lagThresholdRow = 1 + Vect.boundedBinarySearchIndexT(
                             timestampAddr,
@@ -3010,10 +3010,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {
-        if (snapshotAgent.isInProgress()) {
-            // No overwrite can happen while a snapshot is in-flight.
-            return true;
-        }
         long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
         if (fromTxn < 0) {
             fromTxn = 0;
@@ -7296,6 +7292,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
+        if (snapshotAgent.isInProgress()) {
+            LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], snapshot in progress").$();
+            // No overwrite can happen while a snapshot is in-flight.
+            return;
+        }
+
         assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
         int targetPartitionIndex = partitionIndexLo;
 

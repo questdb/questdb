@@ -190,7 +190,10 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             // when symbol files are copied while written to. We need to rebuild them.
             rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
 
-            if (tableMetadata.isWalEnabled()) {
+            if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
+                LOG.info().$("resetting WAL lag [table=").$(tablePath)
+                        .$(", walLagRowCount=").$(txWriter.getLagRowCount())
+                        .I$();
                 // WAL Lag values is not strictly append only data structures, it can be overwritten
                 // while the snapshot was copied. Resetting it will re-apply data from copied WAL files
                 txWriter.resetLagAppliedRows();
