@@ -64,17 +64,10 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     }
 
     public static void initKeyMemory(MemoryMA keyMem, int blockValueCount) {
-        initKeyMemory(keyMem, blockValueCount, true);
-    }
-
-    public static void initKeyMemory(MemoryMA keyMem, int blockValueCount, boolean truncate) {
         // block value count must be power of 2
         assert blockValueCount == Numbers.ceilPow2(blockValueCount);
         keyMem.jumpTo(0);
-        if (truncate) {
-            keyMem.truncate();
-            keyMem.truncate();
-        }
+        keyMem.truncate();
         keyMem.putByte(BitmapIndexUtils.SIGNATURE);
         keyMem.putLong(1); // SEQUENCE
         Unsafe.getUnsafe().storeFence();
@@ -87,7 +80,6 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         keyMem.putLong(-1); // maxRow. It's inclusive, -1 means no rows
         keyMem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - keyMem.getAppendOffset());
     }
-
 
     /**
      * Adds key-value pair to index. If key already exists, value is appended to end of list of existing values. Otherwise,
@@ -351,20 +343,6 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         } finally {
             path.trimTo(plen);
         }
-    }
-
-    public void reset() {
-        initKeyMemory(keyMem, blockValueCountMod + 1, false);
-        int fd = keyMem.getFd();
-
-        long size = keyMem.size();
-        long address = TableUtils.mapRW(configuration.getFilesFacade(), fd, size, 0, MemoryTag.MMAP_INDEX_WRITER);
-        Vect.memset(address + keyMem.getAppendOffset(), size - keyMem.getAppendOffset(), 0);
-        ff.munmap(address, size, MemoryTag.MMAP_INDEX_WRITER);
-
-        valueMem.jumpTo(0);
-        keyCount = 0;
-        valueMemSize = 0;
     }
 
     public void rollbackConditionally(long row) {

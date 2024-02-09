@@ -36,7 +36,7 @@ import static io.questdb.cairo.TableUtils.charFileName;
 import static io.questdb.cairo.TableUtils.offsetFileName;
 
 // The instance is re-usable but doesn't need to be Closable
-// Resources are deallocated after every call automatically
+// Native resources are deallocated after every call automatically but the wrappers are re-usable
 public class SymbolMapUtil {
     private static final Log LOG = LogFactory.getLog(SymbolMapUtil.class);
     private MemoryMARW charMem;

@@ -289,7 +289,6 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                                         mem.close(false);
                                         // Copy _txn file.
                                         path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$();
-                                        LOG.info().$("copying txn file [table=").utf8(tableName).$(", to=").$(path).I$();
                                         mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                                         reader.getTxFile().dumpTo(mem);
                                         mem.close(false);

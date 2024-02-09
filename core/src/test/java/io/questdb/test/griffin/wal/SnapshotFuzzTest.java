@@ -38,10 +38,6 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class SnapshotFuzzTest extends AbstractFuzzTest {
-//    public TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
-//        return fuzzer.createInitialTable(tableName, isWal, rowCount);
-//    }
-
     @Test
     public void testFullFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
@@ -52,8 +48,6 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testFullFuzzEjectedTransactions() throws Exception {
-//        Rnd rnd = generateRandom(LOG, 325343665726833L, 1707412038195L);
-//        Rnd rnd = generateRandom(LOG, 340841609689625L, 1707478153175L);
         Rnd rnd = generateRandom(LOG);
         fuzzer.setFuzzProbabilities(
                 0,

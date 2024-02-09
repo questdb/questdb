@@ -105,7 +105,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.indexWriter = new BitmapIndexWriter(configuration);
             this.indexWriter.of(path.trimTo(plen), name, columnNameTxn);
 
-
             // this is the place where symbol values are stored
             this.charMem = Vm.getWholeMARWInstance(
                     ff,
@@ -137,7 +136,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                     .$(", cache=").$(cache != null)
                     .$(", capacity=").$(symbolCapacity)
                     .I$();
-
 
             // trust _txn file, not the key count in the files
             indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
