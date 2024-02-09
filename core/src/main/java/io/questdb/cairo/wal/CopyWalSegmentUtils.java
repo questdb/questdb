@@ -63,7 +63,7 @@ public class CopyWalSegmentUtils {
         newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);
 
         int secondaryFd;
-        if (ColumnType.isVariableLength(columnType)) {
+        if (ColumnType.isVarSize(columnType)) {
             iFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE);
             secondaryFd = openRW(ff, newSegPath, LOG, options);
             newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 3, secondaryFd);
@@ -72,7 +72,7 @@ public class CopyWalSegmentUtils {
         }
 
         boolean success;
-        if (ColumnType.isVariableLength(columnType)) {
+        if (ColumnType.isVarSize(columnType)) {
             success = copyVarLenFile(ff, primaryColumn, secondaryColumn, primaryFd, secondaryFd, rowOffset, rowCount, newColumnFiles, columnIndex, commitMode);
         } else if (columnType > 0) {
             success = copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, columnType, newColumnFiles, columnIndex, commitMode);

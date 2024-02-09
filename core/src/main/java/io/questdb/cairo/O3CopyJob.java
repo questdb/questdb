@@ -73,7 +73,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long timestampMin,
             long partitionTimestamp, // <-- this is used to determine if partition is last or not as well as partition dir
             int dstFixFd,
-            long dstFixAddr,
+            long dstAuxAddr,
             long dstFixOffset,
             long dstFixFileOffset,
             long dstFixSize,
@@ -136,7 +136,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             srcDataVarAddr + srcDataVarOffset,
                             srcOooFixAddr,
                             srcOooVarAddr,
-                            dstFixAddr + dstFixOffset,
+                            dstAuxAddr + dstFixOffset,
                             dstVarAddr,
                             dstVarOffset
                     );
@@ -150,7 +150,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             srcOooLo,
                             srcOooHi,
                             dstFixFd,
-                            dstFixAddr + dstFixOffset,
+                            dstAuxAddr + dstFixOffset,
                             dstFixFileOffset,
                             dstVarAddr,
                             dstVarFd,
@@ -168,7 +168,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             srcDataVarAddr + srcDataVarOffset,
                             srcDataLo,
                             srcDataHi,
-                            dstFixAddr + dstFixOffset,
+                            dstAuxAddr + dstFixOffset,
                             dstFixFd,
                             dstFixFileOffset,
                             dstVarAddr,
@@ -186,7 +186,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             FilesFacade ff = tableWriter.getFilesFacade();
             O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
             O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+            O3Utils.unmapAndClose(ff, dstFixFd, dstAuxAddr, dstFixSize);
             O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
 
             closeColumnIdle(
@@ -215,7 +215,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 timestampMin,
                 partitionTimestamp,
                 dstFixFd,
-                dstFixAddr,
+                dstAuxAddr,
                 dstFixSize,
                 dstVarFd,
                 dstVarAddr,
@@ -267,7 +267,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long timestampMin = task.getTimestampMin();
         final long partitionTimestamp = task.getPartitionTimestamp();
         final int dstFixFd = task.getDstFixFd();
-        final long dstFixAddr = task.getDstFixAddr();
+        final long dstAuxAddr = task.getDstFixAddr();
         final long dstFixOffset = task.getDstFixOffset();
         final long dstFixFileOffset = task.getDstFixFileOffset();
         final long dstFixSize = task.getDstFixSize();
@@ -323,7 +323,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 timestampMin,
                 partitionTimestamp,
                 dstFixFd,
-                dstFixAddr,
+                dstAuxAddr,
                 dstFixOffset,
                 dstFixFileOffset,
                 dstFixSize,
@@ -353,7 +353,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static void copyData(
             FilesFacade ff,
             int columnType,
-            long srcFixAddr,
+            long srcAuxAddr,
             long srcVarAddr,
             long srcLo,
             long srcHi,
@@ -372,7 +372,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.BINARY:
                 copyVarSizeCol(
                         ff,
-                        srcFixAddr,
+                        srcAuxAddr,
                         srcVarAddr,
                         srcLo,
                         srcHi,
@@ -390,7 +390,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             default:
                 copyFixedSizeCol(
                         ff,
-                        srcFixAddr,
+                        srcAuxAddr,
                         srcLo,
                         srcHi,
                         dstFixAddr,
@@ -553,49 +553,49 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
     private static void copyVarSizeCol(
             FilesFacade ff,
-            long srcFixAddr,
-            long srcVarAddr,
+            long srcAuxAddr,
+            long srcDataAddr,
             long srcLo,
             long srcHi,
-            long dstFixAddr,
-            int dstFixFd,
-            long dstFixFileOffset,
-            long dstVarAddr,
-            int dstVarFd,
-            long dstVarOffset,
-            long dstVarAdjust,
-            long dstVarSize,
+            long dstAuxAddr,
+            int dstAuxFd,
+            long dstAuxFileOffset,
+            long dstDataAddr,
+            int dstDataFd,
+            long dstDataOffset,
+            long dstDataAdjust,
+            long dstDataSize,
             boolean mixedIOFlag
     ) {
-        final long lo = O3Utils.findVarOffset(srcFixAddr, srcLo);
+        final long lo = O3Utils.findVarOffset(srcAuxAddr, srcLo);
         assert lo >= 0;
-        final long hi = O3Utils.findVarOffset(srcFixAddr, srcHi + 1);
+        final long hi = O3Utils.findVarOffset(srcAuxAddr, srcHi + 1);
         assert hi >= lo;
         // copy this before it changes
         final long len = hi - lo;
-        assert len <= Math.abs(dstVarSize) - dstVarOffset;
-        final long offset = dstVarOffset + dstVarAdjust;
+        assert len <= Math.abs(dstDataSize) - dstDataOffset;
+        final long offset = dstDataOffset + dstDataAdjust;
         if (mixedIOFlag) {
-            if (ff.write(Math.abs(dstVarFd), srcVarAddr + lo, len, offset) != len) {
-                throw CairoException.critical(ff.errno()).put("cannot copy var data column prefix [fd=").put(dstVarFd).put(", offset=").put(offset).put(", len=").put(len).put(']');
+            if (ff.write(Math.abs(dstDataFd), srcDataAddr + lo, len, offset) != len) {
+                throw CairoException.critical(ff.errno()).put("cannot copy var data column prefix [fd=").put(dstDataFd).put(", offset=").put(offset).put(", len=").put(len).put(']');
             }
         } else {
-            Vect.memcpy(dstVarAddr + dstVarOffset, srcVarAddr + lo, len);
+            Vect.memcpy(dstDataAddr + dstDataOffset, srcDataAddr + lo, len);
         }
         if (lo == offset) {
             copyFixedSizeCol(
                     ff,
-                    srcFixAddr,
+                    srcAuxAddr,
                     srcLo,
                     srcHi + 1,
-                    dstFixAddr,
-                    dstFixFileOffset,
-                    dstFixFd,
+                    dstAuxAddr,
+                    dstAuxFileOffset,
+                    dstAuxFd,
                     3,
                     mixedIOFlag
             );
         } else {
-            O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcFixAddr, srcLo, srcHi + 1, dstFixAddr);
+            O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcAuxAddr, srcLo, srcHi + 1, dstAuxAddr);
         }
     }
 

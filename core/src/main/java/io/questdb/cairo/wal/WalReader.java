@@ -177,7 +177,7 @@ public class WalReader implements Closeable {
                 final int secondaryIndex = primaryIndex + 1;
                 final MemoryMR primaryMem = columns.getQuick(primaryIndex);
 
-                if (ColumnType.isVariableLength(columnType)) {
+                if (ColumnType.isVarSize(columnType)) {
                     long columnSize = (rowCount + 1) << 3;
                     TableUtils.iFile(path.trimTo(pathLen), name);
                     MemoryMR secondaryMem = columns.getQuick(secondaryIndex);

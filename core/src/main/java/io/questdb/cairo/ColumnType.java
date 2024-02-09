@@ -24,11 +24,13 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 // ColumnType layout - 32bit
 //
@@ -50,6 +52,7 @@ public final class ColumnType {
     public static final int GEOLONG_MIN_BITS = 32;
     public static final int GEOSHORT_MAX_BITS = 15;
     public static final int GEOSHORT_MIN_BITS = 8;
+    public static final int LEGACY_VAR_SIZE_AUX_SHL = 3;
     public static final int MIGRATION_VERSION = 427;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
@@ -87,7 +90,6 @@ public final class ColumnType {
     public static final short LONG128 = GEOHASH + 1;            // = 24  Limited support, few tests only
     public static final short IPv4 = LONG128 + 1;               // = 25
     public static final short VARCHAR = IPv4 + 1;               // = 26
-
     // PG specific types to work with 3rd party software
     // with canned catalogue queries:
     // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
@@ -96,12 +98,12 @@ public final class ColumnType {
     public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 28;
     public static final short PARAMETER = ARRAY_STRING + 1;     // = 29;
     public static final short NULL = PARAMETER + 1;             // = 30; ALWAYS the last
-
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
     private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);
     private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
+    public static final int VARCHAR_AUX_SHL = 4;
     // column type version as written to the metadata file
     public static final int VERSION = 426;
     static final int[] GEO_TYPE_SIZE_POW2;
@@ -115,6 +117,30 @@ public final class ColumnType {
     private ColumnType() {
     }
 
+    public static long getDataOffset(int columnType, MemoryR auxMem, long row) {
+        switch (columnType) {
+            case STRING:
+            case BINARY:
+                return auxMem.getLong(row << LEGACY_VAR_SIZE_AUX_SHL);
+            case VARCHAR:
+                return Utf8s.varcharGetDataVectorSize(auxMem, row << VARCHAR_AUX_SHL);
+            default:
+                throw CairoException.critical(0).put("unsupported var size column type: ").put(columnType);
+        }
+    }
+
+    public static ColumnTypeDriver getDriver(int columnType) {
+        switch (columnType) {
+            case STRING:
+            case BINARY:
+                return StringTypeDriver.INSTANCE;
+            case VARCHAR:
+                return VarcharTypeDriver.INSTANCE;
+            default:
+                throw CairoException.critical(0).put("there is no driver to type: ").put(columnType);
+        }
+    }
+
     public static int getGeoHashBits(int type) {
         return (byte) ((type >> BITS_OFFSET) & 0xFF);
     }
@@ -123,6 +149,13 @@ public final class ColumnType {
         assert bits > 0 && bits <= GEOLONG_MAX_BITS;
         // this logic relies on GeoHash type value to be clustered together
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
+    }
+
+    public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
+        if (columnType == ColumnType.TIMESTAMP && designatedTimestamp) {
+            return 4; // 128 bit column
+        }
+        return pow2SizeOf(columnType);
     }
 
     public static boolean isAssignableFrom(int fromType, int toType) {
@@ -200,8 +233,8 @@ public final class ColumnType {
         return columnType == UNDEFINED;
     }
 
-    public static boolean isVariableLength(int columnType) {
-        return columnType == STRING || columnType == BINARY;
+    public static boolean isVarSize(int columnType) {
+        return columnType == STRING || columnType == BINARY || columnType == VARCHAR;
     }
 
     public static String nameOf(int columnType) {

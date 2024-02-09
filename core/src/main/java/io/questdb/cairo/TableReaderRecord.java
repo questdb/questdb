@@ -342,7 +342,7 @@ public class TableReaderRecord implements Record, Sinkable {
                 offset,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
-        return Utf8s.readVarchar(
+        return Utf8s.varcharRead(
                 offset,
                 reader.getColumn(absoluteColumnIndex),
                 reader.getColumn(absoluteColumnIndex + 1),

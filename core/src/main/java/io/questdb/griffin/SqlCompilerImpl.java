@@ -937,7 +937,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tsIncludedInDedupColumns = true;
                 } else {
                     int columnType = tableMetadata.getColumnType(colIndex);
-                    if (ColumnType.isVariableLength(columnType) || columnType < 0) {
+                    if (ColumnType.isVarSize(columnType) || columnType < 0) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column can only be fixed size column [column=").put(columnName)
                                 .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
                     }

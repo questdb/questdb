@@ -883,7 +883,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final FilesFacade ff = tableWriter.getFilesFacade();
 
         try {
-            if (ColumnType.isVariableLength(columnType)) {
+            if (ColumnType.isVarSize(columnType)) {
                 iFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn);
                 dstFixFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 dstFixSize = (srcOooHi - srcOooLo + 1 + 1) * Long.BYTES;

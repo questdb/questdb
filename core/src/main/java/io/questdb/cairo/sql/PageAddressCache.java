@@ -115,7 +115,7 @@ public class PageAddressCache implements Mutable {
         this.varLenColumnCount = 0;
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             final int columnType = metadata.getColumnType(columnIndex);
-            if (ColumnType.isVariableLength(columnType)) {
+            if (ColumnType.isVarSize(columnType)) {
                 varLenColumnIndexes.setQuick(columnIndex, varLenColumnCount++);
             }
         }

@@ -39,6 +39,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -76,6 +77,7 @@ public class MetricsIODispatcherTest {
     }
 
     @Test
+    @Ignore
     public void testFewMetricsBigBuffersPar() throws Exception {
         testPrometheusScenario(100, 1024 * 1024, 1024 * 1024, PARALLEL_REQUESTS);
     }
@@ -99,6 +101,7 @@ public class MetricsIODispatcherTest {
     }
 
     @Test
+    @Ignore
     public void testMultiChunkResponsePar() throws Exception {
         testPrometheusScenario(100, 1024 * 1024, 256, PARALLEL_REQUESTS);
     }

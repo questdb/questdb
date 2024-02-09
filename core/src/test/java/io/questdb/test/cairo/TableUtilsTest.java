@@ -224,7 +224,7 @@ public class TableUtilsTest extends AbstractTest {
         try {
             for (int columnType = 0; columnType < ColumnType.NULL; columnType++) {
 
-                if (!ColumnType.isVariableLength(columnType)) {
+                if (!ColumnType.isVarSize(columnType)) {
                     int size = ColumnType.sizeOf(columnType);
                     if (size > 0) {
                         TableUtils.setNull(columnType, mem2, 1);

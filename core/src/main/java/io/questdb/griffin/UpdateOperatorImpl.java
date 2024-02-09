@@ -37,7 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.ColumnType.isVariableLength;
+import static io.questdb.cairo.ColumnType.isVarSize;
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 
@@ -326,7 +326,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     }
 
     private static int getFixedColumnSize(int columnType) {
-        if (isVariableLength(columnType)) {
+        if (isVarSize(columnType)) {
             return 3;
         }
         return ColumnType.pow2SizeOf(columnType);
@@ -658,7 +658,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 }
 
                 long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                if (isVariableLength(columnType)) {
+                if (isVarSize(columnType)) {
                     MemoryCMR colMemIndex = (MemoryCMR) columns.get(2 * i);
                     colMemIndex.close();
                     assert !colMemIndex.isOpen();
@@ -701,7 +701,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     }
                 }
                 if (forWrite) {
-                    if (isVariableLength(columnType)) {
+                    if (isVarSize(columnType)) {
                         ((MemoryCMARW) columns.get(2 * i)).putLong(0);
                     }
                 }
