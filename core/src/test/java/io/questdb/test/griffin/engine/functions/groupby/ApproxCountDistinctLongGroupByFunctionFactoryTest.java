@@ -77,7 +77,23 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     }
 
     @Test
-    public void testGroupKeyed() throws Exception {
+    public void testGroupKeyedSparseHLL() throws Exception {
+        compile("create table x as (" +
+                "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)" +
+                ") timestamp(ts))");
+        assertQuery(
+                "a\tcount_distinct\n" +
+                        "a\t2\n" +
+                        "b\t1\n" +
+                        "c\t1\n" +
+                        "d\t4\n" +
+                        "e\t4\n" +
+                        "f\t3\n",
+                "select a, count_distinct(s) from x order by a",
+                null,
+                true,
+                true
+        );
         assertQuery(
                 "a\tapprox_count_distinct\n" +
                         "a\t2\n" +
@@ -87,7 +103,6 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                         "e\t4\n" +
                         "f\t3\n",
                 "select a, approx_count_distinct(s) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
                 true
@@ -95,12 +110,53 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     }
 
     @Test
-    public void testGroupNotKeyed() throws Exception {
+    public void testGroupKeyedDenseHLL() throws Exception {
+        compile("create table x as (" +
+                "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long(0, 100000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)" +
+                ") timestamp(ts))");
+        assertQuery(
+                "a\tcount_distinct\n" +
+                        "a\t80933\n" +
+                        "b\t81171\n" +
+                        "c\t81089\n" +
+                        "d\t81362\n" +
+                        "e\t81187\n" +
+                        "f\t81314\n",
+                "select a, count_distinct(s) from x order by a",
+                null,
+                true,
+                true
+        );
+        assertQuery(
+                "a\tapprox_count_distinct\n" +
+                        "a\t82605\n" +
+                        "b\t82054\n" +
+                        "c\t81363\n" +
+                        "d\t81954\n" +
+                        "e\t82211\n" +
+                        "f\t81957\n",
+                "select a, approx_count_distinct(s) from x order by a",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testGroupNotKeyedSparseHLL() throws Exception {
+        compile("create table x as (select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+        assertQuery(
+                "count_distinct\n" +
+                        "6\n",
+                "select count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
         assertQuery(
                 "approx_count_distinct\n" +
                         "6\n",
                 "select approx_count_distinct(s) from x",
-                "create table x as (select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
                 true
@@ -108,21 +164,62 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
     }
 
     @Test
-    public void testGroupNotKeyedWithNulls() throws Exception {
-        String expected = "approx_count_distinct\n" +
-                "6\n";
+    public void testGroupNotKeyedDenseHLL() throws Exception {
+        compile("create table x as (select * from (select rnd_long(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
         assertQuery(
-                expected,
-                "select approx_count_distinct(s) from x",
-                "create table x as (select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
+                "count_distinct\n" +
+                        "631858\n",
+                "select count_distinct(s) from x",
                 null,
                 false,
                 true
         );
+        assertQuery(
+                "approx_count_distinct\n" +
+                        "637899\n",
+                "select approx_count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testGroupNotKeyedWithNullsSparseHLL() throws Exception {
+        compile("create table x as (" +
+                "select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)" +
+                ") timestamp(ts) PARTITION BY YEAR");
+        String expectedExact = "count_distinct\n" +
+                "6\n";
+        String expectedEstimated = "approx_count_distinct\n" +
+                "6\n";
+
+        assertQuery(expectedExact, "select count_distinct(s) from x", null, false, true);
+        assertQuery(expectedEstimated, "select approx_count_distinct(s) from x", null, false, true);
 
         insert("insert into x values(cast(null as LONG), '2021-05-21')");
         insert("insert into x values(cast(null as LONG), '1970-01-01')");
-        assertSql(expected, "select approx_count_distinct(s) from x");
+        assertSql(expectedExact, "select count_distinct(s) from x");
+        assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+    }
+
+    @Test
+    public void testGroupNotKeyedWithNullsDenseHLL() throws Exception {
+        compile("create table x as (" +
+                "select * from (select rnd_long(1, 1000000, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000000)) timestamp(ts)" +
+                ") timestamp(ts) PARTITION BY YEAR");
+        String expectedExact = "count_distinct\n" +
+                "631858\n";
+        String expectedEstimated = "approx_count_distinct\n" +
+                "637899\n";
+
+        assertQuery(expectedExact, "select count_distinct(s) from x", null, false, true);
+        assertQuery(expectedEstimated, "select approx_count_distinct(s) from x", null, false, true);
+
+        insert("insert into x values(cast(null as LONG), '2021-05-21')");
+        insert("insert into x values(cast(null as LONG), '1970-01-01')");
+        assertSql(expectedExact, "select count_distinct(s) from x");
+        assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
     }
 
     @Test

@@ -77,7 +77,23 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
     }
 
     @Test
-    public void testGroupKeyed() throws Exception {
+    public void testGroupKeyedSparseHLL() throws Exception {
+        compile("create table x as (" +
+                "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_ipv4('1.1.1.1/16', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)" +
+                ") timestamp(ts))");
+        assertQuery(
+                "a\tcount_distinct\n" +
+                        "a\t2\n" +
+                        "b\t1\n" +
+                        "c\t2\n" +
+                        "d\t4\n" +
+                        "e\t5\n" +
+                        "f\t6\n",
+                "select a, count_distinct(s) from x order by a",
+                null,
+                true,
+                true
+        );
         assertQuery(
                 "a\tapprox_count_distinct\n" +
                         "a\t2\n" +
@@ -87,7 +103,6 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                         "e\t5\n" +
                         "f\t6\n",
                 "select a, approx_count_distinct(s) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_ipv4('1.1.1.1/16', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
                 true,
                 true
@@ -95,12 +110,53 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
     }
 
     @Test
-    public void testGroupNotKeyed() throws Exception {
+    public void testGroupKeyedDenseHLL() throws Exception {
+        compile("create table x as (" +
+                "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)" +
+                ") timestamp(ts))");
+        assertQuery(
+                "a\tcount_distinct\n" +
+                        "a\t165309\n" +
+                        "b\t166198\n" +
+                        "c\t166121\n" +
+                        "d\t165973\n" +
+                        "e\t165557\n" +
+                        "f\t165845\n",
+                "select a, count_distinct(s) from x order by a",
+                null,
+                true,
+                true
+        );
+        assertQuery(
+                "a\tapprox_count_distinct\n" +
+                        "a\t165044\n" +
+                        "b\t164963\n" +
+                        "c\t164909\n" +
+                        "d\t166100\n" +
+                        "e\t165568\n" +
+                        "f\t166248\n",
+                "select a, approx_count_distinct(s) from x order by a",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testGroupNotKeyedSparseHLL() throws Exception {
+        compile("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+        assertQuery(
+                "count_distinct\n" +
+                        "100\n",
+                "select count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
         assertQuery(
                 "approx_count_distinct\n" +
                         "100\n",
                 "select approx_count_distinct(s) from x",
-                "create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
                 false,
                 true
@@ -108,13 +164,47 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
     }
 
     @Test
-    public void testGroupNotKeyedWithNulls() throws Exception {
-        String expected = "approx_count_distinct\n" +
-                "100\n";
+    public void testGroupNotKeyedDenseHLL() throws Exception {
+        compile("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100000)) timestamp(ts))");
         assertQuery(
-                expected,
+                "count_distinct\n" +
+                        "99685\n",
+                "select count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
+        assertQuery(
+                "approx_count_distinct\n" +
+                        "99152\n",
                 "select approx_count_distinct(s) from x",
-                "create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testGroupNotKeyedWithNullsSparseHLL() throws Exception {
+        compile("create table x as (" +
+                "select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)" +
+                ") timestamp(ts) PARTITION BY YEAR");
+
+        String expectedExact = "count_distinct\n" +
+                "100\n";
+        String expectedEstimated = "approx_count_distinct\n" +
+                "100\n";
+
+        assertQuery(
+                expectedExact,
+                "select count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
+        assertQuery(
+                expectedEstimated,
+                "select approx_count_distinct(s) from x",
                 null,
                 false,
                 true
@@ -122,7 +212,40 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
 
         insert("insert into x values(cast(null as IPV4), '2021-05-21')");
         insert("insert into x values(cast(null as IPV4), '1970-01-01')");
-        assertSql(expected, "select approx_count_distinct(s) from x");
+        assertSql(expectedExact, "select count_distinct(s) from x");
+        assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+    }
+
+    @Test
+    public void testGroupNotKeyedWithNullsDenseHLL() throws Exception {
+        compile("create table x as (" +
+                "select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000000)) timestamp(ts)" +
+                ") timestamp(ts) PARTITION BY YEAR");
+
+        String expectedExact = "count_distinct\n" +
+                "970716\n";
+        String expectedEstimated = "approx_count_distinct\n" +
+                "975818\n";
+
+        assertQuery(
+                expectedExact,
+                "select count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
+        assertQuery(
+                expectedEstimated,
+                "select approx_count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
+
+        insert("insert into x values(cast(null as IPV4), '2021-05-21')");
+        insert("insert into x values(cast(null as IPV4), '1970-01-01')");
+        assertSql(expectedExact, "select count_distinct(s) from x");
+        assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
     }
 
     @Test
