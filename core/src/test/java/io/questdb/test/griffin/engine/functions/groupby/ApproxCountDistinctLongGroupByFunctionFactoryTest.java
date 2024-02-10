@@ -326,4 +326,80 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                 false
         );
     }
+
+    @Test
+    public void testPrecisionOutOfRange() throws Exception {
+        assertException("select approx_count_distinct(x, 3) from long_sequence(1)", 7, "precision must be between 4 and 18");
+        assertException("select approx_count_distinct(x, 19) from long_sequence(1)", 7, "precision must be between 4 and 18");
+    }
+
+    @Test
+    public void testDifferentPrecisionsSparseHLL() throws Exception {
+        compile("create table x as (select * from (select rnd_long(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+
+        assertQuery(
+                "count_distinct\n" +
+                        "6\n",
+                "select count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
+
+        long[] expectedEstimates = new long[]{
+                5L, 5L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L
+        };
+        for (int precision = 4; precision <= 18; precision++) {
+            assertQuery(
+                    "approx_count_distinct" + precision + "\n" +
+                            expectedEstimates[precision - 4] + "\n",
+                    "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
+                    null,
+                    false,
+                    true
+            );
+        }
+    }
+
+    @Test
+    public void testDifferentPrecisionsDenseHLL() throws Exception {
+        compile("create table x as (select * from (select rnd_long(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
+
+        assertQuery(
+                "count_distinct\n" +
+                        "631858\n",
+                "select count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
+
+        long[] expectedEstimates = new long[]{
+                564553L,
+                557258L,
+                778781L,
+                673573L,
+                648520L,
+                615982L,
+                617525L,
+                612068L,
+                622847L,
+                627491L,
+                637899L,
+                636435L,
+                633988L,
+                632245L,
+                632460L
+        };
+        for (int precision = 4; precision <= 18; precision++) {
+            assertQuery(
+                    "approx_count_distinct" + precision + "\n" +
+                            expectedEstimates[precision - 4] + "\n",
+                    "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
+                    null,
+                    false,
+                    true
+            );
+        }
+    }
 }

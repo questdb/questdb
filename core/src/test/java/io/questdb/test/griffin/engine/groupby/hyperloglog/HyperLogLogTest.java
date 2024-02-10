@@ -43,8 +43,8 @@ public class HyperLogLogTest extends AbstractTest {
 
     @Test
     public void testInvalidPrecision() {
-        assertThrows(IllegalArgumentException.class, () -> new HyperLogLog(3));
-        assertThrows(IllegalArgumentException.class, () -> new HyperLogLog(19));
+        assertThrows(AssertionError.class, () -> new HyperLogLog(3));
+        assertThrows(AssertionError.class, () -> new HyperLogLog(19));
     }
 
     @Test

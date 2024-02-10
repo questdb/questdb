@@ -36,7 +36,7 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactory implements FunctionFa
 
     @Override
     public String getSignature() {
-        return "approx_count_distinct(X)";
+        return "approx_count_distinct(Xi)";
     }
 
     @Override
@@ -50,6 +50,18 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactory implements FunctionFa
                                 IntList argPositions,
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new ApproxCountDistinctIPv4GroupByFunction(args.getQuick(0));
+        final Function exprFunc = args.getQuick(0);
+        final Function precisionFunc = args.getQuick(1);
+
+        if (!precisionFunc.isConstant()) {
+            throw SqlException.$(argPositions.getQuick(1), "precision must be a constant");
+        }
+
+        final int precision = precisionFunc.getInt(null);
+        if (precision < 4 || precision > 18) {
+            throw SqlException.$(position, "precision must be between 4 and 18");
+        }
+
+        return new ApproxCountDistinctIPv4GroupByFunction(exprFunc);
     }
 }

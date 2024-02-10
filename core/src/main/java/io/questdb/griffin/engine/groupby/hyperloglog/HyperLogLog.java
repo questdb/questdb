@@ -28,9 +28,6 @@ import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLogDenseRepresentation.MAX_PRECISION;
-import static io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLogDenseRepresentation.MIN_PRECISION;
-
 /**
  * This is an implementation of HyperLogLog++ described in the paper
  * <a href="http://static.googleusercontent.com/media/research.google.com/fr//pubs/archive/40671.pdf">'HyperLogLog in
@@ -40,7 +37,10 @@ import static io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLogDenseRepr
  * information about their type and the subsequent 8 bytes for cached cardinality.
  */
 public class HyperLogLog {
-    private static final int DEFAULT_PRECISION = 14;
+    public static final int MIN_PRECISION = 4;
+    public static final int MAX_PRECISION = 18;
+    public static final int DEFAULT_PRECISION = 14;
+
     private static final long CARDINALITY_NULL_VALUE = -1;
     private static final long CACHED_CARDINALITY_OFFSET = Byte.BYTES;
     private static final byte SPARSE = 1;
@@ -52,14 +52,8 @@ public class HyperLogLog {
 
     private long ptr;
 
-    public HyperLogLog() {
-        this(DEFAULT_PRECISION);
-    }
-
     public HyperLogLog(int precision) {
-        if (precision < MIN_PRECISION || precision > MAX_PRECISION) {
-            throw new IllegalArgumentException("Precision must be within the range of 4 to 18, inclusive.");
-        }
+        assert precision >= MIN_PRECISION && precision <= MAX_PRECISION : "Precision must be within the range of 4 to 18, inclusive.";
         this.dense = new HyperLogLogDenseRepresentation(precision);
         this.sparse = new HyperLogLogSparseRepresentation(precision);
         this.precision = precision;

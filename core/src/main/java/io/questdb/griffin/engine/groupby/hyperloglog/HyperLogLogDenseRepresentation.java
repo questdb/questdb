@@ -32,6 +32,7 @@ import java.util.Arrays;
 
 import static io.questdb.griffin.engine.groupby.hyperloglog.BiasCorrectionData.RAW_ESTIMATE_DATA;
 import static io.questdb.griffin.engine.groupby.hyperloglog.BiasCorrectionData.THRESHOLD_DATA;
+import static io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLog.MIN_PRECISION;
 
 /**
  * The memory layout is as follows:
@@ -41,13 +42,11 @@ import static io.questdb.griffin.engine.groupby.hyperloglog.BiasCorrectionData.T
  * | 1 byte |       8 bytes      | 2^precision bytes |
  * +--------+--------------------+-------------------+
  * </pre>
- *
+ * <p>
  * The first two fields (type and cached cardinality) are used by {@link HyperLogLog}.
  */
 public class HyperLogLogDenseRepresentation {
     private static final int KNN_K = 6;
-    static final int MIN_PRECISION = 4;
-    static final int MAX_PRECISION = 18;
     private static final double[] RECIPROCALS_OF_POWER_OF_2 = new double[Long.SIZE - MIN_PRECISION + 2];
     private static final long HEADER_SIZE = Byte.BYTES + Long.BYTES;
 

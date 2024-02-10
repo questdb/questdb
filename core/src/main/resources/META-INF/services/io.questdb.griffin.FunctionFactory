@@ -603,8 +603,11 @@ io.questdb.griffin.engine.functions.groupby.CountDistinctIntGroupByFunctionFacto
 io.questdb.griffin.engine.functions.groupby.CountDistinctUuidGroupByFunctionFactory
 
 # 'approx_count_distinct' group by function
+io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIntGroupByDefaultFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIntGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByDefaultFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByDefaultFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByFunctionFactory
 
 # 'isOrdered'

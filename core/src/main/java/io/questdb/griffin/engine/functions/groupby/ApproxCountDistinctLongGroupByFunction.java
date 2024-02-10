@@ -47,10 +47,14 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     private int overwrittenFlagIndex;
     private int hllPtrIndex;
 
-    public ApproxCountDistinctLongGroupByFunction(Function arg) {
+    public ApproxCountDistinctLongGroupByFunction(Function arg, int precision) {
         this.arg = arg;
-        this.hllA = new HyperLogLog();
-        this.hllB = new HyperLogLog();
+        this.hllA = new HyperLogLog(precision);
+        this.hllB = new HyperLogLog(precision);
+    }
+
+    public ApproxCountDistinctLongGroupByFunction(Function arg) {
+        this(arg, HyperLogLog.DEFAULT_PRECISION);
     }
 
     @Override

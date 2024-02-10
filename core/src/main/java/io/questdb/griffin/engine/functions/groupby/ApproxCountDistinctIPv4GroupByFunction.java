@@ -47,10 +47,14 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     private int overwrittenFlagIndex;
     private int hllPtrIndex;
 
-    public ApproxCountDistinctIPv4GroupByFunction(Function arg) {
+    public ApproxCountDistinctIPv4GroupByFunction(Function arg, int precision) {
         this.arg = arg;
-        this.hllA = new HyperLogLog();
-        this.hllB = new HyperLogLog();
+        this.hllA = new HyperLogLog(precision);
+        this.hllB = new HyperLogLog(precision);
+    }
+
+    public ApproxCountDistinctIPv4GroupByFunction(Function arg) {
+        this(arg, HyperLogLog.DEFAULT_PRECISION);
     }
 
     @Override

@@ -352,4 +352,60 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                 false
         );
     }
+
+    @Test
+    public void testPrecisionOutOfRange() throws Exception {
+        assertException("select approx_count_distinct('127.0.0.1'::ipv4, 3) from long_sequence(1)", 7, "precision must be between 4 and 18");
+        assertException("select approx_count_distinct('127.0.0.1'::ipv4, 19) from long_sequence(1)", 7, "precision must be between 4 and 18");
+    }
+
+    @Test
+    public void testDifferentPrecisionsSparseHLL() throws Exception {
+        compile("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+
+        assertQuery(
+                "count_distinct\n" +
+                        "100\n",
+                "select count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
+
+        for (int precision = 4; precision <= 18; precision++) {
+            assertQuery(
+                    "approx_count_distinct" + precision + "\n" +
+                            "100\n",
+                    "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
+                    null,
+                    false,
+                    true
+            );
+        }
+    }
+
+    @Test
+    public void testDifferentPrecisionsDenseHLL() throws Exception {
+        compile("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100000)) timestamp(ts))");
+
+        assertQuery(
+                "count_distinct\n" +
+                        "99685\n",
+                "select count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
+
+        for (int precision = 4; precision <= 18; precision++) {
+            assertQuery(
+                    "approx_count_distinct" + precision + "\n" +
+                            "99152\n",
+                    "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
+                    null,
+                    false,
+                    true
+            );
+        }
+    }
 }

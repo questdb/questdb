@@ -41,7 +41,7 @@ import io.questdb.std.Vect;
  * | 1 byte |       8 bytes      | 4 bytes  |   4 bytes  | 4 bytes | 3 bytes | (capacity * 4) bytes |
  * +-----------------------------+----------+------------+---------+---------+----------------------+
  * </pre>
- *
+ * <p>
  * The first two fields (type and cached cardinality) are used by {@link HyperLogLog}.
  */
 public class HyperLogLogSparseRepresentation {

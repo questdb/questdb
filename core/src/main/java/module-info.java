@@ -649,8 +649,11 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.CountDistinctIntGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountDistinctUuidGroupByFunctionFactory,
 //                  'approx_count_distinct' group by function
+            io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIntGroupByDefaultFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByDefaultFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByDefaultFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByFunctionFactory,
             //      'haversine_dist_degree' group by function
             io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory,
