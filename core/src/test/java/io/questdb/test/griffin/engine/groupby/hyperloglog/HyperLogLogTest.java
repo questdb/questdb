@@ -42,13 +42,7 @@ import static org.junit.Assert.*;
 public class HyperLogLogTest extends AbstractTest {
 
     @Test
-    public void testInvalidPrecision() {
-        assertThrows(AssertionError.class, () -> new HyperLogLog(3));
-        assertThrows(AssertionError.class, () -> new HyperLogLog(19));
-    }
-
-    @Test
-    public void testHighCardinality() throws Exception {
+    public void testAddInvalidatesCachedCardinality() throws Exception {
         CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
             public long getGroupByAllocatorDefaultChunkSize() {
@@ -59,25 +53,26 @@ public class HyperLogLogTest extends AbstractTest {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
                 try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                    Rnd rnd = new Rnd();
+
                     HyperLogLog hll = new HyperLogLog(finalPrecision);
                     hll.setAllocator(allocator);
                     hll.of(0);
 
-                    int exactCardinality = 10000000;
+                    hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(rnd.nextLong()));
+                    assertEquals(1, hll.computeCardinality());
+                    assertEquals(1, hll.computeCardinality());
 
-                    for (int i = 0; i < exactCardinality; i++) {
-                        hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(i));
-                    }
-
-                    long estimatedCardinality = hll.computeCardinality();
-                    assertCardinality(exactCardinality, finalPrecision, estimatedCardinality);
+                    // add should invalidate cache
+                    hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(rnd.nextLong()));
+                    assertEquals(2, hll.computeCardinality());
                 }
             });
         }
     }
 
     @Test
-    public void testLowCardinality() throws Exception {
+    public void testFastCardinalityComputation() throws Exception {
         CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
             public long getGroupByAllocatorDefaultChunkSize() {
@@ -93,18 +88,15 @@ public class HyperLogLogTest extends AbstractTest {
                     hll.of(0);
 
                     int exactCardinality = 10000;
-                    int maxRepetitions = 100;
-                    Rnd rnd = new Rnd();
 
                     for (int i = 0; i < exactCardinality; i++) {
-                        int n = rnd.nextInt(maxRepetitions) + 1;
-                        for (int j = 0; j < n; j++) {
-                            hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(i));
+                        long estimated = hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(i));
+                        if (hll.isSparse()) {
+                            assertCardinality(i + 1, finalPrecision, estimated);
+                        } else {
+                            assertEquals(-1, estimated);
                         }
                     }
-
-                    long estimatedCardinality = hll.computeCardinality();
-                    assertCardinality(exactCardinality, finalPrecision, estimatedCardinality);
                 }
             });
         }
@@ -138,6 +130,75 @@ public class HyperLogLogTest extends AbstractTest {
 
                     long estimatedCardinality = hll.computeCardinality();
                     int exactCardinality = oracle.size();
+                    assertCardinality(exactCardinality, finalPrecision, estimatedCardinality);
+                }
+            });
+        }
+    }
+
+    @Test
+    public void testHighCardinality() throws Exception {
+        CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorDefaultChunkSize() {
+                return 64;
+            }
+        };
+        for (int precision = 4; precision <= 18; precision++) {
+            int finalPrecision = precision;
+            assertMemoryLeak(() -> {
+                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                    HyperLogLog hll = new HyperLogLog(finalPrecision);
+                    hll.setAllocator(allocator);
+                    hll.of(0);
+
+                    int exactCardinality = 10000000;
+
+                    for (int i = 0; i < exactCardinality; i++) {
+                        hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(i));
+                    }
+
+                    long estimatedCardinality = hll.computeCardinality();
+                    assertCardinality(exactCardinality, finalPrecision, estimatedCardinality);
+                }
+            });
+        }
+    }
+
+    @Test
+    public void testInvalidPrecision() {
+        assertThrows(AssertionError.class, () -> new HyperLogLog(3));
+        assertThrows(AssertionError.class, () -> new HyperLogLog(19));
+    }
+
+    @Test
+    public void testLowCardinality() throws Exception {
+        CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorDefaultChunkSize() {
+                return 64;
+            }
+        };
+        for (int precision = 4; precision <= 18; precision++) {
+            int finalPrecision = precision;
+            assertMemoryLeak(() -> {
+                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                    HyperLogLog hll = new HyperLogLog(finalPrecision);
+                    hll.setAllocator(allocator);
+                    hll.of(0);
+
+                    int exactCardinality = 10000;
+                    int maxRepetitions = 100;
+                    Rnd rnd = new Rnd();
+
+                    for (int i = 0; i < exactCardinality; i++) {
+                        int n = rnd.nextInt(maxRepetitions) + 1;
+                        for (int j = 0; j < n; j++) {
+                            hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(i));
+                        }
+                    }
+
+                    long estimatedCardinality = hll.computeCardinality();
                     assertCardinality(exactCardinality, finalPrecision, estimatedCardinality);
                 }
             });
@@ -185,60 +246,6 @@ public class HyperLogLogTest extends AbstractTest {
                     mergedHll.setAllocator(allocator);
                     mergedHll.of(mergedPtr);
 
-                    assertEquals(expectedHll.computeCardinality(), mergedHll.computeCardinality());
-                }
-            });
-        }
-    }
-
-    @Test
-    public void testMergeSparseWithSparse() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
-        for (int precision = 11; precision <= 18; precision++) {
-            int finalPrecision = precision;
-            assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
-                    Rnd rnd = new Rnd();
-
-                    HyperLogLog expectedHll = new HyperLogLog(finalPrecision);
-                    expectedHll.setAllocator(allocator);
-                    expectedHll.of(0);
-
-                    HyperLogLog larger = new HyperLogLog(finalPrecision);
-                    larger.setAllocator(allocator);
-                    larger.of(0);
-                    for (int i = 0; i < 150; i++) {
-                        long hash = rnd.nextLong();
-                        expectedHll.addAndComputeCardinalityFast(hash);
-                        larger.addAndComputeCardinalityFast(hash);
-                    }
-                    assertTrue(larger.isSparse());
-
-                    HyperLogLog smaller = new HyperLogLog(finalPrecision);
-                    smaller.setAllocator(allocator);
-                    smaller.of(0);
-                    for (int i = 0; i < 100; i++) {
-                        long hash = rnd.nextLong();
-                        expectedHll.addAndComputeCardinalityFast(hash);
-                        smaller.addAndComputeCardinalityFast(hash);
-                    }
-                    assertTrue(smaller.isSparse());
-
-                    // Test if merging larger with smaller works correctly.
-                    long mergedPtr = HyperLogLog.merge(larger, smaller);
-                    HyperLogLog mergedHll = new HyperLogLog(finalPrecision);
-                    mergedHll.setAllocator(allocator);
-                    mergedHll.of(mergedPtr);
-                    assertEquals(expectedHll.computeCardinality(), mergedHll.computeCardinality());
-
-                    // Test if merging smaller with larger works correctly.
-                    mergedPtr = HyperLogLog.merge(smaller, larger);
-                    mergedHll.of(mergedPtr);
                     assertEquals(expectedHll.computeCardinality(), mergedHll.computeCardinality());
                 }
             });
@@ -299,61 +306,54 @@ public class HyperLogLogTest extends AbstractTest {
     }
 
     @Test
-    public void testAddInvalidatesCachedCardinality() throws Exception {
+    public void testMergeSparseWithSparse() throws Exception {
         CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
             public long getGroupByAllocatorDefaultChunkSize() {
                 return 64;
             }
         };
-        for (int precision = 4; precision <= 18; precision++) {
+        for (int precision = 11; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
                 try (GroupByAllocator allocator = new GroupByAllocator(config)) {
                     Rnd rnd = new Rnd();
 
-                    HyperLogLog hll = new HyperLogLog(finalPrecision);
-                    hll.setAllocator(allocator);
-                    hll.of(0);
+                    HyperLogLog expectedHll = new HyperLogLog(finalPrecision);
+                    expectedHll.setAllocator(allocator);
+                    expectedHll.of(0);
 
-                    hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(rnd.nextLong()));
-                    assertEquals(1, hll.computeCardinality());
-                    assertEquals(1, hll.computeCardinality());
-
-                    // add should invalidate cache
-                    hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(rnd.nextLong()));
-                    assertEquals(2, hll.computeCardinality());
-                }
-            });
-        }
-    }
-
-    @Test
-    public void testFastCardinalityComputation() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
-        for (int precision = 4; precision <= 18; precision++) {
-            int finalPrecision = precision;
-            assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
-                    HyperLogLog hll = new HyperLogLog(finalPrecision);
-                    hll.setAllocator(allocator);
-                    hll.of(0);
-
-                    int exactCardinality = 10000;
-
-                    for (int i = 0; i < exactCardinality; i++) {
-                        long estimated = hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(i));
-                        if (hll.isSparse()) {
-                            assertCardinality(i + 1, finalPrecision, estimated);
-                        } else {
-                            assertEquals(-1, estimated);
-                        }
+                    HyperLogLog larger = new HyperLogLog(finalPrecision);
+                    larger.setAllocator(allocator);
+                    larger.of(0);
+                    for (int i = 0; i < 150; i++) {
+                        long hash = rnd.nextLong();
+                        expectedHll.addAndComputeCardinalityFast(hash);
+                        larger.addAndComputeCardinalityFast(hash);
                     }
+                    assertTrue(larger.isSparse());
+
+                    HyperLogLog smaller = new HyperLogLog(finalPrecision);
+                    smaller.setAllocator(allocator);
+                    smaller.of(0);
+                    for (int i = 0; i < 100; i++) {
+                        long hash = rnd.nextLong();
+                        expectedHll.addAndComputeCardinalityFast(hash);
+                        smaller.addAndComputeCardinalityFast(hash);
+                    }
+                    assertTrue(smaller.isSparse());
+
+                    // Test if merging larger with smaller works correctly.
+                    long mergedPtr = HyperLogLog.merge(larger, smaller);
+                    HyperLogLog mergedHll = new HyperLogLog(finalPrecision);
+                    mergedHll.setAllocator(allocator);
+                    mergedHll.of(mergedPtr);
+                    assertEquals(expectedHll.computeCardinality(), mergedHll.computeCardinality());
+
+                    // Test if merging smaller with larger works correctly.
+                    mergedPtr = HyperLogLog.merge(smaller, larger);
+                    mergedHll.of(mergedPtr);
+                    assertEquals(expectedHll.computeCardinality(), mergedHll.computeCardinality());
                 }
             });
         }

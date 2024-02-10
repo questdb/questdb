@@ -37,17 +37,15 @@ import org.jetbrains.annotations.TestOnly;
  * information about their type and the subsequent 8 bytes for cached cardinality.
  */
 public class HyperLogLog {
-    public static final int MIN_PRECISION = 4;
-    public static final int MAX_PRECISION = 18;
     public static final int DEFAULT_PRECISION = 14;
-
-    private static final long CARDINALITY_NULL_VALUE = -1;
+    public static final int MAX_PRECISION = 18;
+    public static final int MIN_PRECISION = 4;
     private static final long CACHED_CARDINALITY_OFFSET = Byte.BYTES;
-    private static final byte SPARSE = 1;
+    private static final long CARDINALITY_NULL_VALUE = -1;
     private static final byte DENSE = 0;
-
-    private final int precision;
+    private static final byte SPARSE = 1;
     private final HyperLogLogDenseRepresentation dense;
+    private final int precision;
     private final HyperLogLogSparseRepresentation sparse;
 
     private long ptr;
@@ -57,6 +55,26 @@ public class HyperLogLog {
         this.dense = new HyperLogLogDenseRepresentation(precision);
         this.sparse = new HyperLogLogSparseRepresentation(precision);
         this.precision = precision;
+    }
+
+    public static long merge(HyperLogLog first, HyperLogLog second) {
+        byte firstType = first.getType();
+        byte secondType = second.getType();
+
+        if (firstType == DENSE && secondType == DENSE) {
+            return mergeDenseWithDense(first, second);
+        } else if (firstType == SPARSE && secondType == SPARSE) {
+            if (second.sparse.size() < first.sparse.size()) {
+                return mergeSparseWithSparse(second, first);
+            } else {
+                return mergeSparseWithSparse(first, second);
+            }
+        } else if (firstType == SPARSE && secondType == DENSE) {
+            return mergeSparseWithDense(first, second);
+        } else if (firstType == DENSE && secondType == SPARSE) {
+            return mergeSparseWithDense(second, first);
+        }
+        throw new IllegalStateException("Unexpected combination of HyperLogLog types.");
     }
 
     /**
@@ -89,12 +107,6 @@ public class HyperLogLog {
         }
     }
 
-    private void convertToDense() {
-        sparse.convertToDense(dense);
-        this.ptr = dense.ptr();
-        setType(DENSE);
-    }
-
     public long computeCardinality() {
         long cardinality = getCachedCardinality();
         if (cardinality != CARDINALITY_NULL_VALUE) {
@@ -109,48 +121,9 @@ public class HyperLogLog {
         return cardinality;
     }
 
-    public static long merge(HyperLogLog first, HyperLogLog second) {
-        byte firstType = first.getType();
-        byte secondType = second.getType();
-
-        if (firstType == DENSE && secondType == DENSE) {
-            return mergeDenseWithDense(first, second);
-        } else if (firstType == SPARSE && secondType == SPARSE) {
-            if (second.sparse.size() < first.sparse.size()) {
-                return mergeSparseWithSparse(second, first);
-            } else {
-                return mergeSparseWithSparse(first, second);
-            }
-        } else if (firstType == SPARSE && secondType == DENSE) {
-            return mergeSparseWithDense(first, second);
-        } else if (firstType == DENSE && secondType == SPARSE) {
-            return mergeSparseWithDense(second, first);
-        }
-        throw new IllegalStateException("Unexpected combination of HyperLogLog types.");
-    }
-
-    private static long mergeDenseWithDense(HyperLogLog src, HyperLogLog dst) {
-        src.dense.copyTo(dst.dense);
-        dst.of(dst.dense.ptr());
-        dst.setCachedCardinality(CARDINALITY_NULL_VALUE);
-        return dst.ptr();
-    }
-
-    private static long mergeSparseWithSparse(HyperLogLog src, HyperLogLog dst) {
-        src.sparse.copyTo(dst.sparse);
-        dst.of(dst.sparse.ptr());
-        if (dst.sparse.isFull()) {
-            dst.convertToDense();
-        }
-        dst.setCachedCardinality(CARDINALITY_NULL_VALUE);
-        return dst.ptr();
-    }
-
-    private static long mergeSparseWithDense(HyperLogLog src, HyperLogLog dst) {
-        src.sparse.copyTo(dst.dense);
-        dst.of(dst.dense.ptr());
-        dst.setCachedCardinality(CARDINALITY_NULL_VALUE);
-        return dst.ptr();
+    @TestOnly
+    public boolean isSparse() {
+        return getType() == SPARSE;
     }
 
     public HyperLogLog of(long ptr) {
@@ -187,24 +160,49 @@ public class HyperLogLog {
         dense.setAllocator(allocator);
     }
 
-    private byte getType() {
-        return Unsafe.getUnsafe().getByte(ptr);
+    private static long mergeDenseWithDense(HyperLogLog src, HyperLogLog dst) {
+        src.dense.copyTo(dst.dense);
+        dst.of(dst.dense.ptr());
+        dst.setCachedCardinality(CARDINALITY_NULL_VALUE);
+        return dst.ptr();
     }
 
-    private void setType(byte type) {
-        Unsafe.getUnsafe().putByte(ptr, type);
+    private static long mergeSparseWithDense(HyperLogLog src, HyperLogLog dst) {
+        src.sparse.copyTo(dst.dense);
+        dst.of(dst.dense.ptr());
+        dst.setCachedCardinality(CARDINALITY_NULL_VALUE);
+        return dst.ptr();
     }
 
-    private void setCachedCardinality(long estimate) {
-        Unsafe.getUnsafe().putLong(ptr + CACHED_CARDINALITY_OFFSET, estimate);
+    private static long mergeSparseWithSparse(HyperLogLog src, HyperLogLog dst) {
+        src.sparse.copyTo(dst.sparse);
+        dst.of(dst.sparse.ptr());
+        if (dst.sparse.isFull()) {
+            dst.convertToDense();
+        }
+        dst.setCachedCardinality(CARDINALITY_NULL_VALUE);
+        return dst.ptr();
+    }
+
+    private void convertToDense() {
+        sparse.convertToDense(dense);
+        this.ptr = dense.ptr();
+        setType(DENSE);
     }
 
     private long getCachedCardinality() {
         return Unsafe.getUnsafe().getLong(ptr + CACHED_CARDINALITY_OFFSET);
     }
 
-    @TestOnly
-    public boolean isSparse() {
-        return getType() == SPARSE;
+    private byte getType() {
+        return Unsafe.getUnsafe().getByte(ptr);
+    }
+
+    private void setCachedCardinality(long estimate) {
+        Unsafe.getUnsafe().putLong(ptr + CACHED_CARDINALITY_OFFSET, estimate);
+    }
+
+    private void setType(byte type) {
+        Unsafe.getUnsafe().putByte(ptr, type);
     }
 }

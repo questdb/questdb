@@ -51,10 +51,10 @@ public class HyperLogLogBenchmark {
         }
     });
     private static final HyperLogLog hll = new HyperLogLog(14);
-    private static long hllPtr = 0;
-    private static final GroupByLongHashSet set = new GroupByLongHashSet(16, 0.7, 0);
-    private static long setPtr = 0;
     private static final Rnd rnd = new Rnd();
+    private static final GroupByLongHashSet set = new GroupByLongHashSet(16, 0.7, 0);
+    private static long hllPtr = 0;
+    private static long setPtr = 0;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

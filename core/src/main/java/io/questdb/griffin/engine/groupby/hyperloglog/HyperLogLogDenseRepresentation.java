@@ -46,17 +46,15 @@ import static io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLog.MIN_PREC
  * The first two fields (type and cached cardinality) are used by {@link HyperLogLog}.
  */
 public class HyperLogLogDenseRepresentation {
+    private static final long HEADER_SIZE = Byte.BYTES + Long.BYTES;
     private static final int KNN_K = 6;
     private static final double[] RECIPROCALS_OF_POWER_OF_2 = new double[Long.SIZE - MIN_PRECISION + 2];
-    private static final long HEADER_SIZE = Byte.BYTES + Long.BYTES;
-
-    private final int registerCount;
-    private final int precision;
     private final double alphaMM;
-    private final int biasCorrectionThreshold;
     private final int biasCorrectionDataIndex;
+    private final int biasCorrectionThreshold;
     private final long leadingZerosMask;
-
+    private final int precision;
+    private final int registerCount;
     private GroupByAllocator allocator;
     private long ptr;
 
@@ -81,40 +79,10 @@ public class HyperLogLogDenseRepresentation {
         }
     }
 
-    static long calculateSizeInBytes(int precision) {
-        int registerCount = 1 << precision;
-        return HEADER_SIZE + registerCount;
-    }
-
-    public HyperLogLogDenseRepresentation of(long ptr) {
-        if (ptr == 0) {
-            this.ptr = allocator.malloc(HEADER_SIZE + registerCount);
-            Vect.memset(this.ptr + HEADER_SIZE, registerCount, 0);
-        } else {
-            this.ptr = ptr;
-        }
-        return this;
-    }
-
-    public long ptr() {
-        return ptr;
-    }
-
-    public void setAllocator(GroupByAllocator allocator) {
-        this.allocator = allocator;
-    }
-
     public void add(long hash) {
         int registerIdx = computeRegisterIndex(hash);
         byte leadingZeros = computeNumberOfLeadingZeros(hash);
         add(registerIdx, leadingZeros);
-    }
-
-    void copyTo(HyperLogLogDenseRepresentation dst) {
-        for (int i = 0; i < registerCount; i++) {
-            byte srcVal = get(i);
-            dst.add(i, srcVal);
-        }
     }
 
     public long computeCardinality() {
@@ -139,10 +107,6 @@ public class HyperLogLogDenseRepresentation {
             correctedEstimate = rawEstimate - estimateBias(rawEstimate);
         }
         return Math.round(correctedEstimate);
-    }
-
-    private static double linearCounting(int total, int empty) {
-        return total * Math.log(total / (double) empty);
     }
 
     // visible for testing
@@ -180,12 +144,47 @@ public class HyperLogLogDenseRepresentation {
         return biasTotal / KNN_K;
     }
 
-    private int computeRegisterIndex(long hash) {
-        return (int) (hash >>> (Long.SIZE - precision));
+    public HyperLogLogDenseRepresentation of(long ptr) {
+        if (ptr == 0) {
+            this.ptr = allocator.malloc(HEADER_SIZE + registerCount);
+            Vect.memset(this.ptr + HEADER_SIZE, registerCount, 0);
+        } else {
+            this.ptr = ptr;
+        }
+        return this;
+    }
+
+    public long ptr() {
+        return ptr;
+    }
+
+    public void setAllocator(GroupByAllocator allocator) {
+        this.allocator = allocator;
+    }
+
+    private static double linearCounting(int total, int empty) {
+        return total * Math.log(total / (double) empty);
     }
 
     private byte computeNumberOfLeadingZeros(long hash) {
         return (byte) (Long.numberOfLeadingZeros((hash << precision) | leadingZerosMask) + 1);
+    }
+
+    private int computeRegisterIndex(long hash) {
+        return (int) (hash >>> (Long.SIZE - precision));
+    }
+
+    private byte get(int idx) {
+        return Unsafe.getUnsafe().getByte(ptr + HEADER_SIZE + idx);
+    }
+
+    private void set(int idx, byte val) {
+        Unsafe.getUnsafe().putByte(ptr + HEADER_SIZE + idx, val);
+    }
+
+    static long calculateSizeInBytes(int precision) {
+        int registerCount = 1 << precision;
+        return HEADER_SIZE + registerCount;
     }
 
     void add(int position, byte value) {
@@ -195,12 +194,11 @@ public class HyperLogLogDenseRepresentation {
         }
     }
 
-    private byte get(int idx) {
-        return Unsafe.getUnsafe().getByte(ptr + HEADER_SIZE + idx);
-    }
-
-    private void set(int idx, byte val) {
-        Unsafe.getUnsafe().putByte(ptr + HEADER_SIZE + idx, val);
+    void copyTo(HyperLogLogDenseRepresentation dst) {
+        for (int i = 0; i < registerCount; i++) {
+            byte srcVal = get(i);
+            dst.add(i, srcVal);
+        }
     }
 
     static {

@@ -45,16 +45,53 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
     }
 
     @Test
-    public void testNoValues() throws Exception {
+    public void testDifferentPrecisionsDenseHLL() throws Exception {
+        compile("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100000)) timestamp(ts))");
+
         assertQuery(
-                "approx_count_distinct\n" +
-                        "0\n",
-                "select approx_count_distinct(a) from x",
-                "create table x (a ipv4)",
+                "count_distinct\n" +
+                        "99685\n",
+                "select count_distinct(s) from x",
                 null,
                 false,
                 true
         );
+
+        for (int precision = 4; precision <= 18; precision++) {
+            assertQuery(
+                    "approx_count_distinct" + precision + "\n" +
+                            "99152\n",
+                    "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
+                    null,
+                    false,
+                    true
+            );
+        }
+    }
+
+    @Test
+    public void testDifferentPrecisionsSparseHLL() throws Exception {
+        compile("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+
+        assertQuery(
+                "count_distinct\n" +
+                        "100\n",
+                "select count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
+
+        for (int precision = 4; precision <= 18; precision++) {
+            assertQuery(
+                    "approx_count_distinct" + precision + "\n" +
+                            "100\n",
+                    "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
+                    null,
+                    false,
+                    true
+            );
+        }
     }
 
     @Test
@@ -74,39 +111,6 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
         // addition shouldn't affect the number of distinct values,
         // so the result should stay the same
         assertSql(expected, "select a, approx_count_distinct(s) from x order by a");
-    }
-
-    @Test
-    public void testGroupKeyedSparseHLL() throws Exception {
-        compile("create table x as (" +
-                "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_ipv4('1.1.1.1/16', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)" +
-                ") timestamp(ts))");
-        assertQuery(
-                "a\tcount_distinct\n" +
-                        "a\t2\n" +
-                        "b\t1\n" +
-                        "c\t2\n" +
-                        "d\t4\n" +
-                        "e\t5\n" +
-                        "f\t6\n",
-                "select a, count_distinct(s) from x order by a",
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                "a\tapprox_count_distinct\n" +
-                        "a\t2\n" +
-                        "b\t1\n" +
-                        "c\t2\n" +
-                        "d\t4\n" +
-                        "e\t5\n" +
-                        "f\t6\n",
-                "select a, approx_count_distinct(s) from x order by a",
-                null,
-                true,
-                true
-        );
     }
 
     @Test
@@ -143,22 +147,34 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
     }
 
     @Test
-    public void testGroupNotKeyedSparseHLL() throws Exception {
-        compile("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+    public void testGroupKeyedSparseHLL() throws Exception {
+        compile("create table x as (" +
+                "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_ipv4('1.1.1.1/16', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)" +
+                ") timestamp(ts))");
         assertQuery(
-                "count_distinct\n" +
-                        "100\n",
-                "select count_distinct(s) from x",
+                "a\tcount_distinct\n" +
+                        "a\t2\n" +
+                        "b\t1\n" +
+                        "c\t2\n" +
+                        "d\t4\n" +
+                        "e\t5\n" +
+                        "f\t6\n",
+                "select a, count_distinct(s) from x order by a",
                 null,
-                false,
+                true,
                 true
         );
         assertQuery(
-                "approx_count_distinct\n" +
-                        "100\n",
-                "select approx_count_distinct(s) from x",
+                "a\tapprox_count_distinct\n" +
+                        "a\t2\n" +
+                        "b\t1\n" +
+                        "c\t2\n" +
+                        "d\t4\n" +
+                        "e\t5\n" +
+                        "f\t6\n",
+                "select a, approx_count_distinct(s) from x order by a",
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -185,35 +201,24 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
     }
 
     @Test
-    public void testGroupNotKeyedWithNullsSparseHLL() throws Exception {
-        compile("create table x as (" +
-                "select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)" +
-                ") timestamp(ts) PARTITION BY YEAR");
-
-        String expectedExact = "count_distinct\n" +
-                "100\n";
-        String expectedEstimated = "approx_count_distinct\n" +
-                "100\n";
-
+    public void testGroupNotKeyedSparseHLL() throws Exception {
+        compile("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
         assertQuery(
-                expectedExact,
+                "count_distinct\n" +
+                        "100\n",
                 "select count_distinct(s) from x",
                 null,
                 false,
                 true
         );
         assertQuery(
-                expectedEstimated,
+                "approx_count_distinct\n" +
+                        "100\n",
                 "select approx_count_distinct(s) from x",
                 null,
                 false,
                 true
         );
-
-        insert("insert into x values(cast(null as IPV4), '2021-05-21')");
-        insert("insert into x values(cast(null as IPV4), '1970-01-01')");
-        assertSql(expectedExact, "select count_distinct(s) from x");
-        assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
     }
 
     @Test
@@ -249,6 +254,65 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
     }
 
     @Test
+    public void testGroupNotKeyedWithNullsSparseHLL() throws Exception {
+        compile("create table x as (" +
+                "select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)" +
+                ") timestamp(ts) PARTITION BY YEAR");
+
+        String expectedExact = "count_distinct\n" +
+                "100\n";
+        String expectedEstimated = "approx_count_distinct\n" +
+                "100\n";
+
+        assertQuery(
+                expectedExact,
+                "select count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
+        assertQuery(
+                expectedEstimated,
+                "select approx_count_distinct(s) from x",
+                null,
+                false,
+                true
+        );
+
+        insert("insert into x values(cast(null as IPV4), '2021-05-21')");
+        insert("insert into x values(cast(null as IPV4), '1970-01-01')");
+        assertSql(expectedExact, "select count_distinct(s) from x");
+        assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+    }
+
+    @Test
+    public void testInterpolation() throws Exception {
+        assertQuery(
+                "ts\tapprox_count_distinct\n" +
+                        "1970-01-01T00:00:00.000000Z\t1\n" +
+                        "1970-01-01T00:00:01.000000Z\t1\n",
+                "select ts, approx_count_distinct(s) from x sample by 1s fill(linear) limit 2",
+                "create table x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(0, 60000000) ts from long_sequence(100)) timestamp(ts))",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testNoValues() throws Exception {
+        assertQuery(
+                "approx_count_distinct\n" +
+                        "0\n",
+                "select approx_count_distinct(a) from x",
+                "create table x (a ipv4)",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testNullConstant() throws Exception {
         assertQuery(
                 "a\tapprox_count_distinct\n" +
@@ -261,6 +325,12 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testPrecisionOutOfRange() throws Exception {
+        assertException("select approx_count_distinct('127.0.0.1'::ipv4, 3) from long_sequence(1)", 7, "precision must be between 4 and 18");
+        assertException("select approx_count_distinct('127.0.0.1'::ipv4, 19) from long_sequence(1)", 7, "precision must be between 4 and 18");
     }
 
     @Test
@@ -337,75 +407,5 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                 "ts",
                 false
         );
-    }
-
-    @Test
-    public void testInterpolation() throws Exception {
-        assertQuery(
-                "ts\tapprox_count_distinct\n" +
-                        "1970-01-01T00:00:00.000000Z\t1\n" +
-                        "1970-01-01T00:00:01.000000Z\t1\n",
-                "select ts, approx_count_distinct(s) from x sample by 1s fill(linear) limit 2",
-                "create table x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(0, 60000000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testPrecisionOutOfRange() throws Exception {
-        assertException("select approx_count_distinct('127.0.0.1'::ipv4, 3) from long_sequence(1)", 7, "precision must be between 4 and 18");
-        assertException("select approx_count_distinct('127.0.0.1'::ipv4, 19) from long_sequence(1)", 7, "precision must be between 4 and 18");
-    }
-
-    @Test
-    public void testDifferentPrecisionsSparseHLL() throws Exception {
-        compile("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
-
-        assertQuery(
-                "count_distinct\n" +
-                        "100\n",
-                "select count_distinct(s) from x",
-                null,
-                false,
-                true
-        );
-
-        for (int precision = 4; precision <= 18; precision++) {
-            assertQuery(
-                    "approx_count_distinct" + precision + "\n" +
-                            "100\n",
-                    "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
-                    null,
-                    false,
-                    true
-            );
-        }
-    }
-
-    @Test
-    public void testDifferentPrecisionsDenseHLL() throws Exception {
-        compile("create table x as (select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100000)) timestamp(ts))");
-
-        assertQuery(
-                "count_distinct\n" +
-                        "99685\n",
-                "select count_distinct(s) from x",
-                null,
-                false,
-                true
-        );
-
-        for (int precision = 4; precision <= 18; precision++) {
-            assertQuery(
-                    "approx_count_distinct" + precision + "\n" +
-                            "99152\n",
-                    "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
-                    null,
-                    false,
-                    true
-            );
-        }
     }
 }

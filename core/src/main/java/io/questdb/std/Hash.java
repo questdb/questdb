@@ -30,10 +30,10 @@ import io.questdb.std.str.Utf8String;
 public final class Hash {
 
     private static final long M2 = 0x7a646e4d;
-    private static final int SPREAD_HASH_BITS = 0x7fffffff;
+    private static final int MURMUR3_SEED = 95967;
     private static final long MURMUR3_X64_128_C1 = 0x87c37b91114253d5L;
     private static final long MURMUR3_X64_128_C2 = 0x4cf5ad432745937fL;
-    private static final int MURMUR3_SEED = 95967;
+    private static final int SPREAD_HASH_BITS = 0x7fffffff;
 
     private Hash() {
     }
@@ -120,6 +120,20 @@ public final class Hash {
     }
 
     /**
+     * The Murmur3 128-bit variant. Returns the 8 most significant bytes of the hash.
+     */
+    public static long murmur3ToLong(long key) {
+        return murmur3ToLong(key, Long.BYTES);
+    }
+
+    /**
+     * The Murmur3 128-bit variant. Returns the 8 most significant bytes of the hash.
+     */
+    public static long murmur3ToLong(int key) {
+        return murmur3ToLong(key & 0xffffffffL, Integer.BYTES);
+    }
+
+    /**
      * (copied from ConcurrentHashMap)
      * Spreads (XORs) higher bits of hash to lower and also forces top
      * bit to 0. Because the table uses power-of-two masking, sets of
@@ -143,18 +157,13 @@ public final class Hash {
         return (h ^ (h >>> 16)) & SPREAD_HASH_BITS;
     }
 
-    /**
-     * The Murmur3 128-bit variant. Returns the 8 most significant bytes of the hash.
-     */
-    public static long murmur3ToLong(long key) {
-        return murmur3ToLong(key, Long.BYTES);
-    }
-
-    /**
-     * The Murmur3 128-bit variant. Returns the 8 most significant bytes of the hash.
-     */
-    public static long murmur3ToLong(int key) {
-        return murmur3ToLong(key & 0xffffffffL, Integer.BYTES);
+    private static long fmix64(long h) {
+        h ^= (h >>> 33);
+        h *= 0xff51afd7ed558ccdL;
+        h ^= (h >>> 33);
+        h *= 0xc4ceb9fe1a85ec53L;
+        h ^= (h >>> 33);
+        return h;
     }
 
     /**
@@ -182,14 +191,5 @@ public final class Hash {
         h2 = fmix64(h2);
         h1 += h2;
         return h1;
-    }
-
-    private static long fmix64(long h) {
-        h ^= (h >>> 33);
-        h *= 0xff51afd7ed558ccdL;
-        h ^= (h >>> 33);
-        h *= 0xc4ceb9fe1a85ec53L;
-        h ^= (h >>> 33);
-        return h;
     }
 }

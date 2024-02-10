@@ -45,23 +45,21 @@ import io.questdb.std.Vect;
  * The first two fields (type and cached cardinality) are used by {@link HyperLogLog}.
  */
 public class HyperLogLogSparseRepresentation {
-    private static final int NO_ENTRY_VALUE = 0;
-    private static final int SPARSE_PRECISION = 25;
-    private static final int SPARSE_REGISTER_COUNT = 1 << SPARSE_PRECISION;
-    private static final long HEADER_SIZE = Byte.BYTES + Long.BYTES + 3 * Integer.BYTES + 3;
     private static final long CAPACITY_OFFSET = Byte.BYTES + Long.BYTES;
-    private static final long SIZE_LIMIT_OFFSET = Byte.BYTES + Long.BYTES + 2 * Integer.BYTES;
-    private static final long SIZE_OFFSET = Byte.BYTES + Long.BYTES + Integer.BYTES;
+    private static final long HEADER_SIZE = Byte.BYTES + Long.BYTES + 3 * Integer.BYTES + 3;
     private static final int INITIAL_CAPACITY = 16;
     private static final double LOAD_FACTOR = 0.7;
-
+    private static final int NO_ENTRY_VALUE = 0;
+    private static final long SIZE_LIMIT_OFFSET = Byte.BYTES + Long.BYTES + 2 * Integer.BYTES;
+    private static final long SIZE_OFFSET = Byte.BYTES + Long.BYTES + Integer.BYTES;
+    private static final int SPARSE_PRECISION = 25;
+    private static final int SPARSE_REGISTER_COUNT = 1 << SPARSE_PRECISION;
     private final int densePrecision;
-    private final int sparseSetMaxSize;
-    private final long leadingZerosMask;
     private final long encodeMask;
-
-    private int moduloMask;
+    private final long leadingZerosMask;
+    private final int sparseSetMaxSize;
     private GroupByAllocator allocator;
+    private int moduloMask;
     private long ptr;
 
     public HyperLogLogSparseRepresentation(int densePrecision) {
@@ -95,29 +93,66 @@ public class HyperLogLogSparseRepresentation {
         add(registerIdx, entry);
     }
 
+    public long computeCardinality() {
+        return linearCounting(SPARSE_REGISTER_COUNT, (SPARSE_REGISTER_COUNT - size()));
+    }
+
+    public void convertToDense(HyperLogLogDenseRepresentation dst) {
+        dst.setAllocator(allocator);
+        dst.of(0);
+        for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + ((long) capacity() << 2); p < lim; p += 4L) {
+            int entry = Unsafe.getUnsafe().getInt(p);
+            if (entry != NO_ENTRY_VALUE) {
+                int idx = decodeDenseIndex(entry);
+                byte leadingZeros = (byte) decodeNumberOfLeadingZeros(entry);
+                dst.add(idx, leadingZeros);
+            }
+        }
+
+        allocator.free(ptr, HEADER_SIZE + ((long) capacity() << 2));
+    }
+
+    public boolean isFull() {
+        return size() >= sparseSetMaxSize;
+    }
+
+    public HyperLogLogSparseRepresentation of(long ptr) {
+        if (ptr == 0) {
+            this.ptr = allocator.malloc(HEADER_SIZE + (INITIAL_CAPACITY << 2));
+            zero(this.ptr, INITIAL_CAPACITY);
+            Unsafe.getUnsafe().putInt(this.ptr + CAPACITY_OFFSET, INITIAL_CAPACITY);
+            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
+            Unsafe.getUnsafe().putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (INITIAL_CAPACITY * LOAD_FACTOR));
+            moduloMask = INITIAL_CAPACITY - 1;
+        } else {
+            this.ptr = ptr;
+            moduloMask = capacity() - 1;
+        }
+        return this;
+    }
+
+    public long ptr() {
+        return ptr;
+    }
+
+    public void setAllocator(GroupByAllocator allocator) {
+        this.allocator = allocator;
+    }
+
+    private static int computeRegisterIndex(long hash) {
+        return (int) (hash >>> (Long.SIZE - SPARSE_PRECISION));
+    }
+
+    private static int decodeSparseIndex(int entry) {
+        return entry >>> 7;
+    }
+
     private void add(int registerIdx, int entry) {
         int index = Integer.hashCode(registerIdx) & moduloMask;
         if (!tryAddAt(index, registerIdx, entry)) {
             index = probe(registerIdx, index);
             tryAddAt(index, registerIdx, entry);
         }
-    }
-
-    private boolean tryAddAt(int index, int registerIdx, int entry) {
-        int currentEntry = entryAt(index);
-        if (currentEntry == NO_ENTRY_VALUE) {
-            addAt(index, entry);
-            return true;
-        } else {
-            int currentRegisterIdx = decodeSparseIndex(currentEntry);
-            if (currentRegisterIdx == registerIdx) {
-                if (currentEntry > entry) {
-                    setAt(index, entry);
-                }
-                return true;
-            }
-        }
-        return false;
     }
 
     private void addAt(int index, int entry) {
@@ -128,6 +163,35 @@ public class HyperLogLogSparseRepresentation {
         if (size >= sizeLimit) {
             rehash(capacity() << 1, sizeLimit << 1);
         }
+    }
+
+    private int capacity() {
+        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + CAPACITY_OFFSET) : 0;
+    }
+
+    private int computeNumberOfLeadingZeros(long hash) {
+        return Long.numberOfLeadingZeros((hash << densePrecision) | leadingZerosMask) + 1;
+    }
+
+    private int decodeDenseIndex(int entry) {
+        int sparseIndex = decodeSparseIndex(entry);
+        return sparseIndex >>> (SPARSE_PRECISION - densePrecision);
+    }
+
+    private int decodeNumberOfLeadingZeros(int entry) {
+        if ((entry & 1) == 0) {
+            return (entry >>> 1) & 0x3F;
+        } else {
+            return Integer.numberOfLeadingZeros(entry << densePrecision) + 1;
+        }
+    }
+
+    private int entryAt(int index) {
+        return Unsafe.getUnsafe().getInt(ptr + HEADER_SIZE + ((long) index << 2));
+    }
+
+    private long linearCounting(int total, int empty) {
+        return Math.round(total * Math.log(total / (double) empty));
     }
 
     private int probe(int registerIdx, int index) {
@@ -172,52 +236,33 @@ public class HyperLogLogSparseRepresentation {
         allocator.free(oldPtr, HEADER_SIZE + ((long) oldCapacity << 2));
     }
 
-    private static int computeRegisterIndex(long hash) {
-        return (int) (hash >>> (Long.SIZE - SPARSE_PRECISION));
+    private void setAt(int index, int entry) {
+        Unsafe.getUnsafe().putInt(ptr + HEADER_SIZE + ((long) index << 2), entry);
     }
 
-    private int computeNumberOfLeadingZeros(long hash) {
-        return Long.numberOfLeadingZeros((hash << densePrecision) | leadingZerosMask) + 1;
+    private int sizeLimit() {
+        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
     }
 
-    private int decodeDenseIndex(int entry) {
-        int sparseIndex = decodeSparseIndex(entry);
-        return sparseIndex >>> (SPARSE_PRECISION - densePrecision);
-    }
-
-    private static int decodeSparseIndex(int entry) {
-        return entry >>> 7;
-    }
-
-    private int decodeNumberOfLeadingZeros(int entry) {
-        if ((entry & 1) == 0) {
-            return (entry >>> 1) & 0x3F;
+    private boolean tryAddAt(int index, int registerIdx, int entry) {
+        int currentEntry = entryAt(index);
+        if (currentEntry == NO_ENTRY_VALUE) {
+            addAt(index, entry);
+            return true;
         } else {
-            return Integer.numberOfLeadingZeros(entry << densePrecision) + 1;
-        }
-    }
-
-    public long computeCardinality() {
-        return linearCounting(SPARSE_REGISTER_COUNT, (SPARSE_REGISTER_COUNT - size()));
-    }
-
-    private long linearCounting(int total, int empty) {
-        return Math.round(total * Math.log(total / (double) empty));
-    }
-
-    public void convertToDense(HyperLogLogDenseRepresentation dst) {
-        dst.setAllocator(allocator);
-        dst.of(0);
-        for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + ((long) capacity() << 2); p < lim; p += 4L) {
-            int entry = Unsafe.getUnsafe().getInt(p);
-            if (entry != NO_ENTRY_VALUE) {
-                int idx = decodeDenseIndex(entry);
-                byte leadingZeros = (byte) decodeNumberOfLeadingZeros(entry);
-                dst.add(idx, leadingZeros);
+            int currentRegisterIdx = decodeSparseIndex(currentEntry);
+            if (currentRegisterIdx == registerIdx) {
+                if (currentEntry > entry) {
+                    setAt(index, entry);
+                }
+                return true;
             }
         }
+        return false;
+    }
 
-        allocator.free(ptr, HEADER_SIZE + ((long) capacity() << 2));
+    private void zero(long ptr, int cap) {
+        Vect.memset(ptr + HEADER_SIZE, ((long) cap << 2), 0);
     }
 
     void copyTo(HyperLogLogSparseRepresentation dst) {
@@ -241,54 +286,7 @@ public class HyperLogLogSparseRepresentation {
         }
     }
 
-    public boolean isFull() {
-        return size() >= sparseSetMaxSize;
-    }
-
-    public HyperLogLogSparseRepresentation of(long ptr) {
-        if (ptr == 0) {
-            this.ptr = allocator.malloc(HEADER_SIZE + (INITIAL_CAPACITY << 2));
-            zero(this.ptr, INITIAL_CAPACITY);
-            Unsafe.getUnsafe().putInt(this.ptr + CAPACITY_OFFSET, INITIAL_CAPACITY);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (INITIAL_CAPACITY * LOAD_FACTOR));
-            moduloMask = INITIAL_CAPACITY - 1;
-        } else {
-            this.ptr = ptr;
-            moduloMask = capacity() - 1;
-        }
-        return this;
-    }
-
     int size() {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET) : 0;
-    }
-
-    private int sizeLimit() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
-    }
-
-    private int entryAt(int index) {
-        return Unsafe.getUnsafe().getInt(ptr + HEADER_SIZE + ((long) index << 2));
-    }
-
-    private void setAt(int index, int entry) {
-        Unsafe.getUnsafe().putInt(ptr + HEADER_SIZE + ((long) index << 2), entry);
-    }
-
-    private int capacity() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + CAPACITY_OFFSET) : 0;
-    }
-
-    private void zero(long ptr, int cap) {
-        Vect.memset(ptr + HEADER_SIZE, ((long) cap << 2), 0);
-    }
-
-    public long ptr() {
-        return ptr;
-    }
-
-    public void setAllocator(GroupByAllocator allocator) {
-        this.allocator = allocator;
     }
 }

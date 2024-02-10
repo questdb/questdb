@@ -43,9 +43,9 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     private final Function arg;
     private final HyperLogLog hllA;
     private final HyperLogLog hllB;
-    private int valueIndex;
-    private int overwrittenFlagIndex;
     private int hllPtrIndex;
+    private int overwrittenFlagIndex;
+    private int valueIndex;
 
     public ApproxCountDistinctLongGroupByFunction(Function arg, int precision) {
         this.arg = arg;
@@ -91,11 +91,6 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public int getValueIndex() {
-        return valueIndex;
-    }
-
-    @Override
     public Function getArg() {
         return arg;
     }
@@ -121,6 +116,11 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     @Override
     public String getName() {
         return "approx_count_distinct";
+    }
+
+    @Override
+    public int getValueIndex() {
+        return valueIndex;
     }
 
     @Override

@@ -41,42 +41,6 @@ import static org.junit.Assert.assertTrue;
 public class HyperLogLogSparseRepresentationTest extends AbstractTest {
 
     @Test
-    public void testConvertToDense() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
-        for (int precision = 11; precision <= 18; precision++) {
-            int finalPrecision = precision;
-            assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
-                    HyperLogLogSparseRepresentation sparse = new HyperLogLogSparseRepresentation(finalPrecision);
-                    sparse.setAllocator(allocator);
-                    sparse.of(0);
-
-                    HyperLogLogDenseRepresentation dense = new HyperLogLogDenseRepresentation(finalPrecision);
-                    dense.setAllocator(allocator);
-                    dense.of(0);
-
-                    int exactCardinality = 0;
-                    while (!sparse.isFull()) {
-                        long hash = Hash.murmur3ToLong(exactCardinality++);
-                        sparse.add(hash);
-                        dense.add(hash);
-                    }
-
-                    assertTrue(exactCardinality > 0);
-                    HyperLogLogDenseRepresentation converted = new HyperLogLogDenseRepresentation(finalPrecision);
-                    sparse.convertToDense(converted);
-                    assertEquals(dense.computeCardinality(), converted.computeCardinality());
-                }
-            });
-        }
-    }
-
-    @Test
     public void testComputeCardinality() throws Exception {
         CairoConfiguration config = new DefaultCairoConfiguration(root) {
             @Override
@@ -136,6 +100,42 @@ public class HyperLogLogSparseRepresentationTest extends AbstractTest {
                     assertTrue(exactCardinality > 0);
                     long estimatedCardinality = hll.computeCardinality();
                     HyperLogLogTestUtils.assertCardinality(exactCardinality, finalPrecision, estimatedCardinality);
+                }
+            });
+        }
+    }
+
+    @Test
+    public void testConvertToDense() throws Exception {
+        CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorDefaultChunkSize() {
+                return 64;
+            }
+        };
+        for (int precision = 11; precision <= 18; precision++) {
+            int finalPrecision = precision;
+            assertMemoryLeak(() -> {
+                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                    HyperLogLogSparseRepresentation sparse = new HyperLogLogSparseRepresentation(finalPrecision);
+                    sparse.setAllocator(allocator);
+                    sparse.of(0);
+
+                    HyperLogLogDenseRepresentation dense = new HyperLogLogDenseRepresentation(finalPrecision);
+                    dense.setAllocator(allocator);
+                    dense.of(0);
+
+                    int exactCardinality = 0;
+                    while (!sparse.isFull()) {
+                        long hash = Hash.murmur3ToLong(exactCardinality++);
+                        sparse.add(hash);
+                        dense.add(hash);
+                    }
+
+                    assertTrue(exactCardinality > 0);
+                    HyperLogLogDenseRepresentation converted = new HyperLogLogDenseRepresentation(finalPrecision);
+                    sparse.convertToDense(converted);
+                    assertEquals(dense.computeCardinality(), converted.computeCardinality());
                 }
             });
         }
