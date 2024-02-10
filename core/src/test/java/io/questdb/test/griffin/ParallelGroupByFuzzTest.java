@@ -1066,33 +1066,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelNonKeyedGroupByWithApproxCountDistinctIPv4Function() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT count_distinct(ip2), approx_count_distinct(ip2) FROM tab",
-                "count_distinct\tapprox_count_distinct\n" +
-                        "3265\t3265\n"
-        );
-    }
-
-    @Test
-    public void testParallelNonKeyedGroupByWithApproxCountDistinctIntFunction() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT count_distinct(a2), approx_count_distinct(a2) FROM tab",
-                "count_distinct\tapprox_count_distinct\n" +
-                        "3308\t3308\n"
-        );
-    }
-
-    @Test
-    public void testParallelNonKeyedGroupByWithApproxCountDistinctLongFunction() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT count_distinct(j2), approx_count_distinct(j2) FROM tab",
-                "count_distinct\tapprox_count_distinct\n" +
-                        "3342\t3342\n"
-        );
-    }
-
-    @Test
     public void testParallelNonKeyedGroupByWithAllBindVariableTypesInFilter() throws Exception {
         testParallelGroupByAllTypes(
                 (sqlExecutionContext) -> {
@@ -1132,6 +1105,33 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         " and ts != :atimestamp",
                 "max\tmin\n" +
                         "9205610066984479988\t-9211162377139482426\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithApproxCountDistinctIPv4Function() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(anint::ipv4), approx_count_distinct(anint::ipv4) FROM tab",
+                "count_distinct\tapprox_count_distinct\n" +
+                        "4000\t4000\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithApproxCountDistinctIntFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(anint), approx_count_distinct(anint) FROM tab",
+                "count_distinct\tapprox_count_distinct\n" +
+                        "4000\t4000\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithApproxCountDistinctLongFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(along), approx_count_distinct(along) FROM tab",
+                "count_distinct\tapprox_count_distinct\n" +
+                        "4000\t4000\n"
         );
     }
 
@@ -1333,27 +1333,42 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelNonKeyedGroupByWithTwoApproxCountDistinctIPv4Functions() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT count_distinct(ip), approx_count_distinct(ip), count_distinct(ip2), approx_count_distinct(ip2) FROM tab",
+                "SELECT " +
+                        "count_distinct(anint::ipv4), " +
+                        "approx_count_distinct(anint::ipv4), " +
+                        "count_distinct((abs(anint) % 10)::ipv4), " +
+                        "approx_count_distinct((abs(anint) % 10)::ipv4) " +
+                        "FROM tab",
                 "count_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
-                        "4000\t4000\t3265\t3265\n"
+                        "4000\t4000\t9\t9\n"
         );
     }
 
     @Test
     public void testParallelNonKeyedGroupByWithTwoApproxCountDistinctIntFunctions() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT count_distinct(a), approx_count_distinct(a), count_distinct(a2), approx_count_distinct(a2) FROM tab",
+                "SELECT " +
+                        "count_distinct(anint), " +
+                        "approx_count_distinct(anint), " +
+                        "count_distinct(abs(anint) % 10), " +
+                        "approx_count_distinct(abs(anint) % 10) " +
+                        "FROM tab",
                 "count_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
-                        "4000\t4000\t3308\t3308\n"
+                        "4000\t4000\t10\t10\n"
         );
     }
 
     @Test
     public void testParallelNonKeyedGroupByWithTwoApproxCountDistinctLongFunctions() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT count_distinct(j), approx_count_distinct(j), count_distinct(j2), approx_count_distinct(j2) FROM tab",
+                "SELECT " +
+                        "count_distinct(along), " +
+                        "approx_count_distinct(along), " +
+                        "count_distinct(abs(along) % 10), " +
+                        "approx_count_distinct(abs(along) % 10) " +
+                        "FROM tab",
                 "count_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
-                        "4000\t4000\t3342\t3342\n"
+                        "4000\t4000\t10\t10\n"
         );
     }
 
@@ -1478,6 +1493,102 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByThrowsOnTimeout("select quantity % 100, vwap(price, quantity) from tab");
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithApproxCountDistinctIPv4Function() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(anint::ipv4), approx_count_distinct(anint::ipv4) FROM tab ORDER BY key",
+                "key\tcount_distinct\tapprox_count_distinct\n" +
+                        "k0\t800\t800\n" +
+                        "k1\t800\t800\n" +
+                        "k2\t800\t800\n" +
+                        "k3\t800\t800\n" +
+                        "k4\t800\t800\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithApproxCountDistinctIntFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(anint), approx_count_distinct(anint) FROM tab ORDER BY key",
+                "key\tcount_distinct\tapprox_count_distinct\n" +
+                        "k0\t800\t800\n" +
+                        "k1\t800\t800\n" +
+                        "k2\t800\t800\n" +
+                        "k3\t800\t800\n" +
+                        "k4\t800\t800\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithApproxCountDistinctLongFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(along), approx_count_distinct(along) FROM tab ORDER BY key",
+                "key\tcount_distinct\tapprox_count_distinct\n" +
+                        "k0\t800\t800\n" +
+                        "k1\t800\t800\n" +
+                        "k2\t800\t800\n" +
+                        "k3\t800\t800\n" +
+                        "k4\t800\t800\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithTwoApproxCountDistinctIPv4Functions() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT " +
+                        "key, " +
+                        "count_distinct(anint::ipv4), " +
+                        "approx_count_distinct(anint::ipv4), " +
+                        "count_distinct((abs(anint) % 10)::ipv4), " +
+                        "approx_count_distinct((abs(anint) % 10)::ipv4) " +
+                        "FROM tab ORDER BY key",
+                "key\tcount_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
+                        "k0\t800\t800\t9\t9\n" +
+                        "k1\t800\t800\t9\t9\n" +
+                        "k2\t800\t800\t9\t9\n" +
+                        "k3\t800\t800\t9\t9\n" +
+                        "k4\t800\t800\t9\t9\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithTwoApproxCountDistinctIntFunctions() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT " +
+                        "key, " +
+                        "count_distinct(anint), " +
+                        "approx_count_distinct(anint), " +
+                        "count_distinct(abs(anint) % 10), " +
+                        "approx_count_distinct(abs(anint) % 10) " +
+                        "FROM tab ORDER BY key",
+                "key\tcount_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
+                        "k0\t800\t800\t10\t10\n" +
+                        "k1\t800\t800\t10\t10\n" +
+                        "k2\t800\t800\t10\t10\n" +
+                        "k3\t800\t800\t10\t10\n" +
+                        "k4\t800\t800\t10\t10\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithTwoApproxCountDistinctLongFunctions() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT " +
+                        "key, " +
+                        "count_distinct(along), " +
+                        "approx_count_distinct(along), " +
+                        "count_distinct(abs(along) % 10), " +
+                        "approx_count_distinct(abs(along) % 10) " +
+                        "FROM tab ORDER BY key",
+                "key\tcount_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
+                        "k0\t800\t800\t10\t10\n" +
+                        "k1\t800\t800\t10\t10\n" +
+                        "k2\t800\t800\t10\t10\n" +
+                        "k3\t800\t800\t10\t10\n" +
+                        "k4\t800\t800\t10\t10\n"
+        );
     }
 
     @Test
@@ -1649,45 +1760,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelSingleKeyGroupByWithApproxCountDistinctIPv4Function() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(ip), approx_count_distinct(ip) FROM tab ORDER BY key",
-                "key\tcount_distinct\tapprox_count_distinct\n" +
-                        "k0\t800\t800\n" +
-                        "k1\t800\t800\n" +
-                        "k2\t800\t800\n" +
-                        "k3\t800\t800\n" +
-                        "k4\t800\t800\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyGroupByWithApproxCountDistinctIntFunction() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(a), approx_count_distinct(a) FROM tab ORDER BY key",
-                "key\tcount_distinct\tapprox_count_distinct\n" +
-                        "k0\t800\t800\n" +
-                        "k1\t800\t800\n" +
-                        "k2\t800\t800\n" +
-                        "k3\t800\t800\n" +
-                        "k4\t800\t800\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyGroupByWithApproxCountDistinctLongFunction() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(j), approx_count_distinct(j) FROM tab ORDER BY key",
-                "key\tcount_distinct\tapprox_count_distinct\n" +
-                        "k0\t800\t800\n" +
-                        "k1\t800\t800\n" +
-                        "k2\t800\t800\n" +
-                        "k3\t800\t800\n" +
-                        "k4\t800\t800\n"
-        );
-    }
-
-    @Test
     public void testParallelStringKeyGroupByWithCountDistinctIntFunction() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -1727,45 +1799,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k2\t46.31818181818182\t387.0\t22\n" +
                         "k3\t47.31818181818182\t393.0\t22\n" +
                         "k4\t48.31818181818182\t399.0\t22\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyGroupByWithTwoApproxCountDistinctIPv4Functions() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(ip), approx_count_distinct(ip), count_distinct(ip2), approx_count_distinct(ip2) FROM tab ORDER BY key",
-                "key\tcount_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
-                        "k0\t800\t800\t660\t660\n" +
-                        "k1\t800\t800\t667\t667\n" +
-                        "k2\t800\t800\t653\t653\n" +
-                        "k3\t800\t800\t671\t671\n" +
-                        "k4\t800\t800\t681\t681\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyGroupByWithTwoApproxCountDistinctIntFunctions() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(a), approx_count_distinct(a), count_distinct(a2), approx_count_distinct(a2) FROM tab ORDER BY key",
-                "key\tcount_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
-                        "k0\t800\t800\t653\t653\n" +
-                        "k1\t800\t800\t667\t667\n" +
-                        "k2\t800\t800\t663\t663\n" +
-                        "k3\t800\t800\t663\t663\n" +
-                        "k4\t800\t800\t668\t668\n"
-        );
-    }
-
-    @Test
-    public void testParallelSingleKeyGroupByWithTwoApproxCountDistinctLongFunctions() throws Exception {
-        testParallelGroupByAllTypes(
-                "SELECT key, count_distinct(j), approx_count_distinct(j), count_distinct(j2), approx_count_distinct(j2) FROM tab ORDER BY key",
-                "key\tcount_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
-                        "k0\t800\t800\t680\t680\n" +
-                        "k1\t800\t800\t654\t654\n" +
-                        "k2\t800\t800\t671\t671\n" +
-                        "k3\t800\t800\t671\t671\n" +
-                        "k4\t800\t800\t671\t671\n"
         );
     }
 

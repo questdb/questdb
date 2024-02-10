@@ -161,6 +161,7 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
             if (dstCount == 0 || dstCount == Numbers.LONG_NaN) {
                 destValue.putBool(overwrittenFlagIndex, false);
                 destValue.putLong(hllPtrIndex, srcPtr);
+                destValue.putLong(valueIndex, NULL_VALUE);
                 return;
             }
             // See the comment above. The same applies here.
@@ -171,6 +172,7 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
         if (destPtr == 0) {
             destValue.putBool(overwrittenFlagIndex, false);
             destValue.putLong(hllPtrIndex, srcPtr);
+            destValue.putLong(valueIndex, NULL_VALUE);
             return;
         }
 
@@ -180,6 +182,7 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
 
         destValue.putBool(overwrittenFlagIndex, false);
         destValue.putLong(hllPtrIndex, mergedPtr);
+        destValue.putLong(valueIndex, NULL_VALUE);
     }
 
     @Override
