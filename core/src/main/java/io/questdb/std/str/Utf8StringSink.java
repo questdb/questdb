@@ -64,8 +64,11 @@ public class Utf8StringSink implements MutableUtf8Sink {
         clear(0);
     }
 
+    private boolean ascii;
+
     public void clear(int pos) {
         this.pos = pos;
+        this.ascii = true;
     }
 
     @TestOnly
@@ -97,8 +100,18 @@ public class Utf8StringSink implements MutableUtf8Sink {
 
     @Override
     public Utf8StringSink put(byte b) {
-
+        ascii = false;
         return putByte0(b);
+    }
+
+    @Override
+    public boolean isAscii() {
+        return ascii;
+    }
+
+    @Override
+    public Utf8Sink putAscii(char c) {
+        return putByte0((byte) c);
     }
 
     @NotNull

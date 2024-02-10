@@ -226,35 +226,43 @@ public class Utf8sTest {
         ) {
             final Rnd rnd = TestUtils.generateRandom(null);
             final Utf8StringSink utf8Sink = new Utf8StringSink();
-            int n = rnd.nextInt(1000);
+            int n = rnd.nextInt(10000);
             ObjList<String> expectedValues = new ObjList<>(n);
             BitSet asciiBitSet = new BitSet();
+            LongList expectedOffsets = new LongList();
             for (int i = 0; i < n; i++) {
                 boolean ascii = rnd.nextBoolean();
-                if (ascii) {
-                    asciiBitSet.set(i);
-                }
-
                 if (rnd.nextInt(10) == 0) {
-                    Utf8s.appendVarchar(dataMem, auxMem, null, ascii);
+                    Utf8s.varcharAppend(dataMem, auxMem, null);
                     expectedValues.add(null);
                 } else {
                     utf8Sink.clear();
-                    rnd.nextUtf8Str(Math.max(1, rnd.nextInt(25)), utf8Sink);
+                    int len = Math.max(1, rnd.nextInt(25));
+                    if (ascii) {
+                        rnd.nextUtf8AsciiStr(len, utf8Sink);
+                        Assert.assertTrue(utf8Sink.isAscii());
+                    } else {
+                        rnd.nextUtf8Str(len, utf8Sink);
+                    }
+                    if (utf8Sink.isAscii()) {
+                        asciiBitSet.set(i);
+                    }
                     expectedValues.add(utf8Sink.toString());
-                    Utf8s.appendVarchar(dataMem, auxMem, utf8Sink, ascii);
+                    Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
                 }
+                expectedOffsets.add(dataMem.getAppendOffset());
             }
 
             for (int i = 0; i < n; i++) {
-                Utf8Sequence varchar = Utf8s.readVarchar(i * 16L, dataMem, auxMem, rnd.nextBoolean() ? 1 : 2);
+                Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMem, auxMem, rnd.nextBoolean() ? 1 : 2);
+                Assert.assertEquals(expectedOffsets.getQuick(i), Utf8s.varcharGetDataVectorSize(auxMem, i*16L));
                 String expectedValue = expectedValues.getQuick(i);
                 if (expectedValue == null) {
                     Assert.assertNull(varchar);
                 } else {
                     Assert.assertNotNull(varchar);
                     Assert.assertEquals(expectedValue, varchar.toString());
-                    Assert.assertEquals(varchar.isAscii(), asciiBitSet.get(i));
+                    Assert.assertEquals(asciiBitSet.get(i), varchar.isAscii());
                 }
             }
         }

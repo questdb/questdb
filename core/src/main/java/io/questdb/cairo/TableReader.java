@@ -502,7 +502,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private static void growColumn(MemoryR mem1, MemoryR mem2, int type, long rowCount) {
         if (rowCount > 0) {
-            if (ColumnType.isVariableLength(type)) {
+            if (ColumnType.isVarSize(type)) {
                 assert mem2 != null;
                 mem2.extend((rowCount + 1) * 8);
                 mem1.extend(mem2.getLong(rowCount * 8));
@@ -1080,7 +1080,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (columnRowCount > 0 && (versionRecordIndex > -1L || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
                 final int columnType = metadata.getColumnType(columnIndex);
 
-                if (ColumnType.isVariableLength(columnType)) {
+                if (ColumnType.isVarSize(columnType)) {
                     long columnSize = columnRowCount * 8L + 8L;
                     TableUtils.iFile(path.trimTo(plen), name, columnTxn);
                     mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize);

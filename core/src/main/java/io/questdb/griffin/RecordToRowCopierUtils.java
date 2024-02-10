@@ -87,6 +87,7 @@ public class RecordToRowCopierUtils {
         int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
         int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
         int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
+        int rGetVarchar = asm.poolInterfaceMethod(Record.class, "getVarcharA", "(I)Lio/questdb/std/str/Utf8Sequence;");
         //
         int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
         int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
@@ -105,6 +106,8 @@ public class RecordToRowCopierUtils {
         int wPutSymChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(IC)V");
         int wPutStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
         int wPutGeoStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
+        int wPutVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
+
         int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
         int implicitCastCharAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastCharAsGeoHash", "(CI)B");
         int implicitCastStrAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastStrAsFloat", "(Ljava/lang/CharSequence;)F");
@@ -589,6 +592,14 @@ public class RecordToRowCopierUtils {
                             break;
                         default:
                             assert false;
+                            break;
+                    }
+                    break;
+                case ColumnType.VARCHAR:
+                    asm.invokeInterface(rGetVarchar);
+                    switch (toColumnTypeTag) {
+                        case ColumnType.VARCHAR:
+                            asm.invokeInterface(wPutVarchar, 2);
                             break;
                     }
                     break;

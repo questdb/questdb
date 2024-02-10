@@ -709,7 +709,7 @@ public class SqlParser {
                         timestampColumnFound = true;
                     } else {
                         int columnType = model.getColumnType(colIndex);
-                        if (ColumnType.isVariableLength(columnType)) {
+                        if (ColumnType.isVarSize(columnType)) {
                             throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column can only be fixed size column [column=").put(columnName)
                                     .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
                         }

@@ -76,21 +76,7 @@ class WalWriterEvents implements Closeable {
         return eventMem.getAppendOffset();
     }
 
-    private void appendIndex(long value) {
-        Unsafe.getUnsafe().putLong(longBuffer, value);
-        ff.append(indexFd, longBuffer, Long.BYTES);
-    }
-
-    private void init() {
-        eventMem.putInt(0);
-        eventMem.putInt(WAL_FORMAT_VERSION);
-        eventMem.putInt(-1);
-
-        appendIndex(WALE_HEADER_SIZE);
-        txn = 0;
-    }
-
-    private void writeFunction(Function function) {
+    private void appendFunctionValue(Function function) {
         final int type = function.getType();
         eventMem.putInt(type);
 
@@ -143,6 +129,9 @@ class WalWriterEvents implements Closeable {
             case ColumnType.STRING:
                 eventMem.putStr(function.getStr(null));
                 break;
+            case ColumnType.VARCHAR:
+                eventMem.putVarchar(function.getVarcharA(null));
+                break;
             case ColumnType.BINARY:
                 eventMem.putBin(function.getBin(null));
                 break;
@@ -154,16 +143,29 @@ class WalWriterEvents implements Closeable {
         }
     }
 
-    private void writeIndexedVariables(BindVariableService bindVariableService) {
+    private void appendIndex(long value) {
+        Unsafe.getUnsafe().putLong(longBuffer, value);
+        ff.append(indexFd, longBuffer, Long.BYTES);
+    }
+
+    private void init() {
+        eventMem.putInt(0);
+        eventMem.putInt(WAL_FORMAT_VERSION);
+        eventMem.putInt(-1);
+
+        appendIndex(WALE_HEADER_SIZE);
+        txn = 0;
+    }
+
+    private void appendBindVariableValuesByIndex(BindVariableService bindVariableService) {
         final int count = bindVariableService != null ? bindVariableService.getIndexedVariableCount() : 0;
         eventMem.putInt(count);
-
         for (int i = 0; i < count; i++) {
-            writeFunction(bindVariableService.getFunction(i));
+            appendFunctionValue(bindVariableService.getFunction(i));
         }
     }
 
-    private void writeNamedVariables(BindVariableService bindVariableService) {
+    private void appendBindVariableValuesByName(BindVariableService bindVariableService) {
         final int count = bindVariableService != null ? bindVariableService.getNamedVariables().size() : 0;
         eventMem.putInt(count);
 
@@ -174,7 +176,7 @@ class WalWriterEvents implements Closeable {
                 eventMem.putStr(name);
                 sink.clear();
                 sink.put(':').put(name);
-                writeFunction(bindVariableService.getFunction(sink));
+                appendFunctionValue(bindVariableService.getFunction(sink));
             }
         }
     }
@@ -246,8 +248,8 @@ class WalWriterEvents implements Closeable {
         eventMem.putLong(rnd.getSeed0());
         eventMem.putLong(rnd.getSeed1());
         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
-        writeIndexedVariables(bindVariableService);
-        writeNamedVariables(bindVariableService);
+        appendBindVariableValuesByIndex(bindVariableService);
+        appendBindVariableValuesByName(bindVariableService);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
 

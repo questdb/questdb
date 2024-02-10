@@ -522,7 +522,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 int col = (c + start) % metadata.getColumnCount();
                 int columnType = metadata.getColumnType(col);
 
-                if (!upsertKeyIndexes.contains(col) && !ColumnType.isVariableLength(columnType)) {
+                if (!upsertKeyIndexes.contains(col) && !ColumnType.isVarSize(columnType)) {
                     upsertKeyIndexes.add(col);
                     break;
                 }
@@ -776,7 +776,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         StringSink sink = new StringSink();
         for (int i = 0; i < upsertKeys.size(); i++) {
             int columnType = metadata.getColumnType(upsertKeys.get(i));
-            if (columnType > 0 && !ColumnType.isVariableLength(columnType)) {
+            if (columnType > 0 && !ColumnType.isVarSize(columnType)) {
                 if (i > 0) {
                     sink.put(',');
                 }

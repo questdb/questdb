@@ -64,7 +64,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         this.columnOffsets = new long[count];
         for (int i = 0; i < count; i++) {
             int type = columnTypes.getColumnType(i);
-            if (ColumnType.isVariableLength(type)) {
+            if (ColumnType.isVarSize(type)) {
                 columnOffsets[i] = varOffset;
                 varOffset += 8;
             } else {

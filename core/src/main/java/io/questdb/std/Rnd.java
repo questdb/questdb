@@ -197,7 +197,7 @@ public class Rnd {
             int byteCount = Math.max(1, nextInt(5));
             switch (byteCount) {
                 case 1:
-                    sink.put((byte) ((32 + nextInt(128 - 32)) & 0x7f));
+                    sink.putAscii((char) ((32 + nextInt(128 - 32)) & 0x7f));
                     break;
                 case 2:
                     while (true) {
@@ -248,6 +248,12 @@ public class Rnd {
                     assert false;
                     break;
             }
+        }
+    }
+
+    public void nextUtf8AsciiStr(int len, Utf8Sink sink) {
+        for (int i = 0; i < len; i++) {
+            sink.putAscii((char) ((32 + nextInt(128 - 32)) & 0x7f));
         }
     }
 

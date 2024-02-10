@@ -340,16 +340,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 applyFilter(filter, rows, record, task.getFrameRowCount());
             } else {
-                applyCompiledFilter(
-                        compiledFilter,
-                        atom.getBindVarMemory(),
-                        atom.getBindVarFunctions(),
-                        pageAddressCache,
-                        task.getColumns(),
-                        rows,
-                        task.getFrameRowCount(),
-                        task.getFrameIndex()
-                );
+                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
 
             if (!particle.isSharded()) {

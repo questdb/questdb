@@ -588,7 +588,7 @@ public final class TableUtils {
         long recSize = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             int columnType = metadata.getColumnType(i);
-            if (ColumnType.isVariableLength(columnType)) {
+            if (ColumnType.isVarSize(columnType)) {
                 // Estimate size of variable length column as 28 bytes
                 recSize += ESTIMATED_VAR_COL_SIZE;
             } else if (columnType > 0) {
@@ -1571,7 +1571,7 @@ public final class TableUtils {
                 }
 
                 if (isColumnDedupKey(metaMem, i)) {
-                    if (ColumnType.isVariableLength(type)) {
+                    if (ColumnType.isVarSize(type)) {
                         throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for fixed size column types").put(" at [").put(i).put(']');
                     }
                 }

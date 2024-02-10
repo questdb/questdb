@@ -1,0 +1,188 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2023 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.vm.api.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+
+import java.util.concurrent.atomic.AtomicInteger;
+
+public interface ColumnTypeDriver {
+    void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts);
+
+    /**
+     * Configures AUX memory used by TableWriter to read WAL data. The mapping size will
+     * depend on the size of entry for each row.
+     *
+     * @param ff        files facade
+     * @param auxMem    the memory to configure
+     * @param fd        the fd of the file of the memory, could be -1
+     * @param fileName  the file name for the memory
+     * @param rowLo     the first row of the mapping
+     * @param rowHi     the last row of the mapping
+     * @param memoryTag the memory tag to help identify sources of memory leaks
+     * @param opts      mapping options
+     */
+    void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, int fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
+
+    void configureDataMemOM(FilesFacade ff, MemoryR auxMem, MemoryOM dataMem, int dataFd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
+
+    long getAuxVectorSize(long storageRowCount);
+
+    /**
+     * Data vector size between two rows. Rows are inclusive.
+     *
+     * @param auxMemAddr pointer to the aux vector
+     * @param rowLo      start row
+     * @param rowHi      end row, inclusive.
+     * @return size of data vector in bytes between these two rows.
+     */
+    long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi);
+
+    void o3ColumnCopy(
+            FilesFacade ff,
+            long srcAuxAddr,
+            long srcDataAddr,
+            long srcLo,
+            long srcHi,
+            long dstAuxAddr,
+            int dstAuxFd,
+            long dstAuxFileOffset,
+            long dstDataAddr,
+            int dstDataFd,
+            long dstDataOffset,
+            long dstDataAdjust,
+            long dstDataSize,
+            boolean mixedIOFlag
+    );
+
+    void o3MoveLag(long rowCount, long columnDataRowOffset, long existingLagRows, MemoryCR srcAuxMem, MemoryCR srcDataMem, MemoryARW dstAuxMem, MemoryARW dstDataMem);
+
+    void o3PartitionAppend(
+            AtomicInteger columnCounter,
+            int columnType,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long timestampMin,
+            long partitionTimestamp,
+            long srcDataTop,
+            long srcDataMax,
+            int indexBlockCapacity,
+            int srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            int activeFixFd,
+            int activeVarFd,
+            MemoryMA dstFixMem,
+            MemoryMA dstVarMem,
+            long dstRowCount,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3SplitPartitionSize,
+            TableWriter tableWriter,
+            long partitionUpdateSinkAddr
+    );
+
+    void o3PartitionMerge(
+            Path pathToNewPartition,
+            int pplen,
+            CharSequence columnName,
+            AtomicInteger columnCounter,
+            AtomicInteger partCounter,
+            int columnType,
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long oooPartitionMin,
+            long oooPartitionHi,
+            long srcDataTop,
+            long srcDataMax,
+            int prefixType,
+            long prefixLo,
+            long prefixHi,
+            int mergeType,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            long mergeDataLo,
+            long mergeDataHi,
+            long mergeLen,
+            int suffixType,
+            long suffixLo,
+            long suffixHi,
+            int indexBlockCapacity,
+            int srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            int srcDataFixFd,
+            int srcDataVarFd,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3SplitPartitionSize,
+            TableWriter tableWriter,
+            long colTopSinkAddr,
+            long columnNameTxn,
+            long partitionUpdateSinkAddr
+    );
+
+    /**
+     * Sorts var size vectors. This method is also responsible for sizing the destination vectors and ensuring the
+     * append position after sorting is correct.
+     *
+     * @param timestampIndex     array of 128-bit entries, second 64 bits are row numbers that drive ordering.
+     * @param timestampIndexSize size of the timestamp index
+     * @param srcDataMem         source data vector
+     * @param srcAuxMem          source aux vector
+     * @param dstDataMem         destination data vector
+     * @param dstAuxMem          destination aux vector
+     */
+    void o3sort(
+            long timestampIndex,
+            long timestampIndexSize,
+            MemoryCR srcDataMem,
+            MemoryCR srcAuxMem,
+            MemoryCARW dstDataMem,
+            MemoryCARW dstAuxMem
+    );
+
+    /**
+     * For now this method is called by WAL writer when data is rolled back (or row is cancelled). The
+     * expectation of the WAL writer is to have append position set correctly on aux mem and size of data vector
+     * provided correctly.
+     *
+     * @param auxMem
+     * @param rowCount
+     * @return
+     */
+    long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount);
+}

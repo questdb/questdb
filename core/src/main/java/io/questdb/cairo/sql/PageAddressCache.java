@@ -80,6 +80,10 @@ public class PageAddressCache implements Mutable {
         return columnCount;
     }
 
+    public boolean isVarLenColumn(int columnIndex) {
+        return varLenColumnIndexes.getQuick(columnIndex) > -1;
+    }
+
     public long getIndexPageAddress(int frameIndex, int columnIndex) {
         assert indexPageAddresses.size() >= varLenColumnCount * (frameIndex + 1);
         int varLenColumnIndex = varLenColumnIndexes.getQuick(columnIndex);
@@ -115,7 +119,7 @@ public class PageAddressCache implements Mutable {
         this.varLenColumnCount = 0;
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             final int columnType = metadata.getColumnType(columnIndex);
-            if (ColumnType.isVariableLength(columnType)) {
+            if (ColumnType.isVarSize(columnType)) {
                 varLenColumnIndexes.setQuick(columnIndex, varLenColumnCount++);
             }
         }

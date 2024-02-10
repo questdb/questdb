@@ -603,7 +603,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (intHashSet.excludes(k)) {
                 // if a slave column is not in key, it must be of fixed length.
                 // why? our maps do not support variable length types in values, only in keys
-                if (ColumnType.isVariableLength(slaveMetadata.getColumnType(k))) {
+                if (ColumnType.isVarSize(slaveMetadata.getColumnType(k))) {
                     throw SqlException
                             .position(joinPosition).put("right side column '")
                             .put(slaveMetadata.getColumnName(k)).put("' is of unsupported type");
