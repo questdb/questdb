@@ -80,7 +80,7 @@ public class Rnd {
         return bytes;
     }
 
-    //returns random bytes between 'B' and 'Z' for legacy reasons
+    // returns random bytes between 'B' and 'Z' for legacy reasons
     public void nextBytes(byte[] bytes) {
         int len = bytes.length;
         for (int i = 0; i < len; i++) {
@@ -88,7 +88,7 @@ public class Rnd {
         }
     }
 
-    //returns random bytes between 'B' and 'Z' for legacy reasons
+    // returns random bytes between 'B' and 'Z' for legacy reasons
     public char nextChar() {
         return (char) (nextPositiveInt() % 25 + 'B');
     }
@@ -105,7 +105,7 @@ public class Rnd {
         return sink;
     }
 
-    //returns random bytes between 'B' and 'Z' for legacy reasons
+    // returns random bytes between 'B' and 'Z' for legacy reasons
     public void nextChars(Utf16Sink sink, int len) {
         for (int i = 0; i < len; i++) {
             sink.put((char) (nextPositiveInt() % 25 + 66));
@@ -181,7 +181,7 @@ public class Rnd {
         return (short) nextLong();
     }
 
-    //returns random bytes between 'B' and 'Z' for legacy reasons
+    // returns random bytes between 'B' and 'Z' for legacy reasons
     public String nextString(int len) {
         char[] chars = new char[len];
         for (int i = 0; i < len; i++) {
@@ -200,10 +200,19 @@ public class Rnd {
                     sink.put((byte) ((32 + nextInt(128 - 32)) & 0x7f));
                     break;
                 case 2:
-                    // first byte of two-byte character, it has to start with 110xxxxx
-                    sink.put(nextUtf8Byte(0xe0, 0xc0));
-                    // second byte starts with continuation 10xxxxxx
-                    nextUtf8ContByte(sink);
+                    while (true) {
+                        // first byte of two-byte character, it has to start with 110xxxxx
+                        final byte b1 = nextUtf8Byte(0xe0, 0xc0);
+                        final byte b2 = nextUtf8ContinuationByte();
+
+                        // rule out 0xc1 since 0xC0 and 0xC1 can't appear in valid UTF8 as the only characters
+                        // that could be encoded by those are minimally encoded as single byte characters
+                        if ((b1 & 30) == 0) {
+                            continue;
+                        }
+                        sink.put(b1).put(b2);
+                        break;
+                    }
                     break;
                 case 3:
                     while (true) {
@@ -270,10 +279,6 @@ public class Rnd {
                 return (byte) k;
             }
         }
-    }
-
-    private void nextUtf8ContByte(Utf8Sink sink) {
-        sink.put(nextUtf8ContinuationByte());
     }
 
     private byte nextUtf8ContinuationByte() {

@@ -608,7 +608,7 @@ public final class Utf8s {
     }
 
     public static int utf8DecodeMultiByte(long lo, long hi, byte b, Utf16Sink sink) {
-        if (b >> 5 == -2 /*&& (b & 30) != 0*/) {
+        if (b >> 5 == -2 && (b & 30) != 0) {
             return utf8Decode2Bytes(lo, hi, b, sink);
         }
         if (b >> 4 == -2) {
@@ -1004,7 +1004,7 @@ public final class Utf8s {
     }
 
     private static int utf8DecodeMultiByte(Utf8Sequence seq, int index, byte b, @NotNull Utf16Sink sink) {
-        if (b >> 5 == -2 /*&& (b & 30) != 0*/) {
+        if (b >> 5 == -2 && (b & 30) != 0) {
             // we should allow 11000001, as it is a valid UTF8 byte?
             return utf8Decode2Bytes(seq, index, b, sink);
         }
@@ -1015,7 +1015,7 @@ public final class Utf8s {
     }
 
     private static int utf8DecodeMultiByteZ(long lo, byte b, @NotNull Utf16Sink sink) {
-        if (b >> 5 == -2 /*&& (b & 30) != 0*/) {
+        if (b >> 5 == -2 && (b & 30) != 0) {
             return utf8Decode2BytesZ(lo, b, sink);
         }
         if (b >> 4 == -2) {
