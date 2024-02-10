@@ -25,6 +25,7 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -45,21 +46,27 @@ public class HttpServerConfigurationBuilder {
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private boolean dumpTraffic;
     private FactoryProvider factoryProvider;
-    private Boolean healthCheckAuthRequired;
+    private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
     private String httpProtocolVersion = "HTTP/1.1 ";
+    private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private long multipartIdleSpinCount = -1;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private boolean pessimisticHealthCheck = false;
+    private int port = -1;
     private int receiveBufferSize = 1024 * 1024;
     private int rerunProcessingQueueSize = 4096;
     private int sendBufferSize = 1024 * 1024;
     private boolean serverKeepAlive = true;
-    private Boolean staticContentAuthRequired;
     private int tcpSndBufSize;
     private int workerCount;
 
     public DefaultHttpServerConfiguration build() {
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+            @Override
+            public int getBindPort() {
+                return port != -1 ? port : super.getBindPort();
+            }
+
             @Override
             public NetworkFacade getNetworkFacade() {
                 return nf;
@@ -140,8 +147,8 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public boolean isAuthenticationRequired() {
-                    return staticContentAuthRequired != null ? staticContentAuthRequired : true;
+                public byte getRequiredAuthType() {
+                    return httpStaticContentAuthType;
                 }
             };
 
@@ -212,6 +219,11 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
+            public byte getRequiredAuthType() {
+                return httpHealthCheckAuthType;
+            }
+
+            @Override
             public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
                 return staticContentProcessorConfiguration;
             }
@@ -247,18 +259,13 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
-            public boolean isHealthCheckAuthenticationRequired() {
-                return healthCheckAuthRequired != null ? healthCheckAuthRequired : super.isHealthCheckAuthenticationRequired();
+            public int getWorkerCount() {
+                return workerCount == 0 ? super.getWorkerCount() : workerCount;
             }
 
             @Override
             public boolean isPessimisticHealthCheckEnabled() {
                 return pessimisticHealthCheck;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount == 0 ? super.getWorkerCount() : workerCount;
             }
         };
     }
@@ -288,8 +295,8 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
-    public HttpServerConfigurationBuilder withHealthCheckAuthRequired(boolean healthCheckAuthRequired) {
-        this.healthCheckAuthRequired = healthCheckAuthRequired;
+    public HttpServerConfigurationBuilder withHealthCheckAuthRequired(byte httpHealthCheckAuthType) {
+        this.httpHealthCheckAuthType = httpHealthCheckAuthType;
         return this;
     }
 
@@ -313,6 +320,11 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
+    public HttpServerConfigurationBuilder withPort(int port) {
+        this.port = port;
+        return this;
+    }
+
     public HttpServerConfigurationBuilder withReceiveBufferSize(int receiveBufferSize) {
         this.receiveBufferSize = receiveBufferSize;
         return this;
@@ -333,8 +345,8 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
-    public HttpServerConfigurationBuilder withStaticContentAuthRequired(boolean staticContentAuthRequired) {
-        this.staticContentAuthRequired = staticContentAuthRequired;
+    public HttpServerConfigurationBuilder withStaticContentAuthRequired(byte httpStaticContentAuthType) {
+        this.httpStaticContentAuthType = httpStaticContentAuthType;
         return this;
     }
 

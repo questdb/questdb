@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.ExplainModel;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 /**
  * Simple stub for returning query execution plan text as result set with one column and one row .
@@ -90,7 +90,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void getStr(int col, CharSink sink) {
+        public void getStr(int col, Utf16Sink sink) {
             sink.put(planSink.getLine(cursor.row));
         }
 

@@ -29,14 +29,14 @@ import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 
 public class Long256TypeConstant extends Long256Function implements TypeConstant {
 
     public static final Long256TypeConstant INSTANCE = new Long256TypeConstant();
 
     @Override
-    public void getLong256(Record rec, CharSinkBase<?> sink) {
+    public void getLong256(Record rec, CharSink<?> sink) {
         Long256Impl.NULL_LONG256.toSink(sink);
     }
 

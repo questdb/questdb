@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cutlass.http.HttpChunkedResponseSocket;
+import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
@@ -35,38 +35,38 @@ import io.questdb.network.PeerIsSlowToReadException;
 public class HealthCheckProcessor implements HttpRequestProcessor {
 
     private final boolean pessimisticMode;
-    private final boolean requiresAuthentication;
+    private final byte requiredAuthType;
 
     public HealthCheckProcessor(HttpMinServerConfiguration configuration) {
         this.pessimisticMode = configuration.isPessimisticHealthCheckEnabled();
-        this.requiresAuthentication = configuration.isHealthCheckAuthenticationRequired();
+        this.requiredAuthType = configuration.getRequiredAuthType();
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
     }
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+        HttpChunkedResponse response = context.getChunkedResponse();
 
         if (pessimisticMode) {
             final HealthMetricsImpl metrics = context.getMetrics().health();
             final long unhandledErrors = metrics.unhandledErrorsCount();
             if (unhandledErrors > 0) {
-                r.status(500, "text/plain");
-                r.sendHeader();
-                r.putAscii("Status: Unhealthy\nUnhandled errors: ");
-                r.put(unhandledErrors);
-                r.sendChunk(true);
+                response.status(500, "text/plain");
+                response.sendHeader();
+                response.putAscii("Status: Unhealthy\nUnhandled errors: ");
+                response.put(unhandledErrors);
+                response.sendChunk(true);
                 return;
             }
         }
 
-        r.status(200, "text/plain");
-        r.sendHeader();
-        r.putAscii("Status: Healthy");
-        r.sendChunk(true);
-    }
-
-    @Override
-    public boolean requiresAuthentication() {
-        return requiresAuthentication;
+        response.status(200, "text/plain");
+        response.sendHeader();
+        response.putAscii("Status: Healthy");
+        response.sendChunk(true);
     }
 }

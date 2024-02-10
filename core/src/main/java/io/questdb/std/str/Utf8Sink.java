@@ -27,25 +27,21 @@ package io.questdb.std.str;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public interface Utf8Sink extends CharSinkBase<Utf8Sink> {
+public interface Utf8Sink extends CharSink<Utf8Sink> {
 
-    /**
-     * Encodes the given segment of a char sequence from UTF-16 to UTF-8 and writes it to the sink.
-     */
-    default Utf8Sink put(@NotNull CharSequence cs, int lo, int hi) {
-        int i = lo;
-        while (i < hi) {
-            char c = cs.charAt(i++);
-            if (c < 128) {
-                putAscii(c);
-            } else {
-                i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
-            }
-        }
-        return this;
+    @Override
+    default int getEncoding() {
+        return CharSinkEncoding.UTF8;
     }
 
-    Utf8Sink put(long lo, long hi);
+    /**
+     * Writes out bytes (8bits) to physical storage verbatim. This method is not commonly implemented on
+     * {@link CharSink}. For writing ASCII (8-byte) characters please see {@link #putAscii(char)}
+     *
+     * @param b byte value
+     * @return this sink for daisy-chaining
+     */
+    Utf8Sink put(byte b);
 
     /**
      * Encodes the given char sequence from UTF-16 to UTF-8 and writes it to the sink.
@@ -73,20 +69,28 @@ public interface Utf8Sink extends CharSinkBase<Utf8Sink> {
         return this;
     }
 
-    Utf8Sink put(@Nullable Utf8Sequence us);
 
     default Utf8Sink put(@Nullable DirectUtf8Sequence dus) {
         if (dus != null) {
-            put(dus.lo(), dus.hi());
+            putUtf8(dus.lo(), dus.hi());
         }
         return this;
     }
 
-    Utf8Sink put(byte b);
-
-    @Override
-    default Utf8Sink putAscii(char c) {
-        return put((byte) c);
+    /**
+     * Encodes the given segment of a char sequence from UTF-16 to UTF-8 and writes it to the sink.
+     */
+    default Utf8Sink put(@NotNull CharSequence cs, int lo, int hi) {
+        int i = lo;
+        while (i < hi) {
+            char c = cs.charAt(i++);
+            if (c < 128) {
+                putAscii(c);
+            } else {
+                i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
+            }
+        }
+        return this;
     }
 
     @Override
@@ -98,6 +102,11 @@ public interface Utf8Sink extends CharSinkBase<Utf8Sink> {
             }
         }
         return this;
+    }
+
+    @Override
+    default Utf8Sink putAscii(char c) {
+        return put((byte) c);
     }
 
     default Utf8Sink putQuoted(@NotNull CharSequence cs) {

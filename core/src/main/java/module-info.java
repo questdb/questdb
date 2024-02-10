@@ -47,6 +47,7 @@ open module io.questdb {
     exports io.questdb.cutlass.line;
     exports io.questdb.cutlass.line.udp;
     exports io.questdb.cutlass.line.tcp;
+    exports io.questdb.cutlass.line.http;
     exports io.questdb.cutlass.pgwire;
     exports io.questdb.cutlass.text;
     exports io.questdb.cutlass.text.types;
@@ -111,6 +112,7 @@ open module io.questdb {
     exports io.questdb.client;
     exports io.questdb.std.bytes;
     exports io.questdb.std.histogram.org.HdrHistogram.packedarray;
+    exports io.questdb.client.impl;
     exports io.questdb.griffin.engine.groupby.hyperloglog;
 
     provides FunctionFactory with
@@ -284,6 +286,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndUuidFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory,
             io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory,
+            io.questdb.griffin.engine.functions.long256.LongsToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.uuid.LongsToUuidFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory,

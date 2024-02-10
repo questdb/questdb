@@ -195,7 +195,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                             ) {
                                 boolean isWalTable = engine.isWalTable(tableToken);
                                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-                                LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
+                                LOG.info().$("preparing for snapshot [table=").utf8(tableName).I$();
 
                                 path.trimTo(snapshotDbLen).concat(tableToken);
                                 int rootLen = path.size();
@@ -320,6 +320,10 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
             final CharSequence snapshotInstanceId = memFile.getStr(0);
             if (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {
+                LOG.info()
+                        .$("skipping snapshot recovery [currentId=").$(currentInstanceId)
+                        .$(", previousId=").$(snapshotInstanceId)
+                        .I$();
                 return;
             }
 

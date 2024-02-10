@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
@@ -66,7 +66,7 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("{\"name\":\"")
                 .put(this.getClass().getSimpleName())
                 .putAscii("\", \"table\":\"")

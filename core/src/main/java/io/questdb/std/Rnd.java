@@ -25,7 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.cairo.GeoHashes;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 
 public class Rnd {
@@ -95,7 +95,7 @@ public class Rnd {
     }
 
     //returns random bytes between 'B' and 'Z' for legacy reasons
-    public void nextChars(CharSink sink, int len) {
+    public void nextChars(Utf16Sink sink, int len) {
         for (int i = 0; i < len; i++) {
             sink.put((char) (nextPositiveInt() % 25 + 66));
         }

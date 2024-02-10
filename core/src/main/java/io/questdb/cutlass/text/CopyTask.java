@@ -236,7 +236,7 @@ public class CopyTask {
     public boolean run(
             TextLexerWrapper lf,
             CsvFileIndexer indexer,
-            DirectCharSink utf8Sink,
+            DirectUtf16Sink utf8Sink,
             DirectLongList unmergedIndexes,
             long fileBufAddr,
             long fileBufSize,
@@ -800,7 +800,7 @@ public class CopyTask {
         private TimestampAdapter timestampAdapter;
         private int timestampIndex;
         private ObjList<TypeAdapter> types;
-        private DirectCharSink utf8Sink;
+        private DirectUtf16Sink utf8Sink;
         private final CsvTextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
 
         public void clear() {
@@ -846,7 +846,7 @@ public class CopyTask {
                 TextLexerWrapper lf,
                 long fileBufAddr,
                 long fileBufSize,
-                DirectCharSink utf8Sink,
+                DirectUtf16Sink utf8Sink,
                 DirectLongList unmergedIndexes,
                 Path path,
                 Path tmpPath
@@ -992,7 +992,7 @@ public class CopyTask {
                 long size,
                 long fileBufAddr,
                 long fileBufSize,
-                DirectCharSink utf8Sink,
+                DirectUtf16Sink utf8Sink,
                 Path tmpPath
         ) throws TextException {
             if (ioURingEnabled && rf.isAvailable()) {
@@ -1026,7 +1026,7 @@ public class CopyTask {
                 long size,
                 long fileBufAddr,
                 long fileBufSize,
-                DirectCharSink utf8Sink,
+                DirectUtf16Sink utf8Sink,
                 Path tmpPath
         ) {
             final CairoConfiguration configuration = engine.getConfiguration();
@@ -1140,7 +1140,7 @@ public class CopyTask {
                 long size,
                 long fileBufAddr,
                 long fileBufSize,
-                DirectCharSink utf8Sink,
+                DirectUtf16Sink utf8Sink,
                 Path tmpPath
         ) {
             final CairoConfiguration configuration = engine.getConfiguration();
@@ -1237,7 +1237,7 @@ public class CopyTask {
                 final AbstractTextLexer lexer,
                 long fileBufAddr,
                 long fileBufSize,
-                DirectCharSink utf8Sink,
+                DirectUtf16Sink utf8Sink,
                 DirectLongList unmergedIndexes,
                 Path tmpPath
         ) throws TextException {

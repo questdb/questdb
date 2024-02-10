@@ -26,4 +26,7 @@ package io.questdb.network;
 
 public class PeerIsSlowToReadException extends Exception {
     public static final PeerIsSlowToReadException INSTANCE = new PeerIsSlowToReadException();
+
+    private PeerIsSlowToReadException() {
+    }
 }

@@ -106,7 +106,7 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
 
     @Override
     public boolean isParallelismSupported() {
-        return true;
+        return BinaryFunction.super.isParallelismSupported();
     }
 
     @Override

@@ -69,7 +69,7 @@ public class HttpServer implements Closeable {
         this.httpContextFactory = new HttpContextFactory(configuration, metrics, socketFactory, cookieHandler, headerParserFactory);
         this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), httpContextFactory);
         pool.assign(dispatcher);
-        this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration());
+        this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
         pool.assign(this.rescheduleContext);
 
         for (int i = 0; i < workerCount; i++) {
@@ -78,7 +78,7 @@ public class HttpServer implements Closeable {
             pool.assign(i, new Job() {
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
                 private final IORequestProcessor<HttpConnectionContext> processor =
-                        (operation, context) -> context.handleClientOperation(operation, selector, rescheduleContext);
+                        (operation, context, dispatcher) -> handleClientOperation(context, operation, selector, rescheduleContext, dispatcher);
 
                 @Override
                 public boolean run(int workerId, @NotNull RunStatus runStatus) {
@@ -92,6 +92,21 @@ public class HttpServer implements Closeable {
             // therefore we need each thread to clean their thread locals individually
             pool.assignThreadLocalCleaner(i, httpContextFactory::freeThreadLocal);
         }
+    }
+
+    private boolean handleClientOperation(HttpConnectionContext context, int operation, HttpRequestProcessorSelector selector, WaitProcessor rescheduleContext, IODispatcher<HttpConnectionContext> dispatcher) {
+        try {
+            return context.handleClientOperation(operation, selector, rescheduleContext);
+        } catch (HeartBeatException e) {
+            dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+        } catch (PeerIsSlowToReadException e) {
+            dispatcher.registerChannel(context, IOOperation.WRITE);
+        } catch (ServerDisconnectException e) {
+            dispatcher.disconnect(context, context.getDisconnectReason());
+        } catch (PeerIsSlowToWriteException e) {
+            dispatcher.registerChannel(context, IOOperation.READ);
+        }
+        return false;
     }
 
     public static void addDefaultEndpoints(
@@ -146,6 +161,19 @@ public class HttpServer implements Closeable {
             });
         }
 
+        final SettingsProcessor settingsProcessor = new SettingsProcessor(cairoEngine.getConfiguration());
+        server.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public String getUrl() {
+                return "/settings";
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return settingsProcessor;
+            }
+        });
+
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
@@ -166,7 +194,7 @@ public class HttpServer implements Closeable {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new TextImportProcessor(cairoEngine);
+                return new TextImportProcessor(cairoEngine, configuration.getJsonQueryProcessorConfiguration());
             }
         });
 

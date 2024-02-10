@@ -81,7 +81,7 @@ public class PlainSocket implements Socket {
     }
 
     @Override
-    public int startTlsSession() {
+    public int startTlsSession(CharSequence peerName) {
         throw new UnsupportedOperationException();
     }
 

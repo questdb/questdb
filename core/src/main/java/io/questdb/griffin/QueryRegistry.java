@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -34,6 +35,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -49,6 +51,8 @@ public class QueryRegistry {
     private final ConcurrentLongHashMap<Entry> registry = new ConcurrentLongHashMap<>();
     private final ThreadLocal<WeakMutableObjectPool<Entry>> tlQueryPool;
 
+    private volatile Listener listener;
+
     public QueryRegistry(CairoConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();
         tlQueryPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(Entry::new, configuration.getQueryRegistryPoolSize()));
@@ -59,11 +63,12 @@ public class QueryRegistry {
      * Cancellation is not immediate and depends on how often the running command checks circuit breaker.
      * Cancelling commands issued by other users is allowed for admin user only.
      *
-     * @param queryId          - id of query to cancel, must be non-negative
-     * @param executionContext - execution context
+     * @param queryId          id of query to cancel, must be non-negative
+     * @param executionContext execution context
      * @return true if query was found in registry and cancelled, otherwise false
+     * @throws CairoException when user doesn't have permission to cancel the query or query is executed in WAL Apply job.
      */
-    public boolean cancel(long queryId, SqlExecutionContext executionContext) {
+    public boolean cancel(long queryId, SqlExecutionContext executionContext) throws CairoException {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeCancelQuery();
 
@@ -74,6 +79,9 @@ public class QueryRegistry {
                 securityContext.authorizeAdminAction();
             }
 
+            if (entry.isWAL) {
+                throw CairoException.nonCritical().put("query applied in WAL job can't be cancelled [id=").put(queryId).put(']');
+            }
             entry.cancel();
             entry.changedAtNs = clock.getTicks();
             entry.state = Entry.State.CANCELLED;
@@ -133,11 +141,22 @@ public class QueryRegistry {
             e.workerId = worker.getWorkerId();
             e.poolName = worker.getPoolName();
         }
+        e.isWAL = executionContext.isWalApplication();
         e.principal = executionContext.getSecurityContext().getPrincipal();
         registry.put(queryId, e);
 
+        Listener listener = this.listener;
+        if (listener != null) {
+            listener.onRegister(query, queryId, executionContext);
+        }
+
         executionContext.setCancelledFlag(e.cancelled);
         return queryId;
+    }
+
+    @TestOnly
+    public void setListener(Listener listener) {
+        this.listener = listener;
     }
 
     /**
@@ -163,11 +182,16 @@ public class QueryRegistry {
         executionContext.setCancelledFlag(null);
     }
 
+    public interface Listener {
+        void onRegister(CharSequence query, long queryId, SqlExecutionContext executionContext);
+    }
+
     public static class Entry implements Mutable {
 
         private final AtomicBoolean cancelled = new AtomicBoolean();
         private final StringSink query = new StringSink();
         private long changedAtNs;
+        private boolean isWAL;
         private CharSequence poolName;
         private CharSequence principal;
         private long registeredAtNs;
@@ -188,6 +212,7 @@ public class QueryRegistry {
             workerId = -1;
             principal = null;
             state = State.IDLE;
+            isWAL = false;
         }
 
         public AtomicBoolean getCancelled() {
@@ -224,6 +249,10 @@ public class QueryRegistry {
 
         public long getWorkerId() {
             return workerId;
+        }
+
+        public boolean isWAL() {
+            return isWAL;
         }
 
         public static class State {

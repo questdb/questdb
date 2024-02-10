@@ -45,7 +45,7 @@ import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
@@ -245,7 +245,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         return rows;
     }
 
-    private static void toSink(InputStream is, CharSink sink) throws IOException {
+    private static void toSink(InputStream is, Utf16Sink sink) throws IOException {
         // limit what we print
         byte[] bb = new byte[1];
         int i = 0;

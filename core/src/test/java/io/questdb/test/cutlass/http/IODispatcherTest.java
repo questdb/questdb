@@ -36,10 +36,7 @@ import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
@@ -191,10 +188,10 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> {
+                                    (operation, context, dispatcher1) -> {
                                         if (operation == IOOperation.WRITE) {
                                             Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
-                                            context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                            dispatcher1.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                         }
                                         return true;
                                     }
@@ -411,7 +408,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         }
                     } finally {
@@ -1452,7 +1449,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportBadRequestGet() throws Exception {
         testImport(
-                "HTTP/1.1 404 Not Found\r\n" +
+                "HTTP/1.1 400 Bad request\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -1484,26 +1481,16 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testImportBadRequestNoBoundary() throws Exception {
+    public void testImportBadRequestNoBoundaryDisconnects() throws Exception {
         testImport(
-                "HTTP/1.1 404 Not Found\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "34\r\n" +
-                        "Bad request. Form data in multipart POST expected.\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n",
+                "",
                 "POST /upload?overwrite=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Accept: */*\r\n" +
                         "content-type: multipart/form-data\r\n" +
                         "\r\n",
                 NetworkFacadeImpl.INSTANCE,
-                false,
+                true,
                 1
         );
     }
@@ -2276,7 +2263,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(engine);
+                        return new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
                 workerPool.start(LOG);
@@ -5481,7 +5468,7 @@ public class IODispatcherTest extends AbstractTest {
                         do {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         } while (serverRunning.get());
                     } finally {
@@ -5676,8 +5663,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "2a\r\n" +
-                        "Bad request. Non-multipart GET expected.\r\n" +
+                        "27\r\n" +
+                        "method (multipart POST) not supported\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
@@ -5891,8 +5878,6 @@ public class IODispatcherTest extends AbstractTest {
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
                     try {
                         Rnd rnd = new Rnd();
-                        final int diskBufferLen = 1024 * 1024;
-
                         writeRandomFile(path, rnd, 122222212222L);
 
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
@@ -5922,14 +5907,7 @@ public class IODispatcherTest extends AbstractTest {
                                         "\r\n";
 
                                 for (int j = 0; j < 10; j++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
+                                    sendAndReceive(request, expectedResponseHeader);
                                 }
 
                                 // send few requests to receive 304
@@ -5948,30 +5926,15 @@ public class IODispatcherTest extends AbstractTest {
                                 String expectedResponseHeader2 = "HTTP/1.1 304 Not Modified\r\n" +
                                         "Server: questDB/1.0\r\n" +
                                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                        "Content-Type: text/html; charset=utf-8\r\n" +
                                         "\r\n";
 
                                 for (int i = 0; i < 3; i++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request2, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
+                                    sendAndReceive(request2, expectedResponseHeader2);
                                 }
 
                                 // couple more full downloads after 304
                                 for (int j = 0; j < 2; j++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
+                                    sendAndReceive(request, expectedResponseHeader);
                                 }
 
                                 // get a 404 now
@@ -5998,10 +5961,9 @@ public class IODispatcherTest extends AbstractTest {
                                         "00\r\n" +
                                         "\r\n";
 
-
-                                sendAndReceive(NetworkFacadeImpl.INSTANCE, request3, expectedResponseHeader3, 4, 0, false);
+                                sendAndReceive(request3, expectedResponseHeader3);
                                 // and few more 304s
-                                sendAndReceive(NetworkFacadeImpl.INSTANCE, request2, expectedResponseHeader2, 4, 0, false);
+                                sendAndReceive(request2, expectedResponseHeader2);
                             } finally {
                                 Unsafe.free(buffer, netBufferLen, MemoryTag.NATIVE_DEFAULT);
                             }
@@ -6099,12 +6061,10 @@ public class IODispatcherTest extends AbstractTest {
                                     String expectedResponseHeader2 = "HTTP/1.1 304 Not Modified\r\n" +
                                             "Server: questDB/1.0\r\n" +
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                            "Content-Type: text/html; charset=utf-8\r\n" +
                                             "\r\n";
 
                                     for (int i = 0; i < 3; i++) {
-                                        sendRequest(request2, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
+                                        sendAndReceive(request2, expectedResponseHeader2);
                                     }
 
                                     // couple more full downloads after 304
@@ -6164,8 +6124,9 @@ public class IODispatcherTest extends AbstractTest {
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
+            NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
-                    NetworkFacadeImpl.INSTANCE,
+                    nf,
                     baseDir,
                     16 * 1024,
                     false,
@@ -6226,24 +6187,7 @@ public class IODispatcherTest extends AbstractTest {
                                         "ETag: \"122222212222\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
                                         "\r\n";
 
-                                for (int j = 0; j < 1; j++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(
-                                                fd,
-                                                rnd,
-                                                buffer,
-                                                netBufferLen,
-                                                diskBufferLen,
-                                                expectedResponseHeader,
-                                                20971670
-                                        );
-                                    } finally {
-                                        Net.close(fd);
-                                    }
-                                }
+                                sendAndReceive(nf, request, expectedResponseHeader, 1, 0, false);
 
                                 // send few requests to receive 304
                                 final String request2 = "GET /questdb-temp.txt HTTP/1.1\r\n" +
@@ -6261,31 +6205,16 @@ public class IODispatcherTest extends AbstractTest {
                                 String expectedResponseHeader2 = "HTTP/1.0 304 Not Modified\r\n" +
                                         "Server: questDB/1.0\r\n" +
                                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                        "Content-Type: text/html; charset=utf-8\r\n" +
                                         "Connection: close\r\n" +
                                         "\r\n";
 
                                 for (int i = 0; i < 3; i++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request2, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
+                                    sendAndReceive(nf, request2, expectedResponseHeader2, 1, 0, false);
                                 }
 
                                 // couple more full downloads after 304
-                                for (int j = 0; j < 2; j++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
+                                for (int i = 0; i < 3; i++) {
+                                    sendAndReceive(nf, request, expectedResponseHeader, 1, 0, false);
                                 }
 
                                 // get a 404 now
@@ -6313,29 +6242,11 @@ public class IODispatcherTest extends AbstractTest {
                                         "00\r\n" +
                                         "\r\n";
 
-
-                                for (int i = 0; i < 4; i++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request3, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader3, expectedResponseHeader3.length());
-                                    } finally {
-                                        Net.close(fd);
-                                    }
-                                }
+                                sendAndReceive(nf, request3, expectedResponseHeader3, 1, 0, false);
 
                                 // and few more 304s
-
                                 for (int i = 0; i < 3; i++) {
-                                    int fd = Net.socketTcp(true);
-                                    TestUtils.assertConnect(fd, sockAddr);
-                                    try {
-                                        sendRequest(request2, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
+                                    sendAndReceive(nf, request2, expectedResponseHeader2, 1, 0, false);
                                 }
 
                             } finally {
@@ -6451,7 +6362,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         }
                     } finally {
@@ -6603,7 +6514,7 @@ public class IODispatcherTest extends AbstractTest {
 
                             @Override
                             public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-                                context.simpleResponse().sendStatusWithDefaultMessage(200);
+                                context.simpleResponse().sendStatusTextContent(200);
                             }
                         };
                     }
@@ -6622,7 +6533,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         }
                     } finally {
@@ -6777,7 +6688,7 @@ public class IODispatcherTest extends AbstractTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                             );
                         }
                     } finally {
@@ -7734,7 +7645,7 @@ public class IODispatcherTest extends AbstractTest {
                                 while (serverRunning.get()) {
                                     dispatcher.run(0);
                                     dispatcher.processIOQueue(
-                                            (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                            (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
                                     );
                                 }
                             } finally {
@@ -7797,13 +7708,303 @@ public class IODispatcherTest extends AbstractTest {
                     serverHaltLatch.await();
                 }
             } catch (Throwable e) {
-                e.printStackTrace();
+                LOG.critical().$(e).$();
                 throw e;
             } finally {
                 finished.set(true);
                 senderHalt.await();
             }
             Assert.assertEquals(N * senderCount, requestsReceived.get());
+        });
+    }
+
+    @Test
+    public void testUpdateCommandRunningInWALCantBeCancelled() throws Exception {
+        final String url = "/query";
+        final long TIMEOUT = 240_000;
+
+        SOCountDownLatch started = new SOCountDownLatch(1);
+        SOCountDownLatch stopped = new SOCountDownLatch(1);
+        AtomicReference<Throwable> queryError = new AtomicReference<>();
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine) -> {
+                    DelayedWALListener registryListener = new DelayedWALListener();
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.getQueryRegistry().setListener(registryListener);
+
+                        engine.ddl("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL", executionContext);
+                        engine.insert("insert into tab select true, (86400000000*x)::timestamp, null from long_sequence(1000)", executionContext);
+                        drainWalQueue(engine);
+
+                        final String command = "update tab set b=false";
+
+                        started.setCount(2);
+                        stopped.setCount(2);
+                        queryError.set(null);
+
+                        registryListener.queryText = command;
+                        registryListener.queryFound.setCount(1);
+
+                        new Thread(() -> {
+                            try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                                started.countDown();
+                                try {
+                                    testHttpClient.assertGetRegexp(url, ".*(\"ddl\":\"OK\").*", command, null, null, null);
+                                } catch (Throwable e) {
+                                    queryError.set(e);
+                                }
+                            } finally {
+                                stopped.countDown();
+                            }
+                        }, "command_thread").start();
+
+                        Thread walJob = new Thread(() -> {
+                            started.countDown();
+
+                            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                while (queryError.get() == null) {
+                                    walApplyJob.drain(0);
+                                    new CheckWalTransactionsJob(engine).run(0);
+                                    // run once again as there might be notifications to handle now
+                                    walApplyJob.drain(0);
+                                }
+                            } finally {
+                                // release native path memory used by the job
+                                Path.PATH.get().close();
+                                stopped.countDown();
+                            }
+                        }, "wal_job");
+                        walJob.start();
+
+                        started.await();
+
+                        long queryId;
+                        long start = System.currentTimeMillis();
+
+                        //wait until query appears in registry and get query id
+                        try (RecordCursorFactory factory = engine.select("select query_id from query_activity() where is_wal = true and query = '" + command + "'", executionContext)) {
+                            while (true) {
+                                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                                    if (cursor.hasNext()) {
+                                        queryId = cursor.getRecord().getLong(0);
+                                        break;
+                                    }
+                                }
+                                Os.sleep(1);
+                                if (System.currentTimeMillis() - start > TIMEOUT) {
+                                    throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                }
+                                if (queryError.get() != null) {
+                                    throw new RuntimeException("Query failed!", queryError.get());
+                                }
+                            }
+                        }
+
+                        testHttpClient.assertGetRegexp(
+                                "/query",
+                                ".*(query applied in WAL job can't be cancelled).*",
+                                "cancel query " + queryId,
+                                null, null,
+                                "200"
+                        );
+
+                        registryListener.queryFound.countDown();
+                        queryError.set(new Exception());//stop wal thread
+                        stopped.await();
+
+                        StringSink sink = new StringSink();
+                        TestUtils.assertSql(
+                                engine,
+                                executionContext,
+                                "select count(*) from tab where b=false",
+                                sink,
+                                "count\n1000\n");
+
+                    } finally {
+                        engine.getQueryRegistry().setListener(null);
+                    }
+                });
+    }
+
+    @Test
+    public void testUpdateCommandRunningInWALDoesntTimeOut() throws Exception {
+        assertMemoryLeak(() -> {
+            final long TIMEOUT = 240_000;
+
+            SOCountDownLatch started = new SOCountDownLatch(1);
+            SOCountDownLatch stopped = new SOCountDownLatch(1);
+            AtomicReference<Throwable> queryError = new AtomicReference<>();
+
+            DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                    .withNetwork(NetworkFacadeImpl.INSTANCE)
+                    .withBaseDir(root)
+                    .withSendBufferSize(256)
+                    .withDumpingTraffic(false)
+                    .withAllowDeflateBeforeSend(false)
+                    .withServerKeepAlive(true)
+                    .withHttpProtocolVersion("HTTP/1.1 ")
+                    .build();
+
+            WorkerPool workerPool = new TestWorkerPool(1);
+
+            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root) {
+                @Override
+                public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                    return new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                        @Override
+                        public long getQueryTimeout() {
+                            return 1;
+                        }
+                    };
+                }
+            }, metrics);
+                 HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE);
+                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+            ) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                workerPool.getWorkerCount()
+                        );
+                    }
+                });
+
+                O3Utils.setupWorkerPool(workerPool, engine, engine.getConfiguration().getCircuitBreakerConfiguration());
+
+                workerPool.start(LOG);
+
+                try {
+                    DelayedWALListener registryListener = new DelayedWALListener();
+                    engine.getQueryRegistry().setListener(registryListener);
+
+                    String ddl = "create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL";
+                    final String command = "update tab set b=false where b=true and sleep(1)";
+
+                    engine.ddl(ddl, executionContext);
+                    engine.insert("insert into tab select true, (864000000*x)::timestamp, null from long_sequence(3000)", executionContext);
+                    drainWalQueue(engine);
+
+                    started.setCount(2);
+                    stopped.setCount(2);
+                    queryError.set(null);
+
+                    registryListener.queryText = command;
+                    registryListener.queryFound.setCount(1);
+
+                    new Thread(() -> {
+                        try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                            started.countDown();
+                            try {
+                                testHttpClient.assertGetRegexp("/query", ".*(\"ddl\":\"OK\").*", command, null, null, null);
+                            } catch (Throwable e) {
+                                queryError.set(e);
+                            }
+                        } finally {
+                            stopped.countDown();
+                        }
+                    }, "command_thread").start();
+
+                    Thread walJob = new Thread(() -> {
+                        started.countDown();
+
+                        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                            while (queryError.get() == null) {
+                                walApplyJob.drain(0);
+                                new CheckWalTransactionsJob(engine).run(0);
+                                // run once again as there might be notifications to handle now
+                                walApplyJob.drain(0);
+                            }
+                        } finally {
+                            // release native path memory used by the job
+                            Path.PATH.get().close();
+                            stopped.countDown();
+                        }
+                    }, "wal_job");
+                    walJob.start();
+
+                    started.await();
+
+                    long queryId;
+                    long start = System.currentTimeMillis();
+
+                    //wait until query appears in registry and get query id
+                    try {
+                        try (RecordCursorFactory factory = engine.select("select query_id from query_activity() where is_wal = true and query = '" + command.replace("'", "''") + "'", executionContext)) {
+                            while (true) {
+                                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                                    if (cursor.hasNext()) {
+                                        queryId = cursor.getRecord().getLong(0);
+                                        break;
+                                    }
+                                }
+                                Os.sleep(1);
+                                if (System.currentTimeMillis() - start > TIMEOUT) {
+                                    throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                }
+                                if (queryError.get() != null) {
+                                    throw new RuntimeException("Query failed!", queryError.get());
+                                }
+                            }
+                        }
+                    } finally {
+                        registryListener.queryFound.countDown();
+                    }
+
+                    //wait until query finishes
+                    while (engine.getQueryRegistry().getEntry(queryId) != null) {
+                        Os.sleep(1);
+                    }
+                } finally {
+                    queryError.set(new Exception());//stop wal thread
+                    stopped.await();
+                    workerPool.halt();
+                }
+            }
+
+            // run query in separate engine so it doesn't time out
+            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root));
+                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                StringSink sink = new StringSink();
+                TestUtils.assertSql(
+                        engine,
+                        executionContext,
+                        "select count(*) from tab where b=false",
+                        sink,
+                        "count\n3000\n"
+                );
+            }
+
         });
     }
 
@@ -7889,7 +8090,7 @@ public class IODispatcherTest extends AbstractTest {
                         event.close();
                         totalEvents.incrementAndGet();
                     } catch (Exception e) {
-                        e.printStackTrace();
+                        LOG.critical().$(e).$();
                     }
                 } else {
                     Os.pause();
@@ -7928,6 +8129,18 @@ public class IODispatcherTest extends AbstractTest {
             }
             writer.commit();
         }
+    }
+
+    private static void sendAndReceive(String request, CharSequence response) {
+        sendAndReceive(
+                NetworkFacadeImpl.INSTANCE,
+                request,
+                response,
+                1,
+                0,
+                false,
+                false
+        );
     }
 
     private static void sendAndReceive(
@@ -8114,6 +8327,27 @@ public class IODispatcherTest extends AbstractTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false);
+    }
+
+    private boolean handleClientOperation(
+            HttpConnectionContext context,
+            int operation,
+            HttpRequestProcessorSelector selector,
+            RescheduleContext rescheduleContext,
+            IODispatcher<HttpConnectionContext> dispatcher
+    ) {
+        try {
+            return context.handleClientOperation(operation, selector, rescheduleContext);
+        } catch (HeartBeatException e) {
+            dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+        } catch (PeerIsSlowToReadException e) {
+            dispatcher.registerChannel(context, IOOperation.WRITE);
+        } catch (ServerDisconnectException e) {
+            dispatcher.disconnect(context, context.getDisconnectReason());
+        } catch (PeerIsSlowToWriteException e) {
+            dispatcher.registerChannel(context, IOOperation.READ);
+        }
+        return false;
     }
 
     private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(
@@ -8381,11 +8615,11 @@ public class IODispatcherTest extends AbstractTest {
 
         String baseTable = "create table tab (b boolean, ts timestamp, sym symbol)";
         String walTable = baseTable + " timestamp(ts) partition by DAY WAL";
-        ObjList ddls = new ObjList(
+        ObjList<String> ddls = new ObjList<>(
                 baseTable,
                 baseTable + " timestamp(ts)",
-                baseTable + " timestamp(ts) partition by DAY BYPASS WAL",
-                walTable
+                baseTable + " timestamp(ts) partition by DAY BYPASS WAL"
+                // walTable // TODO: ban cancellation of queries inside WAL Apply job
         );
 
         String createAsSelect = "create table new_tab as (select * from tab where sleep(120000))";
@@ -8403,17 +8637,11 @@ public class IODispatcherTest extends AbstractTest {
         String update2 = "update tab set b=sleep(120000)";
         String updateWithJoin1 = "update tab t1 set b=true from tab t2 where sleep(120000) and t1.b = t2.b";
         String updateWithJoin2 = "update tab t1 set b=sleep(120000) from tab t2 where t1.b = t2.b";
+        String addColumns = "alter table tab add column s1 symbol index";
 
-        // add many symbols to slow down operation enough so that other thread can detect it in registry and cancel it
-        String addColumnsTmp = "alter table tab add column s1 symbol index";
-        for (int i = 2; i < 30; i++) {
-            addColumnsTmp += ", s" + i + " symbol index";
-        }
-        final String addColumns = addColumnsTmp;
-
-        final ObjList commands;
+        final ObjList<String> commands;
         if ("/query".equals(url)) {
-            commands = new ObjList(
+            commands = new ObjList<>(
                     createAsSelect,
                     select1,
                     select2,
@@ -8432,10 +8660,11 @@ public class IODispatcherTest extends AbstractTest {
                     addColumns
             );
         } else {
-            commands = new ObjList(
+            commands = new ObjList<>(
                     select1,
                     select2,
-                    selectWithJoin);
+                    selectWithJoin
+            );
         }
 
 
@@ -8455,11 +8684,12 @@ public class IODispatcherTest extends AbstractTest {
                                 .withServerKeepAlive(true)
                 )
                 .run((engine) -> {
-                    //testHttpClient.setKeepConnection(true);
+                    DelayedListener registryListener = new DelayedListener();
+                    engine.getQueryRegistry().setListener(registryListener);
 
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         for (int i = 0, n = ddls.size(); i < n; i++) {
-                            final String ddl = (String) ddls.getQuick(i);
+                            final String ddl = ddls.getQuick(i);
                             boolean isWal = ddl.equals(walTable);
 
                             engine.drop("drop table if exists tab", executionContext, null);
@@ -8470,32 +8700,7 @@ public class IODispatcherTest extends AbstractTest {
                             }
 
                             for (int j = 0, k = commands.size(); j < k; j++) {
-                                final String command = (String) commands.getQuick(j);
-
-                                if (isWal) {
-                                    try (RecordCursorFactory factory = engine.select("select suspended, writerTxn, sequencerTxn from wal_tables() where name = 'tab'", executionContext)) {
-                                        boolean suspended;
-                                        long sequencerTxn;
-
-                                        try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                                            cursor.hasNext();
-                                            Record record = cursor.getRecord();
-                                            suspended = record.getBool(0);
-                                            sequencerTxn = record.getLong(2) + 1;
-                                        }
-
-                                        if (suspended) {
-                                            engine.ddl("alter table tab resume wal from txn " + sequencerTxn, executionContext);
-
-                                            try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                                                cursor.hasNext();
-                                                Record record = cursor.getRecord();
-                                                suspended = record.getBool(1);
-                                                Assert.assertFalse(suspended);
-                                            }
-                                        }
-                                    }
-                                }
+                                final String command = commands.getQuick(j);
 
                                 // statements containing multiple transactions, such as 'alter table add column col1, col2' are currently not supported for WAL tables
                                 // UPDATE statements with join are not supported yet for WAL tables
@@ -8513,8 +8718,10 @@ public class IODispatcherTest extends AbstractTest {
                                     stopped.setCount(isWal ? 2 : 1);
                                     queryError.set(null);
 
+                                    registryListener.queryText = command;
+                                    registryListener.queryFound.setCount(1);
+
                                     new Thread(() -> {
-                                        String response;
                                         try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                             started.countDown();
                                             try {
@@ -8533,64 +8740,47 @@ public class IODispatcherTest extends AbstractTest {
                                         }
                                     }, "command_thread").start();
 
-                                    if (isWal) {
-                                        Thread walJob = new Thread(() -> {
-                                            started.countDown();
-
-                                            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);) {
-                                                while (queryError.get() == null) {
-                                                    walApplyJob.drain(0);
-                                                    new CheckWalTransactionsJob(engine).run(0);
-                                                    // run once again as there might be notifications to handle now
-                                                    walApplyJob.drain(0);
-                                                }
-                                            } finally {
-                                                // release native path memory used by the job
-                                                Path.PATH.get().close();
-                                                stopped.countDown();
-                                            }
-                                        }, "wal_job");
-                                        walJob.start();
-                                    }
-
                                     started.await();
 
                                     long queryId;
                                     long start = System.currentTimeMillis();
 
                                     //wait until query appears in registry and get query id
-                                    while (true) {
-                                        Os.sleep(1);
-                                        testHttpClient.assertGetRegexp(
-                                                "/query",
-                                                ".*dataset.*",
-                                                "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
-                                                null, null, null,
-                                                new CharSequenceObjHashMap<String>() {{
-                                                    put("nm", "true");
-                                                }},
-                                                "200"
-                                        );
-                                        String response = testHttpClient.getSink().toString();
-                                        int startIdx = response.indexOf("\"dataset\":[[");
-                                        if (startIdx > -1) {
-                                            startIdx += "\"dataset\":[[".length();
-                                            int endIdx = response.indexOf("]]", startIdx);
-                                            queryId = Numbers.parseLong(response, startIdx, endIdx);
-                                            break;
+                                    try {
+                                        while (true) {
+                                            Os.sleep(1);
+                                            testHttpClient.assertGetRegexp(
+                                                    "/query",
+                                                    ".*dataset.*",
+                                                    "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
+                                                    null, null, null,
+                                                    new CharSequenceObjHashMap<String>() {{
+                                                        put("nm", "true");
+                                                    }},
+                                                    "200"
+                                            );
+                                            String response = testHttpClient.getSink().toString();
+                                            int startIdx = response.indexOf("\"dataset\":[[");
+                                            if (startIdx > -1) {
+                                                startIdx += "\"dataset\":[[".length();
+                                                int endIdx = response.indexOf("]]", startIdx);
+                                                queryId = Numbers.parseLong(response, startIdx, endIdx);
+                                                break;
+                                            }
+                                            if (System.currentTimeMillis() - start > TIMEOUT) {
+                                                throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                            }
+                                            if (queryError.get() != null) {
+                                                throw new RuntimeException("Query to cancel failed!", queryError.get());
+                                            }
                                         }
-
-                                        if (System.currentTimeMillis() - start > TIMEOUT) {
-                                            throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
-                                        }
-                                        if (queryError.get() != null) {
-                                            throw new RuntimeException("Query to cancel failed!", queryError.get());
-                                        }
+                                    } finally {
+                                        registryListener.queryFound.countDown();
                                     }
 
                                     testHttpClient.assertGetRegexp(
                                             "/query",
-                                            "\\{\"ddl\":\"OK\"\\}",
+                                            ".*(query to cancel not found in registry|\"ddl\":\"OK\").*",
                                             "cancel query " + queryId,
                                             null, null,
                                             "200"
@@ -8634,6 +8824,8 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             }
                         }
+                    } finally {
+                        engine.getQueryRegistry().setListener(null);
                     }
                 });
     }
@@ -8929,7 +9121,7 @@ public class IODispatcherTest extends AbstractTest {
                     @Override
                     public void run() {
                         long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
-                        IORequestProcessor<TestIOContext> requestProcessor = (operation, context) -> {
+                        IORequestProcessor<TestIOContext> requestProcessor = (operation, context, dispatcher) -> {
                             int fd = context.getFd();
                             int rc;
                             switch (operation) {
@@ -9104,15 +9296,52 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
+    private static class DelayedListener implements QueryRegistry.Listener {
+        private final SOCountDownLatch queryFound = new SOCountDownLatch(1);
+        private volatile CharSequence queryText;
+
+        @Override
+        public void onRegister(CharSequence query, long queryId, SqlExecutionContext executionContext) {
+            if (queryText == null) {
+                return;
+            }
+
+            if (Chars.equalsNc(queryText, query)) {
+                queryFound.await();
+                queryText = null;
+            }
+        }
+    }
+
+    private static class DelayedWALListener implements QueryRegistry.Listener {
+        private final SOCountDownLatch queryFound = new SOCountDownLatch(1);
+        private volatile CharSequence queryText;
+
+        @Override
+        public void onRegister(CharSequence query, long queryId, SqlExecutionContext executionContext) {
+            if (queryText == null) {
+                return;
+            }
+
+            if (!executionContext.isWalApplication()) {
+                return;
+            }
+
+            if (Chars.equalsNc(queryText, query)) {
+                queryFound.await();
+                queryText = null;
+            }
+        }
+    }
+
     private static class HelloContext extends IOContext<HelloContext> {
         private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         private final SOCountDownLatch closeLatch;
 
         public HelloContext(int fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
             super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
-            socket.of(fd);
+            this.of(fd, dispatcher);
             this.closeLatch = closeLatch;
-            this.dispatcher = dispatcher;
         }
 
         @Override
@@ -9154,14 +9383,14 @@ public class IODispatcherTest extends AbstractTest {
                         try {
                             requester.execute(requests[index][0], requests[index][1]);
                         } catch (Throwable e) {
-                            e.printStackTrace();
+                            LOG.critical().$(e).$();
                             System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
                             throw e;
                         }
                     }
                 });
             } catch (Throwable e) {
-                e.printStackTrace();
+                LOG.critical().$(e).$();
                 errorCounter.incrementAndGet();
             } finally {
                 latch.countDown();

@@ -828,13 +828,13 @@ public class LogFactory implements Closeable {
 
     private static class Holder implements Closeable {
         private final Sequence lSeq;
-        private final RingQueue<LogRecordSink> ring;
+        private final RingQueue<LogRecordUtf8Sink> ring;
         private FanOut fanOut;
         private SCSequence wSeq;
 
         public Holder(int queueDepth, final int recordLength) {
             this.ring = new RingQueue<>(
-                    LogRecordSink::new,
+                    LogRecordUtf8Sink::new,
                     Numbers.ceilPow2(recordLength),
                     queueDepth,
                     MemoryTag.NATIVE_LOGGER
@@ -976,7 +976,22 @@ public class LogFactory implements Closeable {
         }
 
         @Override
+        public LogRecord put(@Nullable Utf8Sequence us) {
+            return this;
+        }
+
+        @Override
+        public LogRecord put(byte b) {
+            return this;
+        }
+
+        @Override
         public LogRecord put(char c) {
+            return this;
+        }
+
+        @Override
+        public LogRecord putUtf8(long lo, long hi) {
             return this;
         }
 

@@ -26,7 +26,7 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import org.junit.Test;
 
 public class StrArrayFunctionTest {
@@ -49,12 +49,12 @@ public class StrArrayFunctionTest {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             sink.put(getStr(rec));
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink, int arrayIndex) {
+        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
             sink.put(getStr(rec, arrayIndex));
         }
 

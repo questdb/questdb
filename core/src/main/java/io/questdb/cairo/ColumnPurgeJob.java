@@ -223,18 +223,22 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             try (RecordCursor records = recordCursorFactory.getCursor(sqlExecutionContext)) {
                 Record rec = records.getRecord();
                 long lastTs = 0;
-                ColumnPurgeRetryTask taskRun = null;
+                ColumnPurgeRetryTask task = null;
 
                 CharSequenceObjHashMap<String> stringIntern = new CharSequenceObjHashMap<>();
 
+                boolean taskInitialized = false;
                 while (records.hasNext()) {
                     count++;
                     long ts = rec.getTimestamp(0);
-                    if (ts != lastTs || taskRun == null) {
-                        if (taskRun != null) {
-                            columnPurgeOperator.purgeExclusive(taskRun);
+                    if (ts != lastTs || task == null) {
+                        if (task != null) {
+                            if (taskInitialized) {
+                                columnPurgeOperator.purgeExclusive(task);
+                                taskInitialized = false;
+                            }
                         } else {
-                            taskRun = taskPool.pop();
+                            task = taskPool.pop();
                         }
 
                         lastTs = ts;
@@ -252,7 +256,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             continue;
                         }
 
-                        taskRun.of(
+                        taskInitialized = true;
+                        task.of(
                                 token,
                                 columnName,
                                 tableId,
@@ -267,11 +272,13 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     long columnVersion = rec.getLong(COLUMN_VERSION_COLUMN);
                     long partitionTs = rec.getLong(PARTITION_TIMESTAMP_COLUMN);
                     long partitionNameTxn = rec.getLong(PARTITION_NAME_COLUMN);
-                    taskRun.appendColumnInfo(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());
+                    task.appendColumnInfo(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());
                 }
-                if (taskRun != null) {
-                    columnPurgeOperator.purgeExclusive(taskRun);
-                    taskPool.push(taskRun);
+                if (task != null) {
+                    if (taskInitialized) {
+                        columnPurgeOperator.purgeExclusive(task);
+                    }
+                    taskPool.push(task);
                 }
             }
 

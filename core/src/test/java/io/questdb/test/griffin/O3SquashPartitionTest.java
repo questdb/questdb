@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.Metrics;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -34,6 +35,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -47,15 +49,18 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
-        node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 << 10);
+        Overrides overrides = node1.getConfigurationOverrides();
+        overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
         super.setUp();
     }
 
     @Test
     public void testCannotSplitPartitionAllRowsSameTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(1);
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
 
             Metrics metrics = engine.getMetrics();
@@ -117,8 +122,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     public void testSplitLastPartition() throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
 
             ddl(
@@ -219,8 +224,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     public void testSplitLastPartitionAppend() throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(1);
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
 
             int rowCount = (int) metrics.tableWriter().getPhysicallyWrittenRows();
             compile(
@@ -275,8 +282,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // create table with 2 points every hour for 1 day of 2020-02-03
 
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(1);
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
             ddl(
                     "create table x as (" +
@@ -354,8 +363,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // create table with 2 points every hour for 1 day of 2020-02-03
 
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(1);
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
             long start = TimestampFormatUtils.parseTimestamp("2020-02-03");
             ddl(
                     "create table x as (" +
@@ -490,8 +501,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
         assertMemoryLeak(ff, () -> {
             // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
             compile(
                     "create table x as (" +
@@ -642,8 +653,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     public void testSplitPartitionChangesColTop() throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(1);
+            Overrides overrides1 = node1.getConfigurationOverrides();
+            overrides1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
 
             compile(
                     "create table x as (" +
@@ -694,13 +707,23 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSquashPartitions() throws Exception {
-        testSquashPartitions("");
+    public void testSquashPartitionsOnEmptyTable() throws Exception {
+        testSquashPartitionsOnEmptyTable("");
     }
 
     @Test
-    public void testSquashPartitionsWal() throws Exception {
-        testSquashPartitions("WAL");
+    public void testSquashPartitionsOnEmptyTableWal() throws Exception {
+        testSquashPartitionsOnEmptyTable("WAL");
+    }
+
+    @Test
+    public void testSquashPartitionsOnNonEmptyTable() throws Exception {
+        testSquashPartitionsOnNonEmptyTable("");
+    }
+
+    @Test
+    public void testSquashPartitionsOnNonEmptyTableWal() throws Exception {
+        testSquashPartitionsOnNonEmptyTable("WAL");
     }
 
     private int assertRowCount(int delta, int rowCount) {
@@ -716,11 +739,68 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         }
     }
 
-    private void testSquashPartitions(String wal) throws Exception {
+    private void testSquashPartitionsOnEmptyTable(String wal) throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            node1.getConfigurationOverrides().setPartitionO3SplitThreshold(4 * (1 << 10));
-            node1.getConfigurationOverrides().setO3PartitionSplitMaxCount(2);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE,  4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
+
+            ddl(
+                    "create table x (" +
+                            " i int," +
+                            " j long," +
+                            " str string," +
+                            " ts timestamp" +
+                            ") timestamp (ts) partition by DAY " + wal,
+                    sqlExecutionContext
+            );
+            drainWalQueue();
+
+            // should squash partitions on empty table
+            compile("alter table x squash partitions");
+            drainWalQueue();
+
+            String sqlPrefix = "insert into x " +
+                    "select" +
+                    " cast(x as int) * 1000000 i," +
+                    " -x - 1000000L as j," +
+                    " rnd_str(5,16,2) as str,";
+            ddl(
+                    sqlPrefix +
+                            " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
+                            " from long_sequence(200)",
+                    sqlExecutionContext
+            );
+            drainWalQueue();
+
+            ddl(sqlPrefix +
+                            " timestamp_sequence('2020-02-05T18:01', 60*1000000L) ts" +
+                            " from long_sequence(200)",
+                    sqlExecutionContext
+            );
+            drainWalQueue();
+
+            // should squash partitions this time
+            compile("alter table x squash partitions");
+            // this one should be no-op
+            compile("alter table x squash partitions");
+            drainWalQueue();
+
+            String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
+            assertSql("minTimestamp\tnumRows\tname\n" +
+                    "2020-02-04T20:01:00.000000Z\t200\t2020-02-04\n" +
+                    "2020-02-05T18:01:00.000000Z\t200\t2020-02-05\n", partitionsSql);
+
+            assertSql("count\n" +
+                    "400\n", "select count() from x;");
+        });
+    }
+
+    private void testSquashPartitionsOnNonEmptyTable(String wal) throws Exception {
+        assertMemoryLeak(() -> {
+            // 4kb prefix split threshold
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
             ddl(
                     "create table x as (" +
@@ -734,7 +814,6 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
             drainWalQueue();
-
 
             try (TableReader ignore = getReader("x")) {
                 String sqlPrefix = "insert into x " +
@@ -777,6 +856,23 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 assertSql("minTimestamp\tnumRows\tname\n" +
                         "2020-02-04T00:00:00.000000Z\t1640\t2020-02-04\n" +
                         "2020-02-05T00:00:00.000000Z\t1370\t2020-02-05\n", partitionsSql);
+
+                // Insert a few more rows and verify that they're all inserted.
+                sqlPrefix = "insert into x " +
+                        "select" +
+                        " cast(x as int) * 1000000 i," +
+                        " -x - 1000000L as j," +
+                        " rnd_str(5,16,2) as str,";
+                ddl(
+                        sqlPrefix +
+                                " timestamp_sequence('2023-02-04T20:01', 1000000L) ts" +
+                                " from long_sequence(200)",
+                        sqlExecutionContext
+                );
+                drainWalQueue();
+
+                assertSql("count\n" +
+                        (60 * (23 * 2) + 450) + "\n", "select count() from x;");
             }
         });
     }

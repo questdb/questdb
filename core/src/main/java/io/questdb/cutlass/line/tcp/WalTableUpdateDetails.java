@@ -40,9 +40,10 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
             Utf8String tableNameUtf8,
             Pool<SymbolCache> symbolCachePool,
             long commitInterval,
-            boolean commitOnClose
+            boolean commitOnClose,
+            long maxUncommittedRows
     ) {
-        super(engine, securityContext, writer, -1, defaultColumnTypes, tableNameUtf8, symbolCachePool, commitInterval, commitOnClose);
+        super(engine, securityContext, writer, -1, defaultColumnTypes, tableNameUtf8, symbolCachePool, commitInterval, commitOnClose, maxUncommittedRows);
     }
 
     @Override

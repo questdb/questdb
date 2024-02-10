@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -149,12 +149,12 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     @TestOnly
-    public void print(CharSink sink) {
+    public void print(Utf16Sink sink) {
         print(sink, null);
     }
 
     // prints tree in-order, horizontally
-    public void print(CharSink sink, ValuePrinter printer) {
+    public void print(Utf16Sink sink, ValuePrinter printer) {
         if (root == EMPTY) {
             sink.put("[EMPTY TREE]");
         } else {
@@ -346,7 +346,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         }
     }
 
-    void printTree(CharSink sink, long node, int level, boolean isLeft, ValuePrinter printer) {
+    void printTree(Utf16Sink sink, long node, int level, boolean isLeft, ValuePrinter printer) {
         byte color = colorOf(node);
         long valueOffset = refOf(node);
         long value = valueChain.getLong(valueOffset);

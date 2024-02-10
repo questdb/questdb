@@ -49,6 +49,11 @@ public final class Hash {
         return seq == null ? -1 : (Chars.hashCode(seq) & 0xFFFFFFF) & max;
     }
 
+    public static int hashInt(int k) {
+        long h = Integer.toUnsignedLong(k) * M2;
+        return (int) (h ^ h >>> 32);
+    }
+
     public static int hashLong(long k) {
         long h = k * M2;
         return (int) (h ^ h >>> 32);
@@ -56,6 +61,14 @@ public final class Hash {
 
     public static int hashLong128(long key1, long key2) {
         long h = key1 * M2 + key2;
+        h *= M2;
+        return (int) (h ^ h >>> 32);
+    }
+
+    public static int hashLong256(long key1, long key2, long key3, long key4) {
+        long h = key1 * M2 + key2;
+        h = (h * M2) + key3;
+        h = (h * M2) + key4;
         h *= M2;
         return (int) (h ^ h >>> 32);
     }
@@ -96,7 +109,7 @@ public final class Hash {
      */
     public static int hashMem32(long p, long len) {
         long h = 0;
-        int i = 0;
+        long i = 0;
         for (; i + 7 < len; i += 8) {
             h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
         }

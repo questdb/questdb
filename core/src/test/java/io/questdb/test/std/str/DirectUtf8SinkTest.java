@@ -90,6 +90,7 @@ public class DirectUtf8SinkTest {
 
     @Test
     public void testCreateEmpty() {
+        System.gc(); // This test is sensitive to GC deallocating GcUtf8String memory
         final long mallocCount0 = Unsafe.getMallocCount();
         final long reallocCount0 = Unsafe.getReallocCount();
         final long freeCount0 = Unsafe.getFreeCount();
@@ -104,28 +105,28 @@ public class DirectUtf8SinkTest {
             Assert.assertEquals(32, sink.capacity());
             final long ptr = sink.ptr();
             Assert.assertNotEquals(0, ptr);
-            Assert.assertEquals(getMallocCount.get().longValue(), 1);
-            Assert.assertEquals(getReallocCount.get().longValue(), 0);
-            Assert.assertEquals(getFreeCount.get().longValue(), 0);
-            Assert.assertEquals(getMemUsed.get().longValue(), 32);
+            Assert.assertEquals(1, getMallocCount.get().longValue());
+            Assert.assertEquals(0, getReallocCount.get().longValue());
+            Assert.assertEquals(0, getFreeCount.get().longValue());
+            Assert.assertEquals(32, getMemUsed.get().longValue());
 
             sink.put((byte) 'a');
             Assert.assertEquals(1, sink.size());
             Assert.assertEquals(32, sink.capacity());
             Assert.assertEquals(ptr, sink.ptr());
-            Assert.assertEquals(getMallocCount.get().longValue(), 1);
-            Assert.assertEquals(getReallocCount.get().longValue(), 0);
-            Assert.assertEquals(getFreeCount.get().longValue(), 0);
-            Assert.assertEquals(getMemUsed.get().longValue(), 32);
+            Assert.assertEquals(1, getMallocCount.get().longValue());
+            Assert.assertEquals(0, getReallocCount.get().longValue());
+            Assert.assertEquals(0, getFreeCount.get().longValue());
+            Assert.assertEquals(32, getMemUsed.get().longValue());
 
             sink.clear();
             Assert.assertEquals(0, sink.size());
             Assert.assertEquals(32, sink.capacity());
             Assert.assertEquals(ptr, sink.ptr());
-            Assert.assertEquals(getMallocCount.get().longValue(), 1);
-            Assert.assertEquals(getReallocCount.get().longValue(), 0);
-            Assert.assertEquals(getFreeCount.get().longValue(), 0);
-            Assert.assertEquals(getMemUsed.get().longValue(), 32);
+            Assert.assertEquals(1, getMallocCount.get().longValue());
+            Assert.assertEquals(0, getReallocCount.get().longValue());
+            Assert.assertEquals(0, getFreeCount.get().longValue());
+            Assert.assertEquals(32, getMemUsed.get().longValue());
 
             Utf8StringSink onHeapSink = new Utf8StringSink();
             onHeapSink.repeat("a", 40);
@@ -133,16 +134,16 @@ public class DirectUtf8SinkTest {
             sink.put(onHeapSink);
             Assert.assertEquals(40, sink.size());
             Assert.assertEquals(64, sink.capacity());
-            Assert.assertEquals(getMallocCount.get().longValue(), 1);
-            Assert.assertEquals(getReallocCount.get().longValue(), 1);
-            Assert.assertEquals(getFreeCount.get().longValue(), 0);
-            Assert.assertEquals(getMemUsed.get().longValue(), 64);
+            Assert.assertEquals(1, getMallocCount.get().longValue());
+            Assert.assertEquals(1, getReallocCount.get().longValue());
+            Assert.assertEquals(0, getFreeCount.get().longValue());
+            Assert.assertEquals(64, getMemUsed.get().longValue());
         }
 
-        Assert.assertEquals(getMallocCount.get().longValue(), 1);
-        Assert.assertEquals(getReallocCount.get().longValue(), 1);
-        Assert.assertEquals(getFreeCount.get().longValue(), 1);
-        Assert.assertEquals(getMemUsed.get().longValue(), 0);
+        Assert.assertEquals(1, getMallocCount.get().longValue());
+        Assert.assertEquals(1, getReallocCount.get().longValue());
+        Assert.assertEquals(1, getFreeCount.get().longValue());
+        Assert.assertEquals(0, getMemUsed.get().longValue());
     }
 
     @Test

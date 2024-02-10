@@ -22,10 +22,11 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>org.example</groupId>
+    <groupId>io.questdb</groupId>
     <artifactId>utils</artifactId>
     <version>7.3.10-SNAPSHOT</version>
 
@@ -37,6 +38,8 @@
         <maven.javadoc.skip>true</maven.javadoc.skip>
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
+        <test.exclude>None</test.exclude>
+        <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
     </properties>
 
     <dependencies>
@@ -49,7 +52,7 @@
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
-            <version>2.9.0</version>
+            <version>2.9.1</version>
         </dependency>
         <dependency>
             <groupId>org.questdb</groupId>
@@ -59,7 +62,7 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <version>42.5.1</version>
+            <version>42.5.4</version>
         </dependency>
     </dependencies>
 
@@ -112,6 +115,14 @@
                 <plugin>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>2.17</version>
+                    <configuration>
+                        <includes>
+                            <include>${test.include}</include>
+                        </includes>
+                        <excludes>
+                            <exclude>${test.exclude}</exclude>
+                        </excludes>
+                    </configuration>
                 </plugin>
                 <plugin>
                     <artifactId>maven-compiler-plugin</artifactId>

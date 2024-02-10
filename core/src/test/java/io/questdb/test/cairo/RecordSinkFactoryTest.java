@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import org.jetbrains.annotations.NotNull;
@@ -406,7 +406,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void getLong256(Record rec, CharSinkBase<?> sink) {
+        public void getLong256(Record rec, CharSink<?> sink) {
             throw new UnsupportedOperationException();
         }
 
@@ -454,12 +454,12 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
+        public void getStr(Record rec, Utf16Sink sink) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink, int arrayIndex) {
+        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
             throw new UnsupportedOperationException();
         }
 
@@ -717,6 +717,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
 
         @Override
         public void putLong256(Long256 value) {
+            recordedTypes.add(ColumnType.LONG256);
+        }
+
+        @Override
+        public void putLong256(long l0, long l1, long l2, long l3) {
             recordedTypes.add(ColumnType.LONG256);
         }
 

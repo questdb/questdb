@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -38,6 +39,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -105,13 +107,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testAttachCannotCopy() throws Exception {
         assertMemoryLeak(() -> {
-            configOverrideCopyPartitionOnAttach(true);
+            node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, true);
             String tableName = "tabDetachAttachMissingMeta";
-            attachableDirSuffix = DETACHED_DIR_MARKER;
+            node1.setProperty(
+                    PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
+                    DETACHED_DIR_MARKER
+            );
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int copyRecursive(Path src, Path dst, int dirMode) {
-                    if (Utf8s.containsAscii(src, attachableDirSuffix)) {
+                    if (Utf8s.containsAscii(src, DETACHED_DIR_MARKER)) {
                         return 1000;
                     }
                     return 0;
@@ -160,7 +165,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 return super.copy(src, dest);
             }
         };
-        attachableDirSuffix = DETACHED_DIR_MARKER;
+        node1.setProperty(
+                PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
+                DETACHED_DIR_MARKER
+        );
         assertMemoryLeak(ff1, () -> {
             String tableName = testName.getMethodName();
 
@@ -213,7 +221,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         };
         assertMemoryLeak(ff1, () -> {
             String tableName = "tabDetachAttachMissingMeta";
-            attachableDirSuffix = DETACHED_DIR_MARKER;
+            node1.setProperty(
+                    PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
+                    DETACHED_DIR_MARKER
+            );
 
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
@@ -684,9 +695,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(
                 ff1,
                 () -> {
-                    configOverrideCopyPartitionOnAttach(true);
+                    node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, true);
                     String tableName = testName.getMethodName();
-                    attachableDirSuffix = DETACHED_DIR_MARKER;
+                    node1.setProperty(
+                            PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
+                            DETACHED_DIR_MARKER
+                    );
 
                     try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                         createPopulateTable(
@@ -743,9 +757,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(
                 ff1,
                 () -> {
-                    configOverrideCopyPartitionOnAttach(true);
+                    node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, true);
                     String tableName = testName.getMethodName();
-                    attachableDirSuffix = DETACHED_DIR_MARKER;
+                    node1.setProperty(
+                            PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
+                            DETACHED_DIR_MARKER
+                    );
 
                     try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                         createPopulateTable(
@@ -1119,9 +1136,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testDetachAttachSameDrive() throws Exception {
         assertMemoryLeak(() -> {
-            configOverrideCopyPartitionOnAttach(true);
+            node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, true);
             String tableName = "tabDetachAttachMissingMeta";
-            attachableDirSuffix = DETACHED_DIR_MARKER;
+            node1.setProperty(
+                    PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
+                    DETACHED_DIR_MARKER
+            );
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
@@ -1171,7 +1191,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(
                 () -> {
                     String tableName = testName.getMethodName();
-                    node1.getConfigurationOverrides().setPartitionO3SplitThreshold(300);
+                    Overrides overrides = node1.getConfigurationOverrides();
+                    overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 300);
                     try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                         TableToken token = createPopulateTable(
                                 1,

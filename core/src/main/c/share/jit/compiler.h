@@ -39,15 +39,16 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIE
 JNIEXPORT void JNICALL Java_io_questdb_jit_FiltersCompiler_freeFunction(JNIEnv *e, jclass cl, jlong fnAddress);
 
 JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv *e,
-                                                                        jclass cl,
-                                                                        jlong fnAddress,
-                                                                        jlong colsAddress,
-                                                                        jlong colsSize,
-                                                                        jlong varsAddress,
-                                                                        jlong varsSize,
-                                                                        jlong rowsAddress,
-                                                                        jlong rowsSize,
-                                                                        jlong rowsStartOffset);
+                                                                         jclass cl,
+                                                                         jlong fnAddress,
+                                                                         jlong colsAddress,
+                                                                         jlong colsSize,
+                                                                         jlong varlenIndexesAddress,
+                                                                         jlong varsAddress,
+                                                                         jlong varsSize,
+                                                                         jlong rowsAddress,
+                                                                         jlong rowsSize,
+                                                                         jlong rowsStartOffset);
 
 JNIEXPORT void JNICALL Java_io_questdb_jit_FiltersCompiler_runTests(JNIEnv *e, jclass cl);
 

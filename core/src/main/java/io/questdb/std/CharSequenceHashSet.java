@@ -24,7 +24,7 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
@@ -138,10 +138,6 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         return getListIndexAt(keyIndex(cs));
     }
 
-    public boolean hasNull() {
-        return hasNull;
-    }
-
     public CharSequence keyAt(int index) {
         int index1 = -index - 1;
         return keys[index1];
@@ -182,7 +178,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
     }
 
     @Override
-    public void toSink(@NotNull CharSinkBase<?> sink) {
+    public void toSink(@NotNull CharSink<?> sink) {
         sink.put(list);
     }
 

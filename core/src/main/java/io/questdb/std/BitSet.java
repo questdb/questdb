@@ -61,7 +61,7 @@ public class BitSet implements Mutable {
         assert bitIndex >= 0;
 
         int wordIndex = wordIndex(bitIndex);
-        ensureCapacity(wordIndex + 1);
+        checkCapactiy(wordIndex + 1);
         words[wordIndex] |= 1L << bitIndex;
     }
 
@@ -69,7 +69,7 @@ public class BitSet implements Mutable {
         return bitIndex >> 6;
     }
 
-    private void ensureCapacity(int wordsRequired) {
+    private void checkCapactiy(int wordsRequired) {
         if (words.length < wordsRequired) {
             int newLen = Math.max(2 * words.length, wordsRequired);
             words = Arrays.copyOf(words, newLen);

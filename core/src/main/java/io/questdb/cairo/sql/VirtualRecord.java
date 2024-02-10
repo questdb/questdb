@@ -30,7 +30,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Utf16Sink;
 
 public class VirtualRecord implements ColumnTypes, Record {
     private final int columnCount;
@@ -146,7 +146,7 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public void getLong256(int col, CharSinkBase<?> sink) {
+    public void getLong256(int col, CharSink<?> sink) {
         getFunction(col).getLong256(base, sink);
     }
 
@@ -186,7 +186,7 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public void getStr(int col, CharSink sink) {
+    public void getStr(int col, Utf16Sink sink) {
         getFunction(col).getStr(base, sink);
     }
 

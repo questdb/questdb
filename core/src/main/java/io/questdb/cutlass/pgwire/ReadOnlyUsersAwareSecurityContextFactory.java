@@ -5,6 +5,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
 
 public final class ReadOnlyUsersAwareSecurityContextFactory implements SecurityContextFactory {
     private final boolean httpReadOnly;
@@ -18,7 +19,7 @@ public final class ReadOnlyUsersAwareSecurityContextFactory implements SecurityC
     }
 
     @Override
-    public SecurityContext getInstance(CharSequence principal, byte authType, byte interfaceId) {
+    public SecurityContext getInstance(CharSequence principal, ObjList<CharSequence> groups, byte authType, byte interfaceId) {
         switch (interfaceId) {
             case SecurityContextFactory.HTTP:
                 return httpReadOnly ? ReadOnlySecurityContext.INSTANCE : AllowAllSecurityContext.INSTANCE;
