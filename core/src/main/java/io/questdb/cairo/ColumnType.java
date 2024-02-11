@@ -176,8 +176,8 @@ public final class ColumnType {
         return columnType == CURSOR;
     }
 
-    public static boolean isDesignatedTimestamp(int type) {
-        return  tagOf(type) == TIMESTAMP && (type & TYPE_FLAG_DESIGNATED_TIMESTAMP) != 0;
+    public static boolean isDesignatedTimestamp(int columnType) {
+        return  tagOf(columnType) == TIMESTAMP && (columnType & TYPE_FLAG_DESIGNATED_TIMESTAMP) != 0;
     }
 
     public static boolean isDouble(int columnType) {

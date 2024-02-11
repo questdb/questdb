@@ -550,7 +550,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static void mergeCopy(
             int columnType,
             long timestampMergeIndexAddr,
-            long mergeCount,
+            long timestampMergeIndexCount,
             long srcDataFixAddr,
             long srcDataVarAddr,
             long srcOooFixAddr,
@@ -559,73 +559,56 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarAddr,
             long dstVarOffset
     ) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.GEOBYTE:
-                Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
-                break;
-            case ColumnType.SHORT:
-            case ColumnType.CHAR:
-            case ColumnType.GEOSHORT:
-                Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
-                break;
-            case ColumnType.STRING:
-                Vect.oooMergeCopyStrColumn(
-                        timestampMergeIndexAddr,
-                        mergeCount,
-                        srcDataFixAddr,
-                        srcDataVarAddr,
-                        srcOooFixAddr,
-                        srcOooVarAddr,
-                        dstFixAddr,
-                        dstVarAddr,
-                        dstVarOffset
-                );
-                break;
-            case ColumnType.BINARY:
-                Vect.oooMergeCopyBinColumn(
-                        timestampMergeIndexAddr,
-                        mergeCount,
-                        srcDataFixAddr,
-                        srcDataVarAddr,
-                        srcOooFixAddr,
-                        srcOooVarAddr,
-                        dstFixAddr,
-                        dstVarAddr,
-                        dstVarOffset
-                );
-                break;
-            case ColumnType.INT:
-            case ColumnType.IPv4:
-            case ColumnType.FLOAT:
-            case ColumnType.SYMBOL:
-            case ColumnType.GEOINT:
-                Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
-                break;
-            case ColumnType.DOUBLE:
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.GEOLONG:
-                Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
-                break;
-            case ColumnType.TIMESTAMP:
-                final boolean designated = ColumnType.isDesignatedTimestamp(columnType);
-                if (designated) {
-                    Vect.oooCopyIndex(timestampMergeIndexAddr, mergeCount, dstFixAddr);
-                } else {
-                    Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
-                }
-                break;
-            case ColumnType.UUID:
-            case ColumnType.LONG128:
-                Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
-                break;
-            case ColumnType.LONG256:
-                Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, mergeCount);
-                break;
-            default:
-                break;
+        if (ColumnType.isVarSize(columnType)) {
+            ColumnType.getDriver(columnType).o3ColumnMerge(
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexCount,
+                    srcDataFixAddr,
+                    srcDataVarAddr,
+                    srcOooFixAddr,
+                    srcOooVarAddr,
+                    dstFixAddr,
+                    dstVarAddr,
+                    dstVarOffset
+            );
+        } else if (ColumnType.isDesignatedTimestamp(columnType)) {
+            Vect.oooCopyIndex(timestampMergeIndexAddr, timestampMergeIndexCount, dstFixAddr);
+        } else {
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.BOOLEAN:
+                case ColumnType.BYTE:
+                case ColumnType.GEOBYTE:
+                    Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                    break;
+                case ColumnType.SHORT:
+                case ColumnType.CHAR:
+                case ColumnType.GEOSHORT:
+                    Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                    break;
+                case ColumnType.INT:
+                case ColumnType.IPv4:
+                case ColumnType.FLOAT:
+                case ColumnType.SYMBOL:
+                case ColumnType.GEOINT:
+                    Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                    break;
+                case ColumnType.DOUBLE:
+                case ColumnType.LONG:
+                case ColumnType.DATE:
+                case ColumnType.GEOLONG:
+                case ColumnType.TIMESTAMP:
+                    Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                    break;
+                case ColumnType.UUID:
+                case ColumnType.LONG128:
+                    Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                    break;
+                case ColumnType.LONG256:
+                    Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
+                    break;
+                default:
+                    break;
+            }
         }
     }
 

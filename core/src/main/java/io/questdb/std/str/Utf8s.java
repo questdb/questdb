@@ -1,6 +1,7 @@
 package io.questdb.std.str;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Chars;
@@ -795,36 +796,6 @@ public final class Utf8s {
         auxMem.putInt((int) offset);
     }
 
-    public static long varcharGetDataVectorSize(MemoryR auxMem, long offset) {
-        int raw = auxMem.getInt(offset);
-        final long dataOffset = varcharGetDataOffset(auxMem, offset);
-        int flags = raw & 0x0f; // 4 bit flags
-
-        if ((flags & 4) == 4 || (flags & 1) == 1) {
-            // null flag is set or fully inlined value
-            return dataOffset;
-        }
-        // size of the string at this offset
-        final int size = (raw >> 4) & 0xffffff;
-        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
-    }
-
-    public static long varcharGetDataVectorSize(long auxEntry) {
-        int raw = Unsafe.getUnsafe().getInt(auxEntry);
-        long dataOffset = Unsafe.getUnsafe().getShort(auxEntry + 10);
-        dataOffset <<= 32;
-        dataOffset |= Unsafe.getUnsafe().getInt(auxEntry + 12);
-        int flags = raw & 0x0f; // 4 bit flags
-
-        if ((flags & 4) == 4 || (flags & 1) == 1) {
-            // null flag is set or fully inlined value
-            return dataOffset;
-        }
-        // size of the string at this offset
-        final int size = (raw >> 4) & 0xffffff;
-        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
-    }
-
     public static Utf8Sequence varcharRead(long offset, MemoryR dataMem, MemoryR auxMem, int ab) {
         int raw = auxMem.getInt(offset);
         int flags = raw & 0x0f; // 4 bit flags
@@ -845,17 +816,10 @@ public final class Utf8s {
         Utf8SplitString utf8SplitString = ab == 1 ? auxMem.borrowUtf8SplitStringA() : auxMem.borrowUtf8SplitStringB();
         return utf8SplitString.of(
                 auxMem.addressOf(offset + 4),
-                dataMem.addressOf(varcharGetDataOffset(auxMem, offset)),
+                dataMem.addressOf(VarcharTypeDriver.varcharGetDataOffset(auxMem, offset)),
                 (raw >> 4) & 0xffffff,
                 ascii
         );
-    }
-
-    private static long varcharGetDataOffset(MemoryR auxMem, long offset) {
-        long dataOffset = auxMem.getShort(offset + 10);
-        dataOffset <<= 32;
-        dataOffset |= auxMem.getInt(offset + 12);
-        return dataOffset;
     }
 
     private static int encodeUtf16Surrogate(@NotNull Utf8Sink sink, char c, @NotNull CharSequence in, int pos, int hi) {

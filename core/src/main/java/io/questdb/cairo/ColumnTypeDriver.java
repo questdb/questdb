@@ -51,13 +51,29 @@ public interface ColumnTypeDriver {
 
     void configureDataMemOM(FilesFacade ff, MemoryR auxMem, MemoryOM dataMem, int dataFd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
 
+    /**
+     * Returns offset in bytes of the aux entry that describes the provided row number.
+     *
+     * @param row the row number to locate offset of
+     * @return the offset
+     */
+    long getAuxVectorOffset(long row);
+
+    /**
+     * Calculates size in bytes that is required to store the given number of rows.
+     *
+     * @param storageRowCount the number of rows to store in the aux vector
+     * @return the size of the required vector.
+     */
     long getAuxVectorSize(long storageRowCount);
+
+    long getDataVectorOffset(long auxMemAddr, long row);
 
     /**
      * Data vector size between two rows. Rows are inclusive.
      *
      * @param auxMemAddr pointer to the aux vector
-     * @param rowLo      start row
+     * @param rowLo      start row, inclusive.
      * @param rowHi      end row, inclusive.
      * @return size of data vector in bytes between these two rows.
      */
@@ -80,7 +96,27 @@ public interface ColumnTypeDriver {
             boolean mixedIOFlag
     );
 
-    void o3MoveLag(long rowCount, long columnDataRowOffset, long existingLagRows, MemoryCR srcAuxMem, MemoryCR srcDataMem, MemoryARW dstAuxMem, MemoryARW dstDataMem);
+    void o3ColumnMerge(
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexCount,
+            long srcAuxAddr1,
+            long srcDataAddr1,
+            long srcAuxAddr2,
+            long srcDataAddr2,
+            long dstAuxAddr,
+            long dstDataAddr,
+            long dstDataOffset
+    );
+
+    void o3MoveLag(
+            long rowCount,
+            long columnDataRowOffset,
+            long existingLagRows,
+            MemoryCR srcAuxMem,
+            MemoryCR srcDataMem,
+            MemoryARW dstAuxMem,
+            MemoryARW dstDataMem
+    );
 
     void o3PartitionAppend(
             AtomicInteger columnCounter,
@@ -159,16 +195,16 @@ public interface ColumnTypeDriver {
      * Sorts var size vectors. This method is also responsible for sizing the destination vectors and ensuring the
      * append position after sorting is correct.
      *
-     * @param timestampIndex     array of 128-bit entries, second 64 bits are row numbers that drive ordering.
-     * @param timestampIndexSize size of the timestamp index
-     * @param srcDataMem         source data vector
-     * @param srcAuxMem          source aux vector
-     * @param dstDataMem         destination data vector
-     * @param dstAuxMem          destination aux vector
+     * @param timestampMergeIndexAddr array of 128-bit entries, second 64 bits are row numbers that drive ordering.
+     * @param timestampMergeIndexSize size of the timestamp index
+     * @param srcDataMem              source data vector
+     * @param srcAuxMem               source aux vector
+     * @param dstDataMem              destination data vector
+     * @param dstAuxMem               destination aux vector
      */
     void o3sort(
-            long timestampIndex,
-            long timestampIndexSize,
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             MemoryCR srcDataMem,
             MemoryCR srcAuxMem,
             MemoryCARW dstDataMem,
@@ -185,4 +221,6 @@ public interface ColumnTypeDriver {
      * @return
      */
     long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount);
+
+    long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem, boolean doubleAllocate);
 }
