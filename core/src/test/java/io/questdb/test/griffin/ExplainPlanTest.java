@@ -2260,6 +2260,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             } else if (factory instanceof RndIPv4CCFunctionFactory) {
                                 args.add(new StrConstant("4.12.22.11/12"));
                                 args.add(new IntConstant(2));
+                            } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
+                                args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                             } else if (!useConst) {
                                 args.add(colFuncs.get(sigArgType));
                             } else if (factory instanceof WalTransactionsFunctionFactory && sigArgType == ColumnType.STRING) {
