@@ -381,3 +381,106 @@ JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_vectorGetValidity(JNIEnv *
             D_ASSERT(vector > 0);
     return (jlong) duckdb::FlatVector::Validity(*(duckdb::Vector *) vector).GetData();
 }
+
+inline static duckdb::Appender *get_appender(jlong appender_ptr) {
+    D_ASSERT(appender_ptr > 0);
+    return (duckdb::Appender *) appender_ptr;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_duckdb_DuckDB_createAppender(JNIEnv *, jclass, jlong conn, jlong schema_ptr,
+    jlong schema_size, jlong table_ptr, jlong table_size) {
+    D_ASSERT(conn > 0);
+    D_ASSERT(schema_ptr > 0);
+    D_ASSERT(schema_size > 0);
+    D_ASSERT(table_ptr > 0);
+    D_ASSERT(table_size > 0);
+    try {
+        std::string schema((const char *) schema_ptr, schema_size);
+        std::string table((const char *) table_ptr, table_size);
+        return (jlong) new duckdb::Appender(*(duckdb::Connection *) conn, schema, table);
+    } catch (const duckdb::Exception &ex) {
+        duckdb_error = duckdb::PreservedError(ex);
+    } catch (const std::exception &ex) {
+        duckdb_error = duckdb::PreservedError(ex);
+    } catch (...) {
+        duckdb_error = duckdb::PreservedError("Unknown error in createAppender");
+    }
+    return (jlong) nullptr;
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderBeginRow(JNIEnv *, jclass, jlong appender) {
+    get_appender(appender)->BeginRow();
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderEndRow(JNIEnv *, jclass, jlong appender) {
+    get_appender(appender)->EndRow();
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderFlush(JNIEnv *, jclass, jlong appender) {
+    get_appender(appender)->Flush();
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderClose(JNIEnv *, jclass, jlong appender) {
+    auto app = get_appender(appender);
+    app->Close();
+    delete app;
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendBoolean(JNIEnv *, jclass, jlong appender, jboolean value) {
+    get_appender(appender)->Append((bool) value);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendByte(JNIEnv *, jclass, jlong appender, jbyte value) {
+    get_appender(appender)->Append((int8_t) value);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendShort(JNIEnv *, jclass, jlong appender, jshort value) {
+    get_appender(appender)->Append((int16_t) value);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendInt(JNIEnv *, jclass, jlong appender, jint value) {
+    get_appender(appender)->Append((int32_t) value);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendDate(JNIEnv *, jclass, jlong appender, jint value) {
+    get_appender(appender)->Append((duckdb::date_t) value);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendLong(JNIEnv *, jclass, jlong appender, jlong value) {
+    get_appender(appender)->Append((int64_t) value);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendTimestamp(JNIEnv *, jclass, jlong appender, jlong value) {
+    get_appender(appender)->Append((duckdb::timestamp_t) value);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendLong128(JNIEnv *, jclass, jlong appender, jlong lo, jlong hi) {
+    duckdb::hugeint_t value;
+    value.lower = lo;
+    value.upper = hi;
+    get_appender(appender)->Append(value);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendUUID(JNIEnv *, jclass, jlong appender, jlong lo, jlong hi) {
+    duckdb::hugeint_t value;
+    value.lower = lo;
+    value.upper = hi;
+    get_appender(appender)->Append<duckdb::Value>(duckdb::Value::UUID(value));
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendFloat(JNIEnv *, jclass, jlong appender, jfloat value) {
+    get_appender(appender)->Append((float) value);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendDouble(JNIEnv *, jclass, jlong appender, jdouble value) {
+    get_appender(appender)->Append((double) value);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendUtf8StringOrBlob(JNIEnv *, jclass, jlong appender, jlong value_ptr, jlong value_size) {
+    std::string value((const char *) value_ptr, value_size);
+    get_appender(appender)->Append(value.c_str()); // TODO: empty string?
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendNull(JNIEnv *, jclass, jlong appender) {
+    get_appender(appender)->Append<std::nullptr_t>(nullptr);
+}

@@ -239,6 +239,27 @@ public class DuckDB {
     // returns the validity mask of the vector (uint64_t*)
     public static native long vectorGetValidity(long vector);
 
+    public static native long registerQuestDBScanFunction(long dbPtr);
+
+    public static native long createAppender(long connectionPtr, long schemaPtr, long schemaSize, long tablePtr, long tableSize);
+    public static native void appenderBeginRow(long appenderPtr);
+    public static native void appenderEndRow(long appenderPtr);
+    public static native void appenderFlush(long appenderPtr);
+    public static native void appenderClose(long appenderPtr);
+    public static native void appenderAppendBoolean(long appenderPtr, boolean value);
+    public static native void appenderAppendByte(long appenderPtr, byte value);
+    public static native void appenderAppendShort(long appenderPtr, short value);
+    public static native void appenderAppendInt(long appenderPtr, int value);
+    public static native void appenderAppendDate(long appenderPtr, int value);
+    public static native void appenderAppendLong(long appenderPtr, long value);
+    public static native void appenderAppendTimestamp(long appenderPtr, long value);
+    public static native void appenderAppendLong128(long appenderPtr, long lo, long hi);
+    public static native void appenderAppendUUID(long appenderPtr, long lo, long hi);
+    public static native void appenderAppendFloat(long appenderPtr, float value);
+    public static native void appenderAppendDouble(long appenderPtr, double value);
+    public static native void appenderAppendUtf8StringOrBlob(long appenderPtr, long valuePtr, long valueSize);
+    public static native void appenderAppendNull(long appenderPtr);
+
     public static int decodeLogicalTypeId(long encoded) {
         return (int) (encoded & 0xFFFFFFFFL);
     }

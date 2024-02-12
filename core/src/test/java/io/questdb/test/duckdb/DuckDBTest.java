@@ -24,19 +24,28 @@
 
 package io.questdb.test.duckdb;
 
+import io.questdb.cairo.*;
+import io.questdb.cairo.pool.DuckDBConnectionPool;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.duckdb.*;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8StringZ;
-import io.questdb.std.str.GcUtf8String;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TableModel;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+
+import static io.questdb.test.tools.TestUtils.assertEqualsExactOrder;
+import static org.junit.Assert.assertEquals;
 
 public class DuckDBTest extends AbstractCairoTest {
     public static void checkText(long message, CharSequence expected) {
@@ -467,6 +476,14 @@ public class DuckDBTest extends AbstractCairoTest {
         System.out.println("RSS: " + (b-a) / connCount);
     }
 
+    @Test
+    public void testQuestDBScanTableFunction() {
+        final long db = DuckDB.databaseOpen(0, 0);
+        long ok = DuckDB.registerQuestDBScanFunction(db);
+        Assert.assertEquals(ok, 1);
+        DuckDB.databaseClose(db);
+    }
+
     private static void updateCollection(int iters, long conn, List<Long> longs) {
         for (int j = 0; j < iters; j++) {
             long res = queryNoFail(conn, "SELECT nextval('seq')");
@@ -478,6 +495,299 @@ public class DuckDBTest extends AbstractCairoTest {
             Assert.assertNotEquals(0, data);
             longs.add(Unsafe.getUnsafe().getLong(data));
             DuckDB.dataChunkDestroy(chunk);
+        }
+    }
+
+    private void populateTables(TableModel model, TableWriter writer, long appender, int rowCount) throws NumericException {
+        Rnd rnd = new Rnd();
+        long ts = TimestampFormatUtils.parseTimestamp("2024-02-12T00:00:00.000000Z");
+        long stop = TimestampFormatUtils.parseTimestamp("2024-02-14T00:00:00.000000Z");
+        long delta = (stop - ts) / rowCount;
+        double nullSet = 0.1;
+        int columnCount = model.getColumnCount();
+        for (int r = 0; r < rowCount; r++) {
+            TableWriter.Row row = writer.newRow(ts);
+            DuckDB.appenderBeginRow(appender);
+            for (int c = 0; c < columnCount; c++) {
+                int type = ColumnType.tagOf(model.getColumnType(c));
+                boolean isNull = rnd.nextDouble() < nullSet;
+                switch (type) {
+                    case ColumnType.BOOLEAN:
+                        boolean bl = rnd.nextBoolean();
+                        row.putBool(c, bl);
+                        DuckDB.appenderAppendBoolean(appender, bl);
+                        break;
+                    case ColumnType.BYTE:
+                        byte bt = isNull ? 0 : rnd.nextByte();
+                        row.putByte(c, bt);
+                        DuckDB.appenderAppendByte(appender, bt);
+                        break;
+                    case ColumnType.GEOBYTE:
+                        byte gbt = isNull ? 0 : rnd.nextGeoHashByte(10);
+                        row.putGeoHash(c, gbt);
+                        DuckDB.appenderAppendByte(appender, gbt);
+                        break;
+                    case ColumnType.SHORT:
+                        short srt = isNull ? 0 : rnd.nextShort();
+                        row.putShort(c, srt);
+                        DuckDB.appenderAppendShort(appender, srt);
+                        break;
+                    case ColumnType.CHAR:
+                        char ch = isNull ? 0 : rnd.nextChar();
+                        row.putChar(c, ch);
+                        DuckDB.appenderAppendShort(appender, (short) ch);
+                        break;
+                    case ColumnType.GEOSHORT:
+                        short ghs = rnd.nextGeoHashShort(20);
+                        row.putGeoHash(c, ghs);
+                        DuckDB.appenderAppendShort(appender, ghs);
+                        break;
+                    case ColumnType.INT:
+                        int vl = isNull ? Numbers.INT_NaN : rnd.nextInt();
+                        row.putInt(c, vl);
+                        DuckDB.appenderAppendInt(appender, vl);
+                        break;
+                    case ColumnType.DATE:
+                        long date = isNull ? Numbers.LONG_NaN : rnd.nextPositiveLong();
+                        row.putDate(c, date);
+                        DuckDB.appenderAppendLong(appender, date);
+                        break;
+                    case ColumnType.GEOINT:
+                        int ghi = rnd.nextGeoHashInt(30);
+                        row.putGeoHash(c, ghi);
+                        DuckDB.appenderAppendInt(appender, ghi);
+                        break;
+                    case ColumnType.IPv4:
+                        int ipv4 = isNull ? Numbers.IPv4_NULL : rnd.nextPositiveInt();
+                        row.putInt(c, ipv4);
+                        DuckDB.appenderAppendInt(appender, ipv4);
+                        break;
+                    case ColumnType.LONG:
+                        long lng = isNull ? Numbers.LONG_NaN : rnd.nextLong();
+                        row.putLong(c, lng);
+                        DuckDB.appenderAppendLong(appender, lng);
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        DuckDB.appenderAppendLong(appender, ts);
+                        break;
+                    case ColumnType.GEOLONG:
+                        long ghl = rnd.nextGeoHashLong(40);
+                        row.putGeoHash(c, ghl);
+                        DuckDB.appenderAppendLong(appender, ghl);
+                        break;
+                    case ColumnType.FLOAT:
+                        float flt = isNull ? Float.NaN : rnd.nextFloat();
+                        row.putFloat(c, flt);
+                        DuckDB.appenderAppendFloat(appender, flt);
+                        break;
+                    case ColumnType.DOUBLE:
+                        double dbl = isNull ? Double.NaN : rnd.nextDouble();
+                        row.putDouble(c, dbl);
+                        DuckDB.appenderAppendDouble(appender, dbl);
+                        break;
+                    case ColumnType.STRING:
+                    case ColumnType.BINARY:
+                        String str = rnd.nextString(10);
+                        row.putStr(c, str);
+                        GcUtf8String gcUtf8String = new GcUtf8String(str);
+                        DuckDB.appenderAppendUtf8StringOrBlob(appender, gcUtf8String.ptr(), gcUtf8String.size());
+                        break;
+                    case ColumnType.LONG128:
+                    case ColumnType.UUID:
+                        // Here is a surprise. DuckDB converts INT128 to double (Parquet only)
+                        long lo = rnd.nextLong();
+                        long hi = rnd.nextLong();
+                        if (!isNull) {
+                            row.putLong128(c, lo, hi);
+                            DuckDB.appenderAppendUUID(appender, lo, hi);
+                            System.err.println("or UUID: " + lo + " " + hi);
+                        } else {
+                            row.putLong128(c, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                            DuckDB.appenderAppendUUID(appender, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                        }
+                        break;
+                    default:
+                        Assert.fail("Unsupported type: " + type);
+                }
+            }
+
+            ts = ts + delta;
+            row.append();
+            DuckDB.appenderEndRow(appender);
+        }
+        writer.commit();
+        DuckDB.appenderFlush(appender);
+    }
+
+    private TableModel createQuestTableModel(String tableName) {
+        //noinspection resource
+        return new TableModel(configuration, tableName, PartitionBy.HOUR)
+            .col("COL_" + ColumnType.nameOf(ColumnType.BOOLEAN), ColumnType.BOOLEAN)
+            .col("COL_" + ColumnType.nameOf(ColumnType.BYTE), ColumnType.BYTE)
+            .col("COL_" + ColumnType.nameOf(ColumnType.SHORT), ColumnType.SHORT)
+            .col("COL_" + ColumnType.nameOf(ColumnType.CHAR), ColumnType.CHAR)
+            .col("COL_" + ColumnType.nameOf(ColumnType.INT), ColumnType.INT)
+            .col("COL_" + ColumnType.nameOf(ColumnType.LONG), ColumnType.LONG)
+            .col("COL_" + ColumnType.nameOf(ColumnType.DATE), ColumnType.DATE)
+            .col("COL_" + ColumnType.nameOf(ColumnType.FLOAT), ColumnType.FLOAT)
+            .col("COL_" + ColumnType.nameOf(ColumnType.DOUBLE), ColumnType.DOUBLE)
+            .col("COL_" + ColumnType.nameOf(ColumnType.STRING), ColumnType.STRING)
+//                .col("COL_" + ColumnType.nameOf(ColumnType.SYMBOL), ColumnType.SYMBOL)
+//                .col("COL_" + ColumnType.nameOf(ColumnType.LONG256), ColumnType.LONG256)
+            .col("COL_" + "GEOBYTE", ColumnType.getGeoHashTypeWithBits(5))
+            .col("COL_" + "GEOSHORT", ColumnType.getGeoHashTypeWithBits(15))
+            .col("COL_" + "GEOINT", ColumnType.getGeoHashTypeWithBits(30))
+            .col("COL_" + "GEOLONG", ColumnType.getGeoHashTypeWithBits(60))
+//            .col("COL_" + ColumnType.nameOf(ColumnType.BINARY), ColumnType.BINARY)
+            .col("COL_" + ColumnType.nameOf(ColumnType.UUID), ColumnType.UUID)
+            .col("COL_" + ColumnType.nameOf(ColumnType.LONG128), ColumnType.LONG128)
+            .col("COL_" + ColumnType.nameOf(ColumnType.IPv4), ColumnType.IPv4)
+            .timestamp("COL_" + ColumnType.nameOf(ColumnType.TIMESTAMP));
+    }
+
+    private String duckCreateTableSQL(TableModel model) {
+        StringBuilder sql = new StringBuilder();
+        sql.append("CREATE TABLE ").append(model.getTableName()).append("(");
+        for (int i = 0; i < model.getColumnCount(); i++) {
+            int type = model.getColumnType(i);
+            CharSequence name = model.getColumnName(i);
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.BOOLEAN:
+                case ColumnType.BYTE:
+                case ColumnType.GEOBYTE:
+                    sql.append(name).append(" TINYINT");
+                    break;
+                case ColumnType.SHORT:
+                case ColumnType.CHAR:
+                case ColumnType.GEOSHORT:
+                    sql.append(name).append(" SMALLINT");
+                    break;
+                case ColumnType.INT:
+                case ColumnType.GEOINT:
+                case ColumnType.IPv4:
+                    sql.append(name).append(" INTEGER");
+                    break;
+                case ColumnType.LONG:
+                case ColumnType.DATE:
+                case ColumnType.TIMESTAMP:
+                case ColumnType.GEOLONG:
+                    sql.append(name).append(" BIGINT");
+                    break;
+                case ColumnType.FLOAT:
+                    sql.append(name).append(" REAL");
+                    break;
+                case ColumnType.DOUBLE:
+                    sql.append(name).append(" DOUBLE");
+                    break;
+                case ColumnType.STRING:
+                    sql.append(name).append(" VARCHAR");
+                    break;
+//                case ColumnType.SYMBOL:
+//                    sql.append(name).append(" SYMBOL");
+//                    break;
+//                case ColumnType.LONG256:
+//                    sql.append(name).append(" LONG256");
+//                    break;
+                case ColumnType.BINARY:
+                    sql.append(name).append(" BLOB");
+                    break;
+                case ColumnType.LONG128:
+                case ColumnType.UUID:
+//                    sql.append(name).append(" HUGEINT");
+                    sql.append(name).append(" UUID");
+                    break;
+                default:
+                    Assert.fail("Unsupported type: " + type);
+            }
+            boolean comma = i < model.getColumnCount() - 1;
+            if (comma) {
+                sql.append(", ");
+            }
+        }
+        sql.append(")");
+        return sql.toString();
+    }
+
+    private void checkResult(long res) {
+        long error = DuckDB.resultGetError(res);
+        if (error != 0) {
+            DirectUtf8StringZ errorText = new DirectUtf8StringZ();
+            errorText.of(error);
+            Assert.fail("Error: " + errorText);
+        }
+    }
+
+    private void createDuckTable(TableModel model, DuckDBConnectionPool.Connection conn) {
+        GcUtf8String query = new GcUtf8String(duckCreateTableSQL(model));
+        long result = conn.query(query);
+        checkResult(result);
+        DuckDB.resultDestroy(result);
+    }
+
+    private long createDuckAppender(String tableName, DuckDBConnectionPool.Connection conn) {
+        GcUtf8String schema = new GcUtf8String("main");
+        GcUtf8String table = new GcUtf8String(tableName);
+        long appender = DuckDB.createAppender(conn.getConnection(), schema.ptr(), schema.size(), table.ptr(), table.size());
+        if (appender == 0) {
+            DirectUtf8StringZ error = new DirectUtf8StringZ();
+            error.of(DuckDB.errorMessage());
+            Assert.fail("Error: " + error);
+        }
+        return appender;
+    }
+
+    @Test
+    public void testToDuckAndBackAllTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testToDuckAndBackAllTypes";
+            final String parquetPath = Path.getThreadLocal(root).concat(tableName + ".parquet").$().toString();
+            final int rowCount = 1;
+            try (TableModel model = createQuestTableModel(tableName)) {
+                try (TableWriter writer = getWriter(createTable(model));
+                     DuckDBConnectionPool.Connection conn = engine.getDuckDBConnection();
+                ) {
+                    createDuckTable(model, conn);
+                    long appender = createDuckAppender(tableName, conn);
+                    populateTables(model, writer, appender, rowCount);
+                    DuckDB.appenderClose(appender);
+                    long res = conn.query(new GcUtf8String("INSTALL parquet;LOAD parquet; COPY " + tableName + " TO '" + parquetPath +"' (FORMAT PARQUET)"));
+                    checkResult(res);
+                    DuckDB.resultDestroy(res);
+                 }
+            }
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                String sqlFromTable = "select * from " + tableName;
+                String sqlFromFile = "select * from '" + parquetPath + "'";
+                try (
+                        RecordCursorFactory questFactory = compiler.compile(sqlFromTable, sqlExecutionContext).getRecordCursorFactory();
+                        RecordCursor questCursor = questFactory.getCursor(sqlExecutionContext);
+                ) {
+                    RecordMetadata metadata = questFactory.getMetadata();
+                    try(DuckDBConnectionPool.Connection conn = sqlExecutionContext.getCairoEngine().getDuckDBConnection()) {
+                        testCursors(metadata, questCursor, sqlFromTable, conn);
+                        questCursor.toTop();
+                        testCursors(metadata, questCursor, sqlFromFile, conn);
+                    }
+                }
+            }
+        });
+    }
+
+    private void testCursors(RecordMetadata metadata, RecordCursor expected, String sql, DuckDBConnectionPool.Connection conn) throws SqlException {
+        GcUtf8String query = new GcUtf8String(sql);
+        long stmt = conn.prepare(query);
+        long error = DuckDB.preparedGetError(stmt);
+        if (error != 0) {
+            DirectUtf8StringZ errorText = new DirectUtf8StringZ();
+            errorText.of(error);
+            Assert.fail("Error: " + errorText);
+        }
+        try(
+                DuckDBRecordCursorFactory duckFactory = new DuckDBRecordCursorFactory(stmt, metadata);
+                RecordCursor duckCursor = duckFactory.getCursor(sqlExecutionContext);
+        ) {
+            assertEqualsExactOrder(expected, metadata, duckCursor, metadata, true);
         }
     }
 

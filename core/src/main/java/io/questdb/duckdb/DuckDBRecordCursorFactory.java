@@ -26,15 +26,16 @@ package io.questdb.duckdb;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
-import io.questdb.std.Rows;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.DirectUtf8StringZ;
 
 public class DuckDBRecordCursorFactory implements RecordCursorFactory {
@@ -44,10 +45,18 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
     private final RecordMetadata metadata;
 
     public DuckDBRecordCursorFactory(long stmt) {
+        this(true, stmt, buildMetadata(stmt));
+    }
+
+    public DuckDBRecordCursorFactory(long stmt, RecordMetadata metadata) {
+        this(false, stmt, validateMetadata(stmt, metadata));
+    }
+
+    public DuckDBRecordCursorFactory(boolean duckNative, long stmt, RecordMetadata metadata) {
         this.statement = stmt;
-        this.cursor = new RecordCursorImpl();
+        this.cursor = new RecordCursorImpl(duckNative);
         this.pageFrameCursor = new DuckDBPageFrameCursor();
-        this.metadata = buildMetadata(statement);
+        this.metadata = metadata;
     }
 
     public static RecordMetadata buildMetadata(long statement) {
@@ -69,6 +78,66 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
         }
 
         return metadata;
+    }
+
+    public static RecordMetadata validateMetadata(long statement, RecordMetadata metadata) {
+        if (checkAllTypesMatched(statement, metadata)) {
+            return metadata;
+        }
+        return null; // TODO: throw exception
+    }
+
+    private static boolean checkAllTypesMatched(long statement, RecordMetadata metadata) {
+        final int columnCount = (int)DuckDB.preparedGetColumnCount(statement);
+        if (columnCount == 0 || metadata == null || metadata.getColumnCount() > columnCount) {
+            return false;
+        }
+
+        for (int i = 0, columns = metadata.getColumnCount(); i < columns; i++) {
+            int duckLogicalTypeId = DuckDB.decodeLogicalTypeId(DuckDB.preparedGetColumnTypes(statement, i));
+            int questType = metadata.getColumnType(i);
+            if (!isTypeMatched(questType, duckLogicalTypeId)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isTypeMatched(int questType, int duckType) {
+        switch (questType) {
+            case ColumnType.BOOLEAN:
+                return duckType == DuckDB.COLUMN_TYPE_BOOLEAN;
+            case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
+                return duckType == DuckDB.COLUMN_TYPE_TINYINT;
+            case ColumnType.CHAR:
+            case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
+                return duckType == DuckDB.COLUMN_TYPE_SMALLINT;
+            case ColumnType.INT:
+            case ColumnType.DATE:
+            case ColumnType.GEOINT:
+            case ColumnType.IPv4:
+                return duckType == DuckDB.COLUMN_TYPE_INTEGER;
+            case ColumnType.LONG:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.GEOLONG:
+                return duckType == DuckDB.COLUMN_TYPE_BIGINT;
+            case ColumnType.LONG128:
+            case ColumnType.UUID:
+            case ColumnType.LONG256: // TODO: this is a problem
+                return duckType == DuckDB.COLUMN_TYPE_HUGEINT;
+            case ColumnType.FLOAT:
+                return duckType == DuckDB.COLUMN_TYPE_FLOAT;
+            case ColumnType.DOUBLE:
+                return duckType == DuckDB.COLUMN_TYPE_DOUBLE;
+            case ColumnType.STRING:
+                return duckType == DuckDB.COLUMN_TYPE_VARCHAR;
+            case ColumnType.BINARY:
+                return duckType == DuckDB.COLUMN_TYPE_BLOB;
+            default:
+                return false;
+        }
     }
 
     @Override
@@ -96,9 +165,17 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
     }
 
     public static class RecordCursorImpl implements RecordCursor {
-        private final RecordImpl record = new RecordImpl();
+        private final AbstractRecord record;
         private DuckDBPageFrameCursor pageFrameCursor;
         private DuckDBPageFrameCursor.PageFrameImpl currentPageFrame;
+
+        public RecordCursorImpl(boolean duckNative) {
+            if (duckNative) {
+                this.record = new DuckNativeRecord();
+            } else {
+                this.record = new QuestNativeRecord();
+            }
+        }
 
         public void of(DuckDBPageFrameCursor pageFrameCursor) {
             assert pageFrameCursor != null;
@@ -156,9 +233,28 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
             currentPageFrame = pageFrameCursor.next();
         }
 
-        public class RecordImpl implements Record {
-            private long pageRowIndex = -1;
+        public abstract class AbstractRecord implements Record {
+            protected long pageRowIndex = -1;
 
+            @Override
+            public long getRowId() {
+                return Rows.toRowID(currentPageFrame.getPartitionIndex(), pageRowIndex);
+            }
+
+            public long getPageRowIndex() {
+                return pageRowIndex;
+            }
+
+            public void incrementPageRowIndex() {
+                this.pageRowIndex++;
+            }
+
+            public void setPageRowIndex(long pageRowIndex) {
+                this.pageRowIndex = pageRowIndex;
+            }
+        }
+
+        public class DuckNativeRecord extends AbstractRecord {
             @Override
             public boolean getBool(int columnIndex) {
                 final long address = currentPageFrame.getPageAddress(columnIndex);
@@ -251,15 +347,6 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
             }
 
             @Override
-            public long getRowId() {
-                return Rows.toRowID(currentPageFrame.getPartitionIndex(), pageRowIndex);
-            }
-
-            public long getPageRowIndex() {
-                return pageRowIndex;
-            }
-
-            @Override
             public short getShort(int columnIndex) {
                 final long address = currentPageFrame.getPageAddress(columnIndex);
                 if (address == 0) {
@@ -271,13 +358,244 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
                 }
                 return Unsafe.getUnsafe().getShort(address + pageRowIndex * Short.BYTES);
             }
+        }
 
-            public void incrementPageRowIndex() {
-                this.pageRowIndex++;
+        public class QuestNativeRecord extends AbstractRecord {
+            private final DirectUtf8String utf8String = new DirectUtf8String();
+            private final DirectBinarySequence binarySequence = new DirectBinarySequence();
+            private final Long256Impl long256 = new Long256Impl();
+
+            @Override
+            public boolean getBool(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return false;
+                }
+                return Unsafe.getUnsafe().getByte(address + pageRowIndex * Byte.BYTES) == 1;
             }
 
-            public void setPageRowIndex(long pageRowIndex) {
-                this.pageRowIndex = pageRowIndex;
+            @Override
+            public byte getByte(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return 0;
+                }
+                return Unsafe.getUnsafe().getByte(address + pageRowIndex * Byte.BYTES);
+            }
+
+            @Override
+            public char getChar(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return 0;
+                }
+                return Unsafe.getUnsafe().getChar(address + pageRowIndex * Character.BYTES);
+            }
+
+            @Override
+            public double getDouble(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return Double.NaN;
+                }
+                return Unsafe.getUnsafe().getDouble(address + pageRowIndex * Double.BYTES);
+            }
+
+            @Override
+            public float getFloat(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return Float.NaN;
+                }
+                return Unsafe.getUnsafe().getFloat(address + pageRowIndex * Float.BYTES);
+            }
+
+            @Override
+            public int getInt(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return Numbers.INT_NaN;
+                }
+                return Unsafe.getUnsafe().getInt(address + pageRowIndex * Integer.BYTES);
+            }
+
+            @Override
+            public long getLong(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return Numbers.LONG_NaN;
+                }
+                return Unsafe.getUnsafe().getLong(address + pageRowIndex * Long.BYTES);
+            }
+
+            @Override
+            public short getShort(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return 0;
+                }
+                return Unsafe.getUnsafe().getShort(address + pageRowIndex * Short.BYTES);
+            }
+
+            @Override
+            public byte getGeoByte(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return GeoHashes.BYTE_NULL;
+                }
+                return Unsafe.getUnsafe().getByte(address + pageRowIndex * Byte.BYTES);
+            }
+
+            @Override
+            public int getGeoInt(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return GeoHashes.INT_NULL;
+                }
+                return Unsafe.getUnsafe().getInt(address + pageRowIndex * Integer.BYTES);
+            }
+
+            @Override
+            public long getGeoLong(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return GeoHashes.NULL;
+                }
+                return Unsafe.getUnsafe().getLong(address + pageRowIndex * Long.BYTES);
+            }
+
+            @Override
+            public short getGeoShort(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return GeoHashes.SHORT_NULL;
+                }
+                return Unsafe.getUnsafe().getShort(address + pageRowIndex * Short.BYTES);
+            }
+
+            @Override
+            public int getIPv4(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return Numbers.IPv4_NULL;
+                }
+                return Unsafe.getUnsafe().getInt(address + pageRowIndex * Integer.BYTES);
+            }
+
+            @Override
+            public long getLong128Hi(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return Numbers.LONG_NaN;
+                }
+                return Unsafe.getUnsafe().getLong(address + pageRowIndex * Long128.BYTES + Long.BYTES);
+            }
+
+            @Override
+            public long getLong128Lo(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return Numbers.LONG_NaN;
+                }
+                return Unsafe.getUnsafe().getLong(address + pageRowIndex * Long128.BYTES);
+            }
+
+            @Override
+            public void getLong256(int columnIndex, CharSinkBase<?> sink) {
+                Long256 long256 = getLong256A(columnIndex);
+                Numbers.appendLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3(), sink);
+            }
+
+            @Override
+            public Long256 getLong256A(int columnIndex) {
+                final long addressLo = currentPageFrame.getPageAddress(columnIndex);
+                final long addressHi = currentPageFrame.getPageAddress(columnIndex + 1); // TODO: validate
+                if (addressLo == 0 || addressHi == 0) {
+                    long256.setAll(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                } else {
+                    long recordAddressLo = addressLo + pageRowIndex * Long128.BYTES;
+                    long recordAddressHi = addressHi + pageRowIndex * Long128.BYTES;
+                    long256.setAll(
+                            Unsafe.getUnsafe().getLong(addressLo),
+                            Unsafe.getUnsafe().getLong(addressLo + Long.BYTES),
+                            Unsafe.getUnsafe().getLong(addressHi),
+                            Unsafe.getUnsafe().getLong(addressHi + Long.BYTES)
+                    );
+                }
+                return long256;
+            }
+
+            @Override
+            public CharSequence getStr(int columnIndex) { // TODO: null handling
+                //	union {
+                //		struct {
+                //			uint32_t length;
+                //			char prefix[4];
+                //			char *ptr;
+                //		} pointer;
+                //		struct {
+                //			uint32_t length;
+                //			char inlined[12];
+                //		} inlined;
+                //	} value;
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return null;
+                }
+                long recordAddress = address + pageRowIndex * 16; // sizeof(value)
+                int length = Unsafe.getUnsafe().getInt(recordAddress);
+                if (length <= 12) {
+                    // inlined
+                    long inlinedAddress = recordAddress + Integer.BYTES;
+                    utf8String.of(inlinedAddress, inlinedAddress + length);
+                    return utf8String.toString(); // Convert for now
+                } else {
+                    // ptr
+                    long ptrAddress = Unsafe.getUnsafe().getLong(recordAddress + 8);
+                    utf8String.of(ptrAddress, ptrAddress + length);
+                    return utf8String.toString(); // Convert for now
+                }
+            }
+
+            @Override
+            public int getStrLen(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return 0;
+                }
+                long recordAddress = address + pageRowIndex * 16; // sizeof(value)
+                return Unsafe.getUnsafe().getInt(recordAddress);
+            }
+
+            @Override
+            public BinarySequence getBin(int columnIndex) { // TODO: null handling
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return null;
+                }
+                long recordAddress = address + pageRowIndex * 16; // sizeof(value)
+                int length = Unsafe.getUnsafe().getInt(recordAddress);
+                if (length <= 12) {
+                    // inlined
+                    long inlinedAddress = recordAddress + Integer.BYTES;
+                    binarySequence.of(inlinedAddress, length);
+                    return binarySequence;
+                } else {
+                    // ptr
+                    long ptrAddress = Unsafe.getUnsafe().getLong(recordAddress + 8);
+                    binarySequence.of(ptrAddress, length);
+                    return binarySequence;
+                }
+            }
+
+            @Override
+            public long getBinLen(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0) {
+                    return 0;
+                }
+                long recordAddress = address + pageRowIndex * 16; // sizeof(value)
+                return Unsafe.getUnsafe().getLong(recordAddress);
             }
         }
     }

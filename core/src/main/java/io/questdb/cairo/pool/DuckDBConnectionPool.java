@@ -40,6 +40,7 @@ public class DuckDBConnectionPool extends AbstractMultiTenantPool<DuckDBConnecti
         if (db == 0) {
             throw CairoException.critical(DuckDB.errorType());
         }
+        DuckDB.registerQuestDBScanFunction(db);
     }
 
     @Override
@@ -91,6 +92,10 @@ public class DuckDBConnectionPool extends AbstractMultiTenantPool<DuckDBConnecti
             this.tableToken = tableToken;
             this.pool = pool;
             this.entry = entry;
+        }
+
+        public long getConnection() {
+            return connection;
         }
 
         @Override
