@@ -4894,7 +4894,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try {
                     final long lagDataAddr = Math.abs(lagDataMapAddr) - lagDataBegin;
                     dstDataAddr.jumpTo(src1DataSize + lagDataSize);
-                    dstAuxAddr.jumpTo((timestampMergeIndexCount + 1) << 3);
+                    dstAuxAddr.jumpTo(columnTypeDriver.getAuxVectorSize(timestampMergeIndexCount));
 
                     // exclude the trailing offset from shuffling
                     ColumnType.getDriver(columnType).o3ColumnMerge(
@@ -5163,7 +5163,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void o3MoveWalFromFilesToLastPartition(
             int columnIndex,
             final int columnType,
-            long copyToLagRowCount,
+            long copyRowCount,
             long ignore,
             long columnRowCount,
             long existingLagRows,
@@ -5187,20 +5187,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3dstDataOffset;
             if (ColumnType.isVarSize(columnType)) {
                 // Var dataVectorCopySize column
-                // todo: use driver
                 final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
                 final long committedAuxOffset = columnTypeDriver.getAuxVectorOffset(columnRowCount);
-                o3srcDataOffset = columnTypeDriver.getDataVectorOffset(o3srcAuxMem.addressOf(0), columnRowCount);
-                dataVectorCopySize = //columnTypeDriver.getDataVectorSize(o3srcAuxMem.addressOf(0),  columnRowCount, columnRowCount + copyToLagRowCount + 1);
-                        o3srcAuxMem.getLong((columnRowCount + copyToLagRowCount) << 3) - o3srcDataOffset;
+                final long o3srcAuxMemAddr = o3srcAuxMem.addressOf(0);
+                o3srcDataOffset = columnTypeDriver.getDataVectorOffset(o3srcAuxMemAddr, columnRowCount);
+                dataVectorCopySize = columnTypeDriver.getDataVectorSize(o3srcAuxMemAddr, columnRowCount, columnRowCount + copyRowCount - 1);
 
                 final long o3dstAuxOffset = columnTypeDriver.getAuxVectorOffset(dstRowCount);
-                final long o3dstAuxSize = columnTypeDriver.getAuxVectorSize(copyToLagRowCount);
+                final long o3dstAuxSize = columnTypeDriver.getAuxVectorSize(copyRowCount);
 
                 if (o3dstAuxOffset > 0) {
                     o3dstAuxMem.jumpTo(o3dstAuxOffset);
-                    o3dstDataOffset = Unsafe.getUnsafe().getLong(o3dstAuxMem.addressOf(o3dstAuxOffset));
+                    o3dstDataOffset = columnTypeDriver.getDataVectorOffset(o3dstAuxMem.addressOf(o3dstAuxOffset), 0);
                 } else {
                     o3dstDataOffset = 0;
                 }
@@ -5210,11 +5209,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long o3dstAuxAddr = mapAppendColumnBuffer(o3dstAuxMem, o3dstAuxOffset, o3dstAuxSize, true);
                 assert o3dstAuxAddr != 0;
                 try {
-                    O3Utils.shiftCopyFixedSizeColumnData(
-                            o3srcDataOffset - o3dstDataOffset,
+                    final long shift = o3srcDataOffset - o3dstDataOffset;
+                    columnTypeDriver.o3shiftCopyAuxVector(
+                            shift,
                             o3srcAuxMem.addressOf(committedAuxOffset),
                             0,
-                            copyToLagRowCount, // No need to do +1 here, hi is inclusive
+                            copyRowCount,
                             Math.abs(o3dstAuxAddr)
                     );
                 } finally {
@@ -5224,7 +5224,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Fixed dataVectorCopySize column
                 final int shl = ColumnType.pow2SizeOf(columnType);
                 o3srcDataOffset = isDesignatedTimestamp ? columnRowCount << 4 : columnRowCount << shl;
-                dataVectorCopySize = copyToLagRowCount << shl;
+                dataVectorCopySize = copyRowCount << shl;
                 o3dstDataOffset = dstRowCount << shl;
             }
 
@@ -5272,7 +5272,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long destAddr = mapAppendColumnBuffer(o3DstDataMem, o3dstDataOffset, dataVectorCopySize, true);
                 try {
-                    Vect.copyFromTimestampIndex(srcLo, 0, copyToLagRowCount - 1, Math.abs(destAddr));
+                    Vect.copyFromTimestampIndex(srcLo, 0, copyRowCount - 1, Math.abs(destAddr));
                 } finally {
                     mapAppendColumnBufferRelease(destAddr, o3dstDataOffset, dataVectorCopySize);
                 }
@@ -5282,7 +5282,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     "move wal to lag failed",
                     columnIndex,
                     columnType,
-                    copyToLagRowCount,
+                    copyRowCount,
                     columnRowCount,
                     existingLagRows,
                     symbolsFlags,
@@ -5290,6 +5290,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
         }
     }
+
 
     private void o3OpenColumnSafe(Sequence openColumnSubSeq, long cursor, O3OpenColumnTask openColumnTask) {
         try {

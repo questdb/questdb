@@ -180,6 +180,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void o3shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void o3sort(long timestampMergeIndexAddr, long timestampMergeIndexSize, MemoryCR srcDataMem, MemoryCR srcAuxMem, MemoryCARW dstDataMem, MemoryCARW dstAuxMem) {
         throw new UnsupportedOperationException();
     }

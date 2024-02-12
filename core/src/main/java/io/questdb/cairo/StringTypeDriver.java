@@ -94,6 +94,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public long getAuxVectorOffset(long row) {
+        return row << LEGACY_VAR_SIZE_AUX_SHL;
+    }
+
+    @Override
     public long getAuxVectorSize(long storageRowCount) {
         return (storageRowCount + 1) << LEGACY_VAR_SIZE_AUX_SHL;
     }
@@ -101,11 +106,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
         return findVarOffset(auxMemAddr, row);
-    }
-
-    @Override
-    public long getAuxVectorOffset(long row) {
-        return row << LEGACY_VAR_SIZE_AUX_SHL;
     }
 
     @Override
@@ -163,7 +163,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
                     mixedIOFlag
             );
         } else {
-            O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcAuxAddr, srcLo, srcHi + 1, dstAuxAddr);
+            o3shiftCopyAuxVector(lo - offset, srcAuxAddr, srcLo, srcHi + 1, dstAuxAddr);
         }
     }
 
@@ -205,7 +205,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
         // move count + 1 rows, to make sure index column remains n+1
         // the data is copied back to start of the buffer, no need to set size first
-        O3Utils.shiftCopyFixedSizeColumnData(
+        o3shiftCopyAuxVector(
                 sourceOffset - destOffset,
                 srcAuxMem.addressOf(committedIndexOffset),
                 0,
@@ -479,7 +479,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
                     // nulls we created above
                     long hiInclusive = srcDataMax - srcDataTop; // STOP. DON'T ADD +1 HERE. srcHi is inclusive, no need to do +1
                     assert srcDataFixSize >= srcDataMaxBytes + (hiInclusive + 1) * 8; // make sure enough len mapped
-                    O3Utils.shiftCopyFixedSizeColumnData(
+                    o3shiftCopyAuxVector(
                             -reservedBytesForColTopNulls,
                             srcDataFixAddr,
                             0,
@@ -731,6 +731,23 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void o3shiftCopyAuxVector(
+            long shift,
+            long src,
+            long srcLo,
+            long srcHi,
+            long dstAddr
+    ) {
+        O3Utils.shiftCopyFixedSizeColumnData(
+                shift,
+                src,
+                srcLo,
+                srcHi,
+                dstAddr
+        );
+    }
+
+    @Override
     public void o3sort(
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
@@ -815,4 +832,5 @@ public class StringTypeDriver implements ColumnTypeDriver {
         assert (srcLo == 0 && result == 0) || result > 0;
         return result;
     }
+
 }

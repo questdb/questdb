@@ -191,6 +191,8 @@ public interface ColumnTypeDriver {
             long partitionUpdateSinkAddr
     );
 
+    void o3shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr);
+
     /**
      * Sorts var size vectors. This method is also responsible for sizing the destination vectors and ensuring the
      * append position after sorting is correct.
