@@ -31,7 +31,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
 public class HttpRangeParser {
-    private static final Utf8String BYTES = new Utf8String("bytes=", true);
+    private static final Utf8String BYTES = new Utf8String("bytes=");
     private long hi;
     private long lo;
 
