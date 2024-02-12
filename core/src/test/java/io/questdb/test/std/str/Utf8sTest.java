@@ -270,6 +270,37 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testReadWriteVarcharOver2GB() {
+        try (
+                MemoryAR auxMem = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                MemoryAR dataMem = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+        ) {
+            final Utf8StringSink utf8Sink = new Utf8StringSink();
+            int len = 1024;
+            int dataSize = len - Utf8s.UTF8_STORAGE_SPLIT_BYTE;
+            int n = (Integer.MAX_VALUE / dataSize) + dataSize;
+            LongList expectedOffsets = new LongList(n);
+            for (int i = 0; i < n; i++) {
+                utf8Sink.clear();
+                utf8Sink.repeat("a", len);
+                Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
+                expectedOffsets.add(dataMem.getAppendOffset());
+            }
+
+            utf8Sink.clear();
+            utf8Sink.repeat("a", len);
+            String expectedStr = utf8Sink.toString();
+            for (int i = 0; i < n; i++) {
+                Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMem, auxMem, 1);
+                Assert.assertEquals(expectedOffsets.getQuick(i), VarcharTypeDriver.varcharGetDataVectorSize(auxMem, i * 16L));
+                Assert.assertNotNull(varchar);
+                TestUtils.assertEquals(expectedStr, varchar.asAsciiCharSequence());
+                Assert.assertTrue(varchar.isAscii());
+            }
+        }
+    }
+
+    @Test
     public void testStartsWith() {
         Assert.assertTrue(Utf8s.startsWith(new Utf8String("фу бар баз"), new Utf8String("фу")));
         Assert.assertFalse(Utf8s.startsWith(new Utf8String("фу бар баз"), new Utf8String("бар")));
