@@ -295,10 +295,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     private int put0(CharSequence symbol, int hash, SymbolValueCountCollector countCollector) {
-        long offsetOffset = offsetMem.getAppendOffset() - Long.BYTES;
-        offsetMem.putLong(charMem.putStr(symbol));
-        indexWriter.add(hash, offsetOffset);
-        final int symIndex = offsetToKey(offsetOffset);
+        long offsetOfWhereWeWillWriteOffsetOfTheSymbolValue = offsetMem.getAppendOffset() - Long.BYTES;
+        long offsetAfterAppendingSymbolValue = charMem.putStr(symbol);
+        offsetMem.putLong(offsetAfterAppendingSymbolValue);
+        indexWriter.add(hash, offsetOfWhereWeWillWriteOffsetOfTheSymbolValue);
+        final int symIndex = offsetToKey(offsetOfWhereWeWillWriteOffsetOfTheSymbolValue);
         countCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);
         return symIndex;
     }

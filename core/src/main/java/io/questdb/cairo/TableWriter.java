@@ -4953,9 +4953,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if (ColumnType.isVarSize(columnType)) {
-                    // Var size column
-                    // todo: ask alex
-                    ColumnType.getDriver(columnType).o3MoveLag(copyToLagRowCount, columnDataRowOffset, existingLagRows, srcAuxMem, srcDataMem, dstAuxMem, dstDataMem);
+                    final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                    final long dataOffset = columnTypeDriver.getDataVectorOffset(srcAuxMem.addressOf(0), columnDataRowOffset);
+                    final long dataSize = columnTypeDriver.getDataVectorOffset(srcAuxMem.addressOf(0), columnDataRowOffset + copyToLagRowCount) - dataOffset;
+                    final long destOffset = existingLagRows == 0 ? 0L : columnTypeDriver.getDataVectorOffset(dstAuxMem.addressOf(0), existingLagRows);
+
+                    // adjust append position of the index column to
+                    // maintain n+1 number of entries
+                    dstAuxMem.jumpTo(columnTypeDriver.getAuxVectorSize(existingLagRows + copyToLagRowCount));
+
+                    // move count + 1 rows, to make sure index column remains n+1
+                    // the data is copied back to start of the buffer, no need to set dataSize first
+                    columnTypeDriver.o3shiftCopyAuxVector(
+                            dataOffset - destOffset,
+                            srcAuxMem.addressOf(columnTypeDriver.getAuxVectorOffset(columnDataRowOffset)),
+                            0,
+                            copyToLagRowCount, // No need to do +1 here, hi is inclusive
+                            dstAuxMem.addressOf(columnTypeDriver.getAuxVectorOffset(existingLagRows))
+                    );
+                    dstDataMem.jumpTo(destOffset + dataSize);
+                    assert srcDataMem.size() >= dataSize;
+                    Vect.memmove(dstDataMem.addressOf(destOffset), srcDataMem.addressOf(dataOffset), dataSize);
                 } else {
                     final int shl = ColumnType.pow2SizeOf(columnType);
                     // Fixed size column
@@ -5026,13 +5044,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         try {
             if (colIndex > -1) {
-                MemoryMA srcDataMem = getPrimaryColumn(colIndex);
-                long srcFixOffset;
+                MemoryMA colDataMem = getPrimaryColumn(colIndex);
+                long colDataOffset;
                 final MemoryARW o3DataMem = o3MemColumns1.get(getPrimaryColumnIndex(colIndex));
-                final MemoryARW o3IndexMem = o3MemColumns1.get(getSecondaryColumnIndex(colIndex));
+                final MemoryARW o3auxMem = o3MemColumns1.get(getSecondaryColumnIndex(colIndex));
 
-                long extendedSize;
-                long dstVarOffset = o3DataMem.getAppendOffset();
+                long colDataExtraSize;
+                long o3dataOffset = o3DataMem.getAppendOffset();
 
                 final long columnTop = getColumnTop(colIndex);
 
@@ -5045,71 +5063,67 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .I$();
                 }
 
+                final long committedRowCount = committedTransientRowCount - columnTop;
                 if (ColumnType.isVarSize(columnType)) {
-                    // todo: use driver
-                    // Var size
-                    final int indexShl = 3; // ColumnType.pow2SizeOf(ColumnType.LONG);
-                    final MemoryMA srcFixMem = getSecondaryColumn(colIndex);
-                    long sourceOffset = (committedTransientRowCount - columnTop) << indexShl;
-
-                    // the size includes trailing LONG
-                    long sourceLen = (transientRowsAdded + 1) << indexShl;
-                    long dstAppendOffset = o3IndexMem.getAppendOffset();
+                    final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                    final MemoryMA colAuxMem = getSecondaryColumn(colIndex);
+                    final long colAuxMemOffset = columnTypeDriver.getAuxVectorOffset(committedRowCount);
+                    long colAuxMemRequiredSize = columnTypeDriver.getAuxVectorSize(transientRowsAdded);
+                    long o3auxMemAppendOffset = o3auxMem.getAppendOffset();
 
                     // ensure memory is available
-                    o3IndexMem.jumpTo(dstAppendOffset + (transientRowsAdded << indexShl));
-                    long alignedExtraLen;
-                    long srcAddress = srcFixMem.map(sourceOffset, sourceLen);
-                    boolean locallyMapped = srcAddress == 0;
+                    o3auxMem.jumpTo(o3auxMemAppendOffset + columnTypeDriver.getAuxVectorOffset(transientRowsAdded));
+                    long colAuxMemAddr = colAuxMem.map(colAuxMemOffset, colAuxMemRequiredSize);
+                    boolean locallyMapped = colAuxMemAddr == 0;
 
+                    long alignedExtraLen;
                     if (!locallyMapped) {
                         alignedExtraLen = 0;
                     } else {
                         // Linux requires the mmap offset to be page aligned
-                        final long alignedOffset = Files.floorPageSize(sourceOffset);
-                        alignedExtraLen = sourceOffset - alignedOffset;
-                        srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
+                        final long alignedOffset = Files.floorPageSize(colAuxMemOffset);
+                        alignedExtraLen = colAuxMemOffset - alignedOffset;
+                        colAuxMemAddr = mapRO(ff, colAuxMem.getFd(), colAuxMemRequiredSize + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
                     }
 
-                    final long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress + alignedExtraLen);
-                    O3Utils.shiftCopyFixedSizeColumnData(
-                            srcVarOffset - dstVarOffset,
-                            srcAddress + alignedExtraLen + Long.BYTES,
+                    colDataOffset = columnTypeDriver.getDataVectorOffset(colAuxMemAddr + alignedExtraLen, 0);
+                    columnTypeDriver.o3shiftCopyAuxVector(
+                            colDataOffset - o3dataOffset,
+                            // add one row to where we shift from
+                            colAuxMemAddr + alignedExtraLen + columnTypeDriver.getAuxVectorOffset(1),
                             0,
                             transientRowsAdded - 1,
-                            // copy uncommitted index over the trailing LONG
-                            o3IndexMem.addressOf(dstAppendOffset)
+                            o3auxMem.addressOf(o3auxMemAppendOffset)
                     );
 
                     if (locallyMapped) {
                         // If memory mapping was mapped specially for this move, close it
-                        ff.munmap(srcAddress, sourceLen + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
+                        ff.munmap(colAuxMemAddr, colAuxMemRequiredSize + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
                     }
 
-                    extendedSize = srcDataMem.getAppendOffset() - srcVarOffset;
-                    srcFixOffset = srcVarOffset;
-                    srcFixMem.jumpTo(sourceOffset + Long.BYTES);
+                    colDataExtraSize = colDataMem.getAppendOffset() - colDataOffset;
+                    colAuxMem.jumpTo(columnTypeDriver.getAuxVectorOffset(committedRowCount));
                 } else {
                     // Fixed size
-                    int shl = ColumnType.pow2SizeOf(columnType);
-                    extendedSize = transientRowsAdded << shl;
-                    srcFixOffset = (committedTransientRowCount - columnTop) << shl;
+                    final int shl = ColumnType.pow2SizeOf(columnType);
+                    colDataExtraSize = transientRowsAdded << shl;
+                    colDataOffset = committedRowCount << shl;
                 }
 
-                o3DataMem.jumpTo(dstVarOffset + extendedSize);
-                long appendAddress = o3DataMem.addressOf(dstVarOffset);
-                long sourceAddress = srcDataMem.map(srcFixOffset, extendedSize);
+                o3DataMem.jumpTo(o3dataOffset + colDataExtraSize);
+                long o3dataAddr = o3DataMem.addressOf(o3dataOffset);
+                long sourceAddress = colDataMem.map(colDataOffset, colDataExtraSize);
                 if (sourceAddress != 0) {
-                    Vect.memcpy(appendAddress, sourceAddress, extendedSize);
+                    Vect.memcpy(o3dataAddr, sourceAddress, colDataExtraSize);
                 } else {
                     // Linux requires the mmap offset to be page aligned
-                    long alignedOffset = Files.floorPageSize(srcFixOffset);
-                    long alignedExtraLen = srcFixOffset - alignedOffset;
-                    sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
-                    Vect.memcpy(appendAddress, sourceAddress + alignedExtraLen, extendedSize);
-                    ff.munmap(sourceAddress, extendedSize + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
+                    long alignedOffset = Files.floorPageSize(colDataOffset);
+                    long alignedExtraLen = colDataOffset - alignedOffset;
+                    sourceAddress = mapRO(ff, colDataMem.getFd(), colDataExtraSize + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
+                    Vect.memcpy(o3dataAddr, sourceAddress + alignedExtraLen, colDataExtraSize);
+                    ff.munmap(sourceAddress, colDataExtraSize + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
                 }
-                srcDataMem.jumpTo(srcFixOffset);
+                colDataMem.jumpTo(colDataOffset);
             } else {
                 // Timestamp column
                 colIndex = -colIndex - 1;

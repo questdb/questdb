@@ -193,31 +193,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3MoveLag(long rowCount, long columnRowCount, long lagRowCount, MemoryCR srcAuxMem, MemoryCR srcDataMem, MemoryARW dstAuxMem, MemoryARW dstDataMem) {
-        long committedIndexOffset = columnRowCount << 3;
-        final long sourceOffset = srcAuxMem.getLong(committedIndexOffset);
-        final long size = srcAuxMem.getLong((columnRowCount + rowCount) << 3) - sourceOffset;
-        final long destOffset = lagRowCount == 0 ? 0L : dstAuxMem.getLong(lagRowCount << 3);
-
-        // adjust append position of the index column to
-        // maintain n+1 number of entries
-        dstAuxMem.jumpTo((lagRowCount + rowCount + 1) << 3);
-
-        // move count + 1 rows, to make sure index column remains n+1
-        // the data is copied back to start of the buffer, no need to set size first
-        o3shiftCopyAuxVector(
-                sourceOffset - destOffset,
-                srcAuxMem.addressOf(committedIndexOffset),
-                0,
-                rowCount, // No need to do +1 here, hi is inclusive
-                dstAuxMem.addressOf(lagRowCount << 3)
-        );
-        dstDataMem.jumpTo(destOffset + size);
-        assert srcDataMem.size() >= size;
-        Vect.memmove(dstDataMem.addressOf(destOffset), srcDataMem.addressOf(sourceOffset), size);
-    }
-
-    @Override
     public void o3PartitionAppend(
             AtomicInteger columnCounter,
             int columnType,

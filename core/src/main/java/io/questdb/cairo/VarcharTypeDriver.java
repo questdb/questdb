@@ -165,11 +165,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3MoveLag(long rowCount, long columnDataRowOffset, long existingLagRows, MemoryCR srcAuxMem, MemoryCR srcDataMem, MemoryARW dstAuxMem, MemoryARW dstDataMem) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void o3PartitionAppend(AtomicInteger columnCounter, int columnType, long srcOooFixAddr, long srcOooVarAddr, long srcOooLo, long srcOooHi, long srcOooMax, long timestampMin, long partitionTimestamp, long srcDataTop, long srcDataMax, int indexBlockCapacity, int srcTimestampFd, long srcTimestampAddr, long srcTimestampSize, int activeFixFd, int activeVarFd, MemoryMA dstFixMem, MemoryMA dstVarMem, long dstRowCount, long srcDataNewPartitionSize, long srcDataOldPartitionSize, long o3SplitPartitionSize, TableWriter tableWriter, long partitionUpdateSinkAddr) {
         throw new UnsupportedOperationException();
     }

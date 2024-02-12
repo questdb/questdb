@@ -108,16 +108,6 @@ public interface ColumnTypeDriver {
             long dstDataOffset
     );
 
-    void o3MoveLag(
-            long rowCount,
-            long columnDataRowOffset,
-            long existingLagRows,
-            MemoryCR srcAuxMem,
-            MemoryCR srcDataMem,
-            MemoryARW dstAuxMem,
-            MemoryARW dstDataMem
-    );
-
     void o3PartitionAppend(
             AtomicInteger columnCounter,
             int columnType,
