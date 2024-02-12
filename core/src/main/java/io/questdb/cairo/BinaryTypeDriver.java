@@ -52,6 +52,5 @@ public class BinaryTypeDriver extends StringTypeDriver {
                 dstDataAddr,
                 dstDataOffset
         );
-
     }
 }
