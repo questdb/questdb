@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -39,7 +40,7 @@ import static io.questdb.cairo.TableUtils.offsetFileName;
 // Native resources are deallocated after every call automatically but the wrappers are re-usable
 public class SymbolMapUtil {
     private static final Log LOG = LogFactory.getLog(SymbolMapUtil.class);
-    private MemoryMARW charMem;
+    private MemoryCMOR charMem;
     private BitmapIndexWriter indexWriter;
     private MemoryMARW offsetMem;
 
@@ -71,20 +72,8 @@ public class SymbolMapUtil {
                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
             }
             LOG.info().$("opening symbol [path=").$(path).$(", symbolCount=").$(symbolCount).$(']').$();
+            offsetMem = open(configuration, ff, mapPageSize, len, path, offsetMem);
 
-            // open "offset" memory and make sure we start appending from where
-            // we left off. Where we left off is stored externally to symbol map
-            if (offsetMem == null) {
-                this.offsetMem = Vm.getWholeMARWInstance(
-                        ff,
-                        path,
-                        mapPageSize,
-                        MemoryTag.MMAP_INDEX_WRITER,
-                        configuration.getWriterFileOpenOpts()
-                );
-            } else {
-                offsetMem.of(ff, path, mapPageSize, MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts());
-            }
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
             if (symbolCapacity < 1) {
                 symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
@@ -109,45 +98,92 @@ public class SymbolMapUtil {
                 // .c file is empty, nothing to do
                 return;
             }
-
-            if (this.charMem == null) {
-                this.charMem = Vm.getWholeMARWInstance(
-                        ff,
-                        charFileName(path.trimTo(plen), name, columnNameTxn),
-                        mapPageSize,
-                        MemoryTag.MMAP_INDEX_WRITER,
-                        configuration.getWriterFileOpenOpts()
-                );
-            } else {
-                this.charMem.of(
-                        ff,
-                        charFileName(path.trimTo(plen), name, columnNameTxn),
-                        mapPageSize,
-                        MemoryTag.MMAP_INDEX_WRITER,
-                        configuration.getWriterFileOpenOpts()
-                );
-            }
+            charMem = open(configuration, ff, mapPageSize, -1, charFileName(path.trimTo(plen), name, columnNameTxn), charMem);
 
             // Read .c file and rebuild symbol map
-            charMem.jumpTo(0);
             long strOffset = 0;
+            long offsetOffset = keyToOffset(0);
+            offsetMem.putLong(0L);
+            offsetOffset += Long.BYTES;
+
             for (int i = 0; i < symbolCount; i++) {
+                if (strOffset > charMem.size() - 4) {
+                    throw new CairoException().put("corrupted symbol map [name=").put(path).put(']');
+                }
                 // read symbol value
                 CharSequence symbol = charMem.getStr(strOffset);
                 strOffset += Vm.getStorageLength(symbol);
+                if (symbol.length() == 0) {
+                    LOG.info().$("symbol is empty [index=").$(i).$(']').$();
+                }
 
                 // write symbol value back to symbol map
                 int hash = Hash.boundedHash(symbol, maxHash);
-                long offsetOffset = offsetMem.getAppendOffset() - Long.BYTES;
-                offsetMem.putLong(charMem.putStr(symbol));
-                indexWriter.add(hash, offsetOffset);
+                indexWriter.add(hash, offsetOffset - Long.BYTES);
+
+                // offset stores + 1 of symbols, write offset beyond the end of last symbol
+                offsetMem.putLong(strOffset);
+                offsetOffset += Long.BYTES;
             }
+
         } finally {
             Misc.free(charMem);
-            Misc.free(offsetMem);
+            offsetMem.close(false);
             Misc.free(indexWriter);
             path.trimTo(plen);
         }
+    }
+
+    private static MemoryCMOR open(CairoConfiguration configuration, FilesFacade ff, long mapPageSize, long size, Path path, MemoryCMOR mem) {
+        if (size == -1) {
+            long fileSize = ff.length(path);
+            if (fileSize > 0) {
+                size = fileSize;
+            }
+        }
+
+        if (mem == null) {
+            mem = Vm.getMemoryCMOR();
+        }
+        mem.of(
+                ff,
+                path,
+                mapPageSize,
+                size,
+                MemoryTag.MMAP_INDEX_WRITER,
+                configuration.getWriterFileOpenOpts()
+        );
+        return mem;
+    }
+
+    private static MemoryMARW open(CairoConfiguration configuration, FilesFacade ff, long mapPageSize, long size, Path path, MemoryMARW mem) {
+        if (size == -1) {
+            long fileSize = ff.length(path);
+            if (fileSize > 0) {
+                size = fileSize;
+            }
+        }
+
+        if (mem == null) {
+            mem = Vm.getMARWInstance(
+                    ff,
+                    path,
+                    mapPageSize,
+                    size,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
+        } else {
+            mem.of(
+                    ff,
+                    path,
+                    mapPageSize,
+                    size,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
+        }
+        return mem;
     }
 
     private void truncate(int symbolCapacity) {
@@ -158,7 +194,7 @@ public class SymbolMapUtil {
         offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
         offsetMem.putBool(HEADER_CACHE_ENABLED, useCache);
         offsetMem.putBool(HEADER_NULL_FLAG, nullFlag);
-        offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
+        offsetMem.jumpTo(keyToOffset(0));
 
         indexWriter.truncate();
     }

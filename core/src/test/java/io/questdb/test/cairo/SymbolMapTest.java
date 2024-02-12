@@ -763,9 +763,19 @@ public class SymbolMapTest extends AbstractCairoTest {
 
         int resets = 10 + rnd.nextInt(10);
 
+        // Create longer symbols to hit various mapping page sizes
+        int symbolPrefixSize = (rnd.nextInt(200) + 5) / 3;
+        StringBuilder symbolPrefix = new StringBuilder("abc");
+        for (int i = 0; i < symbolPrefixSize; i++) {
+            symbolPrefix.append("abc");
+        }
+        String prefix = symbolPrefix.toString();
+
         TestUtils.assertMemoryLeak(() -> {
             int N = 128;
             ObjList<CharSequence> symbolList = new ObjList<>();
+            IntList indexList = new IntList();
+
             try (Path path = new Path().of(configuration.getRoot())) {
 
                 SymbolMapUtil smu = new SymbolMapUtil();
@@ -780,10 +790,11 @@ public class SymbolMapTest extends AbstractCairoTest {
                         -1,
                         NOOP_COLLECTOR
                 );
-                addRange(w, 0, rnd.nextInt(symbols), rnd, symbolList);
+                int hi = rnd.nextInt(symbols);
+                hi = addRange(w, 0, hi, rnd, symbolList, indexList, prefix);
 
                 for (int i = 0; i < resets; i++) {
-                    int resetTo = Math.max(0, rnd.nextInt(symbols + 100) - 100);
+                    int resetTo = Math.max(0, rnd.nextInt(Math.max(1, hi - 100)));
                     w.close();
 
                     destroySymbolFilesOffsets(path, "x", resetTo, rnd);
@@ -798,7 +809,9 @@ public class SymbolMapTest extends AbstractCairoTest {
                             -1,
                             NOOP_COLLECTOR
                     );
-                    addRange(w, resetTo, Math.max(resetTo, rnd.nextInt(symbols)), rnd, symbolList);
+
+                    hi = resetTo + rnd.nextInt(symbols - resetTo);
+                    hi = addRange(w, resetTo, Math.max(resetTo, hi), rnd, symbolList, indexList, prefix);
                 }
                 w.close();
             }
@@ -1002,19 +1015,27 @@ public class SymbolMapTest extends AbstractCairoTest {
         });
     }
 
-    private void addRange(SymbolMapWriter w, int lo, int hi, Rnd rnd, ObjList<CharSequence> symbolList) {
+    private int addRange(SymbolMapWriter w, int lo, int hi, Rnd rnd, ObjList<CharSequence> symbolList, IntList indexList, String prefix) {
+        LOG.info().$("Resetting range [").$(lo).$(", ").$(hi).$("]").$();
+
         symbolList.setPos(hi);
+        indexList.setPos(hi);
         for (int i = lo; i < hi; i++) {
             int id = i + rnd.nextInt(hi * 2);
-            String symbol = id % 3 == 0 ? "" : "sym" + id;
-            w.put(symbol);
-            symbolList.setQuick(i, "");
+            String symbol = id % 3 == 0 ? "" : prefix + id;
+            int symi = w.put(symbol);
+            symbolList.setQuick(i, symbol);
+            indexList.setQuick(i, symi);
         }
 
         // Read back all and check
+        int symMax = 0;
         for (int i = 0; i < hi; i++) {
-            TestUtils.assertEquals(symbolList.getQuick(i), symbolList.get(i));
+            int symi = w.put(symbolList.getQuick(i));
+            Assert.assertEquals(indexList.get(i), symi);
+            symMax = Math.max(symMax, symi);
         }
+        return symMax;
     }
 
     private void destroySymbolFilesOffsets(Path path, String name, int cleanCount, Rnd rnd) {
