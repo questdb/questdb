@@ -71,7 +71,6 @@ public class SymbolMapUtil {
                 LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
             }
-            LOG.info().$("opening symbol [path=").$(path).$(", symbolCount=").$(symbolCount).$(']').$();
             offsetMem = open(configuration, ff, mapPageSize, len, path, offsetMem);
 
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
@@ -157,13 +156,6 @@ public class SymbolMapUtil {
     }
 
     private static MemoryMARW open(CairoConfiguration configuration, FilesFacade ff, long mapPageSize, long size, Path path, MemoryMARW mem) {
-        if (size == -1) {
-            long fileSize = ff.length(path);
-            if (fileSize > 0) {
-                size = fileSize;
-            }
-        }
-
         if (mem == null) {
             mem = Vm.getMARWInstance(
                     ff,
