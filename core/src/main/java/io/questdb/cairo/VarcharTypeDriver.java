@@ -42,26 +42,17 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public static final VarcharTypeDriver INSTANCE = new VarcharTypeDriver();
 
     public static long varcharGetDataOffset(MemoryR auxMem, long offset) {
-        long dataOffset = auxMem.getShort(offset + 10) & 0xffffL;
-        dataOffset <<= 32;
-        dataOffset |= auxMem.getInt(offset + 12) & 0xffffffffL;
-        return dataOffset;
+        return (auxMem.getLong(offset + 8L) & 0xffffffffffffL) >>> 16;
     }
 
-    public static long varcharGetDataOffset(long auxAddr, long srcLo) {
-        long addr = auxAddr + (srcLo << VARCHAR_AUX_SHL);
-        long dataOffset = Unsafe.getUnsafe().getShort(addr + 10) & 0xffffL;
-        dataOffset <<= 32;
-        dataOffset |= Unsafe.getUnsafe().getInt(addr + 12) & 0xffffffffL;
-        return dataOffset;
+    public static long varcharGetDataOffset(long auxEntry) {
+        return (Unsafe.getUnsafe().getLong(auxEntry + 8L) & 0xffffffffffffL) >>> 16;
     }
 
     public static long varcharGetDataVectorSize(long auxEntry) {
-        int raw = Unsafe.getUnsafe().getInt(auxEntry);
-        long dataOffset = Unsafe.getUnsafe().getShort(auxEntry + 10);
-        dataOffset <<= 32;
-        dataOffset |= Unsafe.getUnsafe().getInt(auxEntry + 12);
-        int flags = raw & 0x0f; // 4 bit flags
+        final int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        final int flags = raw & 0x0f; // 4 bit flags
+        final long dataOffset = varcharGetDataOffset(auxEntry);
 
         if ((flags & 4) == 4 || (flags & 1) == 1) {
             // null flag is set or fully inlined value
@@ -73,9 +64,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     public static long varcharGetDataVectorSize(MemoryR auxMem, long offset) {
-        int raw = auxMem.getInt(offset);
+        final int raw = auxMem.getInt(offset);
+        final int flags = raw & 0x0f; // 4 bit flags
         final long dataOffset = varcharGetDataOffset(auxMem, offset);
-        int flags = raw & 0x0f; // 4 bit flags
 
         if ((flags & 4) == 4 || (flags & 1) == 1) {
             // null flag is set or fully inlined value
@@ -175,9 +166,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of varchars
         // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
 
-        final long lo = varcharGetDataOffset(srcAuxAddr, srcLo);
+        final long lo = varcharGetDataOffset(srcAuxAddr + (srcLo << VARCHAR_AUX_SHL));
         assert lo >= 0;
-        final long hi = varcharGetDataOffset(srcAuxAddr, srcHi + 1);
+        final long hi = varcharGetDataOffset(srcAuxAddr + ((srcHi + 1) << VARCHAR_AUX_SHL));
         assert hi >= lo;
         // copy this before it changes
         final long len = hi - lo;
@@ -237,7 +228,13 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void o3shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr) {
-        throw new UnsupportedOperationException();
+        O3Utils.shiftCopyVarcharColumnAux(
+                shift,
+                src,
+                srcLo,
+                srcHi,
+                dstAddr
+        );
     }
 
     @Override

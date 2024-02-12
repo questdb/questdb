@@ -235,6 +235,14 @@ void shift_copy(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_h
 }
 
 // 28
+void shift_copy_varchar_aux(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest) {
+    const int64_t count = src_hi - src_lo + 1;
+    for (int64_t i = 0; i < count; i += 2) {
+        dest[i + 1] = src[i + 2 * src_lo + 1] - (shift << 16);
+    }
+}
+
+// 29
 void copy_index_timestamp(index_t *index, int64_t index_lo, int64_t index_hi, int64_t *dest) {
     const int64_t count = index_hi - index_lo + 1;
     for (int64_t i = 0; i < count; i++) {

@@ -791,9 +791,9 @@ public final class Utf8s {
             auxMem.skip(6);
             offset = dataMem.getAppendOffset();
         }
-        // write 48 bit offset
-        auxMem.putShort((short) (offset >> 32));
-        auxMem.putInt((int) offset);
+        // write 48 bit offset (little-endian)
+        auxMem.putShort((short) offset);
+        auxMem.putInt((int) (offset >> 16));
     }
 
     public static Utf8Sequence varcharRead(long offset, MemoryR dataMem, MemoryR auxMem, int ab) {

@@ -108,6 +108,16 @@ public class O3Utils {
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
     }
 
+    static void shiftCopyVarcharColumnAux(
+            long shift,
+            long src,
+            long srcLo,
+            long srcHi,
+            long dstAddr
+    ) {
+        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
+    }
+
     static void unmap(FilesFacade ff, long addr, long size) {
         if (addr != 0 && size > 0) {
             ff.munmap(addr, size, MemoryTag.MMAP_O3);

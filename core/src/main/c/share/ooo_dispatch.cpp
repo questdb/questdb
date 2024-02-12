@@ -485,6 +485,27 @@ void MULTI_VERSION_NAME (shift_copy)(int64_t shift, const int64_t *src, int64_t 
 }
 
 // 28
+// TODO
+void MULTI_VERSION_NAME (shift_copy_varchar_aux)(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest) {
+    const int64_t count = src_hi - src_lo + 1;
+
+    Vec2q vec;
+    auto vec_shift = Vec2q(shift);
+
+    auto l_iteration = [dest, src, src_lo, shift](int64_t i) {
+        dest[i] = src[i + src_lo] - shift;
+    };
+    auto src_loo = src + src_lo;
+    auto l_bulk = [&vec, &vec_shift, dest, src_loo](int64_t i) {
+        MM_PREFETCH_T0(src_loo + i + 64);
+        vec.load(src_loo + i);
+        vec -= vec_shift;
+        vec.store_a(dest + i);
+    };
+    run_vec_bulk<int64_t, Vec2q>(dest, count, l_iteration, l_bulk);
+}
+
+// 29
 void MULTI_VERSION_NAME (copy_index_timestamp)(index_t *index, int64_t index_lo, int64_t index_hi, int64_t *dest) {
     const int64_t count = index_hi - index_lo + 1;
     auto l_iteration = [dest, index, index_lo](int64_t i) {

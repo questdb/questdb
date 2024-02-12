@@ -1081,6 +1081,21 @@ Java_io_questdb_std_Vect_shiftCopyFixedSizeColumnData(JNIEnv *env, jclass cl, jl
     });
 }
 
+DECLARE_DISPATCHER(shift_copy) ;
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_shiftCopyVarcharColumnAux(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
+                                                   jlong srcHi, jlong dst) {
+    measure_time(27, [=]() {
+        shift_copy_varchar_aux(
+                __JLONG_REINTERPRET_CAST__(int64_t, shift),
+                reinterpret_cast<int64_t *>(src),
+                __JLONG_REINTERPRET_CAST__(int64_t, srcLo),
+                __JLONG_REINTERPRET_CAST__(int64_t, srcHi),
+                reinterpret_cast<int64_t *>(dst)
+        );
+    });
+}
+
 DECLARE_DISPATCHER(copy_index_timestamp) ;
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_copyFromTimestampIndex(JNIEnv *env, jclass cl, jlong pIndex, jlong indexLo, jlong indexHi,
