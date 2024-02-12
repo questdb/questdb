@@ -224,7 +224,9 @@ set(
         ${duckdb_SOURCE_DIR}/duckdb.h
         ${duckdb_SOURCE_DIR}/duckdb.hpp
         ${duckdb_SOURCE_DIR}/duckdb.cpp
-        src/main/c/share/duckdb_jni.cpp src/main/c/share/duckdb_jni.h)
+        src/main/c/share/duckdb_jni.cpp src/main/c/share/duckdb_jni.h
+        src/main/c/share/duckdb_qdb_scanner.cpp
+        src/main/c/share/duckdb_qdb_scanner.h)
 include_directories(${duckdb_SOURCE_DIR} SYSTEM)
 
 # ZLIB_SRCS is defined in Zlib Cmake config
