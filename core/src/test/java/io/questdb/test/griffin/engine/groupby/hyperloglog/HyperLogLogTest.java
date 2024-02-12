@@ -35,6 +35,8 @@ import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import static io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLog.MAX_PRECISION;
+import static io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLog.MIN_PRECISION;
 import static io.questdb.test.griffin.engine.groupby.hyperloglog.HyperLogLogTestUtils.assertCardinality;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.*;
@@ -111,29 +113,27 @@ public class HyperLogLogTest extends AbstractTest {
             }
         };
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        for (int precision = 4; precision <= 18; precision++) {
-            int finalPrecision = precision;
-            assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
-                    IntHashSet oracle = new IntHashSet();
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                IntHashSet oracle = new IntHashSet();
 
-                    HyperLogLog hll = new HyperLogLog(finalPrecision);
-                    hll.setAllocator(allocator);
-                    hll.of(0);
+                int precision = MIN_PRECISION + rnd.nextInt(MAX_PRECISION - MIN_PRECISION + 1);
+                HyperLogLog hll = new HyperLogLog(precision);
+                hll.setAllocator(allocator);
+                hll.of(0);
 
-                    int N = 10000000;
-                    for (int i = 0; i < N; i++) {
-                        int value = rnd.nextInt();
-                        hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(value));
-                        oracle.add(value);
-                    }
-
-                    long estimatedCardinality = hll.computeCardinality();
-                    int exactCardinality = oracle.size();
-                    assertCardinality(exactCardinality, finalPrecision, estimatedCardinality);
+                int N = 10000000;
+                for (int i = 0; i < N; i++) {
+                    int value = rnd.nextInt();
+                    hll.addAndComputeCardinalityFast(Hash.murmur3ToLong(value));
+                    oracle.add(value);
                 }
-            });
-        }
+
+                long estimatedCardinality = hll.computeCardinality();
+                int exactCardinality = oracle.size();
+                assertCardinality(exactCardinality, precision, estimatedCardinality);
+            }
+        });
     }
 
     @Test
