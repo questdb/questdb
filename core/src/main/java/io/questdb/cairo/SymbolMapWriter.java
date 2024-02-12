@@ -302,10 +302,18 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     private int put0(CharSequence symbol, int hash, SymbolValueCountCollector countCollector) {
-        long offsetOffset = offsetMem.getAppendOffset() - Long.BYTES;
-        offsetMem.putLong(charMem.putStr(symbol));
-        indexWriter.add(hash, offsetOffset);
-        final int symIndex = offsetToKey(offsetOffset);
+        // offsetMem has N+1 entries, where N is the number of symbols
+        // Last entry is the length of the symbol (.c) file after N symbols are already written
+        final long nOffsetOffset = offsetMem.getAppendOffset() - 8L;
+        final long nPlusOneValue = charMem.putStr(symbol);
+
+        // Here we're adding the offset of in the offset file where the symbol started
+        indexWriter.add(hash, nOffsetOffset);
+
+        // Here we are adding a new symbol and writing offset file the offset AFTER the new symbol
+        offsetMem.putLong(nPlusOneValue);
+
+        final int symIndex = offsetToKey(nOffsetOffset);
         countCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);
         return symIndex;
     }
