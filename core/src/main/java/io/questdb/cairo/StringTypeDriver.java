@@ -34,7 +34,6 @@ import io.questdb.std.str.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
-import static io.questdb.cairo.O3CopyJob.copyFixedSizeCol;
 import static io.questdb.cairo.O3OpenColumnJob.*;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
@@ -94,6 +93,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public int getAuxEntrySizeBits() {
+        return LEGACY_VAR_SIZE_AUX_SHL;
+    }
+
+    @Override
     public long getAuxVectorOffset(long row) {
         return row << LEGACY_VAR_SIZE_AUX_SHL;
     }
@@ -111,59 +115,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi) {
         return getDataVectorOffset(auxMemAddr, rowHi + 1) - getDataVectorOffset(auxMemAddr, rowLo);
-    }
-
-    @Override
-    public void o3ColumnCopy(
-            FilesFacade ff,
-            long srcAuxAddr,
-            long srcDataAddr,
-            long srcLo,
-            long srcHi,
-            long dstAuxAddr,
-            int dstAuxFd,
-            long dstAuxFileOffset,
-            long dstDataAddr,
-            int dstDataFd,
-            long dstDataOffset,
-            long dstDataAdjust,
-            long dstDataSize,
-            boolean mixedIOFlag
-    ) {
-        // we can find out the edge of string column in one of two ways
-        // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
-        // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
-
-        final long lo = findVarOffset(srcAuxAddr, srcLo);
-        assert lo >= 0;
-        final long hi = findVarOffset(srcAuxAddr, srcHi + 1);
-        assert hi >= lo;
-        // copy this before it changes
-        final long len = hi - lo;
-        assert len <= Math.abs(dstDataSize) - dstDataOffset;
-        final long offset = dstDataOffset + dstDataAdjust;
-        if (mixedIOFlag) {
-            if (ff.write(Math.abs(dstDataFd), srcDataAddr + lo, len, offset) != len) {
-                throw CairoException.critical(ff.errno()).put("cannot copy var data column prefix [fd=").put(dstDataFd).put(", offset=").put(offset).put(", len=").put(len).put(']');
-            }
-        } else {
-            Vect.memcpy(dstDataAddr + dstDataOffset, srcDataAddr + lo, len);
-        }
-        if (lo == offset) {
-            copyFixedSizeCol(
-                    ff,
-                    srcAuxAddr,
-                    srcLo,
-                    srcHi + 1,
-                    dstAuxAddr,
-                    dstAuxFileOffset,
-                    dstAuxFd,
-                    3,
-                    mixedIOFlag
-            );
-        } else {
-            o3shiftCopyAuxVector(lo - offset, srcAuxAddr, srcLo, srcHi + 1, dstAuxAddr);
-        }
     }
 
     @Override
@@ -210,8 +161,8 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long srcTimestampSize,
             int activeFixFd,
             int activeVarFd,
-            MemoryMA dstFixMem,
-            MemoryMA dstVarMem,
+            MemoryMA dstAuxMem,
+            MemoryMA dstDataMem,
             long dstRowCount,
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
@@ -219,54 +170,57 @@ public class StringTypeDriver implements ColumnTypeDriver {
             TableWriter tableWriter,
             long partitionUpdateSinkAddr
     ) {
-        long dstFixAddr = 0;
-        long dstFixOffset;
-        long dstFixFileOffset;
+        long dstAuxAddr = 0;
+        long dstAuxOffset;
+        long dstAuxFileOffset;
         long dstVarAddr = 0;
         long dstVarOffset;
         long dstVarAdjust;
         long dstVarSize = 0;
-        long dstFixSize = 0;
+        long dstAuxSize = 0;
         final FilesFacade ff = tableWriter.getFilesFacade();
         try {
             ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
-            long l = columnTypeDriver.getDataVectorSize(srcOooFixAddr, srcOooLo, srcOooHi);
-            dstFixSize = (dstRowCount + 1) * Long.BYTES;
-            if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize || dstVarMem.getAppendAddressSize() < l) {
-                assert dstFixMem == null || dstFixMem.getAppendOffset() - Long.BYTES == (srcDataMax - srcDataTop) * Long.BYTES;
+            long o3auxSize = columnTypeDriver.getDataVectorSize(srcOooFixAddr, srcOooLo, srcOooHi);
+            dstAuxSize = columnTypeDriver.getAuxVectorSize(dstRowCount);
 
-                dstFixOffset = (srcDataMax - srcDataTop) * Long.BYTES;
-                dstFixFileOffset = dstFixOffset;
-                dstFixAddr = mapRW(ff, Math.abs(activeFixFd), dstFixSize, MemoryTag.MMAP_O3);
+            if (dstAuxMem == null || dstAuxMem.getAppendAddressSize() < dstAuxSize || dstDataMem.getAppendAddressSize() < o3auxSize) {
+                // todo: string specific assert
+                assert dstAuxMem == null || dstAuxMem.getAppendOffset() - Long.BYTES == (srcDataMax - srcDataTop) * Long.BYTES;
 
-                if (dstFixOffset > 0) {
-                    dstVarOffset = Unsafe.getUnsafe().getLong(dstFixAddr + dstFixOffset);
+                dstAuxOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
+                dstAuxFileOffset = dstAuxOffset;
+                dstAuxAddr = mapRW(ff, Math.abs(activeFixFd), dstAuxSize, MemoryTag.MMAP_O3);
+
+                if (dstAuxOffset > 0) {
+                    dstVarOffset = Unsafe.getUnsafe().getLong(dstAuxAddr + dstAuxOffset);
                 } else {
                     dstVarOffset = 0;
                 }
 
-                dstVarSize = l + dstVarOffset;
+                dstVarSize = o3auxSize + dstVarOffset;
                 dstVarAddr = mapRW(ff, Math.abs(activeVarFd), dstVarSize, MemoryTag.MMAP_O3);
                 dstVarAdjust = 0;
             } else {
-                assert dstFixMem.getAppendOffset() >= Long.BYTES;
-                assert dstFixMem.getAppendOffset() - Long.BYTES == (srcDataMax - srcDataTop) * Long.BYTES;
+                // todo: string specific assert
+                assert dstAuxMem.getAppendOffset() >= Long.BYTES;
+                assert dstAuxMem.getAppendOffset() - Long.BYTES == (srcDataMax - srcDataTop) * Long.BYTES;
 
-                dstFixAddr = dstFixMem.getAppendAddress() - Long.BYTES;
-                dstVarAddr = dstVarMem.getAppendAddress();
-                dstFixOffset = 0;
-                dstFixFileOffset = dstFixMem.getAppendOffset() - Long.BYTES;
-                dstFixSize = -dstFixSize;
+                dstAuxAddr = dstAuxMem.getAppendAddress() - Long.BYTES;
+                dstVarAddr = dstDataMem.getAppendAddress();
+                dstAuxOffset = 0;
+                dstAuxFileOffset = dstAuxMem.getAppendOffset() - Long.BYTES;
+                dstAuxSize = -dstAuxSize;
                 dstVarOffset = 0;
-                dstVarSize = -l;
-                dstVarAdjust = dstVarMem.getAppendOffset();
+                dstVarSize = -o3auxSize;
+                dstVarAdjust = dstDataMem.getAppendOffset();
             }
         } catch (Throwable e) {
             LOG.error().$("append var error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
-            O3Utils.unmapAndClose(ff, activeFixFd, dstFixAddr, dstFixSize);
+            O3Utils.unmapAndClose(ff, activeFixFd, dstAuxAddr, dstAuxSize);
             O3Utils.unmapAndClose(ff, activeVarFd, dstVarAddr, dstVarSize);
             freeTimestampIndex(
                     columnCounter,
@@ -310,10 +264,10 @@ public class StringTypeDriver implements ColumnTypeDriver {
                 timestampMin,
                 partitionTimestamp, // <-- pass thru
                 activeFixFd,
-                dstFixAddr,
-                dstFixOffset,
-                dstFixFileOffset,
-                dstFixSize,
+                dstAuxAddr,
+                dstAuxOffset,
+                dstAuxFileOffset,
+                dstAuxSize,
                 activeVarFd,
                 dstVarAddr,
                 dstVarOffset,

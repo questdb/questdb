@@ -28,7 +28,6 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -36,7 +35,6 @@ import io.questdb.std.str.Utf8s;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.ColumnType.VARCHAR_AUX_SHL;
-import static io.questdb.cairo.O3CopyJob.copyFixedSizeCol;
 
 public class VarcharTypeDriver implements ColumnTypeDriver {
     public static final VarcharTypeDriver INSTANCE = new VarcharTypeDriver();
@@ -136,6 +134,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public int getAuxEntrySizeBits() {
+        return VARCHAR_AUX_SHL;
+    }
+
+    @Override
     public long getAuxVectorOffset(long row) {
         return row << VARCHAR_AUX_SHL;
     }
@@ -146,68 +149,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     public long getDataVectorOffset(long auxMemAddr, long row) {
-        return varcharGetDataVectorSize(auxMemAddr + (row << VARCHAR_AUX_SHL));
+        return varcharGetDataOffset(auxMemAddr, row);
     }
 
     @Override
     public long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi) {
         return getDataVectorOffset(auxMemAddr, rowHi) - getDataVectorOffset(auxMemAddr, rowLo);
-    }
-
-    @Override
-    public void o3ColumnCopy(
-            FilesFacade ff,
-            long srcAuxAddr,
-            long srcDataAddr,
-            long srcLo,
-            long srcHi,
-            long dstAuxAddr,
-            int dstAuxFd,
-            long dstAuxFileOffset,
-            long dstDataAddr,
-            int dstDataFd,
-            long dstDataOffset,
-            long dstDataAdjust,
-            long dstDataSize,
-            boolean mixedIOFlag
-    ) {
-        // we can find out the edge of varchar column in one of two ways
-        // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of varchars
-        // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
-
-        final long lo = varcharGetDataOffset(srcAuxAddr, srcLo);
-        assert lo >= 0;
-        final long hi = varcharGetDataOffset(srcAuxAddr, srcHi + 1);
-        assert hi >= lo;
-        // copy this before it changes
-        final long len = hi - lo;
-        assert len <= Math.abs(dstDataSize) - dstDataOffset;
-        final long offset = dstDataOffset + dstDataAdjust;
-        if (mixedIOFlag) {
-            if (ff.write(Math.abs(dstDataFd), srcDataAddr + lo, len, offset) != len) {
-                throw CairoException.critical(ff.errno()).put("cannot copy varchar data column prefix [fd=").put(dstDataFd)
-                        .put(", offset=").put(offset)
-                        .put(", len=").put(len)
-                        .put(']');
-            }
-        } else {
-            Vect.memcpy(dstDataAddr + dstDataOffset, srcDataAddr + lo, len);
-        }
-        if (lo == offset) {
-            copyFixedSizeCol(
-                    ff,
-                    srcAuxAddr,
-                    srcLo,
-                    srcHi + 1,
-                    dstAuxAddr,
-                    dstAuxFileOffset,
-                    dstAuxFd,
-                    VARCHAR_AUX_SHL,
-                    mixedIOFlag
-            );
-        } else {
-            o3shiftCopyAuxVector(lo - offset, srcAuxAddr, srcLo, srcHi + 1, dstAuxAddr);
-        }
     }
 
     @Override

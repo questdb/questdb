@@ -373,6 +373,60 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         }
     }
 
+    public static void o3ColumnCopy(
+            FilesFacade ff,
+            int columnType,
+            long srcAuxAddr,
+            long srcDataAddr,
+            long srcLo,
+            long srcHi,
+            long dstAuxAddr,
+            int dstAuxFd,
+            long dstAuxFileOffset,
+            long dstDataAddr,
+            int dstDataFd,
+            long dstDataOffset,
+            long dstDataAdjust,
+            long dstDataSize,
+            boolean mixedIOFlag
+    ) {
+        // we can find out the edge of string column in one of two ways
+        // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
+        // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
+
+        ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+
+        final long lo = columnTypeDriver.getDataVectorOffset(srcAuxAddr, srcLo);
+        assert lo >= 0;
+        // copy this before it changes
+        final long len = columnTypeDriver.getDataVectorSize(srcAuxAddr, srcLo, srcHi);
+        assert len <= Math.abs(dstDataSize) - dstDataOffset;
+        final long offset = dstDataOffset + dstDataAdjust;
+        if (mixedIOFlag) {
+            if (ff.write(Math.abs(dstDataFd), srcDataAddr + lo, len, offset) != len) {
+                throw CairoException.critical(ff.errno()).put("cannot copy var data column prefix [fd=").put(dstDataFd).put(", offset=").put(offset).put(", len=").put(len).put(']');
+            }
+        } else {
+            Vect.memcpy(dstDataAddr + dstDataOffset, srcDataAddr + lo, len);
+        }
+        if (lo == offset) {
+            copyFixedSizeCol(
+                    ff,
+                    srcAuxAddr,
+                    srcLo,
+                    srcHi + 1,
+                    dstAuxAddr,
+                    dstAuxFileOffset,
+                    dstAuxFd,
+                    3, // todo: hardcoded aux vector entry size
+                    mixedIOFlag
+            );
+        } else {
+            columnTypeDriver.o3shiftCopyAuxVector(lo - offset, srcAuxAddr, srcLo, srcHi + 1, dstAuxAddr);
+        }
+    }
+
+
     private static void copyData(
             FilesFacade ff,
             int columnType,
@@ -391,8 +445,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             boolean mixedIOFlag
     ) {
         if (ColumnType.isVarSize(columnType)) {
-            ColumnType.getDriver(columnType).o3ColumnCopy(
+            o3ColumnCopy(
                     ff,
+                    columnType,
                     srcAuxAddr,
                     srcVarAddr,
                     srcLo,
@@ -970,8 +1025,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             boolean mixedIOFlag
     ) {
         if (ColumnType.isVarSize(columnType)) {
-            ColumnType.getDriver(columnType).o3ColumnCopy(
+            o3ColumnCopy(
                     ff,
+                    columnType,
                     srcOooFixAddr,
                     srcOooVarAddr,
                     srcOooLo,

@@ -51,6 +51,8 @@ public interface ColumnTypeDriver {
 
     void configureDataMemOM(FilesFacade ff, MemoryR auxMem, MemoryOM dataMem, int dataFd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
 
+    int getAuxEntrySizeBits();
+
     /**
      * Returns offset in bytes of the aux entry that describes the provided row number.
      *
@@ -78,23 +80,6 @@ public interface ColumnTypeDriver {
      * @return size of data vector in bytes between these two rows.
      */
     long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi);
-
-    void o3ColumnCopy(
-            FilesFacade ff,
-            long srcAuxAddr,
-            long srcDataAddr,
-            long srcLo,
-            long srcHi,
-            long dstAuxAddr,
-            int dstAuxFd,
-            long dstAuxFileOffset,
-            long dstDataAddr,
-            int dstDataFd,
-            long dstDataOffset,
-            long dstDataAdjust,
-            long dstDataSize,
-            boolean mixedIOFlag
-    );
 
     void o3ColumnMerge(
             long timestampMergeIndexAddr,
