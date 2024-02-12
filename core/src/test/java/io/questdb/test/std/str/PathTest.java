@@ -93,6 +93,12 @@ public class PathTest {
     }
 
     @Test
+    public void testConcatNoSlashNonAscii() {
+        TestUtils.assertEquals("xyz" + separator + "раздватри", path.of("xyz").concat("раздватри").$());
+        Assert.assertFalse(path.isAscii());
+    }
+
+    @Test
     public void testConcatSlash() {
         TestUtils.assertEquals("xyz" + separator + "123", path.of("xyz").slash().concat("123").$());
     }
@@ -105,9 +111,16 @@ public class PathTest {
 
     @Test
     public void testConcatUtf8Sequence() {
-        path.concat(new Utf8String("root", true)).$();
+        path.concat(new Utf8String("root")).$();
         Assert.assertTrue(path.isAscii());
         Assert.assertEquals("root", path.toString());
+    }
+
+    @Test
+    public void testConcatUtf8SequenceNonAscii() {
+        path.concat(new Utf8String("грут")).$();
+        Assert.assertFalse(path.isAscii());
+        Assert.assertEquals("грут", path.toString());
     }
 
     @Test
@@ -118,6 +131,19 @@ public class PathTest {
         ) {
             p1.concat(p0.ptr());
             Assert.assertTrue(p0.isAscii());
+            Assert.assertFalse(p1.isAscii());
+            Assert.assertEquals(p0.toString(), p1.toString());
+        }
+    }
+
+    @Test
+    public void testConcatWithExtendNonAscii() {
+        try (
+                Path p0 = new Path().put("тест").$();
+                Path p1 = new Path(1)
+        ) {
+            p1.concat(p0.ptr());
+            Assert.assertFalse(p0.isAscii());
             Assert.assertFalse(p1.isAscii());
             Assert.assertEquals(p0.toString(), p1.toString());
         }
@@ -210,9 +236,28 @@ public class PathTest {
     }
 
     @Test
+    public void testOfAnotherPathNonAscii() {
+        try (Path p0 = new Path().of("грут").$()) {
+            path.of(p0).$();
+            Assert.assertFalse(p0.isAscii());
+            Assert.assertFalse(path.isAscii());
+            Assert.assertEquals("грут", path.toString());
+        }
+    }
+
+    @Test
     public void testOfCharSequence() {
         try (Path p0 = new Path().of("sumerians", 2, 7).$()) {
             Assert.assertEquals("meria", p0.toString());
+            Assert.assertTrue(p0.isAscii());
+        }
+    }
+
+    @Test
+    public void testOfCharSequenceNonAscii() {
+        try (Path p0 = new Path().of("грут", 1, 4).$()) {
+            Assert.assertEquals("рут", p0.toString());
+            Assert.assertFalse(p0.isAscii());
         }
     }
 
@@ -223,6 +268,16 @@ public class PathTest {
             p0.of((Utf8Sequence) p0);
             Assert.assertTrue(p0.isAscii());
             Assert.assertEquals("root", p0.toString());
+        }
+    }
+
+    @Test
+    public void testOfSelfNonAscii() {
+        try (Path p0 = new Path().put("грут")) {
+            p0.flush();
+            p0.of((Utf8Sequence) p0);
+            Assert.assertFalse(p0.isAscii());
+            Assert.assertEquals("грут", p0.toString());
         }
     }
 
@@ -260,7 +315,7 @@ public class PathTest {
     }
 
     @Test
-    public void testPathOfPathUtf8() {
+    public void testPathOfPathNonAscii() {
         Os.init();
 
         path.of("пути неисповедимы");
@@ -320,6 +375,16 @@ public class PathTest {
     }
 
     @Test
+    public void testPrefixNonAscii() {
+        try (Path p0 = new Path(4).put("раздва").$()) {
+            path.of("три").prefix(p0, p0.size()).$();
+            Assert.assertFalse(p0.isAscii());
+            Assert.assertFalse(path.isAscii());
+            TestUtils.assertEquals("раздватри", path.toString());
+        }
+    }
+
+    @Test
     public void testPutDirectUtf8Sequence() {
         try (Path p0 = new Path(16); DirectUtf8Sink sink = new DirectUtf8Sink(32)) {
             Assert.assertEquals(16, p0.capacity());
@@ -350,9 +415,18 @@ public class PathTest {
     @Test
     public void testPutUtf8Sequence() {
         try (Path p0 = new Path(4)) {
-            p0.put(new Utf8String("foobar", true)).$();
+            p0.put(new Utf8String("foobar")).$();
             Assert.assertTrue(p0.isAscii());
             Assert.assertEquals("foobar", p0.toString());
+        }
+    }
+
+    @Test
+    public void testPutUtf8SequenceNonAscii() {
+        try (Path p0 = new Path(4)) {
+            p0.put(new Utf8String("тест")).$();
+            Assert.assertFalse(p0.isAscii());
+            Assert.assertEquals("тест", p0.toString());
         }
     }
 

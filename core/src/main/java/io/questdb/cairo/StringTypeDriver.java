@@ -130,7 +130,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long dstDataSize,
             boolean mixedIOFlag
     ) {
-
         // we can find out the edge of string column in one of two ways
         // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
         // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
@@ -807,5 +806,4 @@ public class StringTypeDriver implements ColumnTypeDriver {
         assert (srcLo == 0 && result == 0) || result > 0;
         return result;
     }
-
 }
