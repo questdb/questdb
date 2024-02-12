@@ -44,14 +44,15 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public static long varcharGetDataOffset(MemoryR auxMem, long offset) {
         long dataOffset = auxMem.getShort(offset + 10) & 0xffff;
         dataOffset <<= 32;
-        dataOffset |= auxMem.getInt(offset + 12);
+        dataOffset |= auxMem.getInt(offset + 12) & 0xffffffffL;
         return dataOffset;
     }
 
-    public static long varcharGetDataOffset(long p, long offset) {
-        long dataOffset = Short.toUnsignedLong(Unsafe.getUnsafe().getShort(offset + 10));
+    public static long varcharGetDataOffset(long auxAddr, long srcLo) {
+        long addr = auxAddr + (srcLo << VARCHAR_AUX_SHL);
+        long dataOffset = Unsafe.getUnsafe().getShort(addr + 10) & 0xffff;
         dataOffset <<= 32;
-        dataOffset |= Integer.toUnsignedLong(Unsafe.getUnsafe().getInt(offset + 12));
+        dataOffset |= Unsafe.getUnsafe().getInt(addr + 12) & 0xffffffffL;
         return dataOffset;
     }
 
@@ -174,9 +175,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of varchars
         // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
 
-        final long lo = varcharGetDataOffset(srcAuxAddr, srcLo << VARCHAR_AUX_SHL);
+        final long lo = varcharGetDataOffset(srcAuxAddr, srcLo);
         assert lo >= 0;
-        final long hi = varcharGetDataOffset(srcAuxAddr, (srcHi + 1) << VARCHAR_AUX_SHL);
+        final long hi = varcharGetDataOffset(srcAuxAddr, srcHi + 1);
         assert hi >= lo;
         // copy this before it changes
         final long len = hi - lo;
