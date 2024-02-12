@@ -446,10 +446,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean configureSecurityContext() {
-        final long authenticationStart = configuration.getNanosecondClock().getTicks();
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
+            final long authenticationStart = configuration.getNanosecondClock().getTicks();
             if (!authenticator.authenticate(headerParser)) {
-                // authenticationNanos stays 0 when it fails, as it is probably irrelevant
+                // authenticationNanos stays 0, when it fails this value is irrelevant
                 return false;
             }
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
@@ -458,8 +458,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     authenticator.getAuthType(),
                     SecurityContextFactory.HTTP
             );
+            authenticationNanos = configuration.getNanosecondClock().getTicks() - authenticationStart;
         }
-        authenticationNanos = configuration.getNanosecondClock().getTicks() - authenticationStart;
         return true;
     }
 
