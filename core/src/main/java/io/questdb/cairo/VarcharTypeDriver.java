@@ -42,7 +42,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public static final VarcharTypeDriver INSTANCE = new VarcharTypeDriver();
 
     public static long varcharGetDataOffset(MemoryR auxMem, long offset) {
-        long dataOffset = auxMem.getShort(offset + 10) & 0xffff;
+        long dataOffset = auxMem.getShort(offset + 10) & 0xffffL;
         dataOffset <<= 32;
         dataOffset |= auxMem.getInt(offset + 12) & 0xffffffffL;
         return dataOffset;
@@ -50,7 +50,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     public static long varcharGetDataOffset(long auxAddr, long srcLo) {
         long addr = auxAddr + (srcLo << VARCHAR_AUX_SHL);
-        long dataOffset = Unsafe.getUnsafe().getShort(addr + 10) & 0xffff;
+        long dataOffset = Unsafe.getUnsafe().getShort(addr + 10) & 0xffffL;
         dataOffset <<= 32;
         dataOffset |= Unsafe.getUnsafe().getInt(addr + 12) & 0xffffffffL;
         return dataOffset;
