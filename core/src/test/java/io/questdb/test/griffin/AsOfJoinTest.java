@@ -386,40 +386,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLtJoin() throws Exception {
-        final String expected = "tag\thi\tlo\tts\tts1\n" +
-                "AA\t315515118\tNaN\t1970-01-03T00:00:00.000000Z\t\n" +
-                "BB\t-727724771\tNaN\t1970-01-03T00:06:00.000000Z\t\n" +
-                "CC\t-948263339\tNaN\t1970-01-03T00:12:00.000000Z\t\n" +
-                "CC\t592859671\t-948263339\t1970-01-03T00:18:00.000000Z\t1970-01-03T00:12:00.000000Z\n" +
-                "AA\t-847531048\t315515118\t1970-01-03T00:24:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
-                "BB\t-2041844972\t-727724771\t1970-01-03T00:30:00.000000Z\t1970-01-03T00:06:00.000000Z\n" +
-                "BB\t-1575378703\t-2041844972\t1970-01-03T00:36:00.000000Z\t1970-01-03T00:30:00.000000Z\n" +
-                "BB\t1545253512\t-1575378703\t1970-01-03T00:42:00.000000Z\t1970-01-03T00:36:00.000000Z\n" +
-                "AA\t1573662097\t-847531048\t1970-01-03T00:48:00.000000Z\t1970-01-03T00:24:00.000000Z\n" +
-                "AA\t339631474\t1573662097\t1970-01-03T00:54:00.000000Z\t1970-01-03T00:48:00.000000Z\n";
-
-        assertQuery(
-                "tag\thi\tlo\tts\tts1\n",
-                "select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)",
-                "create table tab (\n" +
-                        "    tag symbol index,\n" +
-                        "    seq int,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
-                        "        rnd_int() seq, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                false,
-                true,
-                false
-        );
-    }
-
-    @Test
     public void testLtJoin2TablesKeyed() throws Exception {
         assertMemoryLeak(() -> {
             //tabY
@@ -611,6 +577,40 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtJoinKeyed() throws Exception {
+        final String expected = "tag\thi\tlo\tts\tts1\n" +
+                "AA\t315515118\tNaN\t1970-01-03T00:00:00.000000Z\t\n" +
+                "BB\t-727724771\tNaN\t1970-01-03T00:06:00.000000Z\t\n" +
+                "CC\t-948263339\tNaN\t1970-01-03T00:12:00.000000Z\t\n" +
+                "CC\t592859671\t-948263339\t1970-01-03T00:18:00.000000Z\t1970-01-03T00:12:00.000000Z\n" +
+                "AA\t-847531048\t315515118\t1970-01-03T00:24:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
+                "BB\t-2041844972\t-727724771\t1970-01-03T00:30:00.000000Z\t1970-01-03T00:06:00.000000Z\n" +
+                "BB\t-1575378703\t-2041844972\t1970-01-03T00:36:00.000000Z\t1970-01-03T00:30:00.000000Z\n" +
+                "BB\t1545253512\t-1575378703\t1970-01-03T00:42:00.000000Z\t1970-01-03T00:36:00.000000Z\n" +
+                "AA\t1573662097\t-847531048\t1970-01-03T00:48:00.000000Z\t1970-01-03T00:24:00.000000Z\n" +
+                "AA\t339631474\t1573662097\t1970-01-03T00:54:00.000000Z\t1970-01-03T00:48:00.000000Z\n";
+
+        assertQuery(
+                "tag\thi\tlo\tts\tts1\n",
+                "select a.tag, a.seq hi, b.seq lo , a.ts, b.ts from tab a lt join tab b on (tag)",
+                "create table tab (\n" +
+                        "    tag symbol index,\n" +
+                        "    seq int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag, \n" +
+                        "        rnd_int() seq, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testLtJoinNoAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS
@@ -645,7 +645,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
         });
     }
 
-    //select a.seq hi, b.seq lo from tab a lt join b where hi > lo + 1
+    // select a.seq hi, b.seq lo from tab a lt join b where hi > lo + 1
     @Test
     public void testLtJoinNoTimestamp() throws Exception {
         final String expected = "tag\thi\tlo\n" +
@@ -679,6 +679,59 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 false
 
         );
+    }
+
+    @Test
+    public void testLtJoinNonKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compile("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                compile("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+
+                insert("INSERT INTO bids VALUES " +
+                        "('AAPL', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 2, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 3, 'SCAM')," +
+                        "('AAPL', 'LSE', '2000-01-01T00:00:00.000000Z', 4, 'SCAM')," +
+                        "('AAPL', 'LSE', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', '2002-01-01T00:00:00.000000Z', 6, 'SCAM')," +
+                        "('MSFT', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 7, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 8, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 9, 'SCAM')," +
+                        "('MSFT', 'LSE', '2000-01-01T00:00:00.000000Z', 10, 'UNKNOWN')," +
+                        "('MSFT', 'LSE', '2001-01-01T00:00:00.000000Z', 11, 'GOOD')"
+                );
+
+                insert("INSERT INTO asks VALUES " +
+                        "('AAPL', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
+                        "('AAPL', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT')," +
+                        "('AAPL', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', '2000-01-01T00:00:00.000000Z', 4, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', '2001-01-01T00:00:00.000000Z', 5, 'EXCELLENT')," +
+                        "('AAPL', 'LSE', '2002-01-01T00:00:00.000000Z', 6, 'SCAM')," +
+                        "('MSFT', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 7, 'EXCELLENT')," +
+                        "('MSFT', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 8, 'GOOD')," +
+                        "('MSFT', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 9, 'EXCELLENT')," +
+                        "('MSFT', 'LSE', '2000-01-01T00:00:00.000000Z', 10, 'GOOD')," +
+                        "('MSFT', 'LSE', '2001-01-01T00:00:00.000000Z', 11, 'SCAM')"
+                );
+
+                String query = "SELECT * FROM bids LT JOIN asks";
+                String expected = "stock\texchange\tts\ti\trating\tstock1\texchange1\tts1\ti1\trating1\n" +
+                        "AAPL\tNASDAQ\t2000-01-01T00:00:00.000000Z\t1\tGOOD\t\t\t\tNaN\t\n" +
+                        "AAPL\tLSE\t2000-01-01T00:00:00.000000Z\t4\tSCAM\t\t\t\tNaN\t\n" +
+                        "MSFT\tNASDAQ\t2000-01-01T00:00:00.000000Z\t7\tGOOD\t\t\t\tNaN\t\n" +
+                        "MSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tUNKNOWN\t\t\t\tNaN\t\n" +
+                        "AAPL\tNASDAQ\t2001-01-01T00:00:00.000000Z\t2\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tGOOD\n" +
+                        "AAPL\tLSE\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\tMSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tGOOD\n" +
+                        "MSFT\tNASDAQ\t2001-01-01T00:00:00.000000Z\t8\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tGOOD\n" +
+                        "MSFT\tLSE\t2001-01-01T00:00:00.000000Z\t11\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tGOOD\n" +
+                        "AAPL\tLSE\t2002-01-01T00:00:00.000000Z\t6\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000Z\t11\tSCAM\n" +
+                        "MSFT\tNASDAQ\t2002-01-01T00:00:00.000000Z\t9\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000Z\t11\tSCAM\n" +
+                        "AAPL\tNASDAQ\t2002-01-01T00:00:00.000000Z\t3\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000Z\t11\tSCAM\n";
+                assertQuery(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+            }
+        });
     }
 
     @Test
