@@ -24,6 +24,34 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Vect;
+
 public class BinaryTypeDriver extends StringTypeDriver {
     public static final BinaryTypeDriver INSTANCE = new BinaryTypeDriver();
+
+    @Override
+    public void o3ColumnMerge(
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexCount,
+            long srcAuxAddr1,
+            long srcDataAddr1,
+            long srcAuxAddr2,
+            long srcDataAddr2,
+            long dstAuxAddr,
+            long dstDataAddr,
+            long dstDataOffset
+    ) {
+        Vect.oooMergeCopyBinColumn(
+                timestampMergeIndexAddr,
+                timestampMergeIndexCount,
+                srcAuxAddr1,
+                srcDataAddr1,
+                srcAuxAddr2,
+                srcDataAddr2,
+                dstAuxAddr,
+                dstDataAddr,
+                dstDataOffset
+        );
+
+    }
 }

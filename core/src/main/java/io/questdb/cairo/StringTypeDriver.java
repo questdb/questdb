@@ -33,6 +33,7 @@ import io.questdb.std.str.Path;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
 import static io.questdb.cairo.O3CopyJob.copyFixedSizeCol;
 import static io.questdb.cairo.O3OpenColumnJob.*;
 import static io.questdb.cairo.TableUtils.*;
@@ -62,8 +63,8 @@ public class StringTypeDriver implements ColumnTypeDriver {
                 ff,
                 fd,
                 fileName,
-                rowLo << ColumnType.LEGACY_VAR_SIZE_AUX_SHL,
-                (rowHi + 1) << ColumnType.LEGACY_VAR_SIZE_AUX_SHL,
+                rowLo << LEGACY_VAR_SIZE_AUX_SHL,
+                (rowHi + 1) << LEGACY_VAR_SIZE_AUX_SHL,
                 memoryTag,
                 opts
         );
@@ -85,21 +86,135 @@ public class StringTypeDriver implements ColumnTypeDriver {
                 ff,
                 dataFd,
                 fileName,
-                auxMem.getLong(rowLo << ColumnType.LEGACY_VAR_SIZE_AUX_SHL),
-                auxMem.getLong(rowHi << ColumnType.LEGACY_VAR_SIZE_AUX_SHL),
+                auxMem.getLong(rowLo << LEGACY_VAR_SIZE_AUX_SHL),
+                auxMem.getLong(rowHi << LEGACY_VAR_SIZE_AUX_SHL),
                 memoryTag,
                 opts
         );
     }
 
     @Override
+    public long getAuxVectorOffset(long row) {
+        return row << LEGACY_VAR_SIZE_AUX_SHL;
+    }
+
+    @Override
     public long getAuxVectorSize(long storageRowCount) {
-        return (storageRowCount + 1) << ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
+        return (storageRowCount + 1) << LEGACY_VAR_SIZE_AUX_SHL;
+    }
+
+    @Override
+    public long getDataVectorOffset(long auxMemAddr, long row) {
+        return findVarOffset(auxMemAddr, row);
     }
 
     @Override
     public long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi) {
-        return findVarOffset(auxMemAddr, rowHi + 1) - findVarOffset(auxMemAddr, rowLo);
+        return getDataVectorOffset(auxMemAddr, rowHi + 1) - getDataVectorOffset(auxMemAddr, rowLo);
+    }
+
+    @Override
+    public void o3ColumnCopy(
+            FilesFacade ff,
+            long srcAuxAddr,
+            long srcDataAddr,
+            long srcLo,
+            long srcHi,
+            long dstAuxAddr,
+            int dstAuxFd,
+            long dstAuxFileOffset,
+            long dstDataAddr,
+            int dstDataFd,
+            long dstDataOffset,
+            long dstDataAdjust,
+            long dstDataSize,
+            boolean mixedIOFlag
+    ) {
+
+        // we can find out the edge of string column in one of two ways
+        // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
+        // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
+
+        final long lo = findVarOffset(srcAuxAddr, srcLo);
+        assert lo >= 0;
+        final long hi = findVarOffset(srcAuxAddr, srcHi + 1);
+        assert hi >= lo;
+        // copy this before it changes
+        final long len = hi - lo;
+        assert len <= Math.abs(dstDataSize) - dstDataOffset;
+        final long offset = dstDataOffset + dstDataAdjust;
+        if (mixedIOFlag) {
+            if (ff.write(Math.abs(dstDataFd), srcDataAddr + lo, len, offset) != len) {
+                throw CairoException.critical(ff.errno()).put("cannot copy var data column prefix [fd=").put(dstDataFd).put(", offset=").put(offset).put(", len=").put(len).put(']');
+            }
+        } else {
+            Vect.memcpy(dstDataAddr + dstDataOffset, srcDataAddr + lo, len);
+        }
+        if (lo == offset) {
+            copyFixedSizeCol(
+                    ff,
+                    srcAuxAddr,
+                    srcLo,
+                    srcHi + 1,
+                    dstAuxAddr,
+                    dstAuxFileOffset,
+                    dstAuxFd,
+                    3,
+                    mixedIOFlag
+            );
+        } else {
+            o3shiftCopyAuxVector(lo - offset, srcAuxAddr, srcLo, srcHi + 1, dstAuxAddr);
+        }
+    }
+
+    @Override
+    public void o3ColumnMerge(
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexCount,
+            long srcAuxAddr1,
+            long srcDataAddr1,
+            long srcAuxAddr2,
+            long srcDataAddr2,
+            long dstAuxAddr,
+            long dstDataAddr,
+            long dstDataOffset
+    ) {
+        Vect.oooMergeCopyStrColumn(
+                timestampMergeIndexAddr,
+                timestampMergeIndexCount,
+                srcAuxAddr1,
+                srcDataAddr1,
+                srcAuxAddr2,
+                srcDataAddr2,
+                dstAuxAddr,
+                dstDataAddr,
+                dstDataOffset
+        );
+    }
+
+    @Override
+    public void o3MoveLag(long rowCount, long columnRowCount, long lagRowCount, MemoryCR srcAuxMem, MemoryCR srcDataMem, MemoryARW dstAuxMem, MemoryARW dstDataMem) {
+        long committedIndexOffset = columnRowCount << 3;
+        final long sourceOffset = srcAuxMem.getLong(committedIndexOffset);
+        final long size = srcAuxMem.getLong((columnRowCount + rowCount) << 3) - sourceOffset;
+        final long destOffset = lagRowCount == 0 ? 0L : dstAuxMem.getLong(lagRowCount << 3);
+
+        // adjust append position of the index column to
+        // maintain n+1 number of entries
+        dstAuxMem.jumpTo((lagRowCount + rowCount + 1) << 3);
+
+        // move count + 1 rows, to make sure index column remains n+1
+        // the data is copied back to start of the buffer, no need to set size first
+        o3shiftCopyAuxVector(
+                sourceOffset - destOffset,
+                srcAuxMem.addressOf(committedIndexOffset),
+                0,
+                rowCount, // No need to do +1 here, hi is inclusive
+                dstAuxMem.addressOf(lagRowCount << 3)
+        );
+        dstDataMem.jumpTo(destOffset + size);
+        assert srcDataMem.size() >= size;
+        Vect.memmove(dstDataMem.addressOf(destOffset), srcDataMem.addressOf(sourceOffset), size);
     }
 
     @Override
@@ -364,7 +479,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
                     // nulls we created above
                     long hiInclusive = srcDataMax - srcDataTop; // STOP. DON'T ADD +1 HERE. srcHi is inclusive, no need to do +1
                     assert srcDataFixSize >= srcDataMaxBytes + (hiInclusive + 1) * 8; // make sure enough len mapped
-                    O3Utils.shiftCopyFixedSizeColumnData(
+                    o3shiftCopyAuxVector(
                             -reservedBytesForColTopNulls,
                             srcDataFixAddr,
                             0,
@@ -616,9 +731,26 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void o3shiftCopyAuxVector(
+            long shift,
+            long src,
+            long srcLo,
+            long srcHi,
+            long dstAddr
+    ) {
+        O3Utils.shiftCopyFixedSizeColumnData(
+                shift,
+                src,
+                srcLo,
+                srcHi,
+                dstAddr
+        );
+    }
+
+    @Override
     public void o3sort(
-            long timestampIndex,
-            long timestampIndexSize,
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             MemoryCR srcDataMem,
             MemoryCR srcAuxMem,
             MemoryCARW dstDataMem,
@@ -629,7 +761,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
         final long srcAuxAddr = srcAuxMem.addressOf(0);
         // exclude the trailing offset from shuffling
         final long tgtDataAddr = dstDataMem.resize(srcDataMem.size());
-        final long tgtAuxAddr = dstAuxMem.resize(timestampIndexSize * Long.BYTES);
+        final long tgtAuxAddr = dstAuxMem.resize(timestampMergeIndexSize * Long.BYTES);
 
         assert srcDataAddr != 0;
         assert srcAuxAddr != 0;
@@ -638,15 +770,15 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
         // add max offset so that we do not have conditionals inside loop
         final long offset = Vect.sortVarColumn(
-                timestampIndex,
-                timestampIndexSize,
+                timestampMergeIndexAddr,
+                timestampMergeIndexSize,
                 srcDataAddr,
                 srcAuxAddr,
                 tgtDataAddr,
                 tgtAuxAddr
         );
         dstDataMem.jumpTo(offset);
-        dstAuxMem.jumpTo(timestampIndexSize * Long.BYTES);
+        dstAuxMem.jumpTo(timestampMergeIndexSize * Long.BYTES);
         dstAuxMem.putLong(offset);
     }
 
@@ -655,69 +787,44 @@ public class StringTypeDriver implements ColumnTypeDriver {
         // For STRING storage aux vector (mem) contains N+1 offsets. Where N is the
         // row count. Offset indexes are 0 based, so reading Nth element of the vector gives
         // the size of the data vector.
-        auxMem.jumpTo(rowCount << ColumnType.LEGACY_VAR_SIZE_AUX_SHL);
+        auxMem.jumpTo(rowCount << LEGACY_VAR_SIZE_AUX_SHL);
         // it is safe to read offset from the raw memory pointer because paged
         // memories (which MemoryMA is) have power-of-2 page size.
 
         final long dataMemOffset = rowCount > 0 ? Unsafe.getUnsafe().getLong(auxMem.getAppendAddress()) : 0;
 
         // Jump to the end of file to correctly trim the file
-        auxMem.jumpTo((rowCount + 1) << ColumnType.LEGACY_VAR_SIZE_AUX_SHL);
+        auxMem.jumpTo((rowCount + 1) << LEGACY_VAR_SIZE_AUX_SHL);
         return dataMemOffset;
     }
 
     @Override
-    public void o3ColumnCopy(
-            FilesFacade ff,
-            long srcAuxAddr,
-            long srcDataAddr,
-            long srcLo,
-            long srcHi,
-            long dstAuxAddr,
-            int dstAuxFd,
-            long dstAuxFileOffset,
-            long dstDataAddr,
-            int dstDataFd,
-            long dstDataOffset,
-            long dstDataAdjust,
-            long dstDataSize,
-            boolean mixedIOFlag
-    ) {
-
-        // we can find out the edge of string column in one of two ways
-        // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
-        // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
-
-        final long lo = findVarOffset(srcAuxAddr, srcLo);
-        assert lo >= 0;
-        final long hi = findVarOffset(srcAuxAddr, srcHi + 1);
-        assert hi >= lo;
-        // copy this before it changes
-        final long len = hi - lo;
-        assert len <= Math.abs(dstDataSize) - dstDataOffset;
-        final long offset = dstDataOffset + dstDataAdjust;
-        if (mixedIOFlag) {
-            if (ff.write(Math.abs(dstDataFd), srcDataAddr + lo, len, offset) != len) {
-                throw CairoException.critical(ff.errno()).put("cannot copy var data column prefix [fd=").put(dstDataFd).put(", offset=").put(offset).put(", len=").put(len).put(']');
+    public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem, boolean doubleAllocate) {
+        if (pos > 0) {
+            if (doubleAllocate) {
+                auxMem.allocate(pos * Long.BYTES + Long.BYTES);
             }
-        } else {
-            Vect.memcpy(dstDataAddr + dstDataOffset, srcDataAddr + lo, len);
+            // Jump to the number of records written to read length of var column correctly
+            auxMem.jumpTo(pos * Long.BYTES);
+            long m1pos = Unsafe.getUnsafe().getLong(auxMem.getAppendAddress());
+            // Jump to the end of file to correctly trim the file
+            auxMem.jumpTo((pos + 1) * Long.BYTES);
+            long dataSizeBytes = m1pos + (pos + 1) * Long.BYTES;
+            if (doubleAllocate) {
+                dataMem.allocate(m1pos);
+            }
+            dataMem.jumpTo(m1pos);
+            return dataSizeBytes;
         }
-        if (lo == offset) {
-            copyFixedSizeCol(
-                    ff,
-                    srcAuxAddr,
-                    srcLo,
-                    srcHi + 1,
-                    dstAuxAddr,
-                    dstAuxFileOffset,
-                    dstAuxFd,
-                    3,
-                    mixedIOFlag
-            );
-        } else {
-            O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcAuxAddr, srcLo, srcHi + 1, dstAuxAddr);
-        }
+
+        dataMem.jumpTo(0);
+        auxMem.jumpTo(0);
+        auxMem.putLong(0);
+        // Assume var length columns use 28 bytes per value to estimate the record size
+        // if there are no rows in the partition yet.
+        // The record size used to estimate the partition size
+        // to split partition in O3 commit when necessary
+        return TableUtils.ESTIMATED_VAR_COL_SIZE;
     }
 
     static long findVarOffset(long srcFixAddr, long srcLo) {
@@ -726,29 +833,4 @@ public class StringTypeDriver implements ColumnTypeDriver {
         return result;
     }
 
-    @Override
-    public void o3MoveLag(long rowCount, long columnRowCount, long lagRowCount, MemoryCR srcAuxMem, MemoryCR srcDataMem, MemoryARW dstAuxMem, MemoryARW dstDataMem) {
-        long committedIndexOffset = columnRowCount << 3;
-        final long sourceOffset = srcAuxMem.getLong(committedIndexOffset);
-        final long size = srcAuxMem.getLong((columnRowCount + rowCount) << 3) - sourceOffset;
-        final long destOffset = lagRowCount == 0 ? 0L : dstAuxMem.getLong(lagRowCount << 3);
-
-        // adjust append position of the index column to
-        // maintain n+1 number of entries
-        dstAuxMem.jumpTo((lagRowCount + rowCount + 1) << 3);
-
-        // move count + 1 rows, to make sure index column remains n+1
-        // the data is copied back to start of the buffer, no need to set size first
-        O3Utils.shiftCopyFixedSizeColumnData(
-                sourceOffset - destOffset,
-                srcAuxMem.addressOf(committedIndexOffset),
-                0,
-                rowCount, // No need to do +1 here, hi is inclusive
-                dstAuxMem.addressOf(lagRowCount << 3)
-        );
-        dstDataMem.jumpTo(destOffset + size);
-        assert srcDataMem.size() >= size;
-        Vect.memmove(dstDataMem.addressOf(destOffset), srcDataMem.addressOf(sourceOffset), size);
-
-    }
 }

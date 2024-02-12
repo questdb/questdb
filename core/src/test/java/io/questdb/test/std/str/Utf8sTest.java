@@ -1,5 +1,6 @@
 package io.questdb.test.std.str;
 
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.std.*;
@@ -255,7 +256,7 @@ public class Utf8sTest {
 
             for (int i = 0; i < n; i++) {
                 Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMem, auxMem, rnd.nextBoolean() ? 1 : 2);
-                Assert.assertEquals(expectedOffsets.getQuick(i), Utf8s.varcharGetDataVectorSize(auxMem, i * 16L));
+                Assert.assertEquals(expectedOffsets.getQuick(i), VarcharTypeDriver.varcharGetDataVectorSize(auxMem, i * 16L));
                 String expectedValue = expectedValues.getQuick(i);
                 if (expectedValue == null) {
                     Assert.assertNull(varchar);

@@ -27,16 +27,54 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.ColumnType.VARCHAR_AUX_SHL;
-import static io.questdb.std.str.Utf8s.varcharGetDataVectorSize;
 
 public class VarcharTypeDriver implements ColumnTypeDriver {
     public static final VarcharTypeDriver INSTANCE = new VarcharTypeDriver();
+
+    public static long varcharGetDataOffset(MemoryR auxMem, long offset) {
+        long dataOffset = auxMem.getShort(offset + 10);
+        dataOffset <<= 32;
+        dataOffset |= auxMem.getInt(offset + 12);
+        return dataOffset;
+    }
+
+    public static long varcharGetDataVectorSize(MemoryR auxMem, long offset) {
+        int raw = auxMem.getInt(offset);
+        final long dataOffset = varcharGetDataOffset(auxMem, offset);
+        int flags = raw & 0x0f; // 4 bit flags
+
+        if ((flags & 4) == 4 || (flags & 1) == 1) {
+            // null flag is set or fully inlined value
+            return dataOffset;
+        }
+        // size of the string at this offset
+        final int size = (raw >> 4) & 0xffffff;
+        return dataOffset + size - Utf8s.UTF8_STORAGE_SPLIT_BYTE;
+    }
+
+    public static long varcharGetDataVectorSize(long auxEntry) {
+        int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        long dataOffset = Unsafe.getUnsafe().getShort(auxEntry + 10);
+        dataOffset <<= 32;
+        dataOffset |= Unsafe.getUnsafe().getInt(auxEntry + 12);
+        int flags = raw & 0x0f; // 4 bit flags
+
+        if ((flags & 4) == 4 || (flags & 1) == 1) {
+            // null flag is set or fully inlined value
+            return dataOffset;
+        }
+        // size of the string at this offset
+        final int size = (raw >> 4) & 0xffffff;
+        return dataOffset + size - Utf8s.UTF8_STORAGE_SPLIT_BYTE;
+    }
 
     @Override
     public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts) {
@@ -88,19 +126,41 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public long getAuxVectorOffset(long row) {
+        return row << VARCHAR_AUX_SHL;
+    }
+
+    @Override
     public long getAuxVectorSize(long storageRowCount) {
         return storageRowCount << VARCHAR_AUX_SHL;
     }
 
+    public long getDataVectorOffset(long auxMemAddr, long row) {
+        return varcharGetDataVectorSize(auxMemAddr + (row << VARCHAR_AUX_SHL));
+    }
+
     @Override
     public long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi) {
-        final long loSize = varcharGetDataVectorSize(auxMemAddr + (rowLo << VARCHAR_AUX_SHL));
-        final long hiSize = varcharGetDataVectorSize(auxMemAddr + ((rowHi) << VARCHAR_AUX_SHL));
-        return hiSize - loSize;
+        return getDataVectorOffset(auxMemAddr, rowHi) - getDataVectorOffset(auxMemAddr, rowLo);
     }
 
     @Override
     public void o3ColumnCopy(FilesFacade ff, long srcAuxAddr, long srcDataAddr, long srcLo, long srcHi, long dstAuxAddr, int dstAuxFd, long dstAuxFileOffset, long dstDataAddr, int dstDataFd, long dstDataOffset, long dstDataAdjust, long dstDataSize, boolean mixedIOFlag) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void o3ColumnMerge(
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexCount,
+            long srcAuxAddr1,
+            long srcDataAddr1,
+            long srcAuxAddr2,
+            long srcDataAddr2,
+            long dstAuxAddr,
+            long dstDataAddr,
+            long dstDataOffset
+    ) {
         throw new UnsupportedOperationException();
     }
 
@@ -120,7 +180,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3sort(long timestampIndex, long timestampIndexSize, MemoryCR srcDataMem, MemoryCR srcAuxMem, MemoryCARW dstDataMem, MemoryCARW dstAuxMem) {
+    public void o3shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void o3sort(long timestampMergeIndexAddr, long timestampMergeIndexSize, MemoryCR srcDataMem, MemoryCR srcAuxMem, MemoryCARW dstDataMem, MemoryCARW dstAuxMem) {
         throw new UnsupportedOperationException();
     }
 
@@ -141,5 +206,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         // Jump to the end of file to correctly trim the file
         auxMem.jumpTo(0);
         return 0;
+    }
+
+    @Override
+    public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem, boolean doubleAllocate) {
+        throw new UnsupportedOperationException();
     }
 }
