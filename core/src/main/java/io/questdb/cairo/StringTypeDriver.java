@@ -34,7 +34,7 @@ import io.questdb.std.str.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
-import static io.questdb.cairo.O3OpenColumnJob.*;
+import static io.questdb.cairo.O3OpenColumnJob.o3PublishCopyTasks;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
@@ -93,11 +93,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public int getAuxEntrySizeBits() {
-        return LEGACY_VAR_SIZE_AUX_SHL;
-    }
-
-    @Override
     public long getAuxVectorOffset(long row) {
         return row << LEGACY_VAR_SIZE_AUX_SHL;
     }
@@ -115,6 +110,16 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi) {
         return getDataVectorOffset(auxMemAddr, rowHi + 1) - getDataVectorOffset(auxMemAddr, rowLo);
+    }
+
+    @Override
+    public long getDataVectorSizeAt(long auxMemAddr, long row) {
+        return getDataVectorOffset(auxMemAddr, row + 1);
+    }
+
+    @Override
+    public long getMinAuxVectorSize() {
+        return Long.BYTES;
     }
 
     @Override
@@ -139,155 +144,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
                 dstAuxAddr,
                 dstDataAddr,
                 dstDataOffset
-        );
-    }
-
-    @Override
-    public void o3PartitionAppend(
-            AtomicInteger columnCounter,
-            int columnType,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long srcOooLo,
-            long srcOooHi,
-            long srcOooMax,
-            long timestampMin,
-            long partitionTimestamp,
-            long srcDataTop,
-            long srcDataMax,
-            int indexBlockCapacity,
-            int srcTimestampFd,
-            long srcTimestampAddr,
-            long srcTimestampSize,
-            int activeFixFd,
-            int activeVarFd,
-            MemoryMA dstAuxMem,
-            MemoryMA dstDataMem,
-            long dstRowCount,
-            long srcDataNewPartitionSize,
-            long srcDataOldPartitionSize,
-            long o3SplitPartitionSize,
-            TableWriter tableWriter,
-            long partitionUpdateSinkAddr
-    ) {
-        long dstAuxAddr = 0;
-        long dstAuxOffset;
-        long dstAuxFileOffset;
-        long dstVarAddr = 0;
-        long dstVarOffset;
-        long dstVarAdjust;
-        long dstVarSize = 0;
-        long dstAuxSize = 0;
-        final FilesFacade ff = tableWriter.getFilesFacade();
-        try {
-            ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-
-            long o3auxSize = columnTypeDriver.getDataVectorSize(srcOooFixAddr, srcOooLo, srcOooHi);
-            dstAuxSize = columnTypeDriver.getAuxVectorSize(dstRowCount);
-
-            if (dstAuxMem == null || dstAuxMem.getAppendAddressSize() < dstAuxSize || dstDataMem.getAppendAddressSize() < o3auxSize) {
-                // todo: string specific assert
-                assert dstAuxMem == null || dstAuxMem.getAppendOffset() - Long.BYTES == (srcDataMax - srcDataTop) * Long.BYTES;
-
-                dstAuxOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
-                dstAuxFileOffset = dstAuxOffset;
-                dstAuxAddr = mapRW(ff, Math.abs(activeFixFd), dstAuxSize, MemoryTag.MMAP_O3);
-
-                if (dstAuxOffset > 0) {
-                    dstVarOffset = Unsafe.getUnsafe().getLong(dstAuxAddr + dstAuxOffset);
-                } else {
-                    dstVarOffset = 0;
-                }
-
-                dstVarSize = o3auxSize + dstVarOffset;
-                dstVarAddr = mapRW(ff, Math.abs(activeVarFd), dstVarSize, MemoryTag.MMAP_O3);
-                dstVarAdjust = 0;
-            } else {
-                // todo: string specific assert
-                assert dstAuxMem.getAppendOffset() >= Long.BYTES;
-                assert dstAuxMem.getAppendOffset() - Long.BYTES == (srcDataMax - srcDataTop) * Long.BYTES;
-
-                dstAuxAddr = dstAuxMem.getAppendAddress() - Long.BYTES;
-                dstVarAddr = dstDataMem.getAppendAddress();
-                dstAuxOffset = 0;
-                dstAuxFileOffset = dstAuxMem.getAppendOffset() - Long.BYTES;
-                dstAuxSize = -dstAuxSize;
-                dstVarOffset = 0;
-                dstVarSize = -o3auxSize;
-                dstVarAdjust = dstDataMem.getAppendOffset();
-            }
-        } catch (Throwable e) {
-            LOG.error().$("append var error [table=").utf8(tableWriter.getTableToken().getTableName())
-                    .$(", e=").$(e)
-                    .I$();
-            O3Utils.unmapAndClose(ff, activeFixFd, dstAuxAddr, dstAuxSize);
-            O3Utils.unmapAndClose(ff, activeVarFd, dstVarAddr, dstVarSize);
-            freeTimestampIndex(
-                    columnCounter,
-                    0,
-                    0,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
-                    tableWriter,
-                    ff
-            );
-            throw e;
-        }
-
-        o3PublishCopyTask(
-                columnCounter,
-                null,
-                columnType,
-                O3_BLOCK_O3,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                srcOooLo,
-                srcOooHi,
-                srcDataTop,
-                srcDataMax,
-                srcOooFixAddr,
-                srcOooVarAddr,
-                srcOooLo,
-                srcOooHi,
-                srcOooMax,
-                srcOooLo,
-                srcOooHi,
-                timestampMin,
-                partitionTimestamp, // <-- pass thru
-                activeFixFd,
-                dstAuxAddr,
-                dstAuxOffset,
-                dstAuxFileOffset,
-                dstAuxSize,
-                activeVarFd,
-                dstVarAddr,
-                dstVarOffset,
-                dstVarAdjust,
-                dstVarSize,
-                0,
-                0,
-                0,
-                0,
-                indexBlockCapacity,
-                srcTimestampFd,
-                srcTimestampAddr,
-                srcTimestampSize,
-                false,
-                srcDataNewPartitionSize,
-                srcDataOldPartitionSize,
-                o3SplitPartitionSize,
-                tableWriter,
-                null,
-                partitionUpdateSinkAddr
         );
     }
 
@@ -340,13 +196,13 @@ public class StringTypeDriver implements ColumnTypeDriver {
         int dstVarFd = 0;
         long dstVarAddr = 0;
         long srcDataFixOffset;
-        long srcDataFixAddr = 0;
+        long srcAuxAddr = 0;
         long dstVarSize = 0;
         long srcDataTopOffset;
         long dstFixSize = 0;
         long dstFixAppendOffset1;
-        long srcDataFixSize = 0;
-        long srcDataVarSize = 0;
+        long srcAuxSize = 0;
+        long srcDataSize = 0;
         long dstVarAppendOffset2;
         long dstFixAppendOffset2;
         int dstFixFd = 0;
@@ -363,10 +219,12 @@ public class StringTypeDriver implements ColumnTypeDriver {
         try {
             pathToNewPartition.trimTo(pplen);
             if (srcDataTop > 0) {
-                // Size of data actually in the index (fixed) file.
-                final long srcDataActualBytes = (srcDataMax - srcDataTop) * Long.BYTES;
+                final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                // Size of data actually in the aux (fixed) file.
+                final long srcAuxOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
                 // Size of data in the index (fixed) file if it didn't have column top.
-                final long srcDataMaxBytes = srcDataMax * Long.BYTES;
+                final long srcAuxMaxOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax);
+
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
                     // Extend the existing column down, we will be discarding it anyway.
                     // Materialize nulls at the end of the column and add non-null data to merge.
@@ -374,23 +232,26 @@ public class StringTypeDriver implements ColumnTypeDriver {
                     // It is also fine in case when last partition contains WAL LAG, since
                     // At the beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
 
-                    srcDataFixSize = srcDataActualBytes + Long.BYTES + srcDataMaxBytes + Long.BYTES;
-                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
-                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
-                    if (srcDataActualBytes > 0) {
-                        srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataActualBytes);
+                    srcAuxSize =
+                            columnTypeDriver.getAuxVectorSize(srcDataMax - srcDataTop) +
+                            columnTypeDriver.getAuxVectorSize(srcDataMax);
+
+                    srcAuxAddr = mapRW(ff, srcFixFd, srcAuxSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcAuxAddr, srcAuxSize, Files.POSIX_MADV_SEQUENTIAL);
+                    if (srcAuxOffset > 0) {
+                        srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, srcDataMax - srcDataTop - 1);
                     }
 
                     // at bottom of source var column set length of strings to null (-1) for as many strings
                     // as srcDataTop value.
-                    srcDataVarOffset = srcDataVarSize;
+                    srcDataVarOffset = srcDataSize;
                     long reservedBytesForColTopNulls;
                     // We need to reserve null values for every column top value
                     // in the variable len file. Each null value takes 4 bytes for string
                     reservedBytesForColTopNulls = srcDataTop * (ColumnType.isString(columnType) ? Integer.BYTES : Long.BYTES);
-                    srcDataVarSize += reservedBytesForColTopNulls + srcDataVarSize;
-                    srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
-                    ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
+                    srcDataSize += reservedBytesForColTopNulls + srcDataSize;
+                    srcDataVarAddr = mapRW(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataVarAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
 
                     // Set var column values to null first srcDataTop times
                     // Next line should be:
@@ -406,13 +267,13 @@ public class StringTypeDriver implements ColumnTypeDriver {
                     // we need to shift copy the original column so that new block points at strings "below" the
                     // nulls we created above
                     long hiInclusive = srcDataMax - srcDataTop; // STOP. DON'T ADD +1 HERE. srcHi is inclusive, no need to do +1
-                    assert srcDataFixSize >= srcDataMaxBytes + (hiInclusive + 1) * 8; // make sure enough len mapped
+                    assert srcAuxSize >= srcAuxMaxOffset + (hiInclusive + 1) * 8; // make sure enough len mapped
                     o3shiftCopyAuxVector(
                             -reservedBytesForColTopNulls,
-                            srcDataFixAddr,
+                            srcAuxAddr,
                             0,
                             hiInclusive,
-                            srcDataFixAddr + srcDataMaxBytes + Long.BYTES
+                            srcAuxAddr + srcAuxMaxOffset + Long.BYTES
                     );
 
                     // now set the "empty" bit of fixed size column with references to those
@@ -420,13 +281,13 @@ public class StringTypeDriver implements ColumnTypeDriver {
                     // Call to setVarColumnRefs32Bit must be after shiftCopyFixedSizeColumnData
                     // because data first have to be shifted before overwritten
                     if (ColumnType.isString(columnType)) {
-                        Vect.setVarColumnRefs32Bit(srcDataFixAddr + srcDataActualBytes + Long.BYTES, 0, srcDataTop);
+                        Vect.setVarColumnRefs32Bit(srcAuxAddr + srcAuxOffset + Long.BYTES, 0, srcDataTop);
                     } else {
-                        Vect.setVarColumnRefs64Bit(srcDataFixAddr + srcDataActualBytes + Long.BYTES, 0, srcDataTop);
+                        Vect.setVarColumnRefs64Bit(srcAuxAddr + srcAuxOffset + Long.BYTES, 0, srcDataTop);
                     }
 
                     srcDataTop = 0;
-                    srcDataFixOffset = srcDataActualBytes + Long.BYTES;
+                    srcDataFixOffset = srcAuxOffset + Long.BYTES;
                 } else {
                     // when we are shuffling "empty" space we can just reduce column top instead
                     // of moving data
@@ -436,25 +297,25 @@ public class StringTypeDriver implements ColumnTypeDriver {
                         // For split partition, old partition column top will remain the same.
                         // And the new partition will not have any column top since srcDataTop <= prefixHi.
                     }
-                    srcDataFixSize = srcDataActualBytes + Long.BYTES;
-                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
-                    ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
+                    srcAuxSize = srcAuxOffset + Long.BYTES;
+                    srcAuxAddr = mapRW(ff, srcFixFd, srcAuxSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcAuxAddr, srcAuxSize, Files.POSIX_MADV_SEQUENTIAL);
                     srcDataFixOffset = 0;
 
-                    srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES);
-                    srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
-                    ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
+                    srcDataSize = Unsafe.getUnsafe().getLong(srcAuxAddr + srcAuxSize - Long.BYTES);
+                    srcDataVarAddr = mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataVarAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
                 }
             } else {
                 // var index column is n+1
-                srcDataFixSize = (srcDataMax + 1) * Long.BYTES;
-                srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
-                ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
+                srcAuxSize = (srcDataMax + 1) * Long.BYTES;
+                srcAuxAddr = mapRW(ff, srcFixFd, srcAuxSize, MemoryTag.MMAP_O3);
+                ff.madvise(srcAuxAddr, srcAuxSize, Files.POSIX_MADV_SEQUENTIAL);
                 srcDataFixOffset = 0;
 
-                srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES);
-                srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
-                ff.madvise(srcDataVarAddr, srcDataVarSize, Files.POSIX_MADV_SEQUENTIAL);
+                srcDataSize = Unsafe.getUnsafe().getLong(srcAuxAddr + srcAuxSize - Long.BYTES);
+                srcDataVarAddr = mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3);
+                ff.madvise(srcDataVarAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
             }
 
             // upgrade srcDataTop to offset
@@ -474,13 +335,13 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
             dFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn);
             dstVarFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-            dstVarSize = srcDataVarSize - srcDataVarOffset
+            dstVarSize = srcDataSize - srcDataVarOffset
                     + getDataVectorSize(srcOooFixAddr, srcOooLo, srcOooHi);
 
             if (prefixType == O3_BLOCK_NONE && prefixHi > initialSrcDataTop) {
                 // split partition
                 assert prefixLo == 0;
-                dstVarSize -= getDataVectorSize(srcDataFixAddr, prefixLo, prefixHi - initialSrcDataTop);
+                dstVarSize -= getDataVectorSize(srcAuxAddr, prefixLo, prefixHi - initialSrcDataTop);
             }
 
             dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
@@ -511,7 +372,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
                     break;
                 case O3_BLOCK_DATA:
                     dstVarAppendOffset1 = getDataVectorSize(
-                            srcDataFixAddr + srcDataFixOffset,
+                            srcAuxAddr + srcDataFixOffset,
                             prefixLo,
                             prefixHi
                     );
@@ -528,7 +389,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
                     // No deduplication, all rows from O3 and column data will be written.
                     // In this case var col length is calculated as o3 var col len + data var col len
                     long oooLen = getDataVectorSize(srcOooFixAddr, mergeOOOLo, mergeOOOHi);
-                    long dataLen = getDataVectorSize(srcDataFixAddr + srcDataFixOffset, mergeDataLo - srcDataTop, mergeDataHi - srcDataTop);
+                    long dataLen = getDataVectorSize(srcAuxAddr + srcDataFixOffset, mergeDataLo - srcDataTop, mergeDataHi - srcDataTop);
                     dstVarAppendOffset2 = dstVarAppendOffset1 + oooLen + dataLen;
                 } else {
                     // Deduplication happens, some rows are eliminated.
@@ -549,7 +410,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
                     dstVarAppendOffset2 = dstVarAppendOffset1 + Vect.dedupMergeVarColumnLen(
                             timestampMergeIndexAddr,
                             timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES,
-                            srcDataFixAddr + srcDataFixOffset - srcDataTop * 8,
+                            srcAuxAddr + srcDataFixOffset - srcDataTop * 8,
                             srcOooFixAddr
                     );
                 }
@@ -575,11 +436,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
                     timestampMergeIndexAddr,
                     timestampMergeIndexSize,
                     srcDataFixFd,
-                    srcDataFixAddr,
-                    srcDataFixSize,
+                    srcAuxAddr,
+                    srcAuxSize,
                     srcDataVarFd,
                     srcDataVarAddr,
-                    srcDataVarSize,
+                    srcDataSize,
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
@@ -605,13 +466,13 @@ public class StringTypeDriver implements ColumnTypeDriver {
                 timestampMergeIndexAddr,
                 timestampMergeIndexSize,
                 srcDataFixFd,
-                srcDataFixAddr,
+                srcAuxAddr,
                 srcDataFixOffset,
-                srcDataFixSize,
+                srcAuxSize,
                 srcDataVarFd,
                 srcDataVarAddr,
                 srcDataVarOffset,
-                srcDataVarSize,
+                srcDataSize,
                 srcDataTopOffset,
                 srcDataMax,
                 srcOooFixAddr,
@@ -656,6 +517,30 @@ public class StringTypeDriver implements ColumnTypeDriver {
                 srcDataTopOffset >> 2,
                 partitionUpdateSinkAddr
         );
+    }
+
+    @Override
+    public void o3copyAuxVector(
+            FilesFacade ff,
+            long src,
+            long srcLo,
+            long srcHi,
+            long dstFixAddr,
+            long dstFixFileOffset,
+            int dstFd,
+            boolean mixedIOFlag
+    ) {
+        // srcHi is inclusive, and we also copy 1 extra entry due to N+1 aux vector structure
+        final long len = (srcHi + 1 - srcLo + 1) << LEGACY_VAR_SIZE_AUX_SHL;
+        final long fromAddress = src + (srcLo << LEGACY_VAR_SIZE_AUX_SHL);
+        if (mixedIOFlag) {
+            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
+                throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
+                        .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
+            }
+        } else {
+            Vect.memcpy(dstFixAddr, fromAddress, len);
+        }
     }
 
     @Override

@@ -410,15 +410,14 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             Vect.memcpy(dstDataAddr + dstDataOffset, srcDataAddr + lo, len);
         }
         if (lo == offset) {
-            copyFixedSizeCol(
+            columnTypeDriver.o3copyAuxVector(
                     ff,
                     srcAuxAddr,
                     srcLo,
-                    srcHi + 1,
+                    srcHi,
                     dstAuxAddr,
                     dstAuxFileOffset,
                     dstAuxFd,
-                    3, // todo: hardcoded aux vector entry size
                     mixedIOFlag
             );
         } else {

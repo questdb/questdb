@@ -28,6 +28,7 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -52,6 +53,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         dataOffset <<= 32;
         dataOffset |= Unsafe.getUnsafe().getInt(addr + 12) & 0xffffffffL;
         return dataOffset;
+    }
+
+    @Override
+    public long getDataVectorSizeAt(long auxMemAddr, long row) {
+        return varcharGetDataVectorSize(getDataVectorOffset(auxMemAddr, row));
     }
 
     public static long varcharGetDataVectorSize(long auxEntry) {
@@ -134,11 +140,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public int getAuxEntrySizeBits() {
-        return VARCHAR_AUX_SHL;
-    }
-
-    @Override
     public long getAuxVectorOffset(long row) {
         return row << VARCHAR_AUX_SHL;
     }
@@ -154,7 +155,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi) {
-        return getDataVectorOffset(auxMemAddr, rowHi) - getDataVectorOffset(auxMemAddr, rowLo);
+        return getDataVectorSizeAt(auxMemAddr, rowHi) - getDataVectorSizeAt(auxMemAddr, rowLo);
+    }
+
+    @Override
+    public long getMinAuxVectorSize() {
+        return 0;
     }
 
     @Override
@@ -173,13 +179,66 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3PartitionAppend(AtomicInteger columnCounter, int columnType, long srcOooFixAddr, long srcOooVarAddr, long srcOooLo, long srcOooHi, long srcOooMax, long timestampMin, long partitionTimestamp, long srcDataTop, long srcDataMax, int indexBlockCapacity, int srcTimestampFd, long srcTimestampAddr, long srcTimestampSize, int activeFixFd, int activeVarFd, MemoryMA dstFixMem, MemoryMA dstVarMem, long dstRowCount, long srcDataNewPartitionSize, long srcDataOldPartitionSize, long o3SplitPartitionSize, TableWriter tableWriter, long partitionUpdateSinkAddr) {
+    public void o3PartitionMerge(
+            Path pathToNewPartition,
+            int pplen,
+            CharSequence columnName,
+            AtomicInteger columnCounter,
+            AtomicInteger partCounter,
+            int columnType,
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long oooPartitionMin,
+            long oooPartitionHi,
+            long srcDataTop,
+            long srcDataMax,
+            int prefixType,
+            long prefixLo,
+            long prefixHi,
+            int mergeType,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            long mergeDataLo,
+            long mergeDataHi,
+            long mergeLen,
+            int suffixType,
+            long suffixLo,
+            long suffixHi,
+            int indexBlockCapacity,
+            int srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            int srcDataFixFd,
+            int srcDataVarFd,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3SplitPartitionSize,
+            TableWriter tableWriter,
+            long colTopSinkAddr,
+            long columnNameTxn,
+            long partitionUpdateSinkAddr
+    ) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void o3PartitionMerge(Path pathToNewPartition, int pplen, CharSequence columnName, AtomicInteger columnCounter, AtomicInteger partCounter, int columnType, long timestampMergeIndexAddr, long timestampMergeIndexSize, long srcOooFixAddr, long srcOooVarAddr, long srcOooLo, long srcOooHi, long srcOooMax, long oooPartitionMin, long oooPartitionHi, long srcDataTop, long srcDataMax, int prefixType, long prefixLo, long prefixHi, int mergeType, long mergeOOOLo, long mergeOOOHi, long mergeDataLo, long mergeDataHi, long mergeLen, int suffixType, long suffixLo, long suffixHi, int indexBlockCapacity, int srcTimestampFd, long srcTimestampAddr, long srcTimestampSize, int srcDataFixFd, int srcDataVarFd, long srcDataNewPartitionSize, long srcDataOldPartitionSize, long o3SplitPartitionSize, TableWriter tableWriter, long colTopSinkAddr, long columnNameTxn, long partitionUpdateSinkAddr) {
-        throw new UnsupportedOperationException();
+    public void o3copyAuxVector(FilesFacade ff, long src, long srcLo, long srcHi, long dstFixAddr, long dstFixFileOffset, int dstFd, boolean mixedIOFlag) {
+        final long len = (srcHi - srcLo + 1) << VARCHAR_AUX_SHL;
+        final long fromAddress = src + (srcLo << VARCHAR_AUX_SHL);
+        if (mixedIOFlag) {
+            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
+                throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
+                        .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
+            }
+        } else {
+            Vect.memcpy(dstFixAddr, fromAddress, len);
+        }
+
     }
 
     @Override
