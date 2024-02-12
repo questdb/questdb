@@ -51,16 +51,19 @@ public interface Utf8Sequence {
     byte byteAt(int index);
 
     /**
+     * @return true if all characters in the string are ASCII.
+     */
+    default boolean isAscii() {
+        return false;
+    }
+
+    /**
      * Number of bytes in the string.
      * <p>
      * This is NOT the number of 16-bit chars or code points in the string.
      * This is named `size` instead of `length` to avoid collision withs the `CharSequence` interface.
      */
     int size();
-
-    default boolean isAscii() {
-        return false;
-    }
 
     default void writeTo(long addr, int lo, int hi) {
         for (int i = lo; i < hi; i++) {

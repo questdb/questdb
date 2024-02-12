@@ -74,10 +74,10 @@ public class Utf8sTest {
         Assert.assertFalse(Utf8s.equals(str1a, (Utf8Sequence) str2));
         Assert.assertFalse(Utf8s.equals(str2, (Utf8Sequence) str3));
 
-        final Utf8String onHeapStr1a = new Utf8String("test1".getBytes(StandardCharsets.UTF_8));
-        final Utf8String onHeapStr1b = new Utf8String("test1".getBytes(StandardCharsets.UTF_8));
-        final Utf8String onHeapStr2 = new Utf8String("test2".getBytes(StandardCharsets.UTF_8));
-        final Utf8String onHeapStr3 = new Utf8String("a_longer_string".getBytes(StandardCharsets.UTF_8));
+        final Utf8String onHeapStr1a = new Utf8String("test1".getBytes(StandardCharsets.UTF_8), true);
+        final Utf8String onHeapStr1b = new Utf8String("test1".getBytes(StandardCharsets.UTF_8), true);
+        final Utf8String onHeapStr2 = new Utf8String("test2".getBytes(StandardCharsets.UTF_8), true);
+        final Utf8String onHeapStr3 = new Utf8String("a_longer_string".getBytes(StandardCharsets.UTF_8), true);
 
         Assert.assertTrue(Utf8s.equals(onHeapStr1a, onHeapStr1a));
         Assert.assertTrue(Utf8s.equals(onHeapStr1a, onHeapStr1b));
@@ -255,7 +255,7 @@ public class Utf8sTest {
 
             for (int i = 0; i < n; i++) {
                 Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMem, auxMem, rnd.nextBoolean() ? 1 : 2);
-                Assert.assertEquals(expectedOffsets.getQuick(i), Utf8s.varcharGetDataVectorSize(auxMem, i*16L));
+                Assert.assertEquals(expectedOffsets.getQuick(i), Utf8s.varcharGetDataVectorSize(auxMem, i * 16L));
                 String expectedValue = expectedValues.getQuick(i);
                 if (expectedValue == null) {
                     Assert.assertNull(varchar);

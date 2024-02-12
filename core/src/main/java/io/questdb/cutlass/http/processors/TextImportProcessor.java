@@ -57,7 +57,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final int MESSAGE_DATA = 2;
     private static final int MESSAGE_SCHEMA = 1;
     private static final String OVERRIDDEN_FROM_TABLE = "From Table";
-    private static final Utf8String PARTITION_BY_NONE = new Utf8String("NONE");
+    private static final Utf8String PARTITION_BY_NONE = new Utf8String("NONE", true);
     private static final int RESPONSE_COLUMN = 2;
     private static final int RESPONSE_COMPLETE = 6;
     private static final int RESPONSE_DONE = 5;
@@ -547,7 +547,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     static {
-        atomicityParamMap.put(new Utf8String("skipRow"), Atomicity.SKIP_ROW);
-        atomicityParamMap.put(new Utf8String("abort"), Atomicity.SKIP_ALL);
+        atomicityParamMap.put(new Utf8String("skipRow", true), Atomicity.SKIP_ROW);
+        atomicityParamMap.put(new Utf8String("abort", true), Atomicity.SKIP_ALL);
     }
 }

@@ -45,12 +45,6 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
-
-    @Override
-    public boolean isAscii() {
-        return ascii;
-    }
-
     private static final byte NULL = (byte) 0;
     private static final int OVERHEAD = 4;
     private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
@@ -74,6 +68,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         this.capacity = capacity;
         this.memoryTag = memoryTag;
         headPtr = tailPtr = Unsafe.malloc(capacity + 1, memoryTag);
+        ascii = true;
     }
 
     public static void clearThreadLocals() {
@@ -146,6 +141,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     public Path concat(long pUtf8NameZ) {
+        ascii = false;
         ensureSeparator();
         long p = pUtf8NameZ;
         while (true) {
@@ -178,6 +174,11 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
 
     public void flush() {
         $();
+    }
+
+    @Override
+    public boolean isAscii() {
+        return ascii;
     }
 
     public Path of(CharSequence str) {
@@ -252,6 +253,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     public Path prefix(@Nullable Path prefix, int prefixLen) {
         if (prefix != null) {
             if (prefixLen > 0) {
+                ascii &= prefix.isAscii();
                 int thisSize = size();
                 checkExtend(thisSize + prefixLen);
                 Vect.memmove(headPtr + prefixLen, headPtr, thisSize);
@@ -268,12 +270,14 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     public void put(int index, byte b) {
+        ascii = false;
         Unsafe.getUnsafe().putByte(headPtr + index, b);
     }
 
     @Override
     public Path put(@Nullable Utf8Sequence us) {
         if (us != null) {
+            ascii &= us.isAscii();
             int size = us.size();
             checkExtend(size + 1);
             Utf8s.strCpy(us, size, tailPtr);
@@ -352,6 +356,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
 
     @Override
     public Path putUtf8(long lo, long hi) {
+        ascii = false;
         final int size = Bytes.checkedLoHiSize(lo, hi, this.size());
         checkExtend(size);
         Vect.memcpy(tailPtr, lo, size);

@@ -593,7 +593,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     }
 
     public static class BoundaryAugmenter implements QuietCloseable {
-        private static final Utf8String BOUNDARY_PREFIX = new Utf8String("\r\n--");
+        private static final Utf8String BOUNDARY_PREFIX = new Utf8String("\r\n--", true);
         private final DirectUtf8String export = new DirectUtf8String();
         private long _wptr;
         private long lim;

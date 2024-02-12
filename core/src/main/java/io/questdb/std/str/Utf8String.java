@@ -33,21 +33,32 @@ import java.nio.charset.StandardCharsets;
  * An immutable on-heap sequence of UTF-8 bytes.
  */
 public class Utf8String implements Utf8Sequence {
-    public static final Utf8String EMPTY = new Utf8String("");
-
+    public static final Utf8String EMPTY = new Utf8String("", true);
+    private final boolean ascii;
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final byte[] bytes;
 
-    public Utf8String(byte @NotNull [] bytes) {
+    public Utf8String(byte @NotNull [] bytes, boolean ascii) {
         this.bytes = bytes;
+        this.ascii = ascii;
     }
 
     public Utf8String(@NotNull String str) {
+        this(str, false);
+    }
+
+    public Utf8String(@NotNull String str, boolean ascii) {
         this.bytes = str.getBytes(StandardCharsets.UTF_8);
+        this.ascii = ascii;
     }
 
     public Utf8String(@NotNull CharSequence seq) {
+        this(seq, false);
+    }
+
+    public Utf8String(@NotNull CharSequence seq, boolean ascii) {
         this.bytes = seq.toString().getBytes(StandardCharsets.UTF_8);
+        this.ascii = ascii;
     }
 
     public static Utf8String newInstance(@NotNull Utf8Sequence src) {
@@ -55,7 +66,7 @@ public class Utf8String implements Utf8Sequence {
         for (int i = 0, n = src.size(); i < n; i++) {
             bytes[i] = src.byteAt(i);
         }
-        return new Utf8String(bytes);
+        return new Utf8String(bytes, src.isAscii());
     }
 
     @Override
@@ -70,6 +81,11 @@ public class Utf8String implements Utf8Sequence {
 
     public int intAt(int index) {
         return Unsafe.byteArrayGetInt(bytes, index);
+    }
+
+    @Override
+    public boolean isAscii() {
+        return ascii;
     }
 
     public long longAt(int index) {

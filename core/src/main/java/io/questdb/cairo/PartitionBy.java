@@ -318,11 +318,11 @@ public final class PartitionBy {
         nameToIndexMap.put("week", WEEK);
         nameToIndexMap.put("none", NONE);
 
-        nameToIndexMapUtf8.put(new Utf8String("day"), DAY);
-        nameToIndexMapUtf8.put(new Utf8String("month"), MONTH);
-        nameToIndexMapUtf8.put(new Utf8String("year"), YEAR);
-        nameToIndexMapUtf8.put(new Utf8String("hour"), HOUR);
-        nameToIndexMapUtf8.put(new Utf8String("week"), WEEK);
-        nameToIndexMapUtf8.put(new Utf8String("none"), NONE);
+        nameToIndexMapUtf8.put(new Utf8String("day", true), DAY);
+        nameToIndexMapUtf8.put(new Utf8String("month", true), MONTH);
+        nameToIndexMapUtf8.put(new Utf8String("year", true), YEAR);
+        nameToIndexMapUtf8.put(new Utf8String("hour", true), HOUR);
+        nameToIndexMapUtf8.put(new Utf8String("week", true), WEEK);
+        nameToIndexMapUtf8.put(new Utf8String("none", true), NONE);
     }
 }

@@ -42,10 +42,10 @@ import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.*
 import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
 
 public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
-    private static final Utf8String CONTENT_ENCODING = new Utf8String("Content-Encoding");
+    private static final Utf8String CONTENT_ENCODING = new Utf8String("Content-Encoding", true);
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<LineHttpProcessorState> LV = new LocalValue<>();
-    private static final Utf8String URL_PARAM_PRECISION = new Utf8String("precision");
+    private static final Utf8String URL_PARAM_PRECISION = new Utf8String("precision", true);
     private final LineHttpProcessorConfiguration configuration;
     private final CairoEngine engine;
     private final int maxResponseContentLength;
