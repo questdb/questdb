@@ -33,9 +33,7 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Numbers;
-import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -81,11 +79,6 @@ public class HttpServerConfigurationBuilder {
         return new DefaultHttpServerConfiguration() {
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
                 @Override
-                public MillisecondClock getClock() {
-                    return () -> 0;
-                }
-
-                @Override
                 public int getConnectionCheckFrequency() {
                     return 1_000_000;
                 }
@@ -118,6 +111,16 @@ public class HttpServerConfigurationBuilder {
                 @Override
                 public long getMaxQueryResponseRowLimit() {
                     return configuredMaxQueryResponseRowLimit;
+                }
+
+                @Override
+                public MillisecondClock getMillisecondClock() {
+                    return StationaryMillisClock.INSTANCE;
+                }
+
+                @Override
+                public NanosecondClock getNanosecondClock() {
+                    return StationaryNanosClock.INSTANCE;
                 }
             };
             private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
@@ -166,11 +169,6 @@ public class HttpServerConfigurationBuilder {
                     }
 
                     @Override
-                    public MillisecondClock getClock() {
-                        return StationaryMillisClock.INSTANCE;
-                    }
-
-                    @Override
                     public boolean getDumpNetworkTraffic() {
                         return dumpTraffic;
                     }
@@ -186,9 +184,19 @@ public class HttpServerConfigurationBuilder {
                     }
 
                     @Override
+                    public MillisecondClock getMillisecondClock() {
+                        return StationaryMillisClock.INSTANCE;
+                    }
+
+                    @Override
                     public long getMultipartIdleSpinCount() {
                         if (multipartIdleSpinCount < 0) return super.getMultipartIdleSpinCount();
                         return multipartIdleSpinCount;
+                    }
+
+                    @Override
+                    public NanosecondClock getNanosecondClock() {
+                        return StationaryNanosClock.INSTANCE;
                     }
 
                     @Override

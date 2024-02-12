@@ -75,6 +75,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected final byte httpHealthCheckAuthType;
     protected final byte httpStaticContentAuthType;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
+    private final boolean allowTableRegistrySharedWrite;
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -117,6 +118,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean defaultSymbolCacheFlag;
     private final int defaultSymbolCapacity;
     private final int detachedMkdirMode;
+    private final boolean enableTestFactories;
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
@@ -376,10 +378,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
-    private boolean allowTableRegistrySharedWrite;
     protected long walSegmentRolloverSize;
     private long cairoSqlCopyMaxIndexChunkSize;
-    private boolean enableTestFactories;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private int forceRecvFragmentationChunkSize;
@@ -492,7 +492,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public PropServerConfiguration(
             String root,
             Properties properties,
-            @Nullable    Map<String, String> env,
+            @Nullable Map<String, String> env,
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
@@ -2895,11 +2895,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public MillisecondClock getClock() {
-            return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
-        }
-
-        @Override
         public int getConnectionPoolInitialCapacity() {
             return connectionPoolInitialCapacity;
         }
@@ -2935,6 +2930,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public MillisecondClock getMillisecondClock() {
+            return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
         public int getMultipartHeaderBufferSize() {
             return multipartHeaderBufferSize;
         }
@@ -2942,6 +2942,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMultipartIdleSpinCount() {
             return multipartIdleSpinCount;
+        }
+
+        @Override
+        public NanosecondClock getNanosecondClock() {
+            return httpFrozenClock ? StationaryNanosClock.INSTANCE : NanosecondClockImpl.INSTANCE;
         }
 
         @Override
@@ -3318,11 +3323,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     public class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
 
         @Override
-        public MillisecondClock getClock() {
-            return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
-        }
-
-        @Override
         public int getConnectionCheckFrequency() {
             return jsonQueryConnectionCheckFrequency;
         }
@@ -3355,6 +3355,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMaxQueryResponseRowLimit() {
             return maxHttpQueryResponseRowLimit;
+        }
+
+        @Override
+        public MillisecondClock getMillisecondClock() {
+            return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public NanosecondClock getNanosecondClock() {
+            return httpFrozenClock ? StationaryNanosClock.INSTANCE : NanosecondClockImpl.INSTANCE;
         }
     }
 

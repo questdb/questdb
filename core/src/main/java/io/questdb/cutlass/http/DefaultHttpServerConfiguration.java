@@ -35,6 +35,7 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -201,11 +202,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     public class DefaultJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
         @Override
-        public MillisecondClock getClock() {
-            return httpContextConfiguration.getClock();
-        }
-
-        @Override
         public int getConnectionCheckFrequency() {
             return 1_000_000;
         }
@@ -238,6 +234,16 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public long getMaxQueryResponseRowLimit() {
             return Long.MAX_VALUE;
+        }
+
+        @Override
+        public MillisecondClock getMillisecondClock() {
+            return httpContextConfiguration.getMillisecondClock();
+        }
+
+        @Override
+        public NanosecondClock getNanosecondClock() {
+            return httpContextConfiguration.getNanosecondClock();
         }
     }
 

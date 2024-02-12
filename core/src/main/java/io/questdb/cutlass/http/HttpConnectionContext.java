@@ -71,6 +71,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         throw RetryOperationException.INSTANCE;
     };
     private final AssociativeCache<RecordCursorFactory> selectCache;
+    private long authenticationNanos = 0L;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private int receivedBytes;
@@ -116,7 +117,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.metrics = metrics;
         this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
-        this.forceFragmentationReceiveChunkSize = configuration.getHttpContextConfiguration().getForceRecvFragmentationChunkSize();
+        this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();
 
         if (configuration instanceof HttpServerConfiguration) {
             final HttpServerConfiguration serverConfiguration = (HttpServerConfiguration) configuration;
@@ -189,6 +190,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public RetryAttemptAttributes getAttemptDetails() {
         return retryAttemptAttributes;
+    }
+
+    public long getAuthenticationNanos() {
+        return authenticationNanos;
     }
 
     public HttpChunkedResponse getChunkedResponse() {
@@ -337,6 +342,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.retryAttemptAttributes.lastRunTimestamp = 0;
         this.retryAttemptAttributes.attempt = 0;
         this.receivedBytes = 0;
+        this.authenticationNanos = 0L;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.clear();
         this.totalReceived = 0;
@@ -440,8 +446,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean configureSecurityContext() {
+        final long authenticationStart = configuration.getNanosecondClock().getTicks();
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
             if (!authenticator.authenticate(headerParser)) {
+                // authenticationNanos stays 0 when it fails, as it is probably irrelevant
                 return false;
             }
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
@@ -451,6 +459,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     SecurityContextFactory.HTTP
             );
         }
+        authenticationNanos = configuration.getNanosecondClock().getTicks() - authenticationStart;
         return true;
     }
 

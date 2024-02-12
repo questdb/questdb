@@ -77,7 +77,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.nf = configuration.getNetworkFacade();
         this.buffer = new ChunkUtf8Sink(responseBufferSize);
         this.compressOutBuffer = new ChunkUtf8Sink(responseBufferSize);
-        this.headerImpl = new HttpResponseHeaderImpl(configuration.getClock());
+        this.headerImpl = new HttpResponseHeaderImpl(configuration.getMillisecondClock());
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.httpVersion = configuration.getHttpVersion();
         this.connectionCloseHeader = !configuration.getServerKeepAlive();
