@@ -29,25 +29,28 @@ import io.questdb.mp.WorkerPool;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Properties;
 
 public class ReloadingServerMain implements Closeable {
     ServerMain server;
     final WorkerPoolManager workerPoolManager;
     FreeOnExit freeOnExit = new FreeOnExit();
+    ServerConfigurationChangeWatcherJob watcherJob;
 
     final Bootstrap bootstrap;
 
 
-    public ReloadingServerMain(String... args) {
+    public ReloadingServerMain(String... args) throws IOException {
         this(new Bootstrap(args), true);
     }
-    public ReloadingServerMain(final Bootstrap bootstrap, final boolean addShutdownHook) throws IllegalArgumentException {
+    public ReloadingServerMain(final Bootstrap bootstrap, final boolean addShutdownHook) throws IOException  {
         this.bootstrap = bootstrap;
         this.server = new ServerMain(bootstrap);
+        this.watcherJob = new ServerConfigurationChangeWatcherJob(bootstrap, server, addShutdownHook);
+
         this.workerPoolManager = new WorkerPoolManager(bootstrap.getConfiguration(), bootstrap.getMetrics()) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
-                ServerConfigurationChangeWatcherJob watcherJob = new ServerConfigurationChangeWatcherJob(bootstrap, server, addShutdownHook);
                 sharedPool.assign(watcherJob);
                 freeOnExit.register(watcherJob);
             }

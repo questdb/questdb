@@ -82,7 +82,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
 
                         @Override
                         public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
-                            return new ReloadingPropServerConfiguration(
+                            return new PropServerConfiguration(
                                     bootstrap.getRootDirectory(),
                                     bootstrap.loadProperties(),
                                     getEnv(),

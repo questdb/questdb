@@ -65,12 +65,14 @@ public class Bootstrap {
     private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
     private final String rootDirectory;
+    public final String[] args;
 
     public Bootstrap(String... args) {
         this(new PropBootstrapConfiguration(), args);
     }
 
     public Bootstrap(BootstrapConfiguration bootstrapConfiguration, String... args) {
+        this.args = args;
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }

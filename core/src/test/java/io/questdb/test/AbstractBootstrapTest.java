@@ -26,7 +26,7 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.PropBootstrapConfiguration;
-import io.questdb.ReloadingPropServerConfiguration;
+import io.questdb.PropServerConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
@@ -80,7 +80,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     public static void setUpStatic() throws Exception {
         AbstractTest.setUpStatic();
         TestUtils.unchecked(() -> {
-            dbPath = new Path().of(root).concat(ReloadingPropServerConfiguration.DB_DIRECTORY).$();
+            dbPath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).$();
             dbPathLen = dbPath.size();
             auxPath = new Path();
             dbPath.trimTo(dbPathLen).$();

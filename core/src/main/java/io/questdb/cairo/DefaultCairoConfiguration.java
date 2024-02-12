@@ -54,9 +54,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
-        this.confRoot = ReloadingPropServerConfiguration.rootSubdir(root, ReloadingPropServerConfiguration.CONFIG_DIRECTORY);
+        this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
-        this.snapshotRoot = ReloadingPropServerConfiguration.rootSubdir(root, ReloadingPropServerConfiguration.SNAPSHOT_DIRECTORY);
+        this.snapshotRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.SNAPSHOT_DIRECTORY);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
@@ -225,7 +225,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public @NotNull CharSequence getDbDirectory() {
-        return ReloadingPropServerConfiguration.DB_DIRECTORY;
+        return PropServerConfiguration.DB_DIRECTORY;
     }
 
     @Override

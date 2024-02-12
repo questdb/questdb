@@ -38,7 +38,7 @@ public class PGErrorHandlingTest extends BootstrapTest {
                 new PropBootstrapConfiguration() {
                     @Override
                     public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
-                        return new ReloadingPropServerConfiguration(
+                        return new PropServerConfiguration(
                                 bootstrap.getRootDirectory(),
                                 bootstrap.loadProperties(),
                                 getEnv(),
@@ -81,7 +81,7 @@ public class PGErrorHandlingTest extends BootstrapTest {
                 new PropBootstrapConfiguration() {
                     @Override
                     public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
-                        return new ReloadingPropServerConfiguration(
+                        return new PropServerConfiguration(
                                 bootstrap.getRootDirectory(),
                                 bootstrap.loadProperties(),
                                 getEnv(),

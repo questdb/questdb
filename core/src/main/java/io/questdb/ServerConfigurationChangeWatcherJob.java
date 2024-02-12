@@ -25,29 +25,29 @@
 package io.questdb;
 
 import io.questdb.cairo.O3OpenColumnJob;
+import io.questdb.cutlass.json.JsonException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Filewatcher;
 import io.questdb.std.str.Path;
 import io.questdb.mp.SynchronizedJob;
 import java.io.Closeable;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Paths;
+import java.util.Properties;
 
 public class ServerConfigurationChangeWatcherJob extends SynchronizedJob implements Closeable {
     private final long watcherAddress;
-    private final Bootstrap bootstrap;
+    private Bootstrap bootstrap;
     private ServerMain serverMain;
     private final static Log LOG = LogFactory.getLog(ServerConfigurationChangeWatcherJob.class);
     private final boolean addShutdownhook;
-    private ReloadingPropServerConfiguration configuration;
+    private Properties properties;
 
-    public ServerConfigurationChangeWatcherJob(Bootstrap bootstrap, ServerMain serverMain, boolean addShutdownHook) throws IllegalArgumentException {
-        if (!(bootstrap.getConfiguration() instanceof ReloadingPropServerConfiguration)) {
-            throw new IllegalArgumentException("bootstrap.getConfiguration() must return a ReloadingPropServerConfiguration");
-        }
-
+    public ServerConfigurationChangeWatcherJob(Bootstrap bootstrap, ServerMain serverMain, boolean addShutdownHook) throws IOException {
         this.bootstrap = bootstrap;
-        this.configuration = (ReloadingPropServerConfiguration) bootstrap.getConfiguration();
+        this.properties = bootstrap.loadProperties();
         this.serverMain = serverMain;
         this.addShutdownhook = addShutdownHook;
 
@@ -70,13 +70,24 @@ public class ServerConfigurationChangeWatcherJob extends SynchronizedJob impleme
         }
 
         if (Filewatcher.changed(this.watcherAddress)) {
-            if (this.configuration.reload()) {
+            Properties newProperties;
+            try {
+                newProperties = this.bootstrap.loadProperties();
+            } catch (IOException exc) {
+                LOG.error().$("error loading properties").$();
+                return false;
+            }
+
+            if (!newProperties.equals(this.properties)) {
                 LOG.info().$("config successfully reloaded").$();
                 serverMain.close();
+                this.bootstrap = new Bootstrap(this.bootstrap.args);
                 serverMain = new ServerMain(this.bootstrap);
                 serverMain.start(this.addShutdownhook);
+                this.properties = newProperties;
             }
         }
         return true;
     }
+
 }
