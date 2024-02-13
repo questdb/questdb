@@ -47,10 +47,10 @@ jobs:
   build-macos:
     strategy:
       matrix:
-        # macos-13-xlarge = ARM M1
+        # macos-14 = ARM M1
         # macos-latest = x64
         # if you change OS definitions then you need to change conditions in cache-save steps below
-        os: [ macos-13-xlarge, macos-latest ]
+        os: [ macos-14, macos-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
@@ -64,7 +64,7 @@ jobs:
           cmake --build build/release --config Release
           cd ..
       - name: Save ARM MacOS binary to Cache
-        if: ${{ matrix.os == 'macos-13-xlarge' }}
+        if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
         with:
           path: |
