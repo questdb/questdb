@@ -35,8 +35,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.Stack;
-
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
 
@@ -2627,15 +2625,15 @@ public class SqlParser {
             if (SqlKeywords.isAsKeyword(tok)) {
                 tok = tok(lexer, "alias");
                 if (tok.equals("[")) {
-                    Stack<CharSequence> sequenceStack = new Stack<>();
+                    ObjStack<CharSequence> sequenceStack = new ObjStack<>();
                     while (!tok.equals("]")) {
                         tok = SqlUtil.fetchNext(lexer);
                         if (tok instanceof GenericLexer.InternalFloatingSequence) {
                             CharSequence literal = tok.toString();
-                            sequenceStack.add(literal);
+                            sequenceStack.push(literal);
                         }
                     }
-                    tok = sequenceStack.isEmpty() ? tok : sequenceStack.pop();
+                    tok = !sequenceStack.notEmpty() ? tok : sequenceStack.pop();
                     sequenceStack.clear();
                 }
             }

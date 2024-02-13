@@ -373,15 +373,10 @@ public class ExpressionParser {
                             }
 
                             bracketCount--;
+                            ExpressionNode literalNode = null;
                             if (prevBranch == BRANCH_LITERAL) {
-                                ExpressionNode literalNode = opStack.peek();
-                                while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '[')) {
-                                }
-                                node = expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf("[" + literalNode.token + "]"), Integer.MIN_VALUE, lastPos);
-                                opStack.push(node);
-                                break;
+                                literalNode = opStack.peek();
                             }
-
                             // pop the array index from the stack, it could be an operator
                             while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '[')) {
                                 argStackDepth = onNode(listener, node, argStackDepth, false);
@@ -398,14 +393,17 @@ public class ExpressionParser {
                             if (braceCountStack.notEmpty()) {
                                 braceCount = braceCountStack.pop();
                             }
-
-                            node = expressionNodePool.next().of(
-                                    ExpressionNode.ARRAY_ACCESS,
-                                    "[]",
-                                    2,
-                                    lastPos
-                            );
-                            node.paramCount = 2;
+                            if (null != literalNode) {
+                                node = expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf("[" + literalNode.token + "]"), Integer.MIN_VALUE, lastPos);
+                            } else {
+                                node = expressionNodePool.next().of(
+                                        ExpressionNode.ARRAY_ACCESS,
+                                        "[]",
+                                        2,
+                                        lastPos
+                                );
+                                node.paramCount = 2;
+                            }
                             opStack.push(node);
                         }
 
