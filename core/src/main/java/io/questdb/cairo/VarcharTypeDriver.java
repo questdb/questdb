@@ -270,15 +270,17 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem, boolean doubleAllocate) {
         if (pos > 0) {
+            long auxVectorSize = getAuxVectorSize(pos);
             if (doubleAllocate) {
-                auxMem.allocate(getAuxVectorSize(pos));
+                auxMem.allocate(auxVectorSize);
             }
-            // first we need to calculate the used space. both data and aux vectors.
+            
+            // first we need to calculate already used space. both data and aux vectors.
             long auxVectorOffset = getAuxVectorOffset(pos - 1); // the last entry we are NOT overwriting
             auxMem.jumpTo(auxVectorOffset);
             long auxEntryPtr = auxMem.getAppendAddress();
             long dataVectorSize = varcharGetDataVectorSize(auxEntryPtr);
-            long totalDataSizeBytes = dataVectorSize + getAuxVectorSize(pos);
+            long totalDataSizeBytes = dataVectorSize + auxVectorSize;
 
             if (doubleAllocate) {
                 dataMem.allocate(dataVectorSize);
