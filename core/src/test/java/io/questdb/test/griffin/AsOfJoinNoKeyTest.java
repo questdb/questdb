@@ -43,10 +43,10 @@ import java.util.Collection;
  * Fast factories skip full scan of right hand table by lazy time frame navigation.
  */
 @RunWith(Parameterized.class)
-public class TemporalJoinNoKeyTest extends AbstractCairoTest {
+public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     private final JoinType joinType;
 
-    public TemporalJoinNoKeyTest(JoinType joinType) {
+    public AsOfJoinNoKeyTest(JoinType joinType) {
         this.joinType = joinType;
     }
 

@@ -33,8 +33,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 
-import static io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory.binarySearch;
-
 public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinFastRecordCursor cursor;
 
@@ -95,25 +93,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
         slaveFactory.close();
     }
 
-    private static class AsOfJoinFastRecordCursor implements NoRandomAccessRecordCursor {
-        private final int columnSplit;
-        private final int lookahead;
-        private final int masterTimestampIndex;
-        private final OuterJoinRecord record;
-        private final int slaveTimestampIndex;
-        private boolean isMasterHasNextPending;
-        // stands for forward/backward scan through slave's time frames
-        private boolean isSlaveForwardScan;
-        private boolean isSlaveOpenPending;
-        private RecordCursor masterCursor;
-        private boolean masterHasNext;
-        private Record masterRecord;
-        private TimeFrameRecordCursor slaveCursor;
-        private int slaveFrameIndex = -1;
-        private long slaveFrameRow = Long.MIN_VALUE;
-        private Record slaveRecA;
-        private Record slaveRecB;
-        private long slaveTimestamp = Long.MIN_VALUE;
+    private static class AsOfJoinFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
 
         public AsOfJoinFastRecordCursor(
                 int columnSplit,
@@ -122,35 +102,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                 int slaveTimestampIndex,
                 int lookahead
         ) {
-            this.columnSplit = columnSplit;
-            this.record = new OuterJoinRecord(columnSplit, nullRecord);
-            this.masterTimestampIndex = masterTimestampIndex;
-            this.slaveTimestampIndex = slaveTimestampIndex;
-            this.lookahead = lookahead;
-        }
-
-        @Override
-        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            masterCursor.calculateSize(circuitBreaker, counter);
-        }
-
-        @Override
-        public void close() {
-            masterCursor = Misc.free(masterCursor);
-            slaveCursor = Misc.free(slaveCursor);
-        }
-
-        @Override
-        public Record getRecord() {
-            return record;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex < columnSplit) {
-                return masterCursor.getSymbolTable(columnIndex);
-            }
-            return slaveCursor.getSymbolTable(columnIndex - columnSplit);
+            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
         }
 
         @Override
@@ -161,7 +113,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
             }
             if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-                if (masterTimestamp <= slaveTimestamp) {
+                if (masterTimestamp <= lookaheadTimestamp) {
                     isMasterHasNextPending = true;
                     return true;
                 }
@@ -172,67 +124,18 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
             return false;
         }
 
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            if (columnIndex < columnSplit) {
-                return masterCursor.newSymbolTable(columnIndex);
-            }
-            return slaveCursor.newSymbolTable(columnIndex - columnSplit);
-        }
-
-        @Override
-        public long size() {
-            return masterCursor.size();
-        }
-
-        @Override
-        public void toTop() {
-            slaveTimestamp = Long.MIN_VALUE;
-            slaveFrameIndex = -1;
-            slaveFrameRow = Long.MIN_VALUE;
-            record.hasSlave(false);
-            masterCursor.toTop();
-            slaveCursor.toTop();
-            isMasterHasNextPending = true;
-            isSlaveOpenPending = false;
-            isSlaveForwardScan = true;
-        }
-
-        private boolean linearScan(TimeFrame frame, long masterTimestamp) {
-            final long scanHi = Math.min(slaveFrameRow + lookahead, frame.getRowHi());
-            while (slaveFrameRow < scanHi) {
-                slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
-                slaveTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
-                if (slaveTimestamp >= masterTimestamp) {
-                    return true;
-                }
-                record.hasSlave(true);
-                slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
-                slaveFrameRow++;
-            }
-            return false;
-        }
-
         private void nextSlave(long masterTimestamp) {
             final TimeFrame frame = slaveCursor.getTimeFrame();
             while (true) {
                 if (frame.isOpen() && frame.getIndex() == slaveFrameIndex) {
                     // Scan a few rows to speed up self-join/identical tables cases.
-                    if (linearScan(frame, masterTimestamp)) {
+                    if (linearScan(frame, masterTimestamp - 1)) {
                         return;
                     }
                     if (slaveFrameRow < frame.getRowHi()) {
                         // Fallback to binary search.
                         // Find the last value less than the master timestamp.
-                        long foundRow = binarySearch(
-                                masterTimestamp - 1,
-                                slaveFrameRow,
-                                frame.getRowHi() - 1,
-                                slaveCursor,
-                                slaveFrameIndex,
-                                slaveRecA,
-                                slaveTimestampIndex
-                        );
+                        long foundRow = binarySearch(masterTimestamp - 1, slaveFrameRow, frame.getRowHi() - 1);
                         if (foundRow < slaveFrameRow) {
                             // All searched timestamps are equal or greater than the master timestamp.
                             // Linear scan must have found the row.
@@ -241,79 +144,15 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                         slaveFrameRow = foundRow;
                         record.hasSlave(true);
                         slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
-                        slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                        if (foundRow < frame.getRowHi() - 1 || slaveTimestamp == masterTimestamp - 1) {
+                        lookaheadTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                        if (foundRow < frame.getRowHi() - 1 || lookaheadTimestamp == masterTimestamp - 1) {
                             // We've found the row, so there is no point in checking the next partition.
                             return;
                         }
                     }
                 }
-                if (!openSlaveFrame(frame, masterTimestamp)) {
+                if (!openSlaveFrame(frame, masterTimestamp - 1)) {
                     return;
-                }
-            }
-        }
-
-        private void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor) {
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
-            masterRecord = masterCursor.getRecord();
-            slaveRecA = slaveCursor.getRecord();
-            slaveRecB = slaveCursor.getRecordB();
-            record.of(masterRecord, slaveRecB);
-            slaveTimestamp = Long.MIN_VALUE;
-            slaveFrameRow = Long.MIN_VALUE;
-            slaveFrameIndex = -1;
-            toTop();
-        }
-
-        private boolean openSlaveFrame(TimeFrame frame, long masterTimestamp) {
-            while (true) {
-                if (isSlaveOpenPending) {
-                    if (slaveCursor.open() < 1) {
-                        // Empty frame, scan further.
-                        isSlaveOpenPending = false;
-                        continue;
-                    }
-                    // We're lucky! The frame is non-empty.
-                    isSlaveOpenPending = false;
-                    if (isSlaveForwardScan) {
-                        if (masterTimestamp <= frame.getTimestampLo()) {
-                            // The frame is after the master timestamp, we need the previous frame.
-                            isSlaveForwardScan = false;
-                            continue;
-                        }
-                        // The frame is what we need, so we can search through its rows.
-                        slaveFrameIndex = frame.getIndex();
-                        slaveFrameRow = masterTimestamp <= frame.getTimestampHi() - 1 ? frame.getRowLo() : frame.getRowHi() - 1;
-                    } else {
-                        // We were scanning backwards, so position to the last row.
-                        slaveFrameIndex = frame.getIndex();
-                        slaveFrameRow = frame.getRowHi() - 1;
-                        isSlaveForwardScan = true;
-                    }
-                    return true;
-                }
-
-                if (isSlaveForwardScan) {
-                    if (!slaveCursor.next() || masterTimestamp <= frame.getTimestampEstimateLo()) {
-                        // We've reached the last frame or a frame after the searched timestamp.
-                        // Try to find something in previous frames.
-                        isSlaveForwardScan = false;
-                        continue;
-                    }
-                    if (masterTimestamp > frame.getTimestampEstimateLo() && masterTimestamp <= frame.getTimestampEstimateHi()) {
-                        // The frame looks promising, let's open it.
-                        isSlaveOpenPending = true;
-                    }
-                } else {
-                    if (!slaveCursor.prev() || slaveFrameIndex == frame.getIndex()) {
-                        // We've reached the first frame or an already opened frame. The scan is over.
-                        isSlaveForwardScan = true;
-                        return false;
-                    }
-                    // The frame looks promising, let's open it.
-                    isSlaveOpenPending = true;
                 }
             }
         }
