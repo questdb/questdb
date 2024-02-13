@@ -17,6 +17,7 @@ import org.jetbrains.annotations.Nullable;
 public final class Utf8s {
 
     public static final int UTF8_STORAGE_INLINE_BYTES = 9;
+    // Must be kept in sync with Java_io_questdb_std_Vect_sortVarcharColumn.
     public static final int UTF8_STORAGE_SPLIT_BYTE = 6;
 
     private Utf8s() {

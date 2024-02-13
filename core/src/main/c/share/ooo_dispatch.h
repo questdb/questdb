@@ -66,7 +66,6 @@ typedef struct index_t {
     uint64_t operator&(uint64_t mask) const{
         return ts & mask;
     }
-
 } index_t;
 
 typedef struct __attribute__ ((packed)) long_256bit {

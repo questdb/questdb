@@ -304,6 +304,15 @@ public final class Vect {
             long tgtIndxAdd
     );
 
+    public static native long sortVarcharColumn(
+            long mergedTimestampsAddr,
+            long valueCount,
+            long srcDataAddr,
+            long srcAuxAddr,
+            long tgtDataAddr,
+            long tgtAuxAdd
+    );
+
     public static native double sumDouble(long pDouble, long count);
 
     public static native double sumDoubleKahan(long pDouble, long count);

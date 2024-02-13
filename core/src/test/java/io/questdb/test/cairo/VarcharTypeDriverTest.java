@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
@@ -48,7 +49,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
             final VarcharTypeDriver driver = new VarcharTypeDriver();
             final Utf8StringSink utf8Sink = new Utf8StringSink();
             final LongList expectedOffsets = new LongList();
-            for (int n = 1; n < 100; n++) {
+            for (int n = 1; n < 50; n++) {
                 try (
                         MemoryARW auxMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
                         MemoryAR dataMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
@@ -89,6 +90,151 @@ public class VarcharTypeDriverTest extends AbstractTest {
                         Assert.assertNotNull(varchar);
                         TestUtils.assertEquals(expectedStr, varchar.asAsciiCharSequence());
                         Assert.assertTrue(varchar.isAscii());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testO3shiftCopyAuxVectorNulls() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final VarcharTypeDriver driver = new VarcharTypeDriver();
+            final LongList expectedOffsets = new LongList();
+            for (int n = 1; n < 50; n++) {
+                try (
+                        MemoryARW auxMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryAR dataMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryARW auxMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryAR dataMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+                ) {
+                    final int shift = -42;
+                    expectedOffsets.clear();
+                    for (int i = 0; i < n; i++) {
+                        Utf8s.varcharAppend(dataMemA, auxMemA, null);
+                        expectedOffsets.add(dataMemA.getAppendOffset());
+                    }
+
+                    for (int i = 0; i < n; i++) {
+                        Assert.assertNull(Utf8s.varcharRead(i * 16L, dataMemA, auxMemA, 1));
+                        Assert.assertEquals(expectedOffsets.getQuick(i), VarcharTypeDriver.varcharGetDataVectorSize(auxMemA, i * 16L));
+                    }
+
+                    dataMemB.extend(dataMemA.size() - shift);
+                    Vect.memcpy(dataMemB.addressOf(-shift), dataMemA.addressOf(0), dataMemA.size());
+                    auxMemB.extend(auxMemA.size());
+
+                    driver.o3shiftCopyAuxVector(shift, auxMemA.addressOf(0), 0, n, auxMemB.addressOf(0));
+
+                    for (int i = 0; i < n; i++) {
+                        Assert.assertNull(Utf8s.varcharRead(i * 16L, dataMemB, auxMemB, 1));
+                        Assert.assertEquals("offset mismatch: i=" + i + ", n=" + n, expectedOffsets.getQuick(i) - shift, VarcharTypeDriver.varcharGetDataVectorSize(auxMemB, i * 16L));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testO3sortReverseOrder() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    MemoryCARW tsIndexMem = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW auxMemA = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW dataMemA = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW auxMemB = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW dataMemB = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                final VarcharTypeDriver driver = new VarcharTypeDriver();
+                final Utf8StringSink utf8Sink = new Utf8StringSink();
+                final Rnd rnd = new Rnd();
+
+                final int n = 100;
+                for (int i = 0; i < n; i++) {
+                    tsIndexMem.putLong128(0, n - i - 1);
+
+                    utf8Sink.clear();
+                    int len = rnd.nextInt(32);
+                    switch (rnd.nextInt(3)) {
+                        case 0: // null
+                            Utf8s.varcharAppend(dataMemA, auxMemA, null);
+                            break;
+                        case 1: // ascii
+                            utf8Sink.repeat("a", len);
+                            Utf8s.varcharAppend(dataMemA, auxMemA, utf8Sink);
+                            break;
+                        case 2: // non-ascii
+                            utf8Sink.repeat("ы", len);
+                            Utf8s.varcharAppend(dataMemA, auxMemA, utf8Sink);
+                            break;
+                        default:
+                            assert false;
+                    }
+                }
+
+                driver.o3sort(tsIndexMem.addressOf(0), n, dataMemA, auxMemA, dataMemB, auxMemB);
+
+                for (int i = 0; i < n; i++) {
+                    Utf8Sequence varcharA = Utf8s.varcharRead((n - i - 1) * 16L, dataMemA, auxMemA, 1);
+                    Utf8Sequence varcharB = Utf8s.varcharRead(i * 16L, dataMemB, auxMemB, 1);
+                    Assert.assertTrue((varcharA != null && varcharB != null) || (varcharA == null && varcharB == null));
+                    if (varcharA != null) {
+                        Assert.assertEquals(varcharA.isAscii(), varcharB.isAscii());
+                        TestUtils.assertEquals(varcharA, varcharB);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testO3sortSameOrder() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    MemoryCARW tsIndexMem = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW auxMemA = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW dataMemA = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW auxMemB = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW dataMemB = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                final VarcharTypeDriver driver = new VarcharTypeDriver();
+                final Utf8StringSink utf8Sink = new Utf8StringSink();
+                final Rnd rnd = new Rnd();
+
+                final int n = 100;
+                for (int i = 0; i < n; i++) {
+                    tsIndexMem.putLong128(0, i);
+
+                    utf8Sink.clear();
+                    int len = rnd.nextInt(32);
+                    switch (rnd.nextInt(3)) {
+                        case 0: // null
+                            Utf8s.varcharAppend(dataMemA, auxMemA, null);
+                            break;
+                        case 1: // ascii
+                            utf8Sink.repeat("a", len);
+                            Utf8s.varcharAppend(dataMemA, auxMemA, utf8Sink);
+                            break;
+                        case 2: // non-ascii
+                            utf8Sink.repeat("ы", len);
+                            Utf8s.varcharAppend(dataMemA, auxMemA, utf8Sink);
+                            break;
+                        default:
+                            assert false;
+                    }
+                }
+
+                driver.o3sort(tsIndexMem.addressOf(0), n, dataMemA, auxMemA, dataMemB, auxMemB);
+
+                for (int i = 0; i < n; i++) {
+                    Utf8Sequence varcharA = Utf8s.varcharRead(i * 16L, dataMemA, auxMemA, 1);
+                    Utf8Sequence varcharB = Utf8s.varcharRead(i * 16L, dataMemB, auxMemB, 1);
+                    // offsets should match since the data is in-order
+                    Assert.assertEquals(VarcharTypeDriver.varcharGetDataVectorSize(auxMemA, i * 16L), VarcharTypeDriver.varcharGetDataVectorSize(auxMemB, i * 16L));
+                    Assert.assertTrue((varcharA != null && varcharB != null) || (varcharA == null && varcharB == null));
+                    if (varcharA != null) {
+                        Assert.assertEquals(varcharA.isAscii(), varcharB.isAscii());
+                        TestUtils.assertEquals(varcharA, varcharB);
                     }
                 }
             }

@@ -229,7 +229,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         } else {
             Vect.memcpy(dstFixAddr, fromAddress, len);
         }
-
     }
 
     @Override
@@ -244,8 +243,36 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3sort(long timestampMergeIndexAddr, long timestampMergeIndexSize, MemoryCR srcDataMem, MemoryCR srcAuxMem, MemoryCARW dstDataMem, MemoryCARW dstAuxMem) {
-        throw new UnsupportedOperationException();
+    public void o3sort(
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
+            MemoryCR srcDataMem,
+            MemoryCR srcAuxMem,
+            MemoryCARW dstDataMem,
+            MemoryCARW dstAuxMem
+    ) {
+        // ensure we have enough memory allocated
+        final long srcDataAddr = srcDataMem.addressOf(0);
+        final long srcAuxAddr = srcAuxMem.addressOf(0);
+        // exclude the trailing offset from shuffling
+        final long tgtDataAddr = dstDataMem.resize(srcDataMem.size());
+        final long tgtAuxAddr = dstAuxMem.resize(timestampMergeIndexSize * 2 * Long.BYTES);
+
+        assert srcDataAddr != 0;
+        assert srcAuxAddr != 0;
+        assert tgtDataAddr != 0;
+        assert tgtAuxAddr != 0;
+
+        // add max offset so that we do not have conditionals inside loop
+        final long offset = Vect.sortVarcharColumn(
+                timestampMergeIndexAddr,
+                timestampMergeIndexSize,
+                srcDataAddr,
+                srcAuxAddr,
+                tgtDataAddr,
+                tgtAuxAddr
+        );
+        dstDataMem.jumpTo(offset);
     }
 
     @Override

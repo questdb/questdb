@@ -5575,7 +5575,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         try {
-
             final int primaryIndex = getPrimaryColumnIndex(columnIndex);
             final int secondaryIndex = primaryIndex + 1;
 
@@ -5587,7 +5586,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3MemColumns2.getQuick(primaryIndex),
                     o3MemColumns2.getQuick(secondaryIndex)
             );
-
         } catch (Throwable th) {
             handleWorkStealingException("sort variable size column failed", columnIndex, columnType, mergedTimestampsAddr, valueCount, ignore1, ignore2, th);
         }

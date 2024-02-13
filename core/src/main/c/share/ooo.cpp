@@ -21,6 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+
 #include "jni.h"
 #include <cstring>
 #include "util.h"
@@ -31,7 +32,6 @@
 #include <atomic>
 #include <time.h>
 #endif
-
 
 typedef struct {
     uint64_t c8[256];
@@ -1159,6 +1159,37 @@ Java_io_questdb_std_Vect_sortVarColumn(JNIEnv *env, jclass cl, jlong mergedTimes
                         len);
         tgt_index[i] = offset;
         offset += len;
+    }
+    return __JLONG_REINTERPRET_CAST__(jlong, offset);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_sortVarcharColumn(JNIEnv *env, jclass cl, jlong mergedTimestampsAddr, jlong valueCount,
+                                           jlong srcDataAddr, jlong srcAuxAddr, jlong tgtDataAddr, jlong tgtAuxAddr) {
+
+    const index_t *index = reinterpret_cast<index_t *> (mergedTimestampsAddr);
+    const int64_t count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
+    const char *src_data = reinterpret_cast<const char *>(srcDataAddr);
+    const int64_t *src_aux = reinterpret_cast<const int64_t *>(srcAuxAddr);
+    char *tgt_data = reinterpret_cast<char *>(tgtDataAddr);
+    int64_t *tgt_aux = reinterpret_cast<int64_t *>(tgtAuxAddr);
+
+    int64_t offset = 0;
+    for (int64_t i = 0; i < count; ++i) {
+        MM_PREFETCH_T0(index + i + 64);
+        const int64_t row = index[i].i;
+        const int64_t a1 = src_aux[2 * row];
+        const int64_t a2 = src_aux[2 * row + 1];
+        tgt_aux[2 * i] = a1;
+        tgt_aux[2 * i + 1] = (offset << 16) | (a2 & 0xffff);
+        const int64_t flags = a1 & 0x0f;
+        if ((flags & 5) == 0) { // not inlined and not null
+            // 6 bytes are inlined - must be kept in sync with Utf8s#UTF8_STORAGE_SPLIT_BYTE
+            const int64_t size = ((a1 >> 4) & 0xffffff) - 6;
+            platform_memcpy(reinterpret_cast<void *>(tgt_data + offset), reinterpret_cast<const void *>(src_data + (a2 >> 16)),
+                            size);
+            offset += size;
+        }
     }
     return __JLONG_REINTERPRET_CAST__(jlong, offset);
 }
