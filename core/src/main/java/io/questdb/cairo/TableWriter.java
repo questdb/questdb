@@ -7084,8 +7084,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     dataSizeBytes = ColumnType.getDriver(columnType).setAppendPosition(
                             pos,
                             auxMem,
-                            dataMem,
-                            doubleAllocate
+                            dataMem
                     );
                 } else {
                     dataSizeBytes = pos << ColumnType.pow2SizeOf(columnType);
