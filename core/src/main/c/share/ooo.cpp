@@ -1081,7 +1081,7 @@ Java_io_questdb_std_Vect_shiftCopyFixedSizeColumnData(JNIEnv *env, jclass cl, jl
     });
 }
 
-DECLARE_DISPATCHER(shift_copy) ;
+DECLARE_DISPATCHER(shift_copy_varchar_aux) ;
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_shiftCopyVarcharColumnAux(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
                                                    jlong srcHi, jlong dst) {

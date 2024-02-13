@@ -227,10 +227,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr) {
+    public void o3shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr) {
         O3Utils.shiftCopyVarcharColumnAux(
                 shift,
-                src,
+                srcAddr,
                 srcLo,
                 srcHi,
                 dstAddr

@@ -100,22 +100,22 @@ public class O3Utils {
 
     static void shiftCopyFixedSizeColumnData(
             long shift,
-            long src,
+            long srcAddr,
             long srcLo,
             long srcHi,
             long dstAddr
     ) {
-        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
+        Vect.shiftCopyFixedSizeColumnData(shift, srcAddr, srcLo, srcHi, dstAddr);
     }
 
     static void shiftCopyVarcharColumnAux(
             long shift,
-            long src,
+            long srcAddr,
             long srcLo,
             long srcHi,
             long dstAddr
     ) {
-        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
+        Vect.shiftCopyVarcharColumnAux(shift, srcAddr, srcLo, srcHi, dstAddr);
     }
 
     static void unmap(FilesFacade ff, long addr, long size) {

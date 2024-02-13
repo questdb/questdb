@@ -66,7 +66,6 @@ inline void run_vec_bulk(T *dest,
     const auto unaligned = ((uint64_t) dest) % alignment;
     constexpr int64_t iteration_increment = sizeof(T);
     if (unaligned % iteration_increment == 0) {
-
         const int64_t head_iteration_count = unaligned > 0 ? (alignment - unaligned) / iteration_increment : 0;
         constexpr int64_t increment = TVec::size();
         const int64_t bulk_stop = count - increment + 1;
@@ -81,7 +80,6 @@ inline void run_vec_bulk(T *dest,
                 i++;
             }
         }
-
     } else {
         for (int64_t i = 0; i < count; i++) {
             l_iteration(i);
@@ -485,15 +483,16 @@ void MULTI_VERSION_NAME (shift_copy)(int64_t shift, const int64_t *src, int64_t 
 }
 
 // 28
-// TODO
 void MULTI_VERSION_NAME (shift_copy_varchar_aux)(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest) {
-    const int64_t count = src_hi - src_lo + 1;
+    const int64_t count = 2 * (src_hi - src_lo + 1);
 
-    Vec2q vec;
-    auto vec_shift = Vec2q(shift);
+    Vec4q vec;
+    // The offset is stored in the second 8 bytes of varchar's 16 bytes.
+    // Also, 16 LSBs (little-endian) are reserved for other varchar fields.
+    auto vec_shift = Vec4q(0, shift << 16, 0, shift << 16);
 
     auto l_iteration = [dest, src, src_lo, shift](int64_t i) {
-        dest[i] = src[i + src_lo] - shift;
+        dest[i] = src[i + 2 * src_lo] - (i & 1) * (shift << 16);
     };
     auto src_loo = src + src_lo;
     auto l_bulk = [&vec, &vec_shift, dest, src_loo](int64_t i) {
@@ -502,7 +501,7 @@ void MULTI_VERSION_NAME (shift_copy_varchar_aux)(int64_t shift, const int64_t *s
         vec -= vec_shift;
         vec.store_a(dest + i);
     };
-    run_vec_bulk<int64_t, Vec2q>(dest, count, l_iteration, l_bulk);
+    run_vec_bulk<int64_t, Vec4q>(dest, count, l_iteration, l_bulk);
 }
 
 // 29

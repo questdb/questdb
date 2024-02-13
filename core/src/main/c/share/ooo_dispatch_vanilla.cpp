@@ -236,8 +236,11 @@ void shift_copy(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_h
 
 // 28
 void shift_copy_varchar_aux(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest) {
-    const int64_t count = src_hi - src_lo + 1;
+    const int64_t count = 2 * (src_hi - src_lo + 1);
     for (int64_t i = 0; i < count; i += 2) {
+        dest[i] = src[i + 2 * src_lo];
+        // The offset is stored in the second 8 bytes of varchar's 16 bytes.
+        // 16 LSBs (little-endian) are reserved for other varchar fields.
         dest[i + 1] = src[i + 2 * src_lo + 1] - (shift << 16);
     }
 }
