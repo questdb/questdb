@@ -105,18 +105,19 @@ public class VarcharTypeDriverTest extends AbstractTest {
              Path dataPath = new Path().of(temp.newFile().getAbsolutePath()).$();
              MemoryCMARW auxMem = new MemoryCMARWImpl(ff, auxPath, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
              MemoryCMARW dataMem = new MemoryCMARWImpl(ff, dataPath, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
-            long dataMemBaseAddr = dataMem.getAppendAddress();
-            long auxMemBaseAddr = auxMem.getAppendOffset();
-
 
             Utf8StringSink utf8Sink = new Utf8StringSink();
             int n = 10000;
             for (int i = 0; i < n; i++) {
-                utf8Sink.clear();
-                final int len = i % 20;
-                char ch = (char) ('a' + i);
-                utf8Sink.repeat(ch, len);
-                Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
+                if (i % 15 == 0) {
+                    Utf8s.varcharAppend(dataMem, auxMem, null);
+                } else {
+                    utf8Sink.clear();
+                    final int len = i % 20;
+                    char ch = (char) ('a' + i);
+                    utf8Sink.repeat(ch, len);
+                    Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
+                }
             }
 
             StringSink stringSink = new StringSink();
@@ -125,29 +126,43 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 int cut = rnd.nextInt(n);
                 minCut = Math.min(minCut, cut);
                 long size = VarcharTypeDriver.INSTANCE.setAppendPosition(cut, auxMem, dataMem, true);
+                Assert.assertEquals(cut * 16, auxMem.getAppendOffset());
+
                 // todo: assert returned size
                 for (int i = cut; i < n; i++) {
-                    utf8Sink.clear();
-                    final int len = i % 40;
-                    char ch = (char) ('A' + i);
-                    utf8Sink.repeat(ch, len);
-                    Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
+                    if (i % 15 == 0) {
+                        Utf8s.varcharAppend(dataMem, auxMem, null);
+                    } else {
+                        utf8Sink.clear();
+                        final int len = i % 40;
+                        char ch = (char) ('A' + i);
+                        utf8Sink.repeat(ch, len);
+                        Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
+                    }
                 }
 
                 for (int i = 0; i < n; i++) {
                     stringSink.clear();
                     Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMem, auxMem, 1);
-                    Assert.assertNotNull(varchar);
-                    stringSink.put(varchar);
+                    if (i % 15 == 0) {
+                        Assert.assertNull(varchar);
+                    } else {
+                        Assert.assertNotNull(varchar);
+                        stringSink.put(varchar);
 
-                    int expectedLen = i < minCut ? i % 20 : i % 40;
-                    char ch = i < minCut ? (char) ('a' + i) : (char) ('A' + i);
-                    Assert.assertEquals("error in the string no. " + i, expectedLen, stringSink.length());
-                    for (int j = 0; j < stringSink.length(); j++) {
-                        Assert.assertEquals("error in the string no. " + i, ch, stringSink.charAt(j));
+                        int expectedLen = i < minCut ? i % 20 : i % 40;
+                        char ch = i < minCut ? (char) ('a' + i) : (char) ('A' + i);
+                        Assert.assertEquals("error in the string no. " + i, expectedLen, stringSink.length());
+                        for (int j = 0; j < stringSink.length(); j++) {
+                            Assert.assertEquals("error in the string no. " + i, ch, stringSink.charAt(j));
+                        }
                     }
                 }
             }
+
+            VarcharTypeDriver.INSTANCE.setAppendPosition(0, auxMem, dataMem, false);
+            Assert.assertEquals(0, dataMem.getAppendOffset());
+            Assert.assertEquals(0, auxMem.getAppendOffset());
         }
     }
 }
