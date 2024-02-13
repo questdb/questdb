@@ -65,12 +65,12 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
     private final WalWriterMetadata metadata; // protected with #lock
     private final StringSink nameSink = new StringSink(); // protected with #lock
     private final Path path = new Path(); // protected with #lock
-    private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
-    private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
     private final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
+    private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private ColumnVersionReader columnVersionReader = null;
     private TableReaderMetadata tableMetadata = null;
     private TxWriter txWriter = null;
+    private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     DatabaseSnapshotAgentImpl(CairoEngine engine) {
         this.engine = engine;
@@ -109,32 +109,6 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
 
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
         this.walPurgeJobRunLock = walPurgeJobRunLock;
-    }
-
-    void completeSnapshot() throws SqlException {
-        if (!lock.tryLock()) {
-            throw SqlException.position(0).put("Another snapshot command in progress");
-        }
-        try {
-            // Delete snapshot/db directory.
-            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).$();
-            ff.rmdir(path); // it's fine to ignore errors here
-
-            // Resume the WalPurgeJob
-            if (walPurgeJobRunLock != null) {
-                try {
-                    walPurgeJobRunLock.unlock();
-                } catch (IllegalStateException ignore) {
-                    // not an error here
-                    // completeSnapshot can be called several time in a row.
-                }
-            }
-
-            // Reset snapshot in-flight flag.
-            inProgress.set(false);
-        } finally {
-            lock.unlock();
-        }
     }
 
     private void rebuildSymbolFiles(Path tablePath, AtomicInteger recoveredSymbolFiles, int pathTableLen) {
@@ -356,6 +330,32 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         }
     }
 
+    void completeSnapshot() throws SqlException {
+        if (!lock.tryLock()) {
+            throw SqlException.position(0).put("Another snapshot command in progress");
+        }
+        try {
+            // Delete snapshot/db directory.
+            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).$();
+            ff.rmdir(path); // it's fine to ignore errors here
+
+            // Resume the WalPurgeJob
+            if (walPurgeJobRunLock != null) {
+                try {
+                    walPurgeJobRunLock.unlock();
+                } catch (IllegalStateException ignore) {
+                    // not an error here
+                    // completeSnapshot can be called several time in a row.
+                }
+            }
+
+            // Reset snapshot in-flight flag.
+            inProgress.set(false);
+        } finally {
+            lock.unlock();
+        }
+    }
+
     void recoverSnapshot() {
         if (!configuration.isSnapshotRecoveryEnabled()) {
             return;
@@ -390,7 +390,12 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             memFile.smallFile(ff, srcPath, MemoryTag.MMAP_DEFAULT);
 
             final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
-            final CharSequence snapshotInstanceId = memFile.getStr(0);
+            CharSequence snapshotInstanceId = memFile.getStr(0);
+            if (Chars.empty(snapshotInstanceId)) {
+                srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT).$();
+                snapshotInstanceId = TableUtils.readText(ff, path);
+            }
+
             if (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {
                 LOG.info()
                         .$("skipping snapshot recovery [currentId=").$(currentInstanceId)
