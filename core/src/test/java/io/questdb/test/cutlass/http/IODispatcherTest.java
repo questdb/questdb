@@ -121,6 +121,7 @@ public class IODispatcherTest extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -6166,7 +6167,6 @@ public class IODispatcherTest extends AbstractTest {
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
                     try {
                         Rnd rnd = new Rnd();
-                        final int diskBufferLen = 1024 * 1024;
 
                         writeRandomFile(path, rnd, 122222212222L);
 
@@ -7473,7 +7473,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTimingsContainsAuthentication() throws Exception {
-
+        nanosecondClock = StationaryNanosClock.INSTANCE;
         testJsonQuery(
                 10,
                 "GET /query?query=x%20where%20i%20%3D%20%27A%27&timings=true HTTP/1.1\r\n" +
@@ -8942,6 +8942,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(telemetry)
                 .withTempFolder(root)
                 .withJitMode(SqlJitMode.JIT_MODE_ENABLED)
+                .withNanosClock(nanosecondClock)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
                         .withServerKeepAlive(!http1)
                         .withSendBufferSize(16 * 1024)

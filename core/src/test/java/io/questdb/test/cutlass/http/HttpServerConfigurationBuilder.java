@@ -48,6 +48,7 @@ public class HttpServerConfigurationBuilder {
     private String httpProtocolVersion = "HTTP/1.1 ";
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private long multipartIdleSpinCount = -1;
+    private NanosecondClock nanosecondClock = StationaryNanosClock.INSTANCE;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private boolean pessimisticHealthCheck = false;
     private int port = -1;
@@ -120,7 +121,7 @@ public class HttpServerConfigurationBuilder {
 
                 @Override
                 public NanosecondClock getNanosecondClock() {
-                    return StationaryNanosClock.INSTANCE;
+                    return nanosecondClock;
                 }
             };
             private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
@@ -196,7 +197,7 @@ public class HttpServerConfigurationBuilder {
 
                     @Override
                     public NanosecondClock getNanosecondClock() {
-                        return StationaryNanosClock.INSTANCE;
+                        return nanosecondClock;
                     }
 
                     @Override
@@ -315,6 +316,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withMultipartIdleSpinCount(long multipartIdleSpinCount) {
         this.multipartIdleSpinCount = multipartIdleSpinCount;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withNanosClock(NanosecondClock nanosecondClock) {
+        this.nanosecondClock = nanosecondClock;
         return this;
     }
 
