@@ -86,6 +86,56 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
         sink.child(slaveFactory);
     }
 
+    // Finds the last value less or equal to the master timestamp.
+    static long binarySearch(
+            long masterTimestamp,
+            long rowLo,
+            long rowHi,
+            TimeFrameRecordCursor slaveCursor,
+            int slaveFrameIndex,
+            Record slaveRec,
+            int slaveTimestampIndex
+    ) {
+        long lo = rowLo;
+        long hi = rowHi;
+        while (lo < hi) {
+            long mid = (lo + hi) >>> 1;
+            slaveCursor.recordAt(slaveRec, Rows.toRowID(slaveFrameIndex, mid));
+            long midTimestamp = slaveRec.getTimestamp(slaveTimestampIndex);
+
+            if (midTimestamp < masterTimestamp) {
+                if (lo < mid) {
+                    lo = mid;
+                } else {
+                    slaveCursor.recordAt(slaveRec, Rows.toRowID(slaveFrameIndex, hi));
+                    if (slaveRec.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
+                        return lo;
+                    }
+                    return hi;
+                }
+            } else if (midTimestamp > masterTimestamp)
+                hi = mid;
+            else {
+                // In case of multiple equal values, find the last
+                mid++;
+                while (mid > rowLo && mid <= rowHi) {
+                    slaveCursor.recordAt(slaveRec, Rows.toRowID(slaveFrameIndex, mid));
+                    if (slaveRec.getTimestamp(slaveTimestampIndex) != midTimestamp) {
+                        break;
+                    }
+                    mid++;
+                }
+                return mid - 1;
+            }
+        }
+
+        slaveCursor.recordAt(slaveRec, Rows.toRowID(slaveFrameIndex, lo));
+        if (slaveRec.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
+            return lo - 1;
+        }
+        return lo;
+    }
+
     @Override
     protected void _close() {
         ((JoinRecordMetadata) getMetadata()).close();
@@ -196,48 +246,6 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
             isSlaveForwardScan = true;
         }
 
-        // Finds the last value less or equal to the master timestamp.
-        private long binarySearch(long masterTimestamp, long rowLo, long rowHi) {
-            long lo = rowLo;
-            long hi = rowHi;
-            while (lo < hi) {
-                long mid = (lo + hi) >>> 1;
-                slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, mid));
-                long midTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
-
-                if (midTimestamp < masterTimestamp) {
-                    if (lo < mid) {
-                        lo = mid;
-                    } else {
-                        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, hi));
-                        if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
-                            return lo;
-                        }
-                        return hi;
-                    }
-                } else if (midTimestamp > masterTimestamp)
-                    hi = mid;
-                else {
-                    // In case of multiple equal values, find the last
-                    mid++;
-                    while (mid > rowLo && mid <= rowHi) {
-                        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, mid));
-                        if (slaveRecA.getTimestamp(slaveTimestampIndex) != midTimestamp) {
-                            break;
-                        }
-                        mid++;
-                    }
-                    return mid - 1;
-                }
-            }
-
-            slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, lo));
-            if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
-                return lo - 1;
-            }
-            return lo;
-        }
-
         private boolean linearScan(TimeFrame frame, long masterTimestamp) {
             final long scanHi = Math.min(slaveFrameRow + lookahead, frame.getRowHi());
             while (slaveFrameRow < scanHi) {
@@ -263,7 +271,15 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
                     }
                     if (slaveFrameRow < frame.getRowHi()) {
                         // Fallback to binary search.
-                        long foundRow = binarySearch(masterTimestamp, slaveFrameRow, frame.getRowHi() - 1);
+                        long foundRow = binarySearch(
+                                masterTimestamp,
+                                slaveFrameRow,
+                                frame.getRowHi() - 1,
+                                slaveCursor,
+                                slaveFrameIndex,
+                                slaveRecA,
+                                slaveTimestampIndex
+                        );
                         if (foundRow < slaveFrameRow) {
                             // All searched timestamps are greater than the master timestamp.
                             // Linear scan must have found the row.

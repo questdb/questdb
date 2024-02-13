@@ -33,6 +33,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 
+import static io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory.binarySearch;
+
 public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinFastRecordCursor cursor;
 
@@ -196,58 +198,6 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
             isSlaveForwardScan = true;
         }
 
-        // Finds the last value less than the master timestamp.
-        // If all values are equal or greater than the master timestamp, returns rowLo-1.
-        private long binarySearch(long masterTimestamp, long rowLo, long rowHi) {
-            long lo = rowLo;
-            long hi = rowHi;
-            while (lo < hi) {
-                long mid = (lo + hi) >>> 1;
-                slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, mid));
-                long midTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
-
-                if (midTimestamp < masterTimestamp) {
-                    if (lo < mid) {
-                        lo = mid;
-                    } else {
-                        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, hi));
-                        if (slaveRecA.getTimestamp(slaveTimestampIndex) >= masterTimestamp) {
-                            return lo;
-                        }
-                        return hi;
-                    }
-                } else if (midTimestamp > masterTimestamp) {
-                    hi = mid;
-                } else {
-                    // In case of multiple equal values, find the last value less than the master timestamp.
-                    mid--;
-                    while (mid > rowLo && mid <= rowHi) {
-                        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, mid));
-                        if (slaveRecA.getTimestamp(slaveTimestampIndex) != midTimestamp) {
-                            break;
-                        }
-                        mid--;
-                    }
-                    if (mid == rowLo) {
-                        // We've scanned to the very first row. If that row contains master timestamp,
-                        // it means that our search failed.
-                        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, mid));
-                        if (slaveRecA.getTimestamp(slaveTimestampIndex) == midTimestamp) {
-                            return mid - 1;
-                        }
-                    }
-                    return mid;
-                }
-            }
-
-            slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, lo));
-            if (slaveRecA.getTimestamp(slaveTimestampIndex) >= masterTimestamp) {
-                // Our search failed.
-                return lo - 1;
-            }
-            return lo;
-        }
-
         private boolean linearScan(TimeFrame frame, long masterTimestamp) {
             final long scanHi = Math.min(slaveFrameRow + lookahead, frame.getRowHi());
             while (slaveFrameRow < scanHi) {
@@ -273,7 +223,16 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                     }
                     if (slaveFrameRow < frame.getRowHi()) {
                         // Fallback to binary search.
-                        long foundRow = binarySearch(masterTimestamp, slaveFrameRow, frame.getRowHi() - 1);
+                        // Find the last value less than the master timestamp.
+                        long foundRow = binarySearch(
+                                masterTimestamp - 1,
+                                slaveFrameRow,
+                                frame.getRowHi() - 1,
+                                slaveCursor,
+                                slaveFrameIndex,
+                                slaveRecA,
+                                slaveTimestampIndex
+                        );
                         if (foundRow < slaveFrameRow) {
                             // All searched timestamps are equal or greater than the master timestamp.
                             // Linear scan must have found the row.
