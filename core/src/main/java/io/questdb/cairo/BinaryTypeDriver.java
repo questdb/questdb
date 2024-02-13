@@ -29,6 +29,10 @@ import io.questdb.std.Vect;
 public class BinaryTypeDriver extends StringTypeDriver {
     public static final BinaryTypeDriver INSTANCE = new BinaryTypeDriver();
 
+    public long getDataVectorMinEntrySize() {
+        return Long.BYTES;
+    }
+
     @Override
     public void o3ColumnMerge(
             long timestampMergeIndexAddr,
@@ -52,5 +56,10 @@ public class BinaryTypeDriver extends StringTypeDriver {
                 dstDataAddr,
                 dstDataOffset
         );
+    }
+
+    @Override
+    public void o3setColumnRefs(long address, long initialOffset, long count) {
+        Vect.setVarColumnRefs64Bit(address, initialOffset, count);
     }
 }

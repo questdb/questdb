@@ -216,10 +216,10 @@ public interface RecordMetadata extends ColumnTypes, Plannable, TableDescriptor 
             sink.putAsciiQuoted("name").putAscii(':').putQuoted(getColumnName(i)).putAscii(',');
             sink.putAsciiQuoted("type").putAscii(':').putQuoted(ColumnType.nameOf(type));
             if (isColumnIndexed(i)) {
-                sink.put(',').putAsciiQuoted("indexed").putAscii(":true");
-                sink.put(',').putAsciiQuoted("indexValueBlockCapacity").put(':').put(getIndexValueBlockCapacity(i));
+                sink.putAscii(',').putAsciiQuoted("indexed").putAscii(":true");
+                sink.putAscii(',').putAsciiQuoted("indexValueBlockCapacity").putAscii(':').put(getIndexValueBlockCapacity(i));
             }
-            sink.put('}');
+            sink.putAscii('}');
         }
         sink.putAscii(']');
         sink.putAscii(',').putAsciiQuoted("timestampIndex").putAscii(':').put(getTimestampIndex());
