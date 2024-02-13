@@ -271,6 +271,7 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
                     }
                     if (slaveFrameRow < frame.getRowHi()) {
                         // Fallback to binary search.
+                        // Find the last value less or equal to the master timestamp.
                         long foundRow = binarySearch(
                                 masterTimestamp,
                                 slaveFrameRow,
