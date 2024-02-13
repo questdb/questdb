@@ -144,8 +144,14 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
                         slaveFrameRow = foundRow;
                         record.hasSlave(true);
                         slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
-                        lookaheadTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                        if (foundRow < frame.getRowHi() - 1 || lookaheadTimestamp == masterTimestamp) {
+                        long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                        if (slaveFrameRow < frame.getRowHi() - 1) {
+                            slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow + 1));
+                            lookaheadTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
+                        } else {
+                            lookaheadTimestamp = slaveTimestamp;
+                        }
+                        if (foundRow < frame.getRowHi() - 1 || slaveTimestamp == masterTimestamp) {
                             // We've found the row, so there is no point in checking the next partition.
                             return;
                         }

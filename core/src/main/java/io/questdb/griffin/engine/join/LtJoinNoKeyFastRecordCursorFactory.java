@@ -144,7 +144,13 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                         slaveFrameRow = foundRow;
                         record.hasSlave(true);
                         slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
-                        lookaheadTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                        long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                        if (slaveFrameRow < frame.getRowHi() - 1) {
+                            slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow + 1));
+                            lookaheadTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
+                        } else {
+                            lookaheadTimestamp = slaveTimestamp;
+                        }
                         if (foundRow < frame.getRowHi() - 1 || lookaheadTimestamp == masterTimestamp - 1) {
                             // We've found the row, so there is no point in checking the next partition.
                             return;
