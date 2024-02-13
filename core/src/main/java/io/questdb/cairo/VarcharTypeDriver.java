@@ -268,12 +268,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem, boolean doubleAllocate) {
+    public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
             long auxVectorSize = getAuxVectorSize(pos);
-            if (doubleAllocate) {
-                auxMem.allocate(auxVectorSize);
-            }
 
             // first we need to calculate already used space. both data and aux vectors.
             long auxVectorOffset = getAuxVectorOffset(pos - 1); // the last entry we are NOT overwriting
@@ -282,9 +279,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             long dataVectorSize = varcharGetDataVectorSize(auxEntryPtr);
             long totalDataSizeBytes = dataVectorSize + auxVectorSize;
 
-            if (doubleAllocate) {
-                dataMem.allocate(dataVectorSize);
-            }
             auxVectorOffset = getAuxVectorOffset(pos); // the entry we are about to overwrite with the next append
             auxMem.jumpTo(auxVectorOffset);
             dataMem.jumpTo(dataVectorSize);

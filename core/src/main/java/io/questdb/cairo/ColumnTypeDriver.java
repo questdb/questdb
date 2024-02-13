@@ -184,5 +184,5 @@ public interface ColumnTypeDriver {
      */
     long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount);
 
-    long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem, boolean doubleAllocate);
+    long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem);
 }

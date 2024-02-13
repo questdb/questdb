@@ -133,7 +133,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
             int minCut = Integer.MAX_VALUE;
             for (int z = 0; z < 10; z++) {
                 int cut = rnd.nextInt(n);
-                long actualUsedSize = VarcharTypeDriver.INSTANCE.setAppendPosition(cut, auxMem, dataMem, true);
+                long actualUsedSize = VarcharTypeDriver.INSTANCE.setAppendPosition(cut, auxMem, dataMem);
                 expectedUsedSize = (cut == 0) ? 0 : usedSpace.getQuick(cut - 1);
                 Assert.assertEquals(expectedUsedSize, actualUsedSize);
 
@@ -181,7 +181,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 }
             }
 
-            VarcharTypeDriver.INSTANCE.setAppendPosition(0, auxMem, dataMem, false);
+            VarcharTypeDriver.INSTANCE.setAppendPosition(0, auxMem, dataMem);
             Assert.assertEquals(0, dataMem.getAppendOffset());
             Assert.assertEquals(0, auxMem.getAppendOffset());
         }

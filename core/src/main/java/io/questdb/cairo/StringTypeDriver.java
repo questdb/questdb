@@ -234,7 +234,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
                     srcAuxSize =
                             columnTypeDriver.getAuxVectorSize(srcDataMax - srcDataTop) +
-                            columnTypeDriver.getAuxVectorSize(srcDataMax);
+                                    columnTypeDriver.getAuxVectorSize(srcDataMax);
 
                     srcAuxAddr = mapRW(ff, srcFixFd, srcAuxSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcAuxAddr, srcAuxSize, Files.POSIX_MADV_SEQUENTIAL);
@@ -612,20 +612,14 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem, boolean doubleAllocate) {
+    public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
-            if (doubleAllocate) {
-                auxMem.allocate(pos * Long.BYTES + Long.BYTES);
-            }
             // Jump to the number of records written to read length of var column correctly
             auxMem.jumpTo(pos * Long.BYTES);
             long m1pos = Unsafe.getUnsafe().getLong(auxMem.getAppendAddress());
             // Jump to the end of file to correctly trim the file
             auxMem.jumpTo((pos + 1) * Long.BYTES);
             long dataSizeBytes = m1pos + (pos + 1) * Long.BYTES;
-            if (doubleAllocate) {
-                dataMem.allocate(m1pos);
-            }
             dataMem.jumpTo(m1pos);
             return dataSizeBytes;
         }
