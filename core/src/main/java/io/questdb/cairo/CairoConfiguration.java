@@ -346,6 +346,8 @@ public interface CairoConfiguration {
 
     long getSpinLockTimeout();
 
+    int getSqlAsOfJoinLookAhead();
+
     int getSqlCharacterStoreCapacity();
 
     int getSqlCharacterStoreSequencePoolCapacity();
