@@ -24,10 +24,8 @@
 
 package io.questdb.std;
 
-import io.questdb.std.datetime.millitime.MillisecondClock;
-
-public class StationaryMillisClock implements MillisecondClock {
-    public static final StationaryMillisClock INSTANCE = new StationaryMillisClock();
+public class StationaryNanosClock implements NanosecondClock {
+    public static final StationaryNanosClock INSTANCE = new StationaryNanosClock();
 
     @Override
     public long getTicks() {
