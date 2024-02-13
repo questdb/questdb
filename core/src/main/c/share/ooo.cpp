@@ -1085,7 +1085,7 @@ DECLARE_DISPATCHER(shift_copy_varchar_aux) ;
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_shiftCopyVarcharColumnAux(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
                                                    jlong srcHi, jlong dst) {
-    measure_time(27, [=]() {
+    measure_time(28, [=]() {
         shift_copy_varchar_aux(
                 __JLONG_REINTERPRET_CAST__(int64_t, shift),
                 reinterpret_cast<int64_t *>(src),
@@ -1100,7 +1100,7 @@ DECLARE_DISPATCHER(copy_index_timestamp) ;
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_copyFromTimestampIndex(JNIEnv *env, jclass cl, jlong pIndex, jlong indexLo, jlong indexHi,
                                                 jlong pTs) {
-    measure_time(28, [=]() {
+    measure_time(29, [=]() {
         copy_index_timestamp(
                 reinterpret_cast<index_t *>(pIndex),
                 __JLONG_REINTERPRET_CAST__(int64_t, indexLo),
