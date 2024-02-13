@@ -25,17 +25,17 @@
 package io.questdb.test.cairo;
 
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Vect;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.std.*;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -93,5 +93,47 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testSetAppendPosition() throws Exception {
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+        long pageSize = Files.PAGE_SIZE;
+
+        try (Path auxPath = new Path().of(temp.newFile().getAbsolutePath()).$();
+             Path dataPath = new Path().of(temp.newFile().getAbsolutePath()).$();
+             MemoryCMARW auxMem = new MemoryCMARWImpl(ff, auxPath, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW dataMem = new MemoryCMARWImpl(ff, dataPath, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+            long dataMemBaseAddr = dataMem.getAppendAddress();
+
+
+            Utf8s.varcharAppend(dataMem, auxMem, new Utf8String("123456789ABCDEF"));
+            Utf8s.varcharAppend(dataMem, auxMem, new Utf8String("1"));
+            Utf8s.varcharAppend(dataMem, auxMem, new Utf8String("12345"));
+
+            Utf8Sequence varchar = Utf8s.varcharRead(0, dataMem, auxMem, 1);
+            Assert.assertEquals("123456789ABCDEF", varchar.toString());
+
+            varchar = Utf8s.varcharRead(1 * 2 * Long.BYTES, dataMem, auxMem, 1);
+            Assert.assertEquals("1", varchar.toString());
+
+            varchar = Utf8s.varcharRead(2 * 2 * Long.BYTES, dataMem, auxMem, 1);
+            Assert.assertEquals("12345", varchar.toString());
+
+            long size = VarcharTypeDriver.INSTANCE.setAppendPosition(1, auxMem, dataMem, true);
+            Assert.assertEquals("123456789ABCDEF".length() - Utf8s.UTF8_STORAGE_SPLIT_BYTE + 2 * Long.BYTES, size);
+            Utf8s.varcharAppend(dataMem, auxMem, new Utf8String("AAAAAAAAAAAAAAA"));
+            Utf8s.varcharAppend(dataMem, auxMem, new Utf8String("0"));
+
+            varchar = Utf8s.varcharRead(0, dataMem, auxMem, 1);
+            Assert.assertEquals("123456789ABCDEF", varchar.toString());
+            varchar = Utf8s.varcharRead(1 * 2 * Long.BYTES, dataMem, auxMem, 1);
+            Assert.assertEquals("AAAAAAAAAAAAAAA", varchar.toString());
+            varchar = Utf8s.varcharRead(2 * 2 * Long.BYTES, dataMem, auxMem, 1);
+            Assert.assertEquals("0", varchar.toString());
+
+            VarcharTypeDriver.INSTANCE.setAppendPosition(0, auxMem, dataMem, true);
+            Assert.assertEquals(dataMemBaseAddr, dataMem.getAppendAddress());
+        }
     }
 }

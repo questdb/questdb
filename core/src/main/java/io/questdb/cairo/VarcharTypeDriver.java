@@ -269,6 +269,32 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem, boolean doubleAllocate) {
-        throw new UnsupportedOperationException();
+        if (pos > 0) {
+            if (doubleAllocate) {
+                auxMem.allocate(getAuxVectorSize(pos));
+            }
+            // first we need to calculate the used space. both data and aux vectors.
+            long auxVectorOffset = getAuxVectorOffset(pos - 1); // the last entry we are NOT overwriting
+            auxMem.jumpTo(auxVectorOffset);
+            long auxEntryPtr = auxMem.getAppendAddress();
+            long dataVectorSize = varcharGetDataVectorSize(auxEntryPtr);
+            long totalDataSizeBytes = dataVectorSize + getAuxVectorSize(pos);
+
+            if (doubleAllocate) {
+                dataMem.allocate(dataVectorSize);
+            }
+            auxVectorOffset = getAuxVectorOffset(pos); // the entry we are about to overwrite with the next append
+            auxMem.jumpTo(auxVectorOffset);
+            dataMem.jumpTo(dataVectorSize);
+            return totalDataSizeBytes;
+        }
+
+        dataMem.jumpTo(0);
+        auxMem.jumpTo(0);
+        // Assume var length columns use 28 bytes per value to estimate the record size
+        // if there are no rows in the partition yet.
+        // The record size used to estimate the partition size
+        // to split partition in O3 commit when necessary
+        return TableUtils.ESTIMATED_VAR_COL_SIZE;
     }
 }
