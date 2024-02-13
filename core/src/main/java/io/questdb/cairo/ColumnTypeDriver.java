@@ -27,9 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 public interface ColumnTypeDriver {
     void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts);
