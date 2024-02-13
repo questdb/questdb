@@ -24,16 +24,19 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rows;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -365,13 +368,6 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 ") timestamp (t) partition by " + PartitionBy.toString(partitionBy)
                 );
 
-                TestUtils.printSql(
-                        engine,
-                        sqlExecutionContext,
-                        "x",
-                        sink
-                );
-
                 try (RecordCursorFactory factory = select("x")) {
                     Assert.assertTrue(factory.supportsTimeFrameCursor());
                     try (TimeFrameRecordCursor timeFrameCursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
@@ -405,5 +401,85 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                 drop("drop table x");
             });
         }
+    }
+
+    @Test
+    public void testTimeFrameBoundariesSplitPartitions() throws Exception {
+        executeWithPool((engine, compiler, executionContext) -> {
+            // produce split partition
+            compiler.compile(
+                    "create table x as (" +
+                            "  select timestamp_sequence('2020-02-03T13', 60*1000000L) ts " +
+                            "  from long_sequence(60*24*2+300)" +
+                            ") timestamp (ts) partition by DAY",
+                    executionContext
+            );
+            compiler.compile(
+                    "create table z as (" +
+                            "  select timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts " +
+                            "  from long_sequence(50)" +
+                            ")",
+                    executionContext
+            );
+            compiler.compile(
+                    "create table y as (select * from x union all select * from z)",
+                    executionContext
+            );
+            compiler.compile("insert into x select * from z", executionContext);
+
+            try (RecordCursorFactory factory = engine.select("x", executionContext)) {
+                Assert.assertTrue(factory.supportsTimeFrameCursor());
+                try (TimeFrameRecordCursor timeFrameCursor = factory.getTimeFrameCursor(executionContext)) {
+                    Record record = timeFrameCursor.getRecord();
+                    TimeFrame frame = timeFrameCursor.getTimeFrame();
+                    long prevSplitTimestampHi = -1;
+                    // forward scan
+                    while (timeFrameCursor.next()) {
+                        Assert.assertEquals(-1, frame.getRowLo());
+                        Assert.assertEquals(-1, frame.getRowHi());
+                        timeFrameCursor.open();
+                        timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), frame.getRowLo()));
+                        long tsLo = record.getTimestamp(0);
+
+                        PartitionBy.PartitionFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(PartitionBy.DAY);
+                        PartitionBy.PartitionCeilMethod ceilMethod = PartitionBy.getPartitionCeilMethod(PartitionBy.DAY);
+
+                        long expectedEstimateTsLo = floorMethod != null ? floorMethod.floor(tsLo) : 0;
+                        long expectedEstimateTsHi = ceilMethod != null ? ceilMethod.ceil(tsLo) : Long.MAX_VALUE;
+
+                        Assert.assertTrue(frame.getTimestampEstimateLo() >= expectedEstimateTsLo);
+                        if (prevSplitTimestampHi != -1) {
+                            // this must be split partition
+                            Assert.assertEquals(prevSplitTimestampHi, frame.getTimestampEstimateLo());
+                        }
+                        Assert.assertTrue(frame.getTimestampEstimateHi() <= expectedEstimateTsHi);
+                        if (frame.getTimestampEstimateHi() < expectedEstimateTsHi) {
+                            // this must be split partition
+                            prevSplitTimestampHi = frame.getTimestampEstimateHi();
+                        } else {
+                            prevSplitTimestampHi = -1;
+                        }
+
+                        Assert.assertEquals(tsLo, frame.getTimestampLo());
+                        timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), frame.getRowHi() - 1));
+                        long tsHi = record.getTimestamp(0);
+                        Assert.assertEquals(tsHi + 1, frame.getTimestampHi());
+                    }
+                }
+            }
+        });
+    }
+
+    private static void executeWithPool(CustomisableRunnable runnable) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            WorkerPool pool = new WorkerPool(() -> 2);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public long getPartitionO3SplitMinSize() {
+                    return 1000;
+                }
+            };
+            TestUtils.execute(pool, runnable, configuration, LOG);
+        });
     }
 }

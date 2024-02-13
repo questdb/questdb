@@ -89,7 +89,8 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
         int partitionIndex = timeFrame.partitionIndex;
         if (++partitionIndex < partitionHi) {
             long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
-            timeFrame.of(partitionIndex, timestampLo, estimatePartitionHi(timestampLo));
+            long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
+            timeFrame.of(partitionIndex, timestampLo, estimatePartitionHi(timestampLo, maxTimestampHi));
             return true;
         }
         // Update frame index in case of subsequent prev() call.
@@ -136,7 +137,8 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
         int partitionIndex = timeFrame.partitionIndex;
         if (--partitionIndex >= 0) {
             long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
-            timeFrame.of(partitionIndex, timestampLo, estimatePartitionHi(timestampLo));
+            long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
+            timeFrame.of(partitionIndex, timestampLo, estimatePartitionHi(timestampLo, maxTimestampHi));
             return true;
         }
         // Update frame index in case of subsequent next() call.
@@ -154,9 +156,12 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
         timeFrame.clear();
     }
 
-    private long estimatePartitionHi(long partitionTimestamp) {
+    // maxTimestampHi is used to handle split partitions correctly as ceil method
+    // will return the same value for all split partitions
+    private long estimatePartitionHi(long partitionTimestamp, long maxTimestampHi) {
         // partitionCeilMethod is null in case of partition by NONE
-        return partitionCeilMethod != null ? partitionCeilMethod.ceil(partitionTimestamp) : Long.MAX_VALUE;
+        long partitionHi = partitionCeilMethod != null ? partitionCeilMethod.ceil(partitionTimestamp) : Long.MAX_VALUE;
+        return Math.min(partitionHi, maxTimestampHi);
     }
 
     private static class TableReaderTimeFrame implements TimeFrame, Mutable {
