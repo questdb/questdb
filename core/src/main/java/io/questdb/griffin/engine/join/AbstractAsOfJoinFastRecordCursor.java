@@ -136,7 +136,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, mid));
             long midTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
 
-            if (midTimestamp < masterTimestamp) {
+            if (midTimestamp <= masterTimestamp) {
                 if (lo < mid) {
                     lo = mid;
                 } else {
@@ -146,19 +146,8 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                     }
                     return hi;
                 }
-            } else if (midTimestamp > masterTimestamp)
+            } else {
                 hi = mid;
-            else {
-                // In case of multiple equal values, find the last
-                mid++;
-                while (mid > rowLo && mid <= rowHi) {
-                    slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, mid));
-                    if (slaveRecA.getTimestamp(slaveTimestampIndex) != midTimestamp) {
-                        break;
-                    }
-                    mid++;
-                }
-                return mid - 1;
             }
         }
 
