@@ -99,41 +99,55 @@ public class VarcharTypeDriverTest extends AbstractTest {
     public void testSetAppendPosition() throws Exception {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         long pageSize = Files.PAGE_SIZE;
+        final Rnd rnd = TestUtils.generateRandom(null);
 
         try (Path auxPath = new Path().of(temp.newFile().getAbsolutePath()).$();
              Path dataPath = new Path().of(temp.newFile().getAbsolutePath()).$();
              MemoryCMARW auxMem = new MemoryCMARWImpl(ff, auxPath, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
              MemoryCMARW dataMem = new MemoryCMARWImpl(ff, dataPath, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
             long dataMemBaseAddr = dataMem.getAppendAddress();
+            long auxMemBaseAddr = auxMem.getAppendOffset();
 
 
-            Utf8s.varcharAppend(dataMem, auxMem, new Utf8String("123456789ABCDEF"));
-            Utf8s.varcharAppend(dataMem, auxMem, new Utf8String("1"));
-            Utf8s.varcharAppend(dataMem, auxMem, new Utf8String("12345"));
+            Utf8StringSink utf8Sink = new Utf8StringSink();
+            int n = 10000;
+            for (int i = 0; i < n; i++) {
+                utf8Sink.clear();
+                final int len = i % 20;
+                char ch = (char) ('a' + i);
+                utf8Sink.repeat(ch, len);
+                Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
+            }
 
-            Utf8Sequence varchar = Utf8s.varcharRead(0, dataMem, auxMem, 1);
-            Assert.assertEquals("123456789ABCDEF", varchar.toString());
+            StringSink stringSink = new StringSink();
+            int minCut = Integer.MAX_VALUE;
+            for (int z = 0; z < 10; z++) {
+                int cut = rnd.nextInt(n);
+                minCut = Math.min(minCut, cut);
+                long size = VarcharTypeDriver.INSTANCE.setAppendPosition(cut, auxMem, dataMem, true);
+                // todo: assert returned size
+                for (int i = cut; i < n; i++) {
+                    utf8Sink.clear();
+                    final int len = i % 40;
+                    char ch = (char) ('A' + i);
+                    utf8Sink.repeat(ch, len);
+                    Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
+                }
 
-            varchar = Utf8s.varcharRead(1 * 2 * Long.BYTES, dataMem, auxMem, 1);
-            Assert.assertEquals("1", varchar.toString());
+                for (int i = 0; i < n; i++) {
+                    stringSink.clear();
+                    Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMem, auxMem, 1);
+                    Assert.assertNotNull(varchar);
+                    stringSink.put(varchar);
 
-            varchar = Utf8s.varcharRead(2 * 2 * Long.BYTES, dataMem, auxMem, 1);
-            Assert.assertEquals("12345", varchar.toString());
-
-            long size = VarcharTypeDriver.INSTANCE.setAppendPosition(1, auxMem, dataMem, true);
-            Assert.assertEquals("123456789ABCDEF".length() - Utf8s.UTF8_STORAGE_SPLIT_BYTE + 2 * Long.BYTES, size);
-            Utf8s.varcharAppend(dataMem, auxMem, new Utf8String("AAAAAAAAAAAAAAA"));
-            Utf8s.varcharAppend(dataMem, auxMem, new Utf8String("0"));
-
-            varchar = Utf8s.varcharRead(0, dataMem, auxMem, 1);
-            Assert.assertEquals("123456789ABCDEF", varchar.toString());
-            varchar = Utf8s.varcharRead(1 * 2 * Long.BYTES, dataMem, auxMem, 1);
-            Assert.assertEquals("AAAAAAAAAAAAAAA", varchar.toString());
-            varchar = Utf8s.varcharRead(2 * 2 * Long.BYTES, dataMem, auxMem, 1);
-            Assert.assertEquals("0", varchar.toString());
-
-            VarcharTypeDriver.INSTANCE.setAppendPosition(0, auxMem, dataMem, true);
-            Assert.assertEquals(dataMemBaseAddr, dataMem.getAppendAddress());
+                    int expectedLen = i < minCut ? i % 20 : i % 40;
+                    char ch = i < minCut ? (char) ('a' + i) : (char) ('A' + i);
+                    Assert.assertEquals("error in the string no. " + i, expectedLen, stringSink.length());
+                    for (int j = 0; j < stringSink.length(); j++) {
+                        Assert.assertEquals("error in the string no. " + i, ch, stringSink.charAt(j));
+                    }
+                }
+            }
         }
     }
 }

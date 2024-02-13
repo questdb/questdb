@@ -123,6 +123,13 @@ public class Utf8StringSink implements MutableUtf8Sink {
         return this;
     }
 
+    public Utf8StringSink repeat(char value, int n) {
+        for (int i = 0; i < n; i++) {
+            put(value);
+        }
+        return this;
+    }
+
     public void resetCapacity() {
         this.buffer = new byte[initialCapacity];
         clear();
