@@ -22,29 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.std;
 
-import io.questdb.cairo.BitmapIndexReader;
+public class StationaryNanosClock implements NanosecondClock {
+    public static final StationaryNanosClock INSTANCE = new StationaryNanosClock();
 
-/**
- * Interface for retrieving information about a data frame.
- */
-public interface DataFrame {
-
-    BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
-
-    /**
-     * @return numeric index of the current partition
-     */
-    int getPartitionIndex();
-
-    /**
-     * @return upper boundary for last row of a data frame, i.e. last row + 1
-     */
-    long getRowHi();
-
-    /**
-     * @return first row of a data frame
-     */
-    long getRowLo();
+    @Override
+    public long getTicks() {
+        return 0L;
+    }
 }

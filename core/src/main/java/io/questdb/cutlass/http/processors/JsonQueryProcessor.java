@@ -131,7 +131,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
         assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
         this.sqlExecutionContext = sqlExecutionContext;
-        this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
+        this.nanosecondClock = configuration.getNanosecondClock();
         this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
         this.metrics = engine.getMetrics();

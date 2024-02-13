@@ -38,6 +38,6 @@ public final class Rows {
     }
 
     public static long toRowID(int partitionIndex, long localRowID) {
-        return (((long) partitionIndex) << 44L) + localRowID;
+        return (((long) partitionIndex) << 44) + localRowID;
     }
 }

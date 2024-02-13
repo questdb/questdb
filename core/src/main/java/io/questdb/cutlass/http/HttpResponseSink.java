@@ -76,7 +76,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.nf = configuration.getNetworkFacade();
         this.buffer = new ChunkUtf8Sink(responseBufferSize);
         this.compressOutBuffer = new ChunkUtf8Sink(responseBufferSize);
-        this.headerImpl = new HttpResponseHeaderImpl(configuration.getClock());
+        this.headerImpl = new HttpResponseHeaderImpl(configuration.getMillisecondClock());
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.httpVersion = configuration.getHttpVersion();
         this.connectionCloseHeader = !configuration.getServerKeepAlive();
@@ -783,6 +783,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(200, "OK");
         httpStatusMap.put(204, "OK");
         httpStatusMap.put(206, "Partial content");
+        httpStatusMap.put(302, "Temporarily Moved");
         httpStatusMap.put(304, "Not Modified");
         httpStatusMap.put(400, "Bad request");
         httpStatusMap.put(401, "Unauthorized");

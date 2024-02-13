@@ -66,11 +66,11 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final int doubleScale;
     private final CairoEngine engine;
     private final int floatScale;
+    private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
     private final QueryLogger queryLogger;
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
-    private final int maxSqlRecompileAttempts;
 
     @TestOnly
     public TextQueryProcessor(
@@ -89,7 +89,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) {
         this.configuration = configuration;
         this.floatScale = configuration.getFloatScale();
-        this.clock = configuration.getClock();
+        this.clock = configuration.getMillisecondClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
         this.doubleScale = configuration.getDoubleScale();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);

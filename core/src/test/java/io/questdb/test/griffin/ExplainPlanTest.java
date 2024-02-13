@@ -284,8 +284,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a asof join b on ts where a.i = b.ts::int",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts::int\n" +
-                            "        AsOf Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        AsOf Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -306,8 +305,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select ts, ts1, i, i1 from (select * from a asof join b on ts ) where i/10 = i1",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i/10=b.i\n" +
-                            "        AsOf Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        AsOf Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -327,8 +325,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a asof join b on ts",
                     "SelectedRecord\n" +
-                            "    AsOf Join Light\n" +
-                            "      condition: b.ts=a.ts\n" +
+                            "    AsOf Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -348,8 +345,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a asof join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
-                            "    AsOf Join Light\n" +
-                            "      condition: _xQdbA1.ts=a.ts\n" +
+                            "    AsOf Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -370,8 +366,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
-                            "    AsOf Join Light\n" +
-                            "      condition: _xQdbA1.ts=a.ts\n" +
+                            "    AsOf Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -396,10 +391,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "asof join b on ts " +
                             "asof join a c on ts",
                     "SelectedRecord\n" +
-                            "    AsOf Join Light\n" +
-                            "      condition: c.ts=a.ts\n" +
-                            "        AsOf Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        AsOf Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -426,7 +419,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "where a.i = b.i",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.i\n" +
-                            "        AsOf Join\n" +
+                            "        AsOf Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -467,13 +460,75 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKey() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a asof join b where a.i > 0",
+                    "SelectedRecord\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: 0<i\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinNoKeyFast1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertPlan(
                     "select * from a asof join b",
                     "SelectedRecord\n" +
-                            "    AsOf Join\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinNoKeyFast2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a asof join b on(ts)",
+                    "SelectedRecord\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinNoKeyFast3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (ts timestamp, i int) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a asof join b on(ts)",
+                    "SelectedRecord\n" +
+                            "    AsOf Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -2093,7 +2148,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         GenericRecordMetadata cursorMetadata = new GenericRecordMetadata();
         cursorMetadata.add(new TableColumnMetadata("s", ColumnType.STRING));
         constFuncs.put(ColumnType.CURSOR, list(new CursorFunction(new EmptyTableRecordCursorFactory(cursorMetadata) {
-            public boolean supportPageFrameCursor() {
+            public boolean supportsPageFrameCursor() {
                 return true;
             }
         })));
@@ -4331,10 +4386,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
+            compile("CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
 
             String[] joinTypes = {"LEFT", "LT", "ASOF"};
-            String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join", "AsOf Join"};
+            String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join Fast Scan", "AsOf Join Fast Scan"};
 
             for (int i = 0; i < joinTypes.length; i++) {
                 // do not push down predicate to the 'right' table of left join but apply it after join
@@ -4558,8 +4613,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2",
                     "SelectedRecord\n" +
                             "    Filter filter: a.ts::long*a.i<b.ts::long*b.i\n" +
-                            "        Lt Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4579,8 +4633,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join b on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "      condition: b.ts=a.ts\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4603,8 +4656,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4625,8 +4677,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4647,7 +4698,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4667,8 +4718,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "      condition: _xQdbA1.ts=a.ts\n" +
+                            "    Lt Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4709,6 +4759,88 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtJoinNoKey1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a lt join b where a.i > 0",
+                    "SelectedRecord\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: 0<i\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLtJoinNoKey2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a lt join b",
+                    "SelectedRecord\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLtJoinNoKey3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a lt join b on(ts)",
+                    "SelectedRecord\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLtJoinNoKey4() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (ts timestamp, i int) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a lt join b on(ts)",
+                    "SelectedRecord\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
     public void testLtOfJoin3() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -4717,8 +4849,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "      condition: _xQdbA1.ts=a.ts\n" +
+                            "    Lt Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4743,10 +4874,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "lt join b on ts " +
                             "lt join a c on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "      condition: c.ts=a.ts\n" +
-                            "        Lt Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -6349,7 +6478,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count(*) from (select * from a lt join a b) ",
                 "Count\n" +
                         "    SelectedRecord\n" +
-                        "        Lt Join\n" +
+                        "        Lt Join Fast Scan\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -6366,7 +6495,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count(*) from (select * from a asof join a b) ",
                 "Count\n" +
                         "    SelectedRecord\n" +
-                        "        AsOf Join\n" +
+                        "        AsOf Join Fast Scan\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -8816,7 +8945,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Sort light lo: 10 partiallySorted: true\n" +
                             "          keys: [ts, l]\n" +
                             "            DataFrame\n" +
@@ -8840,7 +8969,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "lt join " +
                             "(select * from a) order by ts asc",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Limit lo: 10\n" +
                             "            Sort light\n" +
                             "              keys: [ts, l]\n" +
@@ -8892,7 +9021,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "lt join (select * from a) " +
                             "order by ts asc",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Limit lo: 10\n" +
                             "            Sort\n" +
                             "              keys: [ts, l]\n" +

@@ -24,26 +24,53 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.Nullable;
 
-public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
+/**
+ * Cursor for time-based navigation. Supports lazy navigation in both directions
+ * and random row access.
+ */
+public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource {
 
     /**
-     * Return the REAL row id of given row on current page.
-     * This is used for e.g. updating rows.
+     * @return record at current position
+     */
+    Record getRecord();
+
+    /**
+     * May be used to compare references with getRecord
      *
-     * @param rowIndex - page index of row
-     * @return real row id
+     * @return record at current position
      */
-    long getUpdateRowId(long rowIndex);
-
-    @Nullable PageFrame next();
+    Record getRecordB();
 
     /**
-     * @return size of page in bytes
+     * Time frame should be used only if a previously called {@link #next()} or {@link #prev()}
+     * method returned true.
      */
-    long size();
+    TimeFrame getTimeFrame();
+
+    boolean next();
+
+    /**
+     * Opens frame rows for record navigation and updates frame's row lo/hi fields.
+     *
+     * @return frame size in rows
+     * @throws DataUnavailableException when the queried frame belongs to a partition in the cold storage
+     */
+    long open() throws DataUnavailableException;
+
+    boolean prev();
+
+    /**
+     * Positions record at given row id. The row id must be in the [rowIdLo, rowIdHi] range
+     * for any of the previously open time frames.
+     *
+     * @param record  to position
+     * @param atRowId rowid of the desired record
+     */
+    void recordAt(Record record, long atRowId);
 
     /**
      * Return the cursor to the beginning of the page frame.
