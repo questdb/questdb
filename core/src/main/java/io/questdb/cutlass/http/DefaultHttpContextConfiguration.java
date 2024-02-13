@@ -28,6 +28,8 @@ import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
@@ -40,11 +42,6 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     @Override
     public boolean areCookiesEnabled() {
         return true;
-    }
-
-    @Override
-    public MillisecondClock getClock() {
-        return MillisecondClockImpl.INSTANCE;
     }
 
     @Override
@@ -84,6 +81,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public MillisecondClock getMillisecondClock() {
+        return MillisecondClockImpl.INSTANCE;
+    }
+
+    @Override
     public int getMultipartHeaderBufferSize() {
         return 512;
     }
@@ -91,6 +93,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     @Override
     public long getMultipartIdleSpinCount() {
         return 10_000;
+    }
+
+    @Override
+    public NanosecondClock getNanosecondClock() {
+        return NanosecondClockImpl.INSTANCE;
     }
 
     @Override
