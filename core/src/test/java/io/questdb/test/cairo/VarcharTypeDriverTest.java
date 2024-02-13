@@ -43,7 +43,7 @@ import org.junit.Test;
 public class VarcharTypeDriverTest extends AbstractTest {
 
     @Test
-    public void testSmoke() throws Exception {
+    public void testO3shiftCopyAuxVector() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final VarcharTypeDriver driver = new VarcharTypeDriver();
             final Utf8StringSink utf8Sink = new Utf8StringSink();
