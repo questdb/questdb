@@ -79,22 +79,9 @@ public interface ColumnTypeDriver {
      */
     long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi);
 
-    void o3ColumnCopy(
-            FilesFacade ff,
-            long srcAuxAddr,
-            long srcDataAddr,
-            long srcLo,
-            long srcHi,
-            long dstAuxAddr,
-            int dstAuxFd,
-            long dstAuxFileOffset,
-            long dstDataAddr,
-            int dstDataFd,
-            long dstDataOffset,
-            long dstDataAdjust,
-            long dstDataSize,
-            boolean mixedIOFlag
-    );
+    long getDataVectorSizeAt(long auxMemAddr, long row);
+
+    long getMinAuxVectorSize();
 
     void o3ColumnMerge(
             long timestampMergeIndexAddr,
@@ -106,34 +93,6 @@ public interface ColumnTypeDriver {
             long dstAuxAddr,
             long dstDataAddr,
             long dstDataOffset
-    );
-
-    void o3PartitionAppend(
-            AtomicInteger columnCounter,
-            int columnType,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long srcOooLo,
-            long srcOooHi,
-            long srcOooMax,
-            long timestampMin,
-            long partitionTimestamp,
-            long srcDataTop,
-            long srcDataMax,
-            int indexBlockCapacity,
-            int srcTimestampFd,
-            long srcTimestampAddr,
-            long srcTimestampSize,
-            int activeFixFd,
-            int activeVarFd,
-            MemoryMA dstFixMem,
-            MemoryMA dstVarMem,
-            long dstRowCount,
-            long srcDataNewPartitionSize,
-            long srcDataOldPartitionSize,
-            long o3SplitPartitionSize,
-            TableWriter tableWriter,
-            long partitionUpdateSinkAddr
     );
 
     void o3PartitionMerge(
@@ -179,6 +138,17 @@ public interface ColumnTypeDriver {
             long colTopSinkAddr,
             long columnNameTxn,
             long partitionUpdateSinkAddr
+    );
+
+    void o3copyAuxVector(
+            FilesFacade ff,
+            long src,
+            long srcLo,
+            long srcHi,
+            long dstFixAddr,
+            long dstFixFileOffset,
+            int dstFd,
+            boolean mixedIOFlag
     );
 
     void o3shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr);

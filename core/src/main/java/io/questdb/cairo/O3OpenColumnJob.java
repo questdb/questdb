@@ -81,7 +81,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     ) {
         final long dstLen = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
         if (ColumnType.isVarSize(columnType)) {
-            ColumnType.getDriver(columnType).o3PartitionAppend(
+            o3VarSizePartitionAppend(
                     columnCounter,
                     columnType,
                     srcOooFixAddr,
@@ -1384,7 +1384,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 throw e;
             }
-            ColumnType.getDriver(columnType).o3PartitionAppend(
+            o3VarSizePartitionAppend(
                     columnCounter,
                     columnType,
                     srcOooFixAddr,
@@ -1489,6 +1489,156 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             );
         }
     }
+
+    public static void o3VarSizePartitionAppend(
+            AtomicInteger columnCounter,
+            int columnType,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long timestampMin,
+            long partitionTimestamp,
+            long srcDataTop,
+            long srcDataMax,
+            int indexBlockCapacity,
+            int srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            int activeFixFd,
+            int activeVarFd,
+            MemoryMA dstAuxMem,
+            MemoryMA dstDataMem,
+            long dstRowCount,
+            long srcDataNewPartitionSize,
+            long srcDataOldPartitionSize,
+            long o3SplitPartitionSize,
+            TableWriter tableWriter,
+            long partitionUpdateSinkAddr
+    ) {
+        long dstAuxAddr = 0;
+        long dstAuxOffset;
+        long dstAuxFileOffset;
+        long dstVarAddr = 0;
+        long dstVarOffset;
+        long dstVarAdjust;
+        long dstVarSize = 0;
+        long dstAuxSize = 0;
+        final FilesFacade ff = tableWriter.getFilesFacade();
+        try {
+            ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+
+            long o3auxSize = columnTypeDriver.getDataVectorSize(srcOooFixAddr, srcOooLo, srcOooHi);
+            dstAuxSize = columnTypeDriver.getAuxVectorSize(dstRowCount);
+
+            if (dstAuxMem == null || dstAuxMem.getAppendAddressSize() < dstAuxSize || dstDataMem.getAppendAddressSize() < o3auxSize) {
+                assert dstAuxMem == null || dstAuxMem.getAppendOffset() - columnTypeDriver.getMinAuxVectorSize() == columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
+
+                dstAuxOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
+                dstAuxFileOffset = dstAuxOffset;
+                dstAuxAddr = mapRW(ff, Math.abs(activeFixFd), dstAuxSize, MemoryTag.MMAP_O3);
+
+                if (dstAuxOffset > 0) {
+                    dstVarOffset = Unsafe.getUnsafe().getLong(dstAuxAddr + dstAuxOffset);
+                } else {
+                    dstVarOffset = 0;
+                }
+
+                dstVarSize = o3auxSize + dstVarOffset;
+                dstVarAddr = mapRW(ff, Math.abs(activeVarFd), dstVarSize, MemoryTag.MMAP_O3);
+                dstVarAdjust = 0;
+            } else {
+                assert dstAuxMem.getAppendOffset() >= columnTypeDriver.getMinAuxVectorSize();
+                assert dstAuxMem.getAppendOffset() - columnTypeDriver.getMinAuxVectorSize() == columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
+
+                dstAuxFileOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
+                // this formula is a derivative of:
+                // dstAuxMem.getAppendOffset() - columnTypeDriver.getMinAuxVectorSize() == columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
+                dstAuxAddr = dstAuxMem.getAppendAddress() - (dstAuxMem.getAppendOffset() - dstAuxFileOffset);
+                dstVarAddr = dstDataMem.getAppendAddress();
+                dstAuxOffset = 0;
+                dstAuxSize = -dstAuxSize;
+                dstVarOffset = 0;
+                dstVarSize = -o3auxSize;
+                dstVarAdjust = dstDataMem.getAppendOffset();
+            }
+        } catch (Throwable e) {
+            LOG.error().$("append var error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    .$(", e=").$(e)
+                    .I$();
+            O3Utils.unmapAndClose(ff, activeFixFd, dstAuxAddr, dstAuxSize);
+            O3Utils.unmapAndClose(ff, activeVarFd, dstVarAddr, dstVarSize);
+            freeTimestampIndex(
+                    columnCounter,
+                    0,
+                    0,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter,
+                    ff
+            );
+            throw e;
+        }
+
+        o3PublishCopyTask(
+                columnCounter,
+                null,
+                columnType,
+                O3_BLOCK_O3,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                srcOooLo,
+                srcOooHi,
+                srcDataTop,
+                srcDataMax,
+                srcOooFixAddr,
+                srcOooVarAddr,
+                srcOooLo,
+                srcOooHi,
+                srcOooMax,
+                srcOooLo,
+                srcOooHi,
+                timestampMin,
+                partitionTimestamp, // <-- pass thru
+                activeFixFd,
+                dstAuxAddr,
+                dstAuxOffset,
+                dstAuxFileOffset,
+                dstAuxSize,
+                activeVarFd,
+                dstVarAddr,
+                dstVarOffset,
+                dstVarAdjust,
+                dstVarSize,
+                0,
+                0,
+                0,
+                0,
+                indexBlockCapacity,
+                srcTimestampFd,
+                srcTimestampAddr,
+                srcTimestampSize,
+                false,
+                srcDataNewPartitionSize,
+                srcDataOldPartitionSize,
+                o3SplitPartitionSize,
+                tableWriter,
+                null,
+                partitionUpdateSinkAddr
+        );
+    }
+
+
 
     private static void appendNewPartition(
             Path pathToNewPartition,
