@@ -41,11 +41,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public static final VarcharTypeDriver INSTANCE = new VarcharTypeDriver();
 
     public static long varcharGetDataOffset(MemoryR auxMem, long offset) {
-        return (auxMem.getLong(offset + 8L) & 0xffffffffffffL) >>> 16;
+        return auxMem.getLong(offset + 8L) >>> 16;
     }
 
     public static long varcharGetDataOffset(long auxEntry) {
-        return (Unsafe.getUnsafe().getLong(auxEntry + 8L) & 0xffffffffffffL) >>> 16;
+        return Unsafe.getUnsafe().getLong(auxEntry + 8L) >>> 16;
     }
 
     public static long varcharGetDataVectorSize(long auxEntry) {
@@ -274,7 +274,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             if (doubleAllocate) {
                 auxMem.allocate(auxVectorSize);
             }
-            
+
             // first we need to calculate already used space. both data and aux vectors.
             long auxVectorOffset = getAuxVectorOffset(pos - 1); // the last entry we are NOT overwriting
             auxMem.jumpTo(auxVectorOffset);
