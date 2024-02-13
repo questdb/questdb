@@ -2374,7 +2374,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
                 return;
             } else if (ff.exists(to)) {
-                LOG.info().$("rename destination file exists, assuming failed rename attempt [path=").$(to).I$();
+                LOG.info().$("rename destination file exists, assuming previously failed rename attempt [path=").$(to).I$();
                 ff.remove(to);
                 if (ff.hardLink(from, to) == FILES_RENAME_OK) {
                     LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
