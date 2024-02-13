@@ -173,6 +173,45 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         return false;
     }
 
+    protected void nextSlave(long masterTimestamp) {
+        final TimeFrame frame = slaveCursor.getTimeFrame();
+        while (true) {
+            if (frame.isOpen() && frame.getIndex() == slaveFrameIndex) {
+                // Scan a few rows to speed up self-join/identical tables cases.
+                if (linearScan(frame, masterTimestamp)) {
+                    return;
+                }
+                if (slaveFrameRow < frame.getRowHi()) {
+                    // Fallback to binary search.
+                    // Find the last value less or equal to the master timestamp.
+                    long foundRow = binarySearch(masterTimestamp, slaveFrameRow, frame.getRowHi() - 1);
+                    if (foundRow < slaveFrameRow) {
+                        // All searched timestamps are greater than the master timestamp.
+                        // Linear scan must have found the row.
+                        return;
+                    }
+                    slaveFrameRow = foundRow;
+                    record.hasSlave(true);
+                    slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
+                    long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
+                    if (slaveFrameRow < frame.getRowHi() - 1) {
+                        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow + 1));
+                        lookaheadTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
+                    } else {
+                        lookaheadTimestamp = slaveTimestamp;
+                    }
+                    if (foundRow < frame.getRowHi() - 1 || slaveTimestamp == masterTimestamp) {
+                        // We've found the row, so there is no point in checking the next partition.
+                        return;
+                    }
+                }
+            }
+            if (!openSlaveFrame(frame, masterTimestamp)) {
+                return;
+            }
+        }
+    }
+
     protected boolean openSlaveFrame(TimeFrame frame, long masterTimestamp) {
         while (true) {
             if (isSlaveOpenPending) {

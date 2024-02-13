@@ -31,10 +31,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
-import io.questdb.std.Rows;
 
 public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final AsOfJoinFastRecordCursor cursor;
+    private final LtJoinFastRecordCursor cursor;
 
     public LtJoinNoKeyFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -45,7 +44,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
-        this.cursor = new AsOfJoinFastRecordCursor(
+        this.cursor = new LtJoinFastRecordCursor(
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
@@ -93,9 +92,9 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
         slaveFactory.close();
     }
 
-    private static class AsOfJoinFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
+    private static class LtJoinFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
 
-        public AsOfJoinFastRecordCursor(
+        public LtJoinFastRecordCursor(
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
@@ -117,50 +116,11 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                     isMasterHasNextPending = true;
                     return true;
                 }
-                nextSlave(masterTimestamp);
+                nextSlave(masterTimestamp - 1);
                 isMasterHasNextPending = true;
                 return true;
             }
             return false;
-        }
-
-        private void nextSlave(long masterTimestamp) {
-            final TimeFrame frame = slaveCursor.getTimeFrame();
-            while (true) {
-                if (frame.isOpen() && frame.getIndex() == slaveFrameIndex) {
-                    // Scan a few rows to speed up self-join/identical tables cases.
-                    if (linearScan(frame, masterTimestamp - 1)) {
-                        return;
-                    }
-                    if (slaveFrameRow < frame.getRowHi()) {
-                        // Fallback to binary search.
-                        // Find the last value less than the master timestamp.
-                        long foundRow = binarySearch(masterTimestamp - 1, slaveFrameRow, frame.getRowHi() - 1);
-                        if (foundRow < slaveFrameRow) {
-                            // All searched timestamps are equal or greater than the master timestamp.
-                            // Linear scan must have found the row.
-                            return;
-                        }
-                        slaveFrameRow = foundRow;
-                        record.hasSlave(true);
-                        slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
-                        long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                        if (slaveFrameRow < frame.getRowHi() - 1) {
-                            slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow + 1));
-                            lookaheadTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
-                        } else {
-                            lookaheadTimestamp = slaveTimestamp;
-                        }
-                        if (foundRow < frame.getRowHi() - 1 || lookaheadTimestamp == masterTimestamp - 1) {
-                            // We've found the row, so there is no point in checking the next partition.
-                            return;
-                        }
-                    }
-                }
-                if (!openSlaveFrame(frame, masterTimestamp - 1)) {
-                    return;
-                }
-            }
         }
     }
 }
