@@ -247,6 +247,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean snapshotRecoveryEnabled;
     private final String snapshotRoot;
     private final long spinLockTimeout;
+    private final int sqlAsOfJoinLookahead;
     private final int sqlBindVariablePoolSize;
     private final int sqlCharacterStoreCapacity;
     private final int sqlCharacterStoreSequencePoolCapacity;
@@ -924,6 +925,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
             this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 1048576);
             this.sqlHashJoinLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
+            this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 100);
             this.sqlSortValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216);
             this.sqlSortValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.workStealTimeoutNanos = getLong(properties, env, PropertyKey.CAIRO_WORK_STEAL_TIMEOUT_NANOS, 10_000);
@@ -2356,6 +2358,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSpinLockTimeout() {
             return spinLockTimeout;
+        }
+
+        @Override
+        public int getSqlAsOfJoinLookAhead() {
+            return sqlAsOfJoinLookahead;
         }
 
         @Override
