@@ -146,4 +146,6 @@ public interface ColumnTypeDriver {
     long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem);
 
     void o3setColumnRefs(long address, long initialOffset, long count);
+
+    void setDataVectorEntriesToNull(long dataMemAddr, long rowCount);
 }

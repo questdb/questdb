@@ -1339,7 +1339,10 @@ public class WalWriter implements TableWriterAPI {
             iFile(path, columnName);
             iFile(tempPath, newName);
             if (ff.rename(path.$(), tempPath.$()) != Files.FILES_RENAME_OK) {
-                throw CairoException.critical(ff.errno()).put("could not rename WAL column file [from=").put(path).put(", to=").put(tempPath).put(']');
+                throw CairoException.critical(ff.errno())
+                        .put("could not rename WAL column file [from=").put(path)
+                        .put(", to=").put(tempPath)
+                        .put(']');
             }
             path.trimTo(trimTo);
             tempPath.trimTo(trimTo);
@@ -1448,7 +1451,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void setColumnNull(int columnType, int columnIndex, long rowCount, int commitMode) {
         if (ColumnType.isVarSize(columnType)) {
-            setVarColumnVarFileNull(columnType, columnIndex, rowCount, commitMode);
+            setVarColumnDataFileNull(columnType, columnIndex, rowCount, commitMode);
             setVarColumnFixedFileNull(columnType, columnIndex, rowCount, commitMode);
         } else {
             setFixColumnNulls(columnType, columnIndex, rowCount);
@@ -1493,17 +1496,21 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void setVarColumnVarFileNull(int columnType, int columnIndex, long rowCount, int commitMode) {
-        MemoryMA varColumn = getDataColumn(columnIndex);
-        long varColSize = rowCount * ColumnType.variableColumnLengthBytes(columnType);
-        varColumn.jumpTo(varColSize);
+    private void setVarColumnDataFileNull(int columnType, int columnIndex, long rowCount, int commitMode) {
+        final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+        MemoryMA dataMem = getDataColumn(columnIndex);
+        final long varColSize = rowCount * columnTypeDriver.getDataVectorMinEntrySize();
+        dataMem.jumpTo(varColSize);
         if (rowCount > 0) {
-            long address = TableUtils.mapRW(ff, varColumn.getFd(), varColSize, MEM_TAG);
-            Vect.memset(address, varColSize, -1);
+            final long dataMemAddr = TableUtils.mapRW(ff, dataMem.getFd(), varColSize, MEM_TAG);
+            columnTypeDriver.setDataVectorEntriesToNull(
+                    dataMemAddr,
+                    rowCount
+            );
             if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(address, varColSize, commitMode == CommitMode.ASYNC);
+                ff.msync(dataMemAddr, varColSize, commitMode == CommitMode.ASYNC);
             }
-            ff.munmap(address, varColSize, MEM_TAG);
+            ff.munmap(dataMemAddr, varColSize, MEM_TAG);
         }
     }
 

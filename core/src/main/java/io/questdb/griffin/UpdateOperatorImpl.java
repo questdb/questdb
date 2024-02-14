@@ -326,6 +326,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     }
 
     private static int getFixedColumnSize(int columnType) {
+        // todo: investigate how this is used, we should not be returning shl for varsize
         if (isVarSize(columnType)) {
             return 3;
         }
@@ -599,37 +600,36 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     }
 
     private void copyValues(
-            long fromRowId,
-            long toRowId,
+            long loRowNum,
+            long hiRowNum, // exclusive
             MemoryCMR srcFixMem,
-            MemoryCMR srcVarMem,
+            MemoryCMR srcDataMem,
             MemoryCMARW dstFixMem,
-            MemoryCMARW dstVarMem,
+            MemoryCMARW dstDataMem,
             int columnType,
             int shl
     ) {
-        long address = srcFixMem.addressOf(fromRowId << shl);
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.STRING:
-            case ColumnType.BINARY:
-                long varStartOffset = srcFixMem.getLong(fromRowId * Long.BYTES);
-                long varEndOffset = srcFixMem.getLong((toRowId) * Long.BYTES);
-                long varAddress = srcVarMem.addressOf(varStartOffset);
-                long copyToOffset = dstVarMem.getAppendOffset();
-                dstVarMem.putBlockOfBytes(varAddress, varEndOffset - varStartOffset);
-                dstFixMem.extend((toRowId + 1) << shl);
-                Vect.shiftCopyFixedSizeColumnData(
-                        varStartOffset - copyToOffset,
-                        address + Long.BYTES,
-                        0,
-                        toRowId - fromRowId - 1,
-                        dstFixMem.getAppendAddress()
-                );
-                dstFixMem.jumpTo((toRowId + 1) << shl);
-                break;
-            default:
-                dstFixMem.putBlockOfBytes(address, (toRowId - fromRowId) << shl);
-                break;
+        if (ColumnType.isVarSize(columnType)) {
+            final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+            long dataOffsetLo = columnTypeDriver.getDataVectorOffset(srcFixMem.addressOf(0), loRowNum);
+            long srcDataSize = columnTypeDriver.getDataVectorSize(srcFixMem.addressOf(0), loRowNum, hiRowNum - 1);
+            long srcDataAddr = srcDataMem.addressOf(dataOffsetLo);
+            long copyToOffset = dstDataMem.getAppendOffset();
+            dstDataMem.putBlockOfBytes(srcDataAddr, srcDataSize);
+            dstFixMem.extend(columnTypeDriver.getAuxVectorSize(hiRowNum));
+            columnTypeDriver.o3shiftCopyAuxVector(
+                    dataOffsetLo - copyToOffset,
+                    srcFixMem.addressOf(columnTypeDriver.getAuxVectorOffset(loRowNum + 1)),
+                    0,
+                    hiRowNum - loRowNum - 1,
+                    dstFixMem.getAppendAddress()
+            );
+            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(hiRowNum));
+        } else {
+            dstFixMem.putBlockOfBytes(
+                    srcFixMem.addressOf(loRowNum << shl),
+                    (hiRowNum - loRowNum) << shl
+            );
         }
     }
 

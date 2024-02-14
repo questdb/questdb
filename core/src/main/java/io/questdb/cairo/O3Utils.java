@@ -98,16 +98,6 @@ public class O3Utils {
         Vect.copyFromTimestampIndex(src, srcLo, srcHi, dstAddr);
     }
 
-    static void shiftCopyFixedSizeColumnData(
-            long shift,
-            long srcAddr,
-            long srcLo,
-            long srcHi,
-            long dstAddr
-    ) {
-        Vect.shiftCopyFixedSizeColumnData(shift, srcAddr, srcLo, srcHi, dstAddr);
-    }
-
     static void shiftCopyVarcharColumnAux(
             long shift,
             long srcAddr,

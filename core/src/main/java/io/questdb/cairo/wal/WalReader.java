@@ -172,24 +172,34 @@ public class WalReader implements Closeable {
         try {
             final int columnType = metadata.getColumnType(columnIndex);
             if (columnType > 0) {
-                final CharSequence name = metadata.getColumnName(columnIndex);
-                final int primaryIndex = getPrimaryColumnIndex(columnIndex);
-                final int secondaryIndex = primaryIndex + 1;
-                final MemoryMR primaryMem = columns.getQuick(primaryIndex);
+                final CharSequence columnName = metadata.getColumnName(columnIndex);
+                final int dataMemIndex = getPrimaryColumnIndex(columnIndex);
+                final int auxMemIndex = dataMemIndex + 1;
+                final MemoryMR dataMem = columns.getQuick(dataMemIndex);
 
                 if (ColumnType.isVarSize(columnType)) {
-                    long columnSize = (rowCount + 1) << 3;
-                    TableUtils.iFile(path.trimTo(pathLen), name);
-                    MemoryMR secondaryMem = columns.getQuick(secondaryIndex);
-                    secondaryMem = openOrCreateMemory(path, columns, secondaryIndex, secondaryMem, columnSize);
-                    columnSize = secondaryMem.getLong(rowCount << 3);
-                    TableUtils.dFile(path.trimTo(pathLen), name);
-                    openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnSize);
+                    ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                    long auxMemSize = columnTypeDriver.getAuxVectorSize(rowCount);
+                    TableUtils.iFile(path.trimTo(pathLen), columnName);
+
+                    MemoryMR auxMem = columns.getQuick(auxMemIndex);
+                    auxMem = openOrCreateMemory(path, columns, auxMemIndex, auxMem, auxMemSize);
+
+                    // todo: check for usages where we have mem with artificially extracted address
+                    final long dataMemSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), rowCount - 1);
+                    TableUtils.dFile(path.trimTo(pathLen), columnName);
+                    openOrCreateMemory(path, columns, dataMemIndex, dataMem, dataMemSize);
                 } else {
-                    long columnSize = rowCount << ColumnType.pow2SizeOf(columnType);
-                    TableUtils.dFile(path.trimTo(pathLen), name);
-                    openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnIndex == getTimestampIndex() ? columnSize << 1 : columnSize);
-                    Misc.free(columns.getAndSetQuick(secondaryIndex, null));
+                    final long dataMemSize = rowCount << ColumnType.pow2SizeOf(columnType);
+                    TableUtils.dFile(path.trimTo(pathLen), columnName);
+                    openOrCreateMemory(
+                            path,
+                            columns,
+                            dataMemIndex,
+                            dataMem,
+                            columnIndex == getTimestampIndex() ? dataMemSize << 1 : dataMemSize
+                    );
+                    Misc.free(columns.getAndSetQuick(auxMemIndex, null));
                 }
             }
         } finally {
