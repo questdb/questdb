@@ -627,16 +627,16 @@ Java_io_questdb_std_Vect_oooMergeCopyStrColumn(JNIEnv *env, jclass cl,
 DECLARE_DISPATCHER(merge_copy_varchar_column) ;
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooMergeCopyVarcharColumn(JNIEnv *env, jclass cl,
-                                               jlong merge_index,
-                                               jlong merge_index_size,
-                                               jlong src_data_fix,
-                                               jlong src_data_var,
-                                               jlong src_ooo_fix,
-                                               jlong src_ooo_var,
-                                               jlong dst_fix,
-                                               jlong dst_var,
-                                               jlong dst_var_offset) {
-    measure_time(0, [=]() {
+                                                   jlong merge_index,
+                                                   jlong merge_index_size,
+                                                   jlong src_data_fix,
+                                                   jlong src_data_var,
+                                                   jlong src_ooo_fix,
+                                                   jlong src_ooo_var,
+                                                   jlong dst_fix,
+                                                   jlong dst_var,
+                                                   jlong dst_var_offset) {
+    measure_time(31, [=]() {
         merge_copy_varchar_column(
                 reinterpret_cast<index_t *>(merge_index),
                 __JLONG_REINTERPRET_CAST__(int64_t, merge_index_size),

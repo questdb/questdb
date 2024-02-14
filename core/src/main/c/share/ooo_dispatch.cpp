@@ -264,6 +264,7 @@ void MULTI_VERSION_NAME (merge_copy_var_column_int32)(
                                    dst_fix, dst_var, dst_var_offset, 2);
 }
 
+// 31
 void MULTI_VERSION_NAME (merge_copy_varchar_column)(
         index_t *merge_index,
         int64_t merge_index_size,
@@ -275,8 +276,20 @@ void MULTI_VERSION_NAME (merge_copy_varchar_column)(
         char *dst_var,
         int64_t dst_var_offset
 ) {
-merge_copy_varchar_column(merge_index, merge_index_size, src_data_fix, src_data_var, src_ooo_fix, src_ooo_var,
-        dst_fix, dst_var, dst_var_offset, 2);
+    int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
+    char *src_var[] = {src_ooo_var, src_data_var};
+
+    // todo: this is highly incomplete, working only two fully inlined cases
+    for (int64_t l = 0; l < merge_index_size; l++) {
+        const uint64_t row = merge_index[l].i;
+        const uint32_t bit = (row >> 63);
+        const uint64_t rr = row & ~(1ull << 63);
+        const int64_t firstWord = src_fix[bit][rr * 2];
+        const int64_t secondWord = src_fix[bit][rr * 2 + 1];
+
+        dst_fix[l * 2] = firstWord;
+        dst_fix[l * 2 + 1] = secondWord;
+    }
 }
 
 // 3
