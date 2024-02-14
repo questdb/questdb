@@ -24,10 +24,7 @@
 
 package io.questdb.duckdb;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.NullMemoryMR;
@@ -37,6 +34,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.DirectUtf8StringZ;
+import org.jetbrains.annotations.Nullable;
 
 public class DuckDBRecordCursorFactory implements RecordCursorFactory {
     private final long statement;
@@ -44,19 +42,21 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
     private final DuckDBPageFrameCursor pageFrameCursor;
     private final RecordMetadata metadata;
 
+    // used for a quack function
     public DuckDBRecordCursorFactory(long stmt) {
-        this(true, stmt, buildMetadata(stmt));
+        this(true, stmt, null);
     }
 
-    public DuckDBRecordCursorFactory(long stmt, RecordMetadata metadata) {
-        this(false, stmt, validateMetadata(stmt, metadata));
+    // used for a hybrid tables
+    public DuckDBRecordCursorFactory(long stmt, TableReader reader) {
+        this(false, stmt, reader);
     }
 
-    public DuckDBRecordCursorFactory(boolean duckNative, long stmt, RecordMetadata metadata) {
+    public DuckDBRecordCursorFactory(boolean duckNative, long stmt, @Nullable TableReader reader) {
+        this.metadata = (reader == null) ? buildMetadata(stmt) : validateMetadata(stmt, reader.getMetadata());
         this.statement = stmt;
-        this.cursor = new RecordCursorImpl(duckNative);
+        this.cursor = new RecordCursorImpl(duckNative, reader);
         this.pageFrameCursor = new DuckDBPageFrameCursor();
-        this.metadata = metadata;
     }
 
     public static RecordMetadata buildMetadata(long statement) {
@@ -166,10 +166,12 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
 
     public static class RecordCursorImpl implements RecordCursor {
         private final AbstractRecord record;
+        private final TableReader reader;
         private DuckDBPageFrameCursor pageFrameCursor;
         private DuckDBPageFrameCursor.PageFrameImpl currentPageFrame;
 
-        public RecordCursorImpl(boolean duckNative) {
+        public RecordCursorImpl(boolean duckNative, @Nullable TableReader reader) {
+            this.reader = reader;
             if (duckNative) {
                 this.record = new DuckNativeRecord();
             } else {
@@ -596,6 +598,16 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
                 }
                 long recordAddress = address + pageRowIndex * 16; // sizeof(value)
                 return Unsafe.getUnsafe().getLong(recordAddress);
+            }
+
+            @Override
+            public CharSequence getSym(int columnIndex) {
+                final long address = currentPageFrame.getPageAddress(columnIndex);
+                if (address == 0 || reader == null) {
+                    return null;
+                }
+                int index = Unsafe.getUnsafe().getInt(address + pageRowIndex * Integer.BYTES);
+                return reader.getSymbolMapReader(columnIndex).valueOf(index);
             }
         }
     }

@@ -29,6 +29,7 @@ import io.questdb.cairo.pool.DuckDBConnectionPool;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.duckdb.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -600,11 +601,16 @@ public class DuckDBTest extends AbstractCairoTest {
                         if (!isNull) {
                             row.putLong128(c, lo, hi);
                             DuckDB.appenderAppendUUID(appender, lo, hi);
-                            System.err.println("or UUID: " + lo + " " + hi);
                         } else {
                             row.putLong128(c, Numbers.LONG_NaN, Numbers.LONG_NaN);
                             DuckDB.appenderAppendUUID(appender, Numbers.LONG_NaN, Numbers.LONG_NaN);
                         }
+                        break;
+                    case ColumnType.SYMBOL:
+                        MapWriter mw = writer.getSymbolMapWriter(c);
+                        int index = mw.put(rnd.nextString(10));
+                        row.putSymIndex(c, index);
+                        DuckDB.appenderAppendInt(appender, index);
                         break;
                     default:
                         Assert.fail("Unsupported type: " + type);
@@ -632,7 +638,7 @@ public class DuckDBTest extends AbstractCairoTest {
             .col("COL_" + ColumnType.nameOf(ColumnType.FLOAT), ColumnType.FLOAT)
             .col("COL_" + ColumnType.nameOf(ColumnType.DOUBLE), ColumnType.DOUBLE)
             .col("COL_" + ColumnType.nameOf(ColumnType.STRING), ColumnType.STRING)
-//                .col("COL_" + ColumnType.nameOf(ColumnType.SYMBOL), ColumnType.SYMBOL)
+            .col("COL_" + ColumnType.nameOf(ColumnType.SYMBOL), ColumnType.SYMBOL)
 //                .col("COL_" + ColumnType.nameOf(ColumnType.LONG256), ColumnType.LONG256)
             .col("COL_" + "GEOBYTE", ColumnType.getGeoHashTypeWithBits(5))
             .col("COL_" + "GEOSHORT", ColumnType.getGeoHashTypeWithBits(15))
@@ -665,6 +671,7 @@ public class DuckDBTest extends AbstractCairoTest {
                 case ColumnType.INT:
                 case ColumnType.GEOINT:
                 case ColumnType.IPv4:
+                case ColumnType.SYMBOL:
                     sql.append(name).append(" INTEGER");
                     break;
                 case ColumnType.LONG:
@@ -682,9 +689,6 @@ public class DuckDBTest extends AbstractCairoTest {
                 case ColumnType.STRING:
                     sql.append(name).append(" VARCHAR");
                     break;
-//                case ColumnType.SYMBOL:
-//                    sql.append(name).append(" SYMBOL");
-//                    break;
 //                case ColumnType.LONG256:
 //                    sql.append(name).append(" LONG256");
 //                    break;
@@ -756,25 +760,26 @@ public class DuckDBTest extends AbstractCairoTest {
                  }
             }
 
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 TableReader reader = engine.getReader(tableName);
+            ) {
                 String sqlFromTable = "select * from " + tableName;
                 String sqlFromFile = "select * from '" + parquetPath + "'";
                 try (
                         RecordCursorFactory questFactory = compiler.compile(sqlFromTable, sqlExecutionContext).getRecordCursorFactory();
                         RecordCursor questCursor = questFactory.getCursor(sqlExecutionContext);
                 ) {
-                    RecordMetadata metadata = questFactory.getMetadata();
                     try(DuckDBConnectionPool.Connection conn = sqlExecutionContext.getCairoEngine().getDuckDBConnection()) {
-                        testCursors(metadata, questCursor, sqlFromTable, conn);
+                        testCursors(reader, questCursor, sqlFromTable, conn);
                         questCursor.toTop();
-                        testCursors(metadata, questCursor, sqlFromFile, conn);
+                        testCursors(reader, questCursor, sqlFromFile, conn);
                     }
                 }
             }
         });
     }
 
-    private void testCursors(RecordMetadata metadata, RecordCursor expected, String sql, DuckDBConnectionPool.Connection conn) throws SqlException {
+    private void testCursors(TableReader reader, RecordCursor expected, String sql, DuckDBConnectionPool.Connection conn) throws SqlException {
         GcUtf8String query = new GcUtf8String(sql);
         long stmt = conn.prepare(query);
         long error = DuckDB.preparedGetError(stmt);
@@ -784,10 +789,10 @@ public class DuckDBTest extends AbstractCairoTest {
             Assert.fail("Error: " + errorText);
         }
         try(
-                DuckDBRecordCursorFactory duckFactory = new DuckDBRecordCursorFactory(stmt, metadata);
+                DuckDBRecordCursorFactory duckFactory = new DuckDBRecordCursorFactory(stmt, reader);
                 RecordCursor duckCursor = duckFactory.getCursor(sqlExecutionContext);
         ) {
-            assertEqualsExactOrder(expected, metadata, duckCursor, metadata, true);
+            assertEqualsExactOrder(expected, reader.getMetadata(), duckCursor, reader.getMetadata(), true);
         }
     }
 
