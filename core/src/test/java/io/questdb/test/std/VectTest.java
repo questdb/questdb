@@ -409,7 +409,8 @@ public class VectTest {
 
     @Test
     public void testOooMergeCopyVarcharColumn() throws Exception {
-        int rowCount = 10000;
+        // todo: shuffle vectors
+        int rowCount = 10_000;
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         long pageSize = Files.PAGE_SIZE;
         try (Path dataPathA = new Path().of(temp.newFile().getAbsolutePath()).$();
@@ -424,7 +425,7 @@ public class VectTest {
 
             StringSink sink = new StringSink();
             Utf8StringSink utf8Sink = new Utf8StringSink();
-            int maxLen = 10; // exclusive
+            int maxLen = 50; // exclusive
             int nullModA = 17;
             int nullModB = 23;
             for (int i = 0; i < rowCount; i++) {
