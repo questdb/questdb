@@ -322,7 +322,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // we need to shift copy the original column so that new block points at strings "below" the
                     // nulls we created above
                     // STOP. DON'T ADD +1 HERE. srcHi is inclusive, no need to do +1
-                    columnTypeDriver.o3shiftCopyAuxVector(
+                    columnTypeDriver.shiftCopyAuxVector(
                             -reservedBytesForColTopNulls,
                             srcAuxAddr,
                             0,
@@ -334,7 +334,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // null strings we just added
                     // Call to o3setColumnRefs must be after o3shiftCopyAuxVector
                     // because data first have to be shifted before overwritten
-                    columnTypeDriver.o3setColumnRefs(srcAuxAddr + oldAuxSize, 0, srcDataTop);
+                    columnTypeDriver.setColumnRefs(srcAuxAddr + oldAuxSize, 0, srcDataTop);
                     srcDataTop = 0;
                     srcDataFixOffset = oldAuxSize;
                 } else {

@@ -57,7 +57,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     auxMem.resize((n + auxOffset) * 2 * Long.BYTES);
                     dataMem.resize(dataOffset);
 
-                    driver.o3setColumnRefs(auxMem.addressOf(auxOffset * 2 * Long.BYTES), dataOffset, n);
+                    driver.setColumnRefs(auxMem.addressOf(auxOffset * 2 * Long.BYTES), dataOffset, n);
 
                     for (int i = 0; i < n; i++) {
                         Assert.assertNull(Utf8s.varcharRead((i + auxOffset) * 16L, dataMem, auxMem, 1));
@@ -111,7 +111,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     Vect.memcpy(dataMemB.addressOf(-shift), dataMemA.addressOf(0), dataMemA.size());
                     auxMemB.extend(auxMemA.size());
 
-                    driver.o3shiftCopyAuxVector(shift, auxMemA.addressOf(0), auxLo, n, auxMemB.addressOf(0));
+                    driver.shiftCopyAuxVector(shift, auxMemA.addressOf(0), auxLo, n, auxMemB.addressOf(0));
 
                     for (int i = 0; i < n - auxLo; i++) {
                         Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMemB, auxMemB, 1);
@@ -157,7 +157,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     Vect.memcpy(dataMemB.addressOf(-shift), dataMemA.addressOf(0), dataMemA.size());
                     auxMemB.extend(auxMemA.size());
 
-                    driver.o3shiftCopyAuxVector(shift, auxMemA.addressOf(0), auxLo, n, auxMemB.addressOf(0));
+                    driver.shiftCopyAuxVector(shift, auxMemA.addressOf(0), auxLo, n, auxMemB.addressOf(0));
 
                     for (int i = 0; i < n - auxLo; i++) {
                         Assert.assertNull(Utf8s.varcharRead(i * 16L, dataMemB, auxMemB, 1));

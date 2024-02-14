@@ -421,7 +421,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     mixedIOFlag
             );
         } else {
-            columnTypeDriver.o3shiftCopyAuxVector(lo - offset, srcAuxAddr, srcLo, srcHi + 1, dstAuxAddr);
+            columnTypeDriver.shiftCopyAuxVector(lo - offset, srcAuxAddr, srcLo, srcHi + 1, dstAuxAddr);
         }
     }
 

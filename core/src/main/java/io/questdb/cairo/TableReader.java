@@ -613,7 +613,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         long partitionTs = openPartitionInfo.getQuick(offset);
         long existingPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
-        long newSize = txFile.getPartitionSizeByPartitionTimestamp(partitionTs);
+        long newSize = txFile.getPartitionRowCountByTimestamp(partitionTs);
         if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
             LOG.debug().$("close outdated partition files [table=").utf8(tableToken.getTableName()).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files

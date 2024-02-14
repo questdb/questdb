@@ -204,7 +204,7 @@ public class CopyWalSegmentUtils {
             final long newAuxMemAddr = TableUtils.mapRW(ff, secondaryFd, newAuxMemSize, MEMORY_TAG);
             ff.madvise(newAuxMemAddr, newAuxMemSize, Files.POSIX_MADV_RANDOM);
 
-            columnTypeDriver.o3shiftCopyAuxVector(
+            columnTypeDriver.shiftCopyAuxVector(
                     dataStartOffset,
                     auxMemAddr,
                     startRowNumber,

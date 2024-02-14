@@ -41,8 +41,8 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
     }
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
-        super.append(offset, sourceColumn, sourceLo, sourceHi, commitMode);
+    public void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
+        super.append(appendOffsetRowCount, sourceColumn, sourceLo, sourceHi, commitMode);
         int fd = super.getPrimaryFd();
         int shl = ColumnType.pow2SizeOf(getColumnType());
 
@@ -50,28 +50,28 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
         assert size >= 0;
 
         if (size > 0) {
-            long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, (offset - getColumnTop()) << shl, size << shl, false, MEMORY_TAG);
+            long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, (appendOffsetRowCount - getColumnTop()) << shl, size << shl, false, MEMORY_TAG);
             try {
-                indexWriter.rollbackConditionally(offset);
+                indexWriter.rollbackConditionally(appendOffsetRowCount);
                 for (long i = 0; i < size; i++) {
-                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(mappedAddress + (i << shl))), offset + i);
+                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(mappedAddress + (i << shl))), appendOffsetRowCount + i);
                 }
-                indexWriter.setMaxValue(offset + size - 1);
+                indexWriter.setMaxValue(appendOffsetRowCount + size - 1);
                 indexWriter.commit();
             } finally {
-                TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, (offset - getColumnTop()) << shl, size << shl, MEMORY_TAG);
+                TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, (appendOffsetRowCount - getColumnTop()) << shl, size << shl, MEMORY_TAG);
             }
         }
     }
 
     @Override
-    public void appendNulls(long offset, long count, int commitMode) {
-        super.appendNulls(offset, count, commitMode);
-        indexWriter.rollbackConditionally(offset);
-        for (long i = 0; i < count; i++) {
-            indexWriter.add(0, offset + i);
+    public void appendNulls(long rowCount, long sourceColumnTop, int commitMode) {
+        super.appendNulls(rowCount, sourceColumnTop, commitMode);
+        indexWriter.rollbackConditionally(rowCount);
+        for (long i = 0; i < sourceColumnTop; i++) {
+            indexWriter.add(0, rowCount + i);
         }
-        indexWriter.setMaxValue(offset + count - 1);
+        indexWriter.setMaxValue(rowCount + sourceColumnTop - 1);
         indexWriter.commit();
     }
 

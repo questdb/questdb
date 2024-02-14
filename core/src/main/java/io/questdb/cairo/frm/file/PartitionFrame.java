@@ -41,7 +41,7 @@ public class PartitionFrame implements Frame {
     private long offset = 0;
     private Path partitionPath = new Path();
     private long partitionTimestamp;
-    private long size;
+    private long rowCount;
 
     public PartitionFrame(FrameColumnPool columnPool) {
         this.columnPool = columnPool;
@@ -70,12 +70,12 @@ public class PartitionFrame implements Frame {
         boolean isIndexed = metadata.isColumnIndexed(columnIndex);
         int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(columnIndex) : 0;
         int crvRecIndex = crv.getRecordIndex(partitionTimestamp, columnIndex);
-        long columnTop = crv.getColumnTopByIndexOrDefault(crvRecIndex, partitionTimestamp, columnIndex, size);
+        long columnTop = crv.getColumnTopByIndexOrDefault(crvRecIndex, partitionTimestamp, columnIndex, rowCount);
         long columnTxn = crv.getColumnNameTxn(partitionTimestamp, columnIndex);
 
         FrameColumnTypePool columnTypePool = canWrite ? columnPool.getPoolRW(columnType) : columnPool.getPoolRO(columnType);
-        boolean createNew = columnTop >= size;
-        columnTop = Math.min(columnTop, size);
+        boolean createNew = columnTop >= rowCount;
+        columnTop = Math.min(columnTop, rowCount);
         return columnTypePool.create(partitionPath, metadata.getColumnName(columnIndex), columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex, createNew);
     }
 
@@ -85,14 +85,14 @@ public class PartitionFrame implements Frame {
     }
 
     @Override
-    public long getSize() {
-        return size;
+    public long getRowCount() {
+        return rowCount;
     }
 
-    public void openRO(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, long size) {
+    public void openRO(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, long partitionRowCount) {
         this.metadata = metadata;
         this.crv = cvr;
-        this.size = size;
+        this.rowCount = partitionRowCount;
         this.partitionTimestamp = partitionTimestamp;
         this.partitionPath.of(partitionPath);
         canWrite = false;
@@ -101,15 +101,10 @@ public class PartitionFrame implements Frame {
     public void openRW(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionWriter cvw, long size) {
         this.metadata = metadata;
         this.crv = cvw;
-        this.size = size;
+        this.rowCount = size;
         this.partitionTimestamp = partitionTimestamp;
         this.partitionPath.of(partitionPath);
         canWrite = true;
-    }
-
-    @Override
-    public void rebuildIndexes(long offset) {
-        throw new UnsupportedOperationException();
     }
 
     public void saveChanges(FrameColumn frameColumn) {
@@ -126,8 +121,8 @@ public class PartitionFrame implements Frame {
     }
 
     @Override
-    public void setSize(long size) {
-        this.size = size;
+    public void setRowCount(long rowCount) {
+        this.rowCount = rowCount;
     }
 
     private void free() {

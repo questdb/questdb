@@ -25,10 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.*;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 
 import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
@@ -171,12 +168,12 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3setColumnRefs(long address, long initialOffset, long count) {
+    public void setColumnRefs(long address, long initialOffset, long count) {
         Vect.setVarColumnRefs32Bit(address, initialOffset, count);
     }
 
     @Override
-    public void o3shiftCopyAuxVector(
+    public void shiftCopyAuxVector(
             long shift,
             long src,
             long srcLo,
@@ -269,5 +266,21 @@ public class StringTypeDriver implements ColumnTypeDriver {
         long result = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
         assert (srcLo == 0 && result == 0) || result > 0;
         return result;
+    }
+
+    @Override
+    public long getDataVectorSizeAtFromFd(FilesFacade ff, int auxFd, long row) {
+        long auxFileOffset = getAuxVectorOffset(row);
+        long dataOffset = row > 0 ? ff.readNonNegativeLong(auxFd, auxFileOffset) : 0;
+
+        if (dataOffset < 0 || dataOffset > 1L << 40 || (row > 0 && dataOffset == 0)) {
+            throw CairoException.critical(ff.errno())
+                    .put("Invalid variable file length offset read from offset file [auxFd=").put(auxFd)
+                    .put(", offset=").put(auxFileOffset)
+                    .put(", fileSize=").put(ff.length(auxFd))
+                    .put(", result=").put(dataOffset)
+                    .put(']');
+        }
+        return dataOffset;
     }
 }

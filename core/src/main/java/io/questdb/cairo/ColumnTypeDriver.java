@@ -86,6 +86,8 @@ public interface ColumnTypeDriver {
 
     long getDataVectorSizeAt(long auxMemAddr, long row);
 
+    long getDataVectorSizeAtFromFd(FilesFacade ff, int auxFd, long row);
+
     long getMinAuxVectorSize();
 
     void o3ColumnMerge(
@@ -110,10 +112,6 @@ public interface ColumnTypeDriver {
             int dstFd,
             boolean mixedIOFlag
     );
-
-    void o3setColumnRefs(long address, long initialOffset, long count);
-
-    void o3shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr);
 
     /**
      * Sorts var size vectors. This method is also responsible for sizing the destination vectors and ensuring the
@@ -144,5 +142,9 @@ public interface ColumnTypeDriver {
 
     long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem);
 
+    void setColumnRefs(long address, long initialOffset, long count);
+
     void setDataVectorEntriesToNull(long dataMemAddr, long rowCount);
+
+    void shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr);
 }

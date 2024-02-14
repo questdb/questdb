@@ -152,6 +152,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public long getDataVectorSizeAtFromFd(FilesFacade ff, int auxFd, long row) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public long getMinAuxVectorSize() {
         return 0;
     }
@@ -186,12 +191,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3setColumnRefs(long address, long initialOffset, long count) {
+    public void setColumnRefs(long address, long initialOffset, long count) {
         Vect.setVarcharColumnNullRefs(address, initialOffset, count);
     }
 
     @Override
-    public void o3shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr) {
+    public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr) {
         O3Utils.shiftCopyVarcharColumnAux(
                 shift,
                 srcAddr,

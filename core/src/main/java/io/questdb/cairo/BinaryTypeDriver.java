@@ -59,7 +59,7 @@ public class BinaryTypeDriver extends StringTypeDriver {
     }
 
     @Override
-    public void o3setColumnRefs(long address, long initialOffset, long count) {
+    public void setColumnRefs(long address, long initialOffset, long count) {
         Vect.setVarColumnRefs64Bit(address, initialOffset, count);
     }
 

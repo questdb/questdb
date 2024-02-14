@@ -465,7 +465,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile("update x set str = str where ts >= '2020-02-04'", executionContext).execute(null).await();
+                    engine.update("update x set str = str where ts >= '2020-02-04'", executionContext);
 
                     LPSZ colVer = dFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "str", -1);
                     LOG.info().$("deleting ").$(colVer).$();
@@ -607,8 +607,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     ") timestamp (ts) partition by DAY",
                             executionContext
                     );
-                    compiler.compile("alter table x add column k int", executionContext).execute(null).await();
-                    compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
+                    engine.ddl("alter table x add column k int", executionContext);
+                    engine.ddl("alter table x add column ks string", executionContext);
 
                     compiler.compile(
                             "create table y as (" +
@@ -641,8 +641,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile("insert into x select * from y", executionContext);
-                    compiler.compile("insert into x select * from z", executionContext);
+                    engine.insert("insert into x select * from y", executionContext);
+                    engine.insert("insert into x select * from z", executionContext);
 
                     assertX(compiler, executionContext, "zz");
                 });
@@ -663,8 +663,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     ") timestamp (ts) partition by DAY",
                             executionContext
                     );
-                    compiler.compile("alter table x add column k int", executionContext).execute(null).await();
-                    compiler.compile("alter table x add column ks string", executionContext).execute(null).await();
+                    engine.ddl("alter table x add column k int", executionContext);
+                    engine.ddl("alter table x add column ks string", executionContext);
 
                     compiler.compile(
                             "create table y as (" +
@@ -746,11 +746,11 @@ public class O3SplitPartitionTest extends AbstractO3Test {
         );
     }
 
-    private enum CommitModeParam {
+    public enum CommitModeParam {
         NO_SYNC, SYNC
     }
 
-    private enum MixedIOParam {
+    public enum MixedIOParam {
         MIXED_IO_ALLOWED, NO_MIXED_IO
     }
 }

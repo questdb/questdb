@@ -1451,8 +1451,9 @@ public class WalWriter implements TableWriterAPI {
 
     private void setColumnNull(int columnType, int columnIndex, long rowCount, int commitMode) {
         if (ColumnType.isVarSize(columnType)) {
-            setVarColumnDataFileNull(columnType, columnIndex, rowCount, commitMode);
-            setVarColumnFixedFileNull(columnType, columnIndex, rowCount, commitMode);
+            final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+            setVarColumnDataFileNull(columnTypeDriver, columnIndex, rowCount, commitMode);
+            setVarColumnFixedFileNull(columnTypeDriver, columnIndex, rowCount, commitMode);
         } else {
             setFixColumnNulls(columnType, columnIndex, rowCount);
         }
@@ -1478,26 +1479,23 @@ public class WalWriter implements TableWriterAPI {
         rowValueIsNotNull.setQuick(columnIndex, segmentRowCount);
     }
 
-    private void setVarColumnFixedFileNull(int columnType, int columnIndex, long rowCount, int commitMode) {
-        MemoryMA fixedSizeColumn = getAuxColumn(columnIndex);
-        long fixedSizeColSize = (rowCount + 1) * Long.BYTES;
-        fixedSizeColumn.jumpTo(fixedSizeColSize);
+    private void setVarColumnFixedFileNull(
+            ColumnTypeDriver columnTypeDriver, int columnIndex, long rowCount, int commitMode
+    ) {
+        MemoryMA auxMem = getAuxColumn(columnIndex);
+        final long auxMemSize = columnTypeDriver.getAuxVectorSize(rowCount);
+        auxMem.jumpTo(auxMemSize);
         if (rowCount > 0) {
-            long addressFixed = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), fixedSizeColSize, MEM_TAG);
-            if (columnType == ColumnType.STRING) {
-                Vect.setVarColumnRefs32Bit(addressFixed, 0, rowCount + 1);
-            } else {
-                Vect.setVarColumnRefs64Bit(addressFixed, 0, rowCount + 1);
-            }
+            final long auxMemAddr = TableUtils.mapRW(ff, auxMem.getFd(), auxMemSize, MEM_TAG);
+            columnTypeDriver.setColumnRefs(auxMemAddr, 0, rowCount);
             if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(addressFixed, fixedSizeColSize, commitMode == CommitMode.ASYNC);
+                ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
             }
-            ff.munmap(addressFixed, fixedSizeColSize, MEM_TAG);
+            ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
         }
     }
 
-    private void setVarColumnDataFileNull(int columnType, int columnIndex, long rowCount, int commitMode) {
-        final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+    private void setVarColumnDataFileNull(ColumnTypeDriver columnTypeDriver, int columnIndex, long rowCount, int commitMode) {
         MemoryMA dataMem = getDataColumn(columnIndex);
         final long varColSize = rowCount * columnTypeDriver.getDataVectorMinEntrySize();
         dataMem.jumpTo(varColSize);

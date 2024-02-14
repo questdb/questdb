@@ -3996,7 +3996,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             LOG.info().$("indexing [path=").$(path).I$();
 
                             createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, plen, true);
-                            final long partitionSize = txWriter.getPartitionSizeByPartitionTimestamp(timestamp);
+                            final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
                             final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
                             if (columnTop > -1L && partitionSize > columnTop) {
@@ -4537,7 +4537,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     )
                             )
                             .$(", part1OldSize=").$(
-                                    txWriter.getPartitionSizeByPartitionTimestamp(partitionTimestamp)
+                                    txWriter.getPartitionRowCountByTimestamp(partitionTimestamp)
                             )
                             .$(", part1NewSize=").$(srcDataOldPartitionSize)
                             .$(", part2=").$(formatPartitionForTimestamp(newPartitionTimestamp, txWriter.txn))
@@ -4548,7 +4548,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3SplitPartitionSize, txWriter.txn);
                     if (partitionTimestamp == lastPartitionTimestamp) {
                         // Close last partition without truncating it.
-                        long committedLastPartitionSize = txWriter.getPartitionSizeByPartitionTimestamp(partitionTimestamp);
+                        long committedLastPartitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
                         closeActivePartition(committedLastPartitionSize);
                     }
                 }
@@ -4915,7 +4915,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     // move count + 1 rows, to make sure index column remains n+1
                     // the data is copied back to start of the buffer, no need to set dataSize first
-                    columnTypeDriver.o3shiftCopyAuxVector(
+                    columnTypeDriver.shiftCopyAuxVector(
                             dataOffset - destOffset,
                             srcAuxMem.addressOf(columnTypeDriver.getAuxVectorOffset(columnDataRowOffset)),
                             0,
@@ -5038,7 +5038,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     colDataOffset = columnTypeDriver.getDataVectorOffset(colAuxMemAddr + alignedExtraLen, 0);
-                    columnTypeDriver.o3shiftCopyAuxVector(
+                    columnTypeDriver.shiftCopyAuxVector(
                             colDataOffset - o3dataOffset,
                             // add one row to where we shift from
                             colAuxMemAddr + alignedExtraLen + columnTypeDriver.getAuxVectorOffset(1),
@@ -5175,7 +5175,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 assert o3dstAuxAddr != 0;
                 try {
                     final long shift = o3srcDataOffset - o3dstDataOffset;
-                    columnTypeDriver.o3shiftCopyAuxVector(
+                    columnTypeDriver.shiftCopyAuxVector(
                             shift,
                             o3srcAuxMem.addressOf(committedAuxOffset),
                             0,
@@ -6258,7 +6258,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 try {
                     path.trimTo(pathLen);
-                    long partitionSize = attachTxReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp);
+                    long partitionSize = attachTxReader.getPartitionRowCountByTimestamp(partitionTimestamp);
                     if (partitionSize <= 0) {
                         throw CairoException.nonCritical()
                                 .put("partition is not preset in detached txn file [path=")
@@ -6823,7 +6823,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     setStateForTimestamp(path, ts);
                     int p = path.size();
 
-                    long partitionSize = txWriter.getPartitionSizeByPartitionTimestamp(ts);
+                    long partitionSize = txWriter.getPartitionRowCountByTimestamp(ts);
                     if (partitionSize >= 0 && ff.exists(path.$())) {
                         fixedRowCount += partitionSize;
                         lastTimestamp = ts;
@@ -6863,7 +6863,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             path.trimTo(rootLen);
                             setStateForTimestamp(path, lastTimestamp);
                             int p = path.size();
-                            transientRowCount = txWriter.getPartitionSizeByPartitionTimestamp(lastTimestamp);
+                            transientRowCount = txWriter.getPartitionRowCountByTimestamp(lastTimestamp);
 
                             // 2. read max timestamp
                             TableUtils.dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
@@ -7224,7 +7224,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (squashCount > 0) {
                 long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
                 TableUtils.setPathForPartition(path, partitionBy, targetPartition, targetPartitionNameTxn);
-                final long originalSize = txWriter.getPartitionSizeByPartitionTimestamp(targetPartition);
+                final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
 
                 boolean rw = !copyTargetFrame;
                 Frame targetFrame = null;
@@ -7238,7 +7238,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             targetFrame = partitionFrameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
                             FrameAlgebra.append(targetFrame, firstPartitionFrame, configuration.getCommitMode());
-                            addPhysicallyWrittenRows(firstPartitionFrame.getSize());
+                            addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexLo * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
                             partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
                         } finally {
@@ -7253,20 +7253,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         other.trimTo(rootLen);
                         long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
                         TableUtils.setPathForPartition(other, partitionBy, sourcePartition, sourceNameTxn);
-                        long partitionSize = txWriter.getPartitionSizeByPartitionTimestamp(sourcePartition);
+                        long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(sourcePartition);
                         lastPartitionSquashed = partitionIndexLo + 2 == txWriter.getPartitionCount();
                         if (lastPartitionSquashed) {
                             closeActivePartition(false);
-                            partitionSize = txWriter.getTransientRowCount() + txWriter.getLagRowCount();
+                            partitionRowCount = txWriter.getTransientRowCount() + txWriter.getLagRowCount();
                         }
 
-                        assert partitionSize > 0;
+                        assert partitionRowCount > 0;
+
                         LOG.info().$("squashing partitions [table=").$(tableToken)
-                                .$(", target=").$(formatPartitionForTimestamp(targetPartition, targetPartitionNameTxn)).$(", targetSize=").$(targetFrame.getSize())
-                                .$(", source=").$(formatPartitionForTimestamp(sourcePartition, sourceNameTxn)).$(", sourceSize=").$(partitionSize).I$();
-                        try (Frame sourceFrame = partitionFrameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionSize)) {
+                                .$(", target=").$(formatPartitionForTimestamp(targetPartition, targetPartitionNameTxn))
+                                .$(", targetSize=").$(targetFrame.getRowCount())
+                                .$(", source=").$(formatPartitionForTimestamp(sourcePartition, sourceNameTxn))
+                                .$(", sourceSize=").$(partitionRowCount)
+                                .I$();
+
+                        try (Frame sourceFrame = partitionFrameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionRowCount)) {
                             FrameAlgebra.append(targetFrame, sourceFrame, configuration.getCommitMode());
-                            addPhysicallyWrittenRows(sourceFrame.getSize());
+                            addPhysicallyWrittenRows(sourceFrame.getRowCount());
                         } catch (Throwable th) {
                             LOG.critical().$("partition squashing failed [table=").$(tableToken).$(", error=").$(th).I$();
                             throw th;
@@ -7281,10 +7286,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     }
 
-                    txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getSize());
+                    txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getRowCount());
                     if (lastPartitionSquashed) {
                         // last partition is squashed, adjust fixed/transient row sizes
-                        long newTransientRowCount = targetFrame.getSize() - txWriter.getLagRowCount();
+                        long newTransientRowCount = targetFrame.getRowCount() - txWriter.getLagRowCount();
                         assert newTransientRowCount >= 0;
                         txWriter.fixedRowCount += txWriter.getTransientRowCount() - newTransientRowCount;
                         assert txWriter.fixedRowCount >= 0;

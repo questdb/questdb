@@ -466,7 +466,7 @@ public class AbstractO3Test extends AbstractTest {
         }
     }
 
-    protected enum ParallelMode {
+    public enum ParallelMode {
         CONTENDED, PARALLEL
     }
 }

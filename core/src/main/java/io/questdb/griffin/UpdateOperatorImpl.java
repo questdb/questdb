@@ -609,7 +609,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             long copyToOffset = dstDataMem.getAppendOffset();
             dstDataMem.putBlockOfBytes(srcDataAddr, srcDataSize);
             dstFixMem.extend(columnTypeDriver.getAuxVectorSize(hiRowNum));
-            columnTypeDriver.o3shiftCopyAuxVector(
+            columnTypeDriver.shiftCopyAuxVector(
                     dataOffsetLo - copyToOffset,
                     srcFixMem.addressOf(columnTypeDriver.getAuxVectorOffset(loRowNum + 1)),
                     0,
