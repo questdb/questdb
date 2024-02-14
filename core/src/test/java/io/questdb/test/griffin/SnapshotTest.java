@@ -235,7 +235,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.clear();
 
             // create snapshot.txt file
-            var ff = configuration.getFilesFacade();
+            FilesFacade ff = configuration.getFilesFacade();
             path.trimTo(rootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT);
             int fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
             Assert.assertTrue(fd > 0);
