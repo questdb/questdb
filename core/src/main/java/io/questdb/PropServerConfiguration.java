@@ -247,6 +247,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean snapshotRecoveryEnabled;
     private final String snapshotRoot;
     private final long spinLockTimeout;
+    private final int sqlAsOfJoinLookahead;
     private final int sqlBindVariablePoolSize;
     private final int sqlCharacterStoreCapacity;
     private final int sqlCharacterStoreSequencePoolCapacity;
@@ -621,9 +622,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
         int cpuSpare = 0;
-        if (cpuAvailable > 16) {
+        if (cpuAvailable > 32) {
             cpuSpare = 2;
-        } else if (cpuAvailable > 8) {
+        } else if (cpuAvailable > 16) {
             cpuSpare = 1;
         }
 
@@ -924,6 +925,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
             this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 1048576);
             this.sqlHashJoinLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
+            this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 100);
             this.sqlSortValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216);
             this.sqlSortValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.workStealTimeoutNanos = getLong(properties, env, PropertyKey.CAIRO_WORK_STEAL_TIMEOUT_NANOS, 10_000);
@@ -1146,7 +1148,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     lineTcpMsgBufferSize = lineTcpMaxMeasurementSize;
                 }
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
-                this.lineTcpWriterWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_COUNT, 1);
+                this.lineTcpWriterWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_COUNT, 0);
                 cpuUsed += this.lineTcpWriterWorkerCount;
                 this.lineTcpWriterWorkerAffinity = getAffinity(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_AFFINITY, lineTcpWriterWorkerCount);
                 this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_WRITER_HALT_ON_ERROR, false);
@@ -1219,7 +1221,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
             this.ilpAutoCreateNewTables = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_TABLES, true);
 
-            this.sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(2, cpuAvailable - cpuSpare - cpuUsed));
+            this.sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(4, cpuAvailable - cpuSpare - cpuUsed));
             this.sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.SHARED_WORKER_AFFINITY, sharedWorkerCount);
             this.sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
             this.sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 10);
@@ -2356,6 +2358,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSpinLockTimeout() {
             return spinLockTimeout;
+        }
+
+        @Override
+        public int getSqlAsOfJoinLookAhead() {
+            return sqlAsOfJoinLookahead;
         }
 
         @Override

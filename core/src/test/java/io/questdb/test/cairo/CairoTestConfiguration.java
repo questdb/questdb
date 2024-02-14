@@ -52,20 +52,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    protected CairoConfiguration getDelegate() {
-        return overrides.getConfiguration(root);
-    }
-
-    @Override
-    public @NotNull String getRoot() {
-        return root;
-    }
-
-    @Override
-    public @NotNull CharSequence getSnapshotRoot() {
-        return snapshotRoot;
-    }
-    @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return overrides.getCircuitBreakerConfiguration() != null ? overrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
     }
@@ -118,8 +104,18 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
+    public @NotNull String getRoot() {
+        return root;
+    }
+
+    @Override
     public @NotNull RostiAllocFacade getRostiAllocFacade() {
         return overrides.getRostiAllocFacade() != null ? overrides.getRostiAllocFacade() : super.getRostiAllocFacade();
+    }
+
+    @Override
+    public @NotNull CharSequence getSnapshotRoot() {
+        return snapshotRoot;
     }
 
     @Override
@@ -150,5 +146,10 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public boolean mangleTableDirNames() {
         return overrides.mangleTableDirNames();
+    }
+
+    @Override
+    protected CairoConfiguration getDelegate() {
+        return overrides.getConfiguration(root);
     }
 }

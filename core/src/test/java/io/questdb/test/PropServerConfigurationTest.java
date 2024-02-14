@@ -203,6 +203,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlLatestByRowCount());
         Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlHashJoinLightValuePageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlHashJoinLightValueMaxPages());
+        Assert.assertEquals(100, configuration.getCairoConfiguration().getSqlAsOfJoinLookAhead());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortValuePageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortValueMaxPages());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getWorkStealTimeoutNanos());
@@ -311,10 +312,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
         Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
         Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getWriterQueueCapacity());
-        Assert.assertEquals(1, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
+        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
         Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getSleepThreshold());
-        Assert.assertArrayEquals(new int[]{-1}, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerAffinity());
+        Assert.assertArrayEquals(new int[]{}, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerAffinity());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().haltOnError());
         Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getSleepThreshold());
@@ -1033,6 +1034,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(10000, configuration.getCairoConfiguration().getSqlLatestByRowCount());
             Assert.assertEquals(2 * 1024 * 1024, configuration.getCairoConfiguration().getSqlHashJoinLightValuePageSize());
             Assert.assertEquals(1025, configuration.getCairoConfiguration().getSqlHashJoinLightValueMaxPages());
+            Assert.assertEquals(42, configuration.getCairoConfiguration().getSqlAsOfJoinLookAhead());
             Assert.assertEquals(4 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortValuePageSize());
             Assert.assertEquals(1028, configuration.getCairoConfiguration().getSqlSortValueMaxPages());
             Assert.assertEquals(1000000, configuration.getCairoConfiguration().getWorkStealTimeoutNanos());
@@ -1379,8 +1381,16 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("this.will.not.throw", "Test");
         properties.setProperty("this.will.also.not", "throw");
-
         newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+    }
+
+    @Test
+    public void testMinimum4SharedWorkers() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        FilesFacade ff = configuration.getCairoConfiguration().getFilesFacade();
+        Assert.assertEquals("shared", configuration.getWorkerPoolConfiguration().getPoolName());
+        Assert.assertTrue("must be minimum of 4 shared workers", configuration.getWorkerPoolConfiguration().getWorkerCount() >= 4);
     }
 
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws JsonException {

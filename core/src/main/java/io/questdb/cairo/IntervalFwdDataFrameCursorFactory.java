@@ -79,6 +79,11 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     }
 
     @Override
+    public boolean hasInterval() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         if (sink.getOrder() == ORDER_DESC) {
             sink.type("Interval backward scan");
