@@ -622,9 +622,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
         int cpuSpare = 0;
-        if (cpuAvailable > 16) {
+        if (cpuAvailable > 32) {
             cpuSpare = 2;
-        } else if (cpuAvailable > 8) {
+        } else if (cpuAvailable > 16) {
             cpuSpare = 1;
         }
 
