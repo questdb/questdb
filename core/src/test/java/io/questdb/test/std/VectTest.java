@@ -25,14 +25,20 @@
 package io.questdb.test.std;
 
 import io.questdb.cairo.BinarySearch;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DedupColumnCommitAddresses;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.ClassRule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import static io.questdb.cairo.AbstractIntervalDataFrameCursor.SCAN_UP;
 import static io.questdb.cairo.BinarySearch.SCAN_DOWN;
@@ -40,6 +46,9 @@ import static io.questdb.cairo.BinarySearch.SCAN_DOWN;
 public class VectTest {
 
     private Rnd rnd = new Rnd();
+
+    @ClassRule
+    public static final TemporaryFolder temp = new TemporaryFolder();
 
     @Before
     public void setUp() {
@@ -397,6 +406,120 @@ public class VectTest {
             Unsafe.free(from, buffSize, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(to, maxSize, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testOooMergeCopyStrColumn() throws Exception {
+        int rowCount = 10_000;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+        long pageSize = Files.PAGE_SIZE;
+        try (Path dataPathA = new Path().of(temp.newFile().getAbsolutePath()).$();
+             Path auxPathA = new Path().of(temp.newFile().getAbsolutePath()).$();
+             Path dataPathB = new Path().of(temp.newFile().getAbsolutePath()).$();
+             Path auxPathB = new Path().of(temp.newFile().getAbsolutePath()).$();
+             DirectLongList index = new DirectLongList(rowCount * 4, MemoryTag.NATIVE_DEFAULT);
+             MemoryCMARW dataMemA = new MemoryCMARWImpl(ff, dataPathA, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW auxMemA = new MemoryCMARWImpl(ff, auxPathA, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW dataMemB = new MemoryCMARWImpl(ff, dataPathB, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW auxMemB = new MemoryCMARWImpl(ff, auxPathB, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+            auxMemA.putLong(0);
+            auxMemB.putLong(0);
+
+            StringSink sink = new StringSink();
+            int maxLen = 50; // exclusive
+            int nullModA = 17;
+            int nullModB = 23;
+            for (int i = 0; i < rowCount; i++) {
+                int len = i % maxLen;
+
+                if (i % nullModA == 0) {
+                    auxMemA.putLong(dataMemA.putStr(null));
+                } else {
+                    sink.clear();
+                    sink.repeat("a", len);
+                    auxMemA.putLong(dataMemA.putStr(sink));
+                }
+
+                if (i % nullModB == 0) {
+                    auxMemB.putLong(dataMemB.putStr(null));
+                } else {
+                    sink.clear();
+                    sink.repeat("b", len);
+                    auxMemB.putLong(dataMemB.putStr(sink));
+                }
+                index.add(i * 2); // rowA synthetic timestamp
+                index.add(i); // rowA index
+
+                index.add(i * 2 + 1); // rowB synthetic timestamp
+                index.add(i | 1L << 63); // rowB index
+            }
+
+            String[] strings = asStringArray(dataMemA, auxMemA, rowCount);
+            for (int i = 0; i < rowCount; i++) {
+                if (i % nullModA == 0) {
+                    Assert.assertNull(strings[i]);
+                } else {
+                    sink.clear();
+                    sink.repeat("a", i % maxLen);
+                    TestUtils.assertEquals(sink, strings[i]);
+                }
+            }
+
+            strings = asStringArray(dataMemB, auxMemB, rowCount);
+            for (int i = 0; i < rowCount; i++) {
+                if (i % nullModB == 0) {
+                    Assert.assertNull(strings[i]);
+                } else {
+                    sink.clear();
+                    sink.repeat("b", i % maxLen);
+                    TestUtils.assertEquals(sink, strings[i]);
+                }
+            }
+
+            try (Path dataPathDest = new Path().of(temp.newFile().getAbsolutePath()).$();
+                 Path auxPathDest = new Path().of(temp.newFile().getAbsolutePath()).$();
+                 MemoryCMARW dataMemDest = new MemoryCMARWImpl(ff, dataPathDest, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+                 MemoryCMARW auxMemDest = new MemoryCMARWImpl(ff, auxPathDest, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+
+                auxMemDest.extend(2 * rowCount * 8L + 8L);
+                dataMemDest.extend(dataMemA.getAppendOffset() + dataMemB.getAppendOffset());
+
+                Vect.oooMergeCopyStrColumn(index.getAddress(), 2 * rowCount,
+                        auxMemA.addressOf(0), dataMemA.addressOf(0),
+                        auxMemB.addressOf(0), dataMemB.addressOf(0),
+                        auxMemDest.addressOf(0), dataMemDest.addressOf(0),
+                        0);
+
+
+                strings = asStringArray(dataMemDest, auxMemDest, rowCount * 2);
+                for (int i = 0; i < rowCount; i++) {
+                    if (i % nullModB == 0) {
+                        Assert.assertNull(strings[i * 2]);
+                    } else {
+                        sink.clear();
+                        sink.repeat("b", i % maxLen);
+                        TestUtils.assertEquals(sink, strings[i * 2]);
+                    }
+
+                    if (i % nullModA == 0) {
+                        Assert.assertNull(strings[i * 2 + 1]);
+                    } else {
+                        sink.clear();
+                        sink.repeat("a", i % maxLen);
+                        TestUtils.assertEquals(sink, strings[i * 2 + 1]);
+                    }
+                }
+            }
+        }
+    }
+
+    private String[] asStringArray(MemoryCMARW dataMemA, MemoryCMARW auxMemA, int rowCount) {
+        String[] strings = new String[rowCount];
+        for (int i = 0; i < rowCount; i++) {
+            CharSequence cs = dataMemA.getStr(auxMemA.getLong(i * 8L));
+            strings[i] = Chars.toString(cs);
+        }
+        return strings;
     }
 
     @Test
