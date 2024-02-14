@@ -408,7 +408,12 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             memFile.smallFile(ff, srcPath, MemoryTag.MMAP_DEFAULT);
 
             final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
-            final CharSequence snapshotInstanceId = memFile.getStr(0);
+            CharSequence snapshotInstanceId = memFile.getStr(0);
+            if (Chars.empty(snapshotInstanceId)) {
+                srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT).$();
+                snapshotInstanceId = TableUtils.readText(ff, srcPath);
+            }
+
             if (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {
                 LOG.info()
                         .$("skipping snapshot recovery [currentId=").$(currentInstanceId)
