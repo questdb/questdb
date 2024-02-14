@@ -410,8 +410,12 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
             CharSequence snapshotInstanceId = memFile.getStr(0);
             if (Chars.empty(snapshotInstanceId)) {
+                // Check _snapshot.txt file too reading it as a text file.
                 srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT).$();
-                snapshotInstanceId = TableUtils.readText(ff, srcPath);
+                String snapshotIdTxt = TableUtils.readText(ff, srcPath);
+                if (snapshotIdTxt != null) {
+                    snapshotInstanceId = snapshotIdTxt.trim();
+                }
             }
 
             if (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {
