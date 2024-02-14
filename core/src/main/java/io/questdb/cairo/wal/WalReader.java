@@ -184,8 +184,6 @@ public class WalReader implements Closeable {
 
                     MemoryMR auxMem = columns.getQuick(auxMemIndex);
                     auxMem = openOrCreateMemory(path, columns, auxMemIndex, auxMem, auxMemSize);
-
-                    // todo: check for usages where we have mem with artificially extracted address
                     final long dataMemSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), rowCount - 1);
                     TableUtils.dFile(path.trimTo(pathLen), columnName);
                     openOrCreateMemory(path, columns, dataMemIndex, dataMem, dataMemSize);

@@ -325,14 +325,6 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         }
     }
 
-    private static int getFixedColumnSize(int columnType) {
-        // todo: investigate how this is used, we should not be returning shl for varsize
-        if (isVarSize(columnType)) {
-            return 3;
-        }
-        return ColumnType.pow2SizeOf(columnType);
-    }
-
     private static void updateEffectiveColumnTops(
             TableWriter tableWriter,
             int partitionIndex,
@@ -496,7 +488,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     ) {
         assert newColumnTop <= oldColumnTop || oldColumnTop < 0;
 
-        final int shl = getFixedColumnSize(columnType);
+        final int shl = ColumnType.pow2SizeOf(columnType);
 
         if (oldColumnTop == -1 && prevRow > 0) {
             // Column did not exist at the partition
