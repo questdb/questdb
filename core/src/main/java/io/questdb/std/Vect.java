@@ -251,6 +251,18 @@ public final class Vect {
             long dstVarOffset
     );
 
+    public static native void oooMergeCopyVarcharColumn(
+            long mergeIndexAddr,
+            long mergeIndexSize,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long dstFixAddr,
+            long dstVarAddr,
+            long dstVarOffset
+    );
+
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
     public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy);

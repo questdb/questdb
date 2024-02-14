@@ -120,6 +120,10 @@ DECLARE_DISPATCHER_TYPE (merge_copy_var_column_int32, index_t *merge_index, int6
                          int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
                          int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
 
+DECLARE_DISPATCHER_TYPE (merge_copy_varchar_column, index_t *merge_index, int64_t merge_index_size,
+                         int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
+                         int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
+
 DECLARE_DISPATCHER_TYPE (merge_copy_var_column_int64, index_t *merge_index, int64_t merge_index_size,
                          int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
                          int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
