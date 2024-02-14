@@ -149,7 +149,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 final Utf8StringSink utf8Sink = new Utf8StringSink();
                 final Rnd rnd = new Rnd();
 
-                final int n = 100;
+                final int n = 1000;
                 for (int i = 0; i < n; i++) {
                     tsIndexMem.putLong128(0, n - i - 1);
 
@@ -201,7 +201,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 final Utf8StringSink utf8Sink = new Utf8StringSink();
                 final Rnd rnd = new Rnd();
 
-                final int n = 100;
+                final int n = 1000;
                 for (int i = 0; i < n; i++) {
                     tsIndexMem.putLong128(0, i);
 
