@@ -87,6 +87,8 @@ DECLARE_DISPATCHER_TYPE(set_var_refs_64_bit, int64_t *data, int64_t offset, int6
 
 DECLARE_DISPATCHER_TYPE(set_var_refs_32_bit, int64_t *data, int64_t offset, int64_t count);
 
+DECLARE_DISPATCHER_TYPE(set_varchar_null_refs, int64_t *aux, int64_t offset, int64_t count);
+
 DECLARE_DISPATCHER_TYPE(set_memory_vanilla_int64, int64_t *data, const int64_t value, const int64_t count);
 
 DECLARE_DISPATCHER_TYPE(set_memory_vanilla_int32, int32_t *data, const int32_t value, const int64_t count);
@@ -134,7 +136,6 @@ DECLARE_DISPATCHER_TYPE(platform_memmove, void *dst, const void *src, const size
 template<typename T>
 inline void
 merge_shuffle_vanilla(const T *src1, const T *src2, T *dest, const index_t *index, const int64_t count) {
-
     const T *sources[] = {src2, src1};
     for (int64_t i = 0; i < count; i++) {
         MM_PREFETCH_T0(index + i + 64);
@@ -148,7 +149,6 @@ merge_shuffle_vanilla(const T *src1, const T *src2, T *dest, const index_t *inde
 // 7-8
 template<class T>
 inline void re_shuffle_vanilla(const T *src, T *dest, const index_t *index, const int64_t count) {
-
     for (int64_t i = 0; i < count; i++) {
         MM_PREFETCH_T0(index + i + 64);
         dest[i] = src[index[i].i];

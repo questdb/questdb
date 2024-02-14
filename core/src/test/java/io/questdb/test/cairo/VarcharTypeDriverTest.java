@@ -44,12 +44,38 @@ import org.junit.Test;
 public class VarcharTypeDriverTest extends AbstractTest {
 
     @Test
+    public void testO3setColumnRefs() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final VarcharTypeDriver driver = new VarcharTypeDriver();
+            for (int n = 1; n < 50; n++) {
+                try (
+                        MemoryCARW auxMem = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW dataMem = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+                ) {
+                    long auxOffset = n / 4;
+                    long dataOffset = n / 2;
+                    auxMem.resize((n + auxOffset) * 2 * Long.BYTES);
+                    dataMem.resize(dataOffset);
+
+                    driver.o3setColumnRefs(auxMem.addressOf(auxOffset * 2 * Long.BYTES), dataOffset, n);
+
+                    for (int i = 0; i < n; i++) {
+                        Assert.assertNull(Utf8s.varcharRead((i + auxOffset) * 16L, dataMem, auxMem, 1));
+                        Assert.assertEquals(dataOffset, VarcharTypeDriver.varcharGetDataVectorSize(auxMem, (i + auxOffset) * 16L));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testO3shiftCopyAuxVector() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final VarcharTypeDriver driver = new VarcharTypeDriver();
             final Utf8StringSink utf8Sink = new Utf8StringSink();
             final LongList expectedOffsets = new LongList();
-            for (int n = 1; n < 50; n++) {
+            final int auxLoBase = 3;
+            for (int n = auxLoBase; n < 50; n++) {
                 try (
                         MemoryARW auxMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
                         MemoryAR dataMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
@@ -57,22 +83,25 @@ public class VarcharTypeDriverTest extends AbstractTest {
                         MemoryAR dataMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
                 ) {
                     final int len = n % 16;
+                    final int auxLo = n % auxLoBase;
                     final int shift = -n;
                     expectedOffsets.clear();
                     for (int i = 0; i < n; i++) {
                         utf8Sink.clear();
                         utf8Sink.repeat("a", len);
                         Utf8s.varcharAppend(dataMemA, auxMemA, utf8Sink);
-                        expectedOffsets.add(dataMemA.getAppendOffset());
+                        if (i >= auxLo) {
+                            expectedOffsets.add(dataMemA.getAppendOffset());
+                        }
                     }
 
                     utf8Sink.clear();
                     utf8Sink.repeat("a", len);
                     final String expectedStr = utf8Sink.toString();
 
-                    for (int i = 0; i < n; i++) {
+                    for (int i = auxLo; i < n; i++) {
                         Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMemA, auxMemA, 1);
-                        Assert.assertEquals(expectedOffsets.getQuick(i), VarcharTypeDriver.varcharGetDataVectorSize(auxMemA, i * 16L));
+                        Assert.assertEquals(expectedOffsets.getQuick(i - auxLo), VarcharTypeDriver.varcharGetDataVectorSize(auxMemA, i * 16L));
                         Assert.assertNotNull(varchar);
                         TestUtils.assertEquals(expectedStr, varchar.asAsciiCharSequence());
                         Assert.assertTrue(varchar.isAscii());
@@ -82,9 +111,9 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     Vect.memcpy(dataMemB.addressOf(-shift), dataMemA.addressOf(0), dataMemA.size());
                     auxMemB.extend(auxMemA.size());
 
-                    driver.o3shiftCopyAuxVector(shift, auxMemA.addressOf(0), 0, n, auxMemB.addressOf(0));
+                    driver.o3shiftCopyAuxVector(shift, auxMemA.addressOf(0), auxLo, n, auxMemB.addressOf(0));
 
-                    for (int i = 0; i < n; i++) {
+                    for (int i = 0; i < n - auxLo; i++) {
                         Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMemB, auxMemB, 1);
                         Assert.assertEquals("offset mismatch: i=" + i + ", n=" + n, expectedOffsets.getQuick(i) - shift, VarcharTypeDriver.varcharGetDataVectorSize(auxMemB, i * 16L));
                         Assert.assertNotNull(varchar);
@@ -101,32 +130,36 @@ public class VarcharTypeDriverTest extends AbstractTest {
         TestUtils.assertMemoryLeak(() -> {
             final VarcharTypeDriver driver = new VarcharTypeDriver();
             final LongList expectedOffsets = new LongList();
-            for (int n = 1; n < 50; n++) {
+            final int auxLoBase = 3;
+            for (int n = auxLoBase; n < 50; n++) {
                 try (
                         MemoryARW auxMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
                         MemoryAR dataMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
                         MemoryARW auxMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
                         MemoryAR dataMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
                 ) {
+                    final int auxLo = n % auxLoBase;
                     final int shift = -42;
                     expectedOffsets.clear();
                     for (int i = 0; i < n; i++) {
                         Utf8s.varcharAppend(dataMemA, auxMemA, null);
-                        expectedOffsets.add(dataMemA.getAppendOffset());
+                        if (i >= auxLo) {
+                            expectedOffsets.add(dataMemA.getAppendOffset());
+                        }
                     }
 
-                    for (int i = 0; i < n; i++) {
+                    for (int i = auxLo; i < n; i++) {
                         Assert.assertNull(Utf8s.varcharRead(i * 16L, dataMemA, auxMemA, 1));
-                        Assert.assertEquals(expectedOffsets.getQuick(i), VarcharTypeDriver.varcharGetDataVectorSize(auxMemA, i * 16L));
+                        Assert.assertEquals(expectedOffsets.getQuick(i - auxLo), VarcharTypeDriver.varcharGetDataVectorSize(auxMemA, i * 16L));
                     }
 
                     dataMemB.extend(dataMemA.size() - shift);
                     Vect.memcpy(dataMemB.addressOf(-shift), dataMemA.addressOf(0), dataMemA.size());
                     auxMemB.extend(auxMemA.size());
 
-                    driver.o3shiftCopyAuxVector(shift, auxMemA.addressOf(0), 0, n, auxMemB.addressOf(0));
+                    driver.o3shiftCopyAuxVector(shift, auxMemA.addressOf(0), auxLo, n, auxMemB.addressOf(0));
 
-                    for (int i = 0; i < n; i++) {
+                    for (int i = 0; i < n - auxLo; i++) {
                         Assert.assertNull(Utf8s.varcharRead(i * 16L, dataMemB, auxMemB, 1));
                         Assert.assertEquals("offset mismatch: i=" + i + ", n=" + n, expectedOffsets.getQuick(i) - shift, VarcharTypeDriver.varcharGetDataVectorSize(auxMemB, i * 16L));
                     }

@@ -332,7 +332,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // now set the "empty" bit of fixed size column with references to those
                     // null strings we just added
-                    // Call to setVarColumnRefs32Bit must be after shiftCopyFixedSizeColumnData
+                    // Call to o3setColumnRefs must be after o3shiftCopyAuxVector
                     // because data first have to be shifted before overwritten
                     columnTypeDriver.o3setColumnRefs(srcAuxAddr + oldAuxSize, 0, srcDataTop);
                     srcDataTop = 0;

@@ -274,6 +274,8 @@ public final class Vect {
 
     public static native void setVarColumnRefs64Bit(long address, long initialOffset, long count);
 
+    public static native void setVarcharColumnNullRefs(long address, long initialOffset, long count);
+
     public static native void shiftCopyFixedSizeColumnData(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr);
 
     public static native void shiftCopyVarcharColumnAux(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr);

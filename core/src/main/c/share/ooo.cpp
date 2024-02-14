@@ -1110,6 +1110,19 @@ Java_io_questdb_std_Vect_copyFromTimestampIndex(JNIEnv *env, jclass cl, jlong pI
     });
 }
 
+DECLARE_DISPATCHER(set_varchar_null_refs) ;
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setVarcharColumnNullRefs(JNIEnv *env, jclass cl, jlong aux, jlong offset,
+                                                  jlong count) {
+    measure_time(30, [=]() {
+        set_varchar_null_refs(
+                reinterpret_cast<int64_t *>(aux),
+                __JLONG_REINTERPRET_CAST__(int64_t, offset),
+                __JLONG_REINTERPRET_CAST__(int64_t, count)
+        );
+    });
+}
+
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_getPerformanceCounter(JNIEnv *env, jclass cl, jint counterIndex) {
 #ifdef OOO_CPP_PROFILE_TIMING

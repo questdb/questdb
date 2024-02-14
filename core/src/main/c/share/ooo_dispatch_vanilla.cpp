@@ -252,3 +252,11 @@ void copy_index_timestamp(index_t *index, int64_t index_lo, int64_t index_hi, in
         dest[i] = index[index_lo + i].ts;
     }
 }
+
+// 30
+void set_varchar_null_refs(int64_t *aux, int64_t offset, int64_t count) {
+    for (int64_t i = 0; i < 2 * count; i += 2) {
+        aux[i] = 4;                 // null flag
+        aux[i + 1] = offset << 16;  // offset for subsequent null varchars stays the same
+    }
+}

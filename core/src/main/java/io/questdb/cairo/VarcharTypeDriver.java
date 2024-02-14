@@ -187,7 +187,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void o3setColumnRefs(long address, long initialOffset, long count) {
-        throw new UnsupportedOperationException();
+        Vect.setVarcharColumnNullRefs(address, initialOffset, count);
     }
 
     @Override
