@@ -30,10 +30,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.ColumnType.VARCHAR_AUX_SHL;
 
@@ -135,6 +132,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return storageRowCount << VARCHAR_AUX_SHL;
     }
 
+    @Override
+    public long getDataVectorMinEntrySize() {
+        return 0;
+    }
+
     public long getDataVectorOffset(long auxMemAddr, long row) {
         return varcharGetDataOffset(auxMemAddr + (row << VARCHAR_AUX_SHL));
     }
@@ -170,54 +172,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3PartitionMerge(
-            Path pathToNewPartition,
-            int pplen,
-            CharSequence columnName,
-            AtomicInteger columnCounter,
-            AtomicInteger partCounter,
-            int columnType,
-            long timestampMergeIndexAddr,
-            long timestampMergeIndexSize,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long srcOooLo,
-            long srcOooHi,
-            long srcOooMax,
-            long oooPartitionMin,
-            long oooPartitionHi,
-            long srcDataTop,
-            long srcDataMax,
-            int prefixType,
-            long prefixLo,
-            long prefixHi,
-            int mergeType,
-            long mergeOOOLo,
-            long mergeOOOHi,
-            long mergeDataLo,
-            long mergeDataHi,
-            long mergeLen,
-            int suffixType,
-            long suffixLo,
-            long suffixHi,
-            int indexBlockCapacity,
-            int srcTimestampFd,
-            long srcTimestampAddr,
-            long srcTimestampSize,
-            int srcDataFixFd,
-            int srcDataVarFd,
-            long srcDataNewPartitionSize,
-            long srcDataOldPartitionSize,
-            long o3SplitPartitionSize,
-            TableWriter tableWriter,
-            long colTopSinkAddr,
-            long columnNameTxn,
-            long partitionUpdateSinkAddr
-    ) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void o3copyAuxVector(FilesFacade ff, long src, long srcLo, long srcHi, long dstFixAddr, long dstFixFileOffset, int dstFd, boolean mixedIOFlag) {
         final long len = (srcHi - srcLo + 1) << VARCHAR_AUX_SHL;
         final long fromAddress = src + (srcLo << VARCHAR_AUX_SHL);
@@ -229,6 +183,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         } else {
             Vect.memcpy(dstFixAddr, fromAddress, len);
         }
+    }
+
+    @Override
+    public void o3setColumnRefs(long address, long initialOffset, long count) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -295,12 +254,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem, boolean doubleAllocate) {
+    public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
             long auxVectorSize = getAuxVectorSize(pos);
-            if (doubleAllocate) {
-                auxMem.allocate(auxVectorSize);
-            }
 
             // first we need to calculate already used space. both data and aux vectors.
             long auxVectorOffset = getAuxVectorOffset(pos - 1); // the last entry we are NOT overwriting
@@ -309,9 +265,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             long dataVectorSize = varcharGetDataVectorSize(auxEntryPtr);
             long totalDataSizeBytes = dataVectorSize + auxVectorSize;
 
-            if (doubleAllocate) {
-                dataMem.allocate(dataVectorSize);
-            }
             auxVectorOffset = getAuxVectorOffset(pos); // the entry we are about to overwrite with the next append
             auxMem.jumpTo(auxVectorOffset);
             dataMem.jumpTo(dataVectorSize);

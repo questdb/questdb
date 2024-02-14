@@ -27,9 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 public interface ColumnTypeDriver {
     void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts);
@@ -95,51 +92,6 @@ public interface ColumnTypeDriver {
             long dstDataOffset
     );
 
-    void o3PartitionMerge(
-            Path pathToNewPartition,
-            int pplen,
-            CharSequence columnName,
-            AtomicInteger columnCounter,
-            AtomicInteger partCounter,
-            int columnType,
-            long timestampMergeIndexAddr,
-            long timestampMergeIndexSize,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long srcOooLo,
-            long srcOooHi,
-            long srcOooMax,
-            long oooPartitionMin,
-            long oooPartitionHi,
-            long srcDataTop,
-            long srcDataMax,
-            int prefixType,
-            long prefixLo,
-            long prefixHi,
-            int mergeType,
-            long mergeOOOLo,
-            long mergeOOOHi,
-            long mergeDataLo,
-            long mergeDataHi,
-            long mergeLen,
-            int suffixType,
-            long suffixLo,
-            long suffixHi,
-            int indexBlockCapacity,
-            int srcTimestampFd,
-            long srcTimestampAddr,
-            long srcTimestampSize,
-            int srcDataFixFd,
-            int srcDataVarFd,
-            long srcDataNewPartitionSize,
-            long srcDataOldPartitionSize,
-            long o3SplitPartitionSize,
-            TableWriter tableWriter,
-            long colTopSinkAddr,
-            long columnNameTxn,
-            long partitionUpdateSinkAddr
-    );
-
     void o3copyAuxVector(
             FilesFacade ff,
             long src,
@@ -152,6 +104,13 @@ public interface ColumnTypeDriver {
     );
 
     void o3shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr);
+
+    /**
+     * Minimum entry size in the data vector, typically allocated for storing nulls.
+     *
+     * @return number of bytes required to store null value.
+     */
+    long getDataVectorMinEntrySize();
 
     /**
      * Sorts var size vectors. This method is also responsible for sizing the destination vectors and ensuring the
@@ -175,7 +134,7 @@ public interface ColumnTypeDriver {
 
     /**
      * For now this method is called by WAL writer when data is rolled back (or row is cancelled). The
-     * expectation of the WAL writer is to have append position set correctly on aux mem and size of data vector
+     * expectation of the WAL writer is to have the append position set correctly on aux mem and size of data vector
      * provided correctly.
      *
      * @param auxMem
@@ -184,5 +143,7 @@ public interface ColumnTypeDriver {
      */
     long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount);
 
-    long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem, boolean doubleAllocate);
+    long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem);
+
+    void o3setColumnRefs(long address, long initialOffset, long count);
 }

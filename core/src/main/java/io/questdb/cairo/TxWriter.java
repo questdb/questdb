@@ -294,13 +294,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         commit(symbolCountProviders);
     }
 
+    public void resetLagAppliedRows() {
+        txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
+        txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MAX_VALUE);
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MIN_VALUE);
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0));
+    }
+
     public void resetLagValuesUnsafe() {
         txMemBase.putLong(readBaseOffset + TX_OFFSET_SEQ_TXN_64, 0);
         txMemBase.putInt(readBaseOffset + TX_OFFSET_CHECKSUM_32, 0);
-        txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
-        txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
-        txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, 0);
-        txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, 0);
+        resetLagAppliedRows();
     }
 
     public void resetStructureVersionUnsafe() {

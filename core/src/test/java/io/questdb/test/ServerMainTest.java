@@ -340,6 +340,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.hash.join.light.value.page.size\tQDB_CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.hash.join.value.max.pages\tQDB_CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.hash.join.value.page.size\tQDB_CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.asof.join.lookahead\tQDB_CAIRO_SQL_ASOF_JOIN_LOOKAHEAD\t100\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.insert.model.pool.capacity\tQDB_CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.jit.bind.vars.memory.max.pages\tQDB_CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.jit.bind.vars.memory.page.size\tQDB_CAIRO_SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE\t4096\tdefault\tfalse\tfalse\n" +

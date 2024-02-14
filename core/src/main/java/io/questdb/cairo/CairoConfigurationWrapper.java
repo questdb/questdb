@@ -49,10 +49,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     public CairoConfigurationWrapper(@NotNull CairoConfiguration delegate) {
         this.delegate = delegate;
     }
-    
-    protected CairoConfiguration getDelegate() {
-        return delegate;
-    }
 
     @Override
     public boolean attachPartitionCopy() {
@@ -547,6 +543,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getSpinLockTimeout() {
         return getDelegate().getSpinLockTimeout();
+    }
+
+    @Override
+    public int getSqlAsOfJoinLookAhead() {
+        return getDelegate().getSqlAsOfJoinLookAhead();
     }
 
     @Override
@@ -1076,5 +1077,9 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
         getDelegate().populateSettings(settings);
+    }
+
+    protected CairoConfiguration getDelegate() {
+        return delegate;
     }
 }

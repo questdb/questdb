@@ -114,7 +114,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         }
 
         factory = select("select * from x");
-        Assert.assertTrue(factory.supportPageFrameCursor());
+        Assert.assertTrue(factory.supportsPageFrameCursor());
         metadata = factory.getMetadata();
     }
 

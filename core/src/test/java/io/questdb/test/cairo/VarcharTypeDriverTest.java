@@ -254,7 +254,10 @@ public class VarcharTypeDriverTest extends AbstractTest {
 
             Utf8StringSink utf8Sink = new Utf8StringSink();
             int n = 10000;
+            LongList usedSpace = new LongList();
+            long expectedUsedSize = 0;
             for (int i = 0; i < n; i++) {
+                expectedUsedSize += 16; // aux vector entry size
                 if (i % 15 == 0) {
                     Utf8s.varcharAppend(dataMem, auxMem, null);
                 } else {
@@ -262,20 +265,31 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     final int len = i % 20;
                     char ch = (char) ('a' + i);
                     utf8Sink.repeat(ch, len);
+                    if (utf8Sink.size() > Utf8s.UTF8_STORAGE_INLINE_BYTES) {
+                        expectedUsedSize += (utf8Sink.size() - Utf8s.UTF8_STORAGE_SPLIT_BYTE);
+                    }
                     Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
                 }
+                long actuallyUsedSize = (dataMem.getAppendOffset() + auxMem.getAppendOffset());
+                Assert.assertEquals(expectedUsedSize, actuallyUsedSize);
+                usedSpace.add(actuallyUsedSize);
             }
 
             StringSink stringSink = new StringSink();
             int minCut = Integer.MAX_VALUE;
             for (int z = 0; z < 10; z++) {
                 int cut = rnd.nextInt(n);
-                minCut = Math.min(minCut, cut);
-                long size = VarcharTypeDriver.INSTANCE.setAppendPosition(cut, auxMem, dataMem, true);
-                Assert.assertEquals(cut * 16, auxMem.getAppendOffset());
+                long actualUsedSize = VarcharTypeDriver.INSTANCE.setAppendPosition(cut, auxMem, dataMem);
+                expectedUsedSize = (cut == 0) ? 0 : usedSpace.getQuick(cut - 1);
+                Assert.assertEquals(expectedUsedSize, actualUsedSize);
 
-                // todo: assert returned size
+                long expectedAuxUsedSize = cut * 16L;
+                long expectedDataUsedSize = expectedUsedSize - expectedAuxUsedSize;
+                Assert.assertEquals(expectedAuxUsedSize, auxMem.getAppendOffset());
+                Assert.assertEquals(expectedDataUsedSize, dataMem.getAppendOffset());
+
                 for (int i = cut; i < n; i++) {
+                    expectedUsedSize += 16;
                     if (i % 15 == 0) {
                         Utf8s.varcharAppend(dataMem, auxMem, null);
                     } else {
@@ -283,10 +297,17 @@ public class VarcharTypeDriverTest extends AbstractTest {
                         final int len = i % 40;
                         char ch = (char) ('A' + i);
                         utf8Sink.repeat(ch, len);
+                        if (utf8Sink.size() > Utf8s.UTF8_STORAGE_INLINE_BYTES) {
+                            expectedUsedSize += (utf8Sink.size() - Utf8s.UTF8_STORAGE_SPLIT_BYTE);
+                        }
                         Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
                     }
+                    long actuallyUsedSize = (dataMem.getAppendOffset() + auxMem.getAppendOffset());
+                    Assert.assertEquals(expectedUsedSize, actuallyUsedSize);
+                    usedSpace.add(i, actuallyUsedSize);
                 }
 
+                minCut = Math.min(minCut, cut);
                 for (int i = 0; i < n; i++) {
                     stringSink.clear();
                     Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMem, auxMem, 1);
@@ -306,7 +327,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 }
             }
 
-            VarcharTypeDriver.INSTANCE.setAppendPosition(0, auxMem, dataMem, false);
+            VarcharTypeDriver.INSTANCE.setAppendPosition(0, auxMem, dataMem);
             Assert.assertEquals(0, dataMem.getAppendOffset());
             Assert.assertEquals(0, auxMem.getAppendOffset());
         }
