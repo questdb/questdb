@@ -35,6 +35,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 
 public class RecordToRowCopierUtils {
+
     private RecordToRowCopierUtils() {
     }
 

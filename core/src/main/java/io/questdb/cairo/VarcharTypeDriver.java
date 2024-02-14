@@ -148,7 +148,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorSizeAt(long auxMemAddr, long row) {
-        return varcharGetDataVectorSize(getDataVectorOffset(auxMemAddr, row));
+        return varcharGetDataVectorSize(auxMemAddr + (row << VARCHAR_AUX_SHL));
     }
 
     @Override
