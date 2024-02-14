@@ -31,6 +31,6 @@ public class StationaryMillisClock implements MillisecondClock {
 
     @Override
     public long getTicks() {
-        return 0;
+        return 0L;
     }
 }

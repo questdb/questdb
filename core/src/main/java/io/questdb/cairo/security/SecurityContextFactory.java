@@ -25,6 +25,7 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public interface SecurityContextFactory {
@@ -32,7 +33,11 @@ public interface SecurityContextFactory {
     byte ILP = 2;
     byte PGWIRE = 1;
 
-    SecurityContext getInstance(@Transient CharSequence principal, byte authType, byte interfaceId);
+    default SecurityContext getInstance(@Transient CharSequence principal, byte authType, byte interfaceId) {
+        return getInstance(principal, null, authType, interfaceId);
+    }
+
+    SecurityContext getInstance(@Transient CharSequence principal, @Transient ObjList<CharSequence> groups, byte authType, byte interfaceId);
 
     default SecurityContext getRootContext() {
         return AllowAllSecurityContext.INSTANCE;

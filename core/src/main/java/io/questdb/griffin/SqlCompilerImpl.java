@@ -410,7 +410,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             if (SqlKeywords.isAddKeyword(tok)) {
                 securityContext.authorizeAlterTableAddColumn(tableToken);
-                alterTableAddColumn(tableNamePosition, tableToken, tableMetadata);
+                alterTableAddColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
             } else if (SqlKeywords.isDropKeyword(tok)) {
                 tok = expectToken(lexer, "'column' or 'partition'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
@@ -619,13 +619,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableAddColumn(
+            SecurityContext securityContext,
             int tableNamePosition,
             TableToken tableToken,
             TableRecordMetadata tableMetadata
     ) throws SqlException {
         // add columns to table
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        //ignoring `column`
+        // ignore `column`
         if (tok != null && !SqlKeywords.isColumnKeyword(tok)) {
             lexer.unparseLast();
         }
@@ -697,10 +698,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int symbolCapacity;
             final boolean indexed;
 
-            if (ColumnType.isSymbol(type)
-                    && tok != null
-                    && !Chars.equals(tok, ',')
-                    && !Chars.equals(tok, ';')
+            if (
+                    ColumnType.isSymbol(type)
+                            && tok != null
+                            && !Chars.equals(tok, ',')
+                            && !Chars.equals(tok, ';')
             ) {
                 if (isCapacityKeyword(tok)) {
                     tok = expectToken(lexer, "symbol capacity");
@@ -760,9 +762,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     indexValueBlockCapacity = configuration.getIndexValueBlockSize();
                 }
-            } else { //set defaults
+            } else { // set defaults
 
-                //ignoring `NULL` and `NOT NULL`
+                // ignore `NULL` and `NOT NULL`
                 if (tok != null && SqlKeywords.isNotKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
                 }
@@ -794,9 +796,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                addColumnSuffix(securityContext, tok, tableToken, alterOperationBuilder);
+                compiledQuery.ofAlter(alterOperationBuilder.build());
+                return;
             }
         } while (true);
+
+        addColumnSuffix(securityContext, null, tableToken, alterOperationBuilder);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -1191,6 +1197,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
+
         securityContext.authorizeAlterTableRenameColumn(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
@@ -1465,7 +1472,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         try {
             final ExecutionModel executionModel = compileExecutionModel(executionContext);
-            if (query == null) {//we need query text for query registry
+            if (query == null) { // we need query text for query registry
                 query = lexer.getContent().subSequence(queryStart, lexer.getPosition());
             }
             switch (executionModel.getModelType()) {
@@ -1519,10 +1526,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             short type = compiledQuery.getType();
-            if (type == CompiledQuery.INSERT_AS_SELECT // insert as select is immediate, simple insert is not!
-                    || type == CompiledQuery.EXPLAIN
-                    || type == CompiledQuery.RENAME_TABLE  // non-wal rename table is complete at this point
-                    || type == CompiledQuery.CREATE_TABLE || type == CompiledQuery.CREATE_TABLE_AS_SELECT // create table is complete at this point
+            if (
+                    type == CompiledQuery.INSERT_AS_SELECT // insert as select is immediate, simple insert is not!
+                            || type == CompiledQuery.EXPLAIN
+                            || type == CompiledQuery.RENAME_TABLE  // non-wal rename table is complete at this point
+                            || type == CompiledQuery.CREATE_TABLE || type == CompiledQuery.CREATE_TABLE_AS_SELECT // create table is complete at this point
             ) {
                 queryRegistry.unregister(queryId, executionContext);
             }
@@ -1830,8 +1838,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    private void createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws
-            SqlException {
+    private void createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
 
@@ -1842,7 +1849,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else if (status == TableUtils.TABLE_EXISTS) {
             throw SqlException.$(name.position, "table already exists");
         } else {
-
             // create table (...) ... in volume volumeAlias;
             CharSequence volumeAlias = createTableModel.getVolumeAlias();
             if (volumeAlias != null) {
@@ -2791,22 +2797,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected static CharSequence expectToken(GenericLexer lexer, CharSequence expected) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
         }
-
         return tok;
     }
 
     protected static CharSequence maybeExpectToken(GenericLexer lexer, CharSequence expected, boolean expect) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-
         if (expect && tok == null) {
             throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
         }
-
         return tok;
+    }
+
+    protected void addColumnSuffix(
+            @Transient SecurityContext securityContext,
+            @Nullable CharSequence tok,
+            TableToken tableToken,
+            AlterOperationBuilder addColumnStatement
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+        }
     }
 
     // returns true if it dropped the table, false otherwise (or throws exception)
@@ -2945,7 +2958,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("cancel", cancelQuery);
     }
 
-    @SuppressWarnings({"unused"})
     protected void unknownAlterStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' expected");
@@ -2953,7 +2965,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
     }
 
-    @SuppressWarnings({"unused"})
     protected void unknownDropColumnSuffix(
             @Transient SecurityContext securityContext,
             CharSequence tok,
@@ -2963,7 +2974,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
     }
 
-    @SuppressWarnings({"unused"})
     protected void unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' or 'all tables' expected");
@@ -2971,7 +2981,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'all tables' expected");
     }
 
-    @SuppressWarnings({"unused"})
     protected void unknownDropTableSuffix(
             SqlExecutionContext executionContext,
             CharSequence tok,
@@ -3487,7 +3496,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // the selected method depends on the second token, we have already seen DROP
             CharSequence tok = SqlUtil.fetchNext(lexer);
             if (tok != null) {
-
                 // DROP TABLE [ IF EXISTS ] name [;]
                 if (SqlKeywords.isTableKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);

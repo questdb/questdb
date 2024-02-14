@@ -51,7 +51,7 @@ public interface MapWriter extends SymbolCountProvider {
             mem.putBool(symbolCacheFlag);
             mem.jumpTo(SymbolMapWriter.HEADER_SIZE);
             mem.sync(false);
-            mem.close(false);
+            mem.close();
 
             if (!ff.touch(charFileName(path.trimTo(plen), columnName, columnNameTxn))) {
                 throw CairoException.critical(ff.errno()).put("Cannot create ").put(path);

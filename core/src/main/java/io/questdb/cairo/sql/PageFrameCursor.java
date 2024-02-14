@@ -29,9 +29,6 @@ import org.jetbrains.annotations.Nullable;
 
 public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
 
-    @Override
-    void close(); // we don't throw IOException
-
     /**
      * Return the REAL row id of given row on current page.
      * This is used for e.g. updating rows.

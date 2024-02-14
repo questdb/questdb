@@ -240,7 +240,7 @@ public class FuzzRunner {
         }
     }
 
-    public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
+    public void applyToWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
         ObjList<WalWriter> writers = new ObjList<>();
         for (int i = 0; i < walWriterCount; i++) {
             writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
@@ -272,6 +272,10 @@ public class FuzzRunner {
         }
 
         Misc.freeObjList(writers);
+    }
+
+    public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
+        applyToWal(transactions, tableName, walWriterCount, applyRnd);
         drainWalQueue(applyRnd, tableName);
     }
 

@@ -39,7 +39,6 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             int columnSplit
-
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         this.cursor = new AsOfLightJoinRecordCursor(

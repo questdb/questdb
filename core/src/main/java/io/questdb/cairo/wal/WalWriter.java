@@ -205,10 +205,14 @@ public class WalWriter implements TableWriterAPI {
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        if (alterOp.isStructural()) {
-            return applyStructural(alterOp);
-        } else {
-            return applyNonStructural(alterOp, false);
+        try {
+            if (alterOp.isStructural()) {
+                return applyStructural(alterOp);
+            } else {
+                return applyNonStructural(alterOp, false);
+            }
+        } finally {
+            alterOp.clearSecurityContext();
         }
     }
 
@@ -832,30 +836,6 @@ public class WalWriter implements TableWriterAPI {
                 .put(", wal=").put(walId).put(']');
     }
 
-    private void removeSymbolFiles(Path path, int rootLen, CharSequence columnName) {
-        // Symbol files in WAL directory are hard links to symbol files in the table.
-        // Removing them does not affect the allocated disk space, and it is just
-        // making directory tidy. On Windows OS, removing hard link can trigger
-        // ACCESS_DENIED error, caused by the fact hard link destination file is open.
-        // For those reasons we do not put maximum effort into removing the files here.
-
-        path.trimTo(rootLen);
-        BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
-        ff.removeQuiet(path.$());
-
-        path.trimTo(rootLen);
-        BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
-        ff.removeQuiet(path.$());
-
-        path.trimTo(rootLen);
-        TableUtils.charFileName(path, columnName, COLUMN_NAME_TXN_NONE);
-        ff.removeQuiet(path.$());
-
-        path.trimTo(rootLen);
-        TableUtils.offsetFileName(path, columnName, COLUMN_NAME_TXN_NONE);
-        ff.removeQuiet(path.$());
-    }
-
     private void closeSegmentSwitchFiles(LongList newColumnFiles) {
         int commitMode = configuration.getCommitMode();
 
@@ -1319,6 +1299,30 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
+    private void removeSymbolFiles(Path path, int rootLen, CharSequence columnName) {
+        // Symbol files in WAL directory are hard links to symbol files in the table.
+        // Removing them does not affect the allocated disk space, and it is just
+        // making directory tidy. On Windows OS, removing hard link can trigger
+        // ACCESS_DENIED error, caused by the fact hard link destination file is open.
+        // For those reasons we do not put maximum effort into removing the files here.
+
+        path.trimTo(rootLen);
+        BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        ff.removeQuiet(path.$());
+
+        path.trimTo(rootLen);
+        BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        ff.removeQuiet(path.$());
+
+        path.trimTo(rootLen);
+        TableUtils.charFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        ff.removeQuiet(path.$());
+
+        path.trimTo(rootLen);
+        TableUtils.offsetFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        ff.removeQuiet(path.$());
+    }
+
     private void removeSymbolMapReader(int index) {
         Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
         symbolMaps.setQuick(index, null);
@@ -1726,7 +1730,7 @@ public class WalWriter implements TableWriterAPI {
                     if (securityContext != null) {
                         ddlListener.onColumnAdded(securityContext, metadata.getTableToken(), columnName);
                     }
-                    LOG.info().$("added column to WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
+                    LOG.info().$("added column to WAL [path=").$(path).$(", columnName=").utf8(columnName).$(", type=").$(ColumnType.nameOf(columnType)).I$();
                 } else {
                     throw CairoException.critical(0).put("column '").put(columnName)
                             .put("' was added, cannot apply commit because of concurrent table definition change");

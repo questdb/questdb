@@ -48,13 +48,13 @@ import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 public class TableSequencerAPI implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
     private final CairoConfiguration configuration;
+    private final Function<CharSequence, SeqTxnTracker> createTxnTracker;
     private final CairoEngine engine;
     private final long inactiveTtlUs;
     private final BiFunction<CharSequence, Object, TableSequencerEntry> openSequencerInstanceLambda;
     private final int recreateDistressedSequencerAttempts;
     private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>(false);
     private final ConcurrentHashMap<SeqTxnTracker> seqTxnTrackers = new ConcurrentHashMap<>(false);
-    Function<CharSequence, SeqTxnTracker> createTxnTracker;
     private volatile boolean closed;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {

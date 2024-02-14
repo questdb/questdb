@@ -42,7 +42,9 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.SymbolMapWriter.keyToOffset;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapTest extends AbstractCairoTest {
     private final static SymbolValueCountCollector NOOP_COLLECTOR = (symbolIndexInTxWriter, count) -> {
@@ -755,6 +757,68 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackFuzz() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        int symbols = 64 + rnd.nextInt(1024);
+
+        int resets = 10 + rnd.nextInt(10);
+
+        // Create longer symbols to hit various mapping page sizes
+        int symbolPrefixSize = (rnd.nextInt(200) + 5) / 3;
+        StringBuilder symbolPrefix = new StringBuilder("abc");
+        for (int i = 0; i < symbolPrefixSize; i++) {
+            symbolPrefix.append("abc");
+        }
+        String prefix = symbolPrefix.toString();
+
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 128;
+            ObjList<CharSequence> symbolList = new ObjList<>();
+            IntList indexList = new IntList();
+
+            try (Path path = new Path().of(configuration.getRoot())) {
+
+                SymbolMapUtil smu = new SymbolMapUtil();
+                create(path, "x", N, true);
+
+                SymbolMapWriter w = new SymbolMapWriter(
+                        configuration,
+                        path,
+                        "x",
+                        COLUMN_NAME_TXN_NONE,
+                        0,
+                        -1,
+                        NOOP_COLLECTOR
+                );
+                int hi = rnd.nextInt(symbols);
+                hi = addRange(w, 0, hi, rnd, symbolList, indexList, prefix);
+
+                for (int i = 0; i < resets; i++) {
+                    int resetTo = Math.max(0, rnd.nextInt(Math.max(1, hi - 100)));
+                    w.close();
+
+                    destroySymbolFilesOffsets(path, "x", resetTo, rnd);
+                    smu.rebuildSymbolFiles(configuration, path, "x", -1, resetTo, -1);
+
+                    w = new SymbolMapWriter(
+                            configuration,
+                            path,
+                            "x",
+                            COLUMN_NAME_TXN_NONE,
+                            resetTo,
+                            -1,
+                            NOOP_COLLECTOR
+                    );
+
+                    hi = resetTo + rnd.nextInt(symbols - resetTo);
+                    hi = addRange(w, resetTo, Math.max(resetTo, hi), rnd, symbolList, indexList, prefix);
+                }
+                w.close();
+            }
+        });
+    }
+
+    @Test
     public void testShortHeader() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getRoot())) {
@@ -949,5 +1013,49 @@ public class SymbolMapTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private int addRange(SymbolMapWriter w, int lo, int hi, Rnd rnd, ObjList<CharSequence> symbolList, IntList indexList, String prefix) {
+        LOG.info().$("Resetting range [").$(lo).$(", ").$(hi).$("]").$();
+
+        symbolList.setPos(hi);
+        indexList.setPos(hi);
+        for (int i = lo; i < hi; i++) {
+            int id = i + rnd.nextInt(hi * 2);
+            String symbol = id % 3 == 0 ? "" : prefix + id;
+            int symi = w.put(symbol);
+            symbolList.setQuick(i, symbol);
+            indexList.setQuick(i, symi);
+        }
+
+        // Read back all and check
+        int symMax = 0;
+        for (int i = 0; i < hi; i++) {
+            int symi = w.put(symbolList.getQuick(i));
+            Assert.assertEquals(indexList.get(i), symi);
+            symMax = Math.max(symMax, symi);
+        }
+        return symMax;
+    }
+
+    private void destroySymbolFilesOffsets(Path path, String name, int cleanCount, Rnd rnd) {
+        int plen = path.size();
+        try {
+            FilesFacade ff = configuration.getFilesFacade();
+            offsetFileName(path.trimTo(plen), name, -1);
+            long size = ff.length(path);
+
+            int fd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
+            long address = TableUtils.mapRW(ff, fd, size, MemoryTag.MMAP_DEFAULT);
+            for (long i = keyToOffset(cleanCount); i + 4 < size; i += 4) {
+                Unsafe.getUnsafe().putInt(address + i, rnd.nextInt());
+            }
+
+            ff.munmap(address, size, MemoryTag.MMAP_DEFAULT);
+            ff.close(fd);
+
+        } finally {
+            path.trimTo(plen);
+        }
     }
 }

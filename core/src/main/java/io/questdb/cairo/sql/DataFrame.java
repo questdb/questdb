@@ -30,6 +30,7 @@ import io.questdb.cairo.BitmapIndexReader;
  * Interface for retrieving information about a data frame.
  */
 public interface DataFrame {
+
     BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
 
     /**
@@ -38,7 +39,7 @@ public interface DataFrame {
     int getPartitionIndex();
 
     /**
-     * @return last row of a data frame
+     * @return upper boundary for last row of a data frame, i.e. last row + 1
      */
     long getRowHi();
 

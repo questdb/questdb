@@ -105,9 +105,18 @@ public interface MemoryCR extends MemoryC, MemoryR {
     default CharSequence getStr(long offset, CharSequenceView view) {
         long addr = addressOf(offset);
         assert addr > 0;
+        if (Vm.PARANOIA_MODE && offset + 4 > size()) {
+            throw CairoException.critical(0)
+                    .put("String is outside of file boundary [offset=")
+                    .put(offset)
+                    .put(", size=")
+                    .put(size())
+                    .put(']');
+        }
+
         final int len = Unsafe.getUnsafe().getInt(addr);
         if (len != TableUtils.NULL_LEN) {
-            if (len + 4 + offset <= size()) {
+            if (Vm.getStorageLength(len) + offset <= size()) {
                 return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
             }
             throw CairoException.critical(0)
