@@ -68,7 +68,6 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         if (sourceColumn.getStorageType() != COLUMN_CONTIGUOUS_FILE) {
             throw new UnsupportedOperationException();
         }
-
         sourceLo -= sourceColumn.getColumnTop();
         sourceHi -= sourceColumn.getColumnTop();
         appendOffsetRowCount -= columnTop;
