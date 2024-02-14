@@ -497,8 +497,9 @@ void MULTI_VERSION_NAME (shift_copy_varchar_aux)(int64_t shift, const int64_t *s
     }
 
     // tail
-    for (; i < count; i++) {
-        dest[i] = src[i + 2 * src_lo] - (i & 1) * (shift << 16);
+    for (; i < count; i += 2) {
+        dest[i] = src[i + 2 * src_lo];
+        dest[i + 1] = src[i + 2 * src_lo + 1] - (shift << 16);
     }
 }
 
@@ -531,11 +532,8 @@ void MULTI_VERSION_NAME (set_varchar_null_refs)(int64_t *aux, int64_t offset, in
     }
 
     // tail
-    for (; i < count; i++) {
-        if ((i & 1) == 0) {
-            aux[i] = 4;
-        } else {
-            aux[i] = o;
-        }
+    for (; i < count; i += 2) {
+        aux[i] = 4;
+        aux[i + 1] = o;
     }
 }
