@@ -65,12 +65,12 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
     private final WalWriterMetadata metadata; // protected with #lock
     private final StringSink nameSink = new StringSink(); // protected with #lock
     private final Path path = new Path(); // protected with #lock
-    private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
-    private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
     private final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
+    private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private ColumnVersionReader columnVersionReader = null;
     private TableReaderMetadata tableMetadata = null;
     private TxWriter txWriter = null;
+    private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     DatabaseSnapshotAgentImpl(CairoEngine engine) {
         this.engine = engine;
@@ -111,29 +111,21 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         this.walPurgeJobRunLock = walPurgeJobRunLock;
     }
 
-    void completeSnapshot() throws SqlException {
-        if (!lock.tryLock()) {
-            throw SqlException.position(0).put("Another snapshot command in progress");
-        }
-        try {
-            // Delete snapshot/db directory.
-            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).$();
-            ff.rmdir(path); // it's fine to ignore errors here
-
-            // Resume the WalPurgeJob
-            if (walPurgeJobRunLock != null) {
-                try {
-                    walPurgeJobRunLock.unlock();
-                } catch (IllegalStateException ignore) {
-                    // not an error here
-                    // completeSnapshot can be called several time in a row.
-                }
-            }
-
-            // Reset snapshot in-flight flag.
-            inProgress.set(false);
-        } finally {
-            lock.unlock();
+    private static void copyOrError(Path srcPath, Path dstPath, FilesFacade ff, AtomicInteger counter, String fileName) {
+        srcPath.concat(fileName).$();
+        dstPath.concat(fileName).$();
+        if (ff.copy(srcPath, dstPath) < 0) {
+            LOG.error()
+                    .$("could not copy ").$(fileName).$(" file [src=").$(srcPath)
+                    .$(", dst=").$(dstPath)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
+        } else {
+            counter.incrementAndGet();
+            LOG.info()
+                    .$("recovered ").$(fileName).$(" file [src=").$(srcPath)
+                    .$(", dst=").$(dstPath)
+                    .I$();
         }
     }
 
@@ -201,6 +193,32 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
 
         } finally {
             tablePath.trimTo(pathTableLen);
+        }
+    }
+
+    void completeSnapshot() throws SqlException {
+        if (!lock.tryLock()) {
+            throw SqlException.position(0).put("Another snapshot command in progress");
+        }
+        try {
+            // Delete snapshot/db directory.
+            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).$();
+            ff.rmdir(path); // it's fine to ignore errors here
+
+            // Resume the WalPurgeJob
+            if (walPurgeJobRunLock != null) {
+                try {
+                    walPurgeJobRunLock.unlock();
+                } catch (IllegalStateException ignore) {
+                    // not an error here
+                    // completeSnapshot can be called several time in a row.
+                }
+            }
+
+            // Reset snapshot in-flight flag.
+            inProgress.set(false);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -447,60 +465,9 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                     int srcPathLen = srcPath.size();
                     int dstPathLen = dstPath.size();
 
-                    srcPath.concat(TableUtils.META_FILE_NAME).$();
-                    dstPath.concat(TableUtils.META_FILE_NAME).$();
-                    if (ff.exists(srcPath) && ff.exists(dstPath)) {
-                        if (ff.copy(srcPath, dstPath) < 0) {
-                            LOG.error()
-                                    .$("could not copy _meta file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
-                                    .$(", errno=").$(ff.errno())
-                                    .I$();
-                        } else {
-                            recoveredMetaFiles.incrementAndGet();
-                            LOG.info()
-                                    .$("recovered _meta file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
-                                    .I$();
-                        }
-                    }
-
-                    srcPath.trimTo(srcPathLen).concat(TableUtils.TXN_FILE_NAME).$();
-                    dstPath.trimTo(dstPathLen).concat(TableUtils.TXN_FILE_NAME).$();
-                    if (ff.exists(srcPath) && ff.exists(dstPath)) {
-                        if (ff.copy(srcPath, dstPath) < 0) {
-                            LOG.error()
-                                    .$("could not copy _txn file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
-                                    .$(", errno=").$(ff.errno())
-                                    .I$();
-                        } else {
-                            recoveredTxnFiles.incrementAndGet();
-                            LOG.info()
-                                    .$("recovered _txn file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
-                                    .I$();
-                        }
-                    }
-
-                    srcPath.trimTo(srcPathLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                    dstPath.trimTo(dstPathLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                    if (ff.exists(srcPath) && ff.exists(dstPath)) {
-                        if (ff.copy(srcPath, dstPath) < 0) {
-                            LOG.error()
-                                    .$("could not copy _cv file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
-                                    .$(", errno=").$(ff.errno())
-                                    .I$();
-                        } else {
-                            recoveredCVFiles.incrementAndGet();
-                            LOG.info()
-                                    .$("recovered _cv file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
-                                    .I$();
-                        }
-                    }
-
+                    copyOrError(srcPath, dstPath, ff, recoveredMetaFiles, TableUtils.META_FILE_NAME);
+                    copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredTxnFiles, TableUtils.TXN_FILE_NAME);
+                    copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredCVFiles, TableUtils.COLUMN_VERSION_FILE_NAME);
                     rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
 
                     // Go inside SEQ_DIR
@@ -512,7 +479,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                     dstPathLen = dstPath.size();
                     dstPath.concat(TableUtils.META_FILE_NAME).$();
 
-                    if (ff.exists(srcPath) && ff.exists(dstPath)) {
+                    if (ff.exists(srcPath)) {
                         if (ff.copy(srcPath, dstPath) < 0) {
                             LOG.critical()
                                     .$("could not copy ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)

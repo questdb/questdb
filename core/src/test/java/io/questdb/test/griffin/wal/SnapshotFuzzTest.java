@@ -40,15 +40,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class SnapshotFuzzTest extends AbstractFuzzTest {
     @Test
-    public void testFullFuzz() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-        fullFuzz(rnd);
-        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
-        runFuzzWithSnapshot(rnd);
-    }
-
-    @Test
-    public void testFullFuzzEjectedTransactions() throws Exception {
+    public void testSnapshotEjectedWalApply() throws Exception {
         Rnd rnd = generateRandom(LOG);
         fuzzer.setFuzzProbabilities(
                 0,
@@ -76,6 +68,14 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         );
 
         setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
+        runFuzzWithSnapshot(rnd);
+    }
+
+    @Test
+    public void testSnapshotFullFuzz() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        fullFuzz(rnd);
+        setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
         runFuzzWithSnapshot(rnd);
     }
 
