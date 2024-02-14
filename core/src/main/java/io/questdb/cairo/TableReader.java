@@ -35,8 +35,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -1081,16 +1081,17 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final int columnType = metadata.getColumnType(columnIndex);
 
                 if (ColumnType.isVarSize(columnType)) {
-                    long columnSize = columnRowCount * 8L + 8L;
+                    ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                    long auxSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
                     TableUtils.iFile(path.trimTo(plen), name, columnTxn);
-                    mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize);
-                    long column2Size = mem2.getLong(columnRowCount * 8L);
-                    if (column2Size <= 0 || column2Size >= (1L << 40)) {
-                        LOG.critical().$("Invalid var len column size [column=").$(name).$(", size=").$(column2Size).$(", path=").$(path).I$();
-                        throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(column2Size).put(']');
+                    mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, auxSize);
+                    long dataSize = columnTypeDriver.getDataVectorSizeAt(mem2.addressOf(0), columnRowCount - 1);
+                    if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
+                        LOG.critical().$("Invalid var len column size [column=").$(name).$(", size=").$(dataSize).$(", path=").$(path).I$();
+                        throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(dataSize).put(']');
                     }
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(path, columns, primaryIndex, mem1, column2Size);
+                    openOrCreateMemory(path, columns, primaryIndex, mem1, dataSize);
                 } else {
                     long columnSize = columnRowCount << ColumnType.pow2SizeOf(columnType);
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
