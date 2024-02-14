@@ -28,16 +28,16 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.DuckDBConnectionPool;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.duckdb.*;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
+import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.griffin.engine.TestBinarySequence;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -501,6 +501,9 @@ public class DuckDBTest extends AbstractCairoTest {
 
     private void populateTables(TableModel model, TableWriter writer, long appender, int rowCount) throws NumericException {
         Rnd rnd = new Rnd();
+        final int binarySize = 32;
+        DirectByteSink sink = new DirectByteSink(binarySize);
+
         long ts = TimestampFormatUtils.parseTimestamp("2024-02-12T00:00:00.000000Z");
         long stop = TimestampFormatUtils.parseTimestamp("2024-02-14T00:00:00.000000Z");
         long delta = (stop - ts) / rowCount;
@@ -587,11 +590,18 @@ public class DuckDBTest extends AbstractCairoTest {
                         DuckDB.appenderAppendDouble(appender, dbl);
                         break;
                     case ColumnType.STRING:
-                    case ColumnType.BINARY:
                         String str = rnd.nextString(10);
                         row.putStr(c, str);
                         GcUtf8String gcUtf8String = new GcUtf8String(str);
-                        DuckDB.appenderAppendUtf8StringOrBlob(appender, gcUtf8String.ptr(), gcUtf8String.size());
+                        DuckDB.appenderAppendUtf8String(appender, gcUtf8String.ptr(), gcUtf8String.size());
+                        break;
+                    case ColumnType.BINARY:
+                        sink.clear();
+                        for (int i = 0; i < binarySize; i++) {
+                            sink.put(rnd.nextByte());
+                        }
+                        row.putBin(c, sink.ptr(), sink.size());
+                        DuckDB.appenderAppendBlob(appender, sink.ptr(), sink.size());
                         break;
                     case ColumnType.LONG128:
                     case ColumnType.UUID:
@@ -623,6 +633,7 @@ public class DuckDBTest extends AbstractCairoTest {
         }
         writer.commit();
         DuckDB.appenderFlush(appender);
+        sink.close();
     }
 
     private TableModel createQuestTableModel(String tableName) {
@@ -644,7 +655,7 @@ public class DuckDBTest extends AbstractCairoTest {
             .col("COL_" + "GEOSHORT", ColumnType.getGeoHashTypeWithBits(15))
             .col("COL_" + "GEOINT", ColumnType.getGeoHashTypeWithBits(30))
             .col("COL_" + "GEOLONG", ColumnType.getGeoHashTypeWithBits(60))
-//            .col("COL_" + ColumnType.nameOf(ColumnType.BINARY), ColumnType.BINARY)
+            .col("COL_" + ColumnType.nameOf(ColumnType.BINARY), ColumnType.BINARY)
             .col("COL_" + ColumnType.nameOf(ColumnType.UUID), ColumnType.UUID)
             .col("COL_" + ColumnType.nameOf(ColumnType.LONG128), ColumnType.LONG128)
             .col("COL_" + ColumnType.nameOf(ColumnType.IPv4), ColumnType.IPv4)

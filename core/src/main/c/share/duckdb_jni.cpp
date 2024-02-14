@@ -476,11 +476,16 @@ JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendDouble(JNIEnv
     get_appender(appender)->Append((double) value);
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendUtf8StringOrBlob(JNIEnv *, jclass, jlong appender, jlong value_ptr, jlong value_size) {
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendUtf8String(JNIEnv *, jclass, jlong appender, jlong value_ptr, jlong value_size) {
     std::string value((const char *) value_ptr, value_size);
     get_appender(appender)->Append(value.c_str()); // TODO: empty string?
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendNull(JNIEnv *, jclass, jlong appender) {
     get_appender(appender)->Append<std::nullptr_t>(nullptr);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendBlob(JNIEnv *, jclass, jlong appender, jlong data_ptr, jlong length) {
+    auto value = duckdb::Value::BLOB((duckdb::const_data_ptr_t) data_ptr, length);
+    get_appender(appender)->Append(value);
 }

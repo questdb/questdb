@@ -70,8 +70,9 @@ extern "C" {
     JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendUUID(JNIEnv *, jclass, jlong appender, jlong lo, jlong hi);
     JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendFloat(JNIEnv *, jclass, jlong appender, jfloat value);
     JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendDouble(JNIEnv *, jclass, jlong appender, jdouble value);
-    JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendUtf8StringOrBlob(JNIEnv *, jclass, jlong appender, jlong value_ptr, jlong value_size);
+    JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendUtf8String(JNIEnv *, jclass, jlong appender, jlong value_ptr, jlong value_size);
     JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendNull(JNIEnv *, jclass, jlong appender);
+    JNIEXPORT void JNICALL Java_io_questdb_duckdb_DuckDB_appenderAppendBlob(JNIEnv *, jclass, jlong appender, jlong data_ptr, jlong length);
 }
 
 #endif //QUESTDB_DUCKDB_JNI_H

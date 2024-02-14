@@ -257,8 +257,9 @@ public class DuckDB {
     public static native void appenderAppendUUID(long appenderPtr, long lo, long hi);
     public static native void appenderAppendFloat(long appenderPtr, float value);
     public static native void appenderAppendDouble(long appenderPtr, double value);
-    public static native void appenderAppendUtf8StringOrBlob(long appenderPtr, long valuePtr, long valueSize);
+    public static native void appenderAppendUtf8String(long appenderPtr, long valuePtr, long valueSize);
     public static native void appenderAppendNull(long appenderPtr);
+    public static native void appenderAppendBlob(long appenderPtr, long dataPtr, long dataSize);
 
     public static int decodeLogicalTypeId(long encoded) {
         return (int) (encoded & 0xFFFFFFFFL);
