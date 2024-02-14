@@ -40,8 +40,6 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import java.util.Arrays;
-
 import static io.questdb.cairo.AbstractIntervalDataFrameCursor.SCAN_UP;
 import static io.questdb.cairo.BinarySearch.SCAN_DOWN;
 
@@ -412,7 +410,7 @@ public class VectTest {
 
     @Test
     public void testOooMergeCopyStrColumn() throws Exception {
-        int rowCount = 1_000;
+        int rowCount = 10_000;
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         long pageSize = Files.PAGE_SIZE;
         try (Path dataPathA = new Path().of(temp.newFile().getAbsolutePath()).$();
@@ -428,17 +426,27 @@ public class VectTest {
             auxMemB.putLong(0);
 
             StringSink sink = new StringSink();
+            int maxLen = 50; // exclusive
+            int nullModA = 17;
+            int nullModB = 23;
             for (int i = 0; i < rowCount; i++) {
-                int len = i % 10;
+                int len = i % maxLen;
 
-                sink.clear();
-                sink.repeat("a", len);
-                auxMemA.putLong(dataMemA.putStr(sink));
+                if (i % nullModA == 0) {
+                    auxMemA.putLong(dataMemA.putStr(null));
+                } else {
+                    sink.clear();
+                    sink.repeat("a", len);
+                    auxMemA.putLong(dataMemA.putStr(sink));
+                }
 
-                sink.clear();
-                sink.repeat("b", len);
-                auxMemB.putLong(dataMemB.putStr(sink));
-
+                if (i % nullModB == 0) {
+                    auxMemB.putLong(dataMemB.putStr(null));
+                } else {
+                    sink.clear();
+                    sink.repeat("b", len);
+                    auxMemB.putLong(dataMemB.putStr(sink));
+                }
                 index.add(i * 2); // rowA synthetic timestamp
                 index.add(i); // rowA index
 
@@ -448,16 +456,24 @@ public class VectTest {
 
             String[] strings = asStringArray(dataMemA, auxMemA, rowCount);
             for (int i = 0; i < rowCount; i++) {
-                sink.clear();
-                sink.repeat("a", i % 10);
-                TestUtils.assertEquals(sink, strings[i]);
+                if (i % nullModA == 0) {
+                    Assert.assertNull(strings[i]);
+                } else {
+                    sink.clear();
+                    sink.repeat("a", i % maxLen);
+                    TestUtils.assertEquals(sink, strings[i]);
+                }
             }
 
             strings = asStringArray(dataMemB, auxMemB, rowCount);
             for (int i = 0; i < rowCount; i++) {
-                sink.clear();
-                sink.repeat("b", i % 10);
-                TestUtils.assertEquals(sink, strings[i]);
+                if (i % nullModB == 0) {
+                    Assert.assertNull(strings[i]);
+                } else {
+                    sink.clear();
+                    sink.repeat("b", i % maxLen);
+                    TestUtils.assertEquals(sink, strings[i]);
+                }
             }
 
             try (Path dataPathDest = new Path().of(temp.newFile().getAbsolutePath()).$();
@@ -477,15 +493,22 @@ public class VectTest {
 
                 strings = asStringArray(dataMemDest, auxMemDest, rowCount * 2);
                 for (int i = 0; i < rowCount; i++) {
-                    sink.clear();
-                    sink.repeat("b", i % 10);
-                    TestUtils.assertEquals(sink, strings[i * 2]);
+                    if (i % nullModB == 0) {
+                        Assert.assertNull(strings[i * 2]);
+                    } else {
+                        sink.clear();
+                        sink.repeat("b", i % maxLen);
+                        TestUtils.assertEquals(sink, strings[i * 2]);
+                    }
 
-                    sink.clear();
-                    sink.repeat("a", i % 10);
-                    TestUtils.assertEquals(sink, strings[i * 2 + 1]);
+                    if (i % nullModA == 0) {
+                        Assert.assertNull(strings[i * 2 + 1]);
+                    } else {
+                        sink.clear();
+                        sink.repeat("a", i % maxLen);
+                        TestUtils.assertEquals(sink, strings[i * 2 + 1]);
+                    }
                 }
-                System.out.println(Arrays.toString(strings));
             }
         }
     }
@@ -493,11 +516,11 @@ public class VectTest {
     private String[] asStringArray(MemoryCMARW dataMemA, MemoryCMARW auxMemA, int rowCount) {
         String[] strings = new String[rowCount];
         for (int i = 0; i < rowCount; i++) {
-            strings[i] = dataMemA.getStr(auxMemA.getLong(i * 8L)).toString();
+            CharSequence cs = dataMemA.getStr(auxMemA.getLong(i * 8L));
+            strings[i] = Chars.toString(cs);
         }
         return strings;
     }
-
 
     @Test
     public void testMergeDedupIndex() {
