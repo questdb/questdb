@@ -393,7 +393,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             CharSequence snapshotInstanceId = memFile.getStr(0);
             if (Chars.empty(snapshotInstanceId)) {
                 srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT).$();
-                snapshotInstanceId = TableUtils.readText(ff, path);
+                snapshotInstanceId = TableUtils.readText(ff, srcPath);
             }
 
             if (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {
