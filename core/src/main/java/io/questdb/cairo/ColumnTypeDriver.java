@@ -29,6 +29,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
 public interface ColumnTypeDriver {
+
     void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts);
 
     /**
@@ -63,6 +64,13 @@ public interface ColumnTypeDriver {
      * @return the size of the required vector.
      */
     long getAuxVectorSize(long storageRowCount);
+
+    /**
+     * Minimum entry size in the data vector, typically allocated for storing nulls.
+     *
+     * @return number of bytes required to store null value.
+     */
+    long getDataVectorMinEntrySize();
 
     long getDataVectorOffset(long auxMemAddr, long row);
 
@@ -103,14 +111,9 @@ public interface ColumnTypeDriver {
             boolean mixedIOFlag
     );
 
-    void o3shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr);
+    void o3setColumnRefs(long address, long initialOffset, long count);
 
-    /**
-     * Minimum entry size in the data vector, typically allocated for storing nulls.
-     *
-     * @return number of bytes required to store null value.
-     */
-    long getDataVectorMinEntrySize();
+    void o3shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr);
 
     /**
      * Sorts var size vectors. This method is also responsible for sizing the destination vectors and ensuring the
@@ -136,16 +139,10 @@ public interface ColumnTypeDriver {
      * For now this method is called by WAL writer when data is rolled back (or row is cancelled). The
      * expectation of the WAL writer is to have the append position set correctly on aux mem and size of data vector
      * provided correctly.
-     *
-     * @param auxMem
-     * @param rowCount
-     * @return
      */
     long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount);
 
     long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem);
-
-    void o3setColumnRefs(long address, long initialOffset, long count);
 
     void setDataVectorEntriesToNull(long dataMemAddr, long rowCount);
 }

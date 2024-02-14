@@ -91,7 +91,7 @@ public final class ColumnType {
     // PG specific types to work with 3rd party software
     // with canned catalogue queries:
     // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-    public static final short REGCLASS = VARCHAR + 1;              // = 26;
+    public static final short REGCLASS = VARCHAR + 1;           // = 26;
     public static final short REGPROCEDURE = REGCLASS + 1;      // = 27;
     public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 28;
     public static final short PARAMETER = ARRAY_STRING + 1;     // = 29;
@@ -177,7 +177,7 @@ public final class ColumnType {
     }
 
     public static boolean isDesignatedTimestamp(int columnType) {
-        return  tagOf(columnType) == TIMESTAMP && (columnType & TYPE_FLAG_DESIGNATED_TIMESTAMP) != 0;
+        return tagOf(columnType) == TIMESTAMP && (columnType & TYPE_FLAG_DESIGNATED_TIMESTAMP) != 0;
     }
 
     public static boolean isDouble(int columnType) {
@@ -213,7 +213,13 @@ public final class ColumnType {
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
-        return ((toType == fromType || tagOf(fromType) == tagOf(toType)) && (getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0)) || isBuiltInWideningCast(fromType, toType) || isStringCast(fromType, toType) || isGeoHashWideningCast(fromType, toType) || isImplicitParsingCast(fromType, toType) || isIPv4Cast(fromType, toType);
+        return ((toType == fromType || tagOf(fromType) == tagOf(toType)) && (getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0))
+                || isBuiltInWideningCast(fromType, toType)
+                || isStringCast(fromType, toType)
+                || isVarcharCast(fromType, toType)
+                || isGeoHashWideningCast(fromType, toType)
+                || isImplicitParsingCast(fromType, toType)
+                || isIPv4Cast(fromType, toType);
     }
 
     public static boolean isUndefined(int columnType) {
@@ -307,6 +313,10 @@ public final class ColumnType {
 
     private static boolean isStringCast(int fromType, int toType) {
         return (fromType == STRING && toType == SYMBOL) || (fromType == SYMBOL && toType == STRING) || (fromType == CHAR && toType == SYMBOL) || (fromType == CHAR && toType == STRING) || (fromType == UUID && toType == STRING);
+    }
+
+    private static boolean isVarcharCast(int fromType, int toType) {
+        return (fromType == STRING && toType == VARCHAR) || (fromType == VARCHAR && toType == SYMBOL) || (fromType == SYMBOL && toType == VARCHAR) || (fromType == CHAR && toType == VARCHAR) || (fromType == UUID && toType == VARCHAR);
     }
 
     private static int mkGeoHashType(int bits, short baseType) {

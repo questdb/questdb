@@ -15,8 +15,19 @@ import org.jetbrains.annotations.Nullable;
  * UTF-8 specific variant of the {@link Chars} utility.
  */
 public final class Utf8s {
+    // the longest varchar in bytes we can encode into aux and data memory
+    // the length is encoded into 28 bits
+    private static final int UTF8_MAX_LENGTH_BYTES = 1 << 28; // exclusive
 
+    // Maximum string size in bytes that we can fully inline into auxiliary memory. In such case
+    // There is no need to store any part of the string in the data memory.
+    // When a string size is longer than this value, we store a first few bytes in the auxiliary memory
+    // and the rest in the data memory.
     public static final int UTF8_STORAGE_INLINE_BYTES = 9;
+
+    // When a string does not fully fit into the auxiliary memory the we store first few bytes
+    // in the auxiliary memory and the rest in the data memory.
+    // This constant defines the number of bytes that we store in the auxiliary memory
     // Must be kept in sync with Java_io_questdb_std_Vect_sortVarcharColumn.
     public static final int UTF8_STORAGE_SPLIT_BYTE = 6;
 
@@ -769,8 +780,8 @@ public final class Utf8s {
                 auxMem.skip(UTF8_STORAGE_INLINE_BYTES - size);
                 offset = dataMem.getAppendOffset();
             } else {
-                if (size >= 268435456) {
-                    throw CairoException.critical(0).put("varchar value is too long [size=").put(size).put(", max=").put(268435456).put(']');
+                if (size >= UTF8_MAX_LENGTH_BYTES) {
+                    throw CairoException.critical(0).put("varchar value is too long [size=").put(size).put(", max=").put(UTF8_MAX_LENGTH_BYTES).put(']');
                 }
 
                 int flags = 0;  // not inlined

@@ -27,7 +27,10 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableReaderRecord.ifOffsetNegThen0ElseValue;
 
@@ -306,6 +309,16 @@ public class TableReaderSelectedColumnRecord implements Record {
         return getRowId();
     }
 
+    @Override
+    public Utf8Sequence getVarcharA(int columnIndex) {
+        return getVarchar(columnIndex, 1);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int columnIndex) {
+        return getVarchar(columnIndex, 2);
+    }
+
     public void incrementRecordIndex() {
         recordIndex++;
     }
@@ -330,5 +343,21 @@ public class TableReaderSelectedColumnRecord implements Record {
     private long getAdjustedRecordIndex(int col) {
         assert col > -1 && col < reader.getColumnCount() : "Column index out of bounds: " + col + " >= " + reader.getColumnCount();
         return recordIndex - reader.getColumnTop(columnBase, col);
+    }
+
+    @Nullable
+    private Utf8Sequence getVarchar(int columnIndex, int ab) {
+        final int col = deferenceColumn(columnIndex);
+        final long offset = getAdjustedRecordIndex(col) * 16L;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                offset,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return Utf8s.varcharRead(
+                offset,
+                reader.getColumn(absoluteColumnIndex),
+                reader.getColumn(absoluteColumnIndex + 1),
+                ab
+        );
     }
 }
