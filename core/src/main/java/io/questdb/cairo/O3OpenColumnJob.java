@@ -208,7 +208,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int columnType,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcOooFixAddr,
+            long o3AuxAddr,
             long srcOooVarAddr,
             long srcOooLo,
             long srcOooHi,
@@ -258,8 +258,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long dstAuxAppendOffset2;
         int dstAuxFd = 0;
         long dstAuxAddr = 0;
-        long srcDataVarAddr = 0;
-        long srcDataVarOffset = 0;
+        long srcDataAddr = 0;
+        long srcDataOffset = 0;
         long dstDataAppendOffset1 = 0;
         final int srcFixFd = Math.abs(srcDataFixFd);
         final int srcVarFd = Math.abs(srcDataVarFd);
@@ -300,24 +300,24 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // at bottom of source var column set length of strings to null (-1) for as many strings
                     // as srcDataTop value.
-                    srcDataVarOffset = srcDataSize;
+                    srcDataOffset = srcDataSize;
                     // We need to reserve null values for every column top value
                     // in the variable len file. Each null value takes 4 bytes for string
-                    long reservedBytesForColTopNulls = srcDataTop * columnTypeDriver.getDataVectorMinEntrySize();
+                    final long reservedBytesForColTopNulls = srcDataTop * columnTypeDriver.getDataVectorMinEntrySize();
                     srcDataSize += reservedBytesForColTopNulls + srcDataSize;
-                    srcDataVarAddr = mapRW(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3);
-                    ff.madvise(srcDataVarAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
+                    srcDataAddr = mapRW(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
 
                     // Set var column values to null first srcDataTop times
                     // Next line should be:
-                    // Vect.setMemoryInt(srcDataVarAddr + srcDataVarOffset, -1, srcDataTop);
+                    // Vect.setMemoryInt(srcDataAddr + srcDataOffset, -1, srcDataTop);
                     // But we can replace it with memset setting each byte to -1
                     // because binary repr of int -1 is 4 bytes of -1
                     // memset is faster than any SIMD implementation we can come with
-                    Vect.memset(srcDataVarAddr + srcDataVarOffset, (int) reservedBytesForColTopNulls, -1);
+                    columnTypeDriver.setDataVectorEntriesToNull(srcDataAddr + srcDataOffset, srcDataTop);
 
                     // Copy var column data
-                    Vect.memcpy(srcDataVarAddr + srcDataVarOffset + reservedBytesForColTopNulls, srcDataVarAddr, srcDataVarOffset);
+                    Vect.memcpy(srcDataAddr + srcDataOffset + reservedBytesForColTopNulls, srcDataAddr, srcDataOffset);
 
                     // we need to shift copy the original column so that new block points at strings "below" the
                     // nulls we created above
@@ -353,8 +353,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataFixOffset = 0;
 
                     srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCount - 1);
-                    srcDataVarAddr = mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3);
-                    ff.madvise(srcDataVarAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
+                    srcDataAddr = mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3);
+                    ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
                 }
             } else {
                 newAuxSize = columnTypeDriver.getAuxVectorSize(srcDataMax);
@@ -362,8 +362,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
                 srcDataFixOffset = 0;
                 srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, srcDataMax - 1);
-                srcDataVarAddr = mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3);
-                ff.madvise(srcDataVarAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
+                srcDataAddr = mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3);
+                ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
             }
 
             // upgrade srcDataTop to offset
@@ -385,7 +385,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             dFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn);
             dstDataFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-            dstDataSize = srcDataSize - srcDataVarOffset + columnTypeDriver.getDataVectorSize(srcOooFixAddr, srcOooLo, srcOooHi);
+            dstDataSize = srcDataSize - srcDataOffset + columnTypeDriver.getDataVectorSize(o3AuxAddr, srcOooLo, srcOooHi);
 
             if (prefixType == O3_BLOCK_NONE && prefixHi > initialSrcDataTop) {
                 // split partition
@@ -416,7 +416,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             // configure offsets
             switch (prefixType) {
                 case O3_BLOCK_O3:
-                    dstDataAppendOffset1 = columnTypeDriver.getDataVectorSize(srcOooFixAddr, prefixLo, prefixHi);
+                    dstDataAppendOffset1 = columnTypeDriver.getDataVectorSize(o3AuxAddr, prefixLo, prefixHi);
                     partCount++;
                     break;
                 case O3_BLOCK_DATA:
@@ -437,7 +437,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 if (mergeRowCount == mergeDataHi - mergeDataLo + 1 + mergeOOOHi - mergeOOOLo + 1) {
                     // No deduplication, all rows from O3 and column data will be written.
                     // In this case var col length is calculated as o3 var col len + data var col len
-                    final long o3size = columnTypeDriver.getDataVectorSize(srcOooFixAddr, mergeOOOLo, mergeOOOHi);
+                    final long o3size = columnTypeDriver.getDataVectorSize(o3AuxAddr, mergeOOOLo, mergeOOOHi);
                     final long dataSize = columnTypeDriver.getDataVectorSize(
                             srcAuxAddr + srcDataFixOffset,
                             mergeDataLo - srcDataTop,
@@ -464,7 +464,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             timestampMergeIndexAddr,
                             timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES,
                             srcAuxAddr + srcDataFixOffset - columnTypeDriver.getAuxVectorOffset(srcDataTop),
-                            srcOooFixAddr
+                            o3AuxAddr
                     );
                 }
             } else {
@@ -492,7 +492,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcAuxAddr,
                     newAuxSize,
                     srcDataVarFd,
-                    srcDataVarAddr,
+                    srcDataAddr,
                     srcDataSize,
                     srcTimestampFd,
                     srcTimestampAddr,
@@ -523,12 +523,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 srcDataFixOffset,
                 newAuxSize,
                 srcDataVarFd,
-                srcDataVarAddr,
-                srcDataVarOffset,
+                srcDataAddr,
+                srcDataOffset,
                 srcDataSize,
                 srcDataTopOffset,
                 srcDataMax,
-                srcOooFixAddr,
+                o3AuxAddr,
                 srcOooVarAddr,
                 srcOooLo,
                 srcOooHi,

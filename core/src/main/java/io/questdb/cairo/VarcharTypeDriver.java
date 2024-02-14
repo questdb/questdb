@@ -279,4 +279,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         // to split partition in O3 commit when necessary
         return TableUtils.ESTIMATED_VAR_COL_SIZE;
     }
+
+    @Override
+    public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
+        // this is a no-op, NULLs do not occupy space in the data vector
+    }
 }
