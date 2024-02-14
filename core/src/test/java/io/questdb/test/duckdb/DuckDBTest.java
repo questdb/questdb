@@ -503,6 +503,8 @@ public class DuckDBTest extends AbstractCairoTest {
         Rnd rnd = new Rnd();
         final int binarySize = 32;
         DirectByteSink sink = new DirectByteSink(binarySize);
+        Long256Impl long256 = new Long256Impl();
+        DirectLongList long256Bytes = new DirectLongList(4, MemoryTag.NATIVE_LONG_LIST);
 
         long ts = TimestampFormatUtils.parseTimestamp("2024-02-12T00:00:00.000000Z");
         long stop = TimestampFormatUtils.parseTimestamp("2024-02-14T00:00:00.000000Z");
@@ -622,6 +624,17 @@ public class DuckDBTest extends AbstractCairoTest {
                         row.putSymIndex(c, index);
                         DuckDB.appenderAppendInt(appender, index);
                         break;
+                    case ColumnType.LONG256:
+                        long256.fromRnd(rnd);
+                        Long256 l256 = isNull ? Long256Impl.NULL_LONG256 : long256;
+                        row.putLong256(c, l256);
+                        long256Bytes.clear();
+                        long256Bytes.add(l256.getLong0());
+                        long256Bytes.add(l256.getLong1());
+                        long256Bytes.add(l256.getLong2());
+                        long256Bytes.add(l256.getLong3());
+                        DuckDB.appenderAppendBlob(appender, long256Bytes.getAddress(), Long256.BYTES);
+                        break;
                     default:
                         Assert.fail("Unsupported type: " + type);
                 }
@@ -634,6 +647,7 @@ public class DuckDBTest extends AbstractCairoTest {
         writer.commit();
         DuckDB.appenderFlush(appender);
         sink.close();
+        long256Bytes.close();
     }
 
     private TableModel createQuestTableModel(String tableName) {
@@ -650,7 +664,7 @@ public class DuckDBTest extends AbstractCairoTest {
             .col("COL_" + ColumnType.nameOf(ColumnType.DOUBLE), ColumnType.DOUBLE)
             .col("COL_" + ColumnType.nameOf(ColumnType.STRING), ColumnType.STRING)
             .col("COL_" + ColumnType.nameOf(ColumnType.SYMBOL), ColumnType.SYMBOL)
-//                .col("COL_" + ColumnType.nameOf(ColumnType.LONG256), ColumnType.LONG256)
+            .col("COL_" + ColumnType.nameOf(ColumnType.LONG256), ColumnType.LONG256)
             .col("COL_" + "GEOBYTE", ColumnType.getGeoHashTypeWithBits(5))
             .col("COL_" + "GEOSHORT", ColumnType.getGeoHashTypeWithBits(15))
             .col("COL_" + "GEOINT", ColumnType.getGeoHashTypeWithBits(30))
@@ -700,10 +714,8 @@ public class DuckDBTest extends AbstractCairoTest {
                 case ColumnType.STRING:
                     sql.append(name).append(" VARCHAR");
                     break;
-//                case ColumnType.LONG256:
-//                    sql.append(name).append(" LONG256");
-//                    break;
                 case ColumnType.BINARY:
+                case ColumnType.LONG256:
                     sql.append(name).append(" BLOB");
                     break;
                 case ColumnType.LONG128:

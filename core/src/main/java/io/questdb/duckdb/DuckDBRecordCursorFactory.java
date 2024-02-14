@@ -510,21 +510,22 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
 
             @Override
             public Long256 getLong256A(int columnIndex) {
-                final long addressLo = currentPageFrame.getPageAddress(columnIndex);
-                final long addressHi = currentPageFrame.getPageAddress(columnIndex + 1); // TODO: validate
-                if (addressLo == 0 || addressHi == 0) {
-                    long256.setAll(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                final long baseAddress = currentPageFrame.getPageAddress(columnIndex);
+                if (baseAddress == 0) {
+                    return Long256Impl.NULL_LONG256;
                 } else {
-                    long recordAddressLo = addressLo + pageRowIndex * Long128.BYTES;
-                    long recordAddressHi = addressHi + pageRowIndex * Long128.BYTES;
+                    long recordAddress = baseAddress + pageRowIndex * 16; // sizeof(value)
+                    int length = Unsafe.getUnsafe().getInt(recordAddress);
+                    assert length == 32;
+                    long address = Unsafe.getUnsafe().getLong(recordAddress + 8);
                     long256.setAll(
-                            Unsafe.getUnsafe().getLong(addressLo),
-                            Unsafe.getUnsafe().getLong(addressLo + Long.BYTES),
-                            Unsafe.getUnsafe().getLong(addressHi),
-                            Unsafe.getUnsafe().getLong(addressHi + Long.BYTES)
+                            Unsafe.getUnsafe().getLong(address),
+                            Unsafe.getUnsafe().getLong(address + Long.BYTES),
+                            Unsafe.getUnsafe().getLong(address + Long.BYTES * 2),
+                            Unsafe.getUnsafe().getLong(address + Long.BYTES * 3)
                     );
+                    return long256;
                 }
-                return long256;
             }
 
             @Override
