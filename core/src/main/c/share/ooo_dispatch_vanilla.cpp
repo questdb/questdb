@@ -101,7 +101,8 @@ void merge_copy_varchar_column(
     int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
     char *src_var[] = {src_ooo_var, src_data_var};
 
-    // todo: this is highly incomplete, working only two fully inlined cases
+    // todo: perf. optimizations
+    // todo: check types, possible UB, etc.
     for (int64_t l = 0; l < merge_index_size; l++) {
         const uint64_t row = merge_index[l].i;
         const uint32_t bit = (row >> 63);
@@ -109,8 +110,21 @@ void merge_copy_varchar_column(
         const int64_t firstWord = src_fix[bit][rr * 2];
         const int64_t secondWord = src_fix[bit][rr * 2 + 1];
 
+        auto originalData = secondWord & 0x000000000000ffffLL;
+        auto rellocatedSecondWord = originalData | (dst_var_offset << 16);
+        if ((firstWord & 1) == 0 && (firstWord & 4) == 0) {
+            // todo: is this branch needed? perhaps we can get away without it?
+            // not inlined and not null
+            auto originalOffset = secondWord >> 16;
+            auto len = (firstWord >> 4) & 0xffffff;
+            // todo: make sure to keep the constant in-sync with Java
+            auto lenInDataMem = len - 6;
+            auto data = src_var[bit] + originalOffset;
+            __MEMCPY(dst_var + dst_var_offset, data, lenInDataMem);
+            dst_var_offset += lenInDataMem;
+        }
         dst_fix[l * 2] = firstWord;
-        dst_fix[l * 2 + 1] = secondWord;
+        dst_fix[l * 2 + 1] = rellocatedSecondWord;
     }
 }
 
