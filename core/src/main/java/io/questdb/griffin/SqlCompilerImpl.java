@@ -2405,7 +2405,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int functionPosition,
             BindVariableService bindVariableService
     ) throws SqlException {
-
         final int columnType = metadata.getColumnType(metadataColumnIndex);
         if (function.isUndefined()) {
             function.assignType(columnType, bindVariableService);
