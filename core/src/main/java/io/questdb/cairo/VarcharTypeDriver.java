@@ -25,10 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.*;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 
@@ -153,7 +150,24 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorSizeAtFromFd(FilesFacade ff, int auxFd, long row) {
-        throw new UnsupportedOperationException();
+        long auxFileOffset = row << VARCHAR_AUX_SHL;
+        if (row < 0) {
+            return 0;
+        }
+        final int raw = readInt(ff, auxFd, auxFileOffset);
+        final int flags = raw & 0x0f; // 4 bit flags
+
+        final int offsetLo = readInt(ff, auxFd, auxFileOffset + 8L);
+        final int offsetHi = readInt(ff, auxFd, auxFileOffset + 12L);
+        final long dataOffset = Numbers.encodeLowHighInts(offsetLo, offsetHi) >>> 16;
+
+        if ((flags & 4) == 4 || (flags & 1) == 1) {
+            // null flag is set or fully inlined value
+            return dataOffset;
+        }
+        // size of the string at this offset
+        final int size = (raw >> 4) & 0xffffff;
+        return dataOffset + size - Utf8s.UTF8_STORAGE_SPLIT_BYTE;
     }
 
     @Override
@@ -201,22 +215,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void setColumnRefs(long address, long initialOffset, long count) {
-        Vect.setVarcharColumnNullRefs(address, initialOffset, count);
-    }
-
-    @Override
-    public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr) {
-        O3Utils.shiftCopyVarcharColumnAux(
-                shift,
-                srcAddr,
-                srcLo,
-                srcHi,
-                dstAddr
-        );
-    }
-
-    @Override
     public void o3sort(
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
@@ -230,7 +228,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         final long srcAuxAddr = srcAuxMem.addressOf(0);
         // exclude the trailing offset from shuffling
         final long tgtDataAddr = dstDataMem.resize(srcDataMem.size());
-        final long tgtAuxAddr = dstAuxMem.resize(timestampMergeIndexSize * 2 * Long.BYTES);
+        final long tgtAuxAddr = dstAuxMem.resize(timestampMergeIndexSize << VARCHAR_AUX_SHL);
 
         assert srcDataAddr != 0;
         assert srcAuxAddr != 0;
@@ -290,7 +288,36 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void setColumnRefs(long address, long initialOffset, long count) {
+        Vect.setVarcharColumnNullRefs(address, initialOffset, count);
+    }
+
+    @Override
     public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
         // this is a no-op, NULLs do not occupy space in the data vector
+    }
+
+    @Override
+    public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr) {
+        O3Utils.shiftCopyVarcharColumnAux(
+                shift,
+                srcAddr,
+                srcLo,
+                srcHi,
+                dstAddr
+        );
+    }
+
+    private static int readInt(FilesFacade ff, int fd, long offset) {
+        long res = ff.readIntAsUnsignedLong(fd, offset);
+        if (res < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("Invalid data read from varchar aux file [fd=").put(fd)
+                    .put(", offset=").put(offset)
+                    .put(", fileSize=").put(ff.length(fd))
+                    .put(", result=").put(res)
+                    .put(']');
+        }
+        return Numbers.decodeLowInt(res);
     }
 }

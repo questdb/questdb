@@ -174,7 +174,6 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         assert rowCount >= 0;
 
         if (sourceColumnTop > 0) {
-
             long targetDataOffset = getDataAppendOffsetBytes(rowCount);
             long srcDataSize = sourceColumnTop * columnTypeDriver.getDataVectorMinEntrySize();
             TableUtils.allocateDiskSpaceToPage(ff, dataFd, targetDataOffset + srcDataSize);
@@ -311,7 +310,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private long getDataAppendOffsetBytes(long appendOffsetRowCount) {
         // cache repeated calls to this method provided the append offset row count is the same
         if (this.appendOffsetRowCount != appendOffsetRowCount) {
-            dataAppendOffsetBytes = columnTypeDriver.getDataVectorSizeAtFromFd(ff, auxFd, appendOffsetRowCount);
+            dataAppendOffsetBytes = columnTypeDriver.getDataVectorSizeAtFromFd(ff, auxFd, appendOffsetRowCount - 1);
             this.appendOffsetRowCount = appendOffsetRowCount;
         }
         return dataAppendOffsetBytes;

@@ -25,7 +25,10 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.*;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
 import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
@@ -114,6 +117,22 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public long getDataVectorSizeAtFromFd(FilesFacade ff, int auxFd, long row) {
+        long auxFileOffset = getAuxVectorOffset(row + 1);
+        long dataOffset = row > -1 ? ff.readNonNegativeLong(auxFd, auxFileOffset) : 0;
+
+        if (dataOffset < 0 || dataOffset > 1L << 40 || (row > -1 && dataOffset == 0)) {
+            throw CairoException.critical(ff.errno())
+                    .put("Invalid variable file length offset read from offset file [auxFd=").put(auxFd)
+                    .put(", offset=").put(auxFileOffset)
+                    .put(", fileSize=").put(ff.length(auxFd))
+                    .put(", result=").put(dataOffset)
+                    .put(']');
+        }
+        return dataOffset;
+    }
+
+    @Override
     public long getMinAuxVectorSize() {
         return Long.BYTES;
     }
@@ -165,22 +184,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
         } else {
             Vect.memcpy(dstFixAddr, fromAddress, len);
         }
-    }
-
-    @Override
-    public void setColumnRefs(long address, long initialOffset, long count) {
-        Vect.setVarColumnRefs32Bit(address, initialOffset, count);
-    }
-
-    @Override
-    public void shiftCopyAuxVector(
-            long shift,
-            long src,
-            long srcLo,
-            long srcHi,
-            long dstAddr
-    ) {
-        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
     }
 
     @Override
@@ -258,29 +261,29 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void setColumnRefs(long address, long initialOffset, long count) {
+        Vect.setVarColumnRefs32Bit(address, initialOffset, count);
+    }
+
+    @Override
     public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
         Vect.memset(dataMemAddr, rowCount * Integer.BYTES, -1);
+    }
+
+    @Override
+    public void shiftCopyAuxVector(
+            long shift,
+            long src,
+            long srcLo,
+            long srcHi,
+            long dstAddr
+    ) {
+        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
     }
 
     static long findVarOffset(long srcFixAddr, long srcLo) {
         long result = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
         assert (srcLo == 0 && result == 0) || result > 0;
         return result;
-    }
-
-    @Override
-    public long getDataVectorSizeAtFromFd(FilesFacade ff, int auxFd, long row) {
-        long auxFileOffset = getAuxVectorOffset(row);
-        long dataOffset = row > 0 ? ff.readNonNegativeLong(auxFd, auxFileOffset) : 0;
-
-        if (dataOffset < 0 || dataOffset > 1L << 40 || (row > 0 && dataOffset == 0)) {
-            throw CairoException.critical(ff.errno())
-                    .put("Invalid variable file length offset read from offset file [auxFd=").put(auxFd)
-                    .put(", offset=").put(auxFileOffset)
-                    .put(", fileSize=").put(ff.length(auxFd))
-                    .put(", result=").put(dataOffset)
-                    .put(']');
-        }
-        return dataOffset;
     }
 }

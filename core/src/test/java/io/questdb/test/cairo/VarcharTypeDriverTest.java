@@ -44,6 +44,32 @@ import org.junit.Test;
 public class VarcharTypeDriverTest extends AbstractTest {
 
     @Test
+    public void testGetDataVectorSize() throws Exception {
+        final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+        final VarcharTypeDriver driver = new VarcharTypeDriver();
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
+                try (
+                        MemoryCMARW auxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                        MemoryCARW dataMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+                ) {
+                    Utf8s.varcharAppend(dataMem, auxMem, null);
+                    Utf8s.varcharAppend(dataMem, auxMem, new Utf8String("foobarbaz - bazbarfoo"));
+
+                    Assert.assertEquals(15, driver.getDataVectorSize(auxMem.addressOf(0), 0, 1));
+
+                    Assert.assertEquals(0, driver.getDataVectorSizeAt(auxMem.addressOf(0), 0));
+                    Assert.assertEquals(15, driver.getDataVectorSizeAt(auxMem.addressOf(0), 1));
+
+                    Assert.assertEquals(0, driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), -1));
+                    Assert.assertEquals(0, driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), 0));
+                    Assert.assertEquals(15, driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), 1));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testO3setColumnRefs() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final VarcharTypeDriver driver = new VarcharTypeDriver();
