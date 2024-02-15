@@ -627,7 +627,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "wal.apply.worker.sleep.timeout\tQDB_WAL_APPLY_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.yield.threshold\tQDB_WAL_APPLY_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.recompile.attempts\tQDB_CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\tfalse\n" +
-                                    "cairo.default.wal.seq.chunk.txn.count\tQDB_CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT\t0\tdefault\tfalse\tfalse")
+                                    "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse")
                                     .split("\n");
 
                     final Set<String> missingProps = new HashSet<>();
