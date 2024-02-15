@@ -91,6 +91,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         charVarPool.clear();
         long256VarPool.clear();
         geoHashVarPool.clear();
+        uuidVarPool.clear();
     }
 
     @Override
@@ -878,7 +879,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setIPv40(Function function, int value, int index, @Nullable CharSequence name)  {
+    private static void setIPv40(Function function, int value, int index, @Nullable CharSequence name) {
         ((IPv4BindVariable) function).value = value;
     }
 
