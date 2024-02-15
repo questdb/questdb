@@ -95,7 +95,7 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
 
         for (int i = 0, columns = metadata.getColumnCount(); i < columns; i++) {
             int duckLogicalTypeId = DuckDB.decodeLogicalTypeId(DuckDB.preparedGetColumnTypes(statement, i));
-            int questType = metadata.getColumnType(i);
+            int questType = ColumnType.tagOf(metadata.getColumnType(i));
             if (!isTypeMatched(questType, duckLogicalTypeId)) {
                 return false;
             }
@@ -106,7 +106,6 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
     private static boolean isTypeMatched(int questType, int duckType) {
         switch (questType) {
             case ColumnType.BOOLEAN:
-                return duckType == DuckDB.COLUMN_TYPE_BOOLEAN;
             case ColumnType.BYTE:
             case ColumnType.GEOBYTE:
                 return duckType == DuckDB.COLUMN_TYPE_TINYINT;
@@ -115,18 +114,18 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
             case ColumnType.GEOSHORT:
                 return duckType == DuckDB.COLUMN_TYPE_SMALLINT;
             case ColumnType.INT:
-            case ColumnType.DATE:
             case ColumnType.GEOINT:
             case ColumnType.IPv4:
+            case ColumnType.SYMBOL:
                 return duckType == DuckDB.COLUMN_TYPE_INTEGER;
             case ColumnType.LONG:
+            case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
             case ColumnType.GEOLONG:
                 return duckType == DuckDB.COLUMN_TYPE_BIGINT;
             case ColumnType.LONG128:
             case ColumnType.UUID:
-            case ColumnType.LONG256: // TODO: this is a problem
-                return duckType == DuckDB.COLUMN_TYPE_HUGEINT;
+                return duckType == DuckDB.COLUMN_TYPE_UUID;
             case ColumnType.FLOAT:
                 return duckType == DuckDB.COLUMN_TYPE_FLOAT;
             case ColumnType.DOUBLE:
@@ -134,6 +133,7 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
             case ColumnType.STRING:
                 return duckType == DuckDB.COLUMN_TYPE_VARCHAR;
             case ColumnType.BINARY:
+            case ColumnType.LONG256:
                 return duckType == DuckDB.COLUMN_TYPE_BLOB;
             default:
                 return false;
@@ -197,12 +197,25 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public Record getRecordB() {
-            return record;
+            throw new UnsupportedOperationException();
         }
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return pageFrameCursor.getSymbolTable(columnIndex);
+            if (reader == null) {
+                return pageFrameCursor.getSymbolTable(columnIndex);
+            } else {
+                return reader.getSymbolTable(columnIndex);
+            }
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            if (reader == null) {
+                return pageFrameCursor.newSymbolTable(columnIndex);
+            } else {
+                return reader.newSymbolTable(columnIndex);
+            }
         }
 
         @Override
@@ -365,7 +378,8 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
         public class QuestNativeRecord extends AbstractRecord {
             private final DirectUtf8String utf8String = new DirectUtf8String();
             private final DirectBinarySequence binarySequence = new DirectBinarySequence();
-            private final Long256Impl long256 = new Long256Impl();
+            private final Long256Impl long256A = new Long256Impl();
+            private final Long256Impl long256B = new Long256Impl();
 
             @Override
             public boolean getBool(int columnIndex) {
@@ -508,11 +522,10 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
                 Numbers.appendLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3(), sink);
             }
 
-            @Override
-            public Long256 getLong256A(int columnIndex) {
+            private void updateLong256(int columnIndex, Long256 long256) {
                 final long baseAddress = currentPageFrame.getPageAddress(columnIndex);
                 if (baseAddress == 0) {
-                    return Long256Impl.NULL_LONG256;
+                    long256.setAll(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN);
                 } else {
                     long recordAddress = baseAddress + pageRowIndex * 16; // sizeof(value)
                     int length = Unsafe.getUnsafe().getInt(recordAddress);
@@ -524,8 +537,19 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
                             Unsafe.getUnsafe().getLong(address + Long.BYTES * 2),
                             Unsafe.getUnsafe().getLong(address + Long.BYTES * 3)
                     );
-                    return long256;
                 }
+            }
+
+            @Override
+            public Long256 getLong256A(int columnIndex) {
+                updateLong256(columnIndex, long256A);
+                return long256A;
+            }
+
+            @Override
+            public Long256 getLong256B(int columnIndex) {
+                updateLong256(columnIndex, long256B);
+                return long256B;
             }
 
             @Override
@@ -547,17 +571,14 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
                 }
                 long recordAddress = address + pageRowIndex * 16; // sizeof(value)
                 int length = Unsafe.getUnsafe().getInt(recordAddress);
-                if (length <= 12) {
-                    // inlined
-                    long inlinedAddress = recordAddress + Integer.BYTES;
-                    utf8String.of(inlinedAddress, inlinedAddress + length);
-                    return utf8String.toString(); // Convert for now
-                } else {
-                    // ptr
-                    long ptrAddress = Unsafe.getUnsafe().getLong(recordAddress + 8);
-                    utf8String.of(ptrAddress, ptrAddress + length);
-                    return utf8String.toString(); // Convert for now
-                }
+                long dataAddress = getVarlenAddress(recordAddress, length);
+                utf8String.of(dataAddress, dataAddress + length);
+                return utf8String.toString(); // Convert for now
+            }
+
+            @Override
+            public CharSequence getStrB(int columnIndex) {
+               return getStr(columnIndex);
             }
 
             @Override
@@ -571,45 +592,49 @@ public class DuckDBRecordCursorFactory implements RecordCursorFactory {
             }
 
             @Override
-            public BinarySequence getBin(int columnIndex) { // TODO: null handling
+            public BinarySequence getBin(int columnIndex) {
                 final long address = currentPageFrame.getPageAddress(columnIndex);
                 if (address == 0) {
                     return null;
                 }
                 long recordAddress = address + pageRowIndex * 16; // sizeof(value)
                 int length = Unsafe.getUnsafe().getInt(recordAddress);
+                long dataAddress = getVarlenAddress(recordAddress, length);
+                binarySequence.of(dataAddress, length);
+                return binarySequence;
+            }
+
+            private long getVarlenAddress(long recordAddress, int length) {
                 if (length <= 12) {
-                    // inlined
-                    long inlinedAddress = recordAddress + Integer.BYTES;
-                    binarySequence.of(inlinedAddress, length);
-                    return binarySequence;
+                    return recordAddress + Integer.BYTES;
                 } else {
-                    // ptr
-                    long ptrAddress = Unsafe.getUnsafe().getLong(recordAddress + 8);
-                    binarySequence.of(ptrAddress, length);
-                    return binarySequence;
+                    return Unsafe.getUnsafe().getLong(recordAddress + 8);
                 }
             }
 
             @Override
             public long getBinLen(int columnIndex) {
-                final long address = currentPageFrame.getPageAddress(columnIndex);
-                if (address == 0) {
-                    return 0;
-                }
-                long recordAddress = address + pageRowIndex * 16; // sizeof(value)
-                return Unsafe.getUnsafe().getLong(recordAddress);
+                return getStrLen(columnIndex);
             }
 
             @Override
             public CharSequence getSym(int columnIndex) {
-                final long address = currentPageFrame.getPageAddress(columnIndex);
-                if (address == 0 || reader == null) {
+                final int index = getInt(columnIndex);
+                if (index == Numbers.INT_NaN || reader == null) {
                     return null;
                 }
-                int index = Unsafe.getUnsafe().getInt(address + pageRowIndex * Integer.BYTES);
                 return reader.getSymbolMapReader(columnIndex).valueOf(index);
             }
+
+            @Override
+            public CharSequence getSymB(int columnIndex) {
+                final int index = getInt(columnIndex);
+                if (index == Numbers.INT_NaN || reader == null) {
+                    return null;
+                }
+                return reader.getSymbolMapReader(columnIndex).valueBOf(index);
+            }
+
         }
     }
 }

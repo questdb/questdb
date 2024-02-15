@@ -46,6 +46,7 @@ import java.util.Collections;
 import java.util.List;
 
 import static io.questdb.test.tools.TestUtils.assertEqualsExactOrder;
+import static io.questdb.test.tools.TestUtils.printCursor;
 import static org.junit.Assert.assertEquals;
 
 public class DuckDBTest extends AbstractCairoTest {
@@ -768,7 +769,7 @@ public class DuckDBTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String tableName = "testToDuckAndBackAllTypes";
             final String parquetPath = Path.getThreadLocal(root).concat(tableName + ".parquet").$().toString();
-            final int rowCount = 1;
+            final int rowCount = 250;
             try (TableModel model = createQuestTableModel(tableName)) {
                 try (TableWriter writer = getWriter(createTable(model));
                      DuckDBConnectionPool.Connection conn = engine.getDuckDBConnection();
@@ -816,6 +817,9 @@ public class DuckDBTest extends AbstractCairoTest {
                 RecordCursor duckCursor = duckFactory.getCursor(sqlExecutionContext);
         ) {
             assertEqualsExactOrder(expected, reader.getMetadata(), duckCursor, reader.getMetadata(), true);
+            expected.toTop();
+            printCursor(expected, reader.getMetadata(), true, sink, printer);
+            assertFactoryCursor(sink.toString(), "COL_TIMESTAMP", duckFactory, false, sqlExecutionContext, false, true);
         }
     }
 
