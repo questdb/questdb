@@ -50,14 +50,14 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     private final AtomicLong maxTxn = new AtomicLong();
     private final int mkDirMode;
     private final Path rootPath;
-    private final MemoryCMARW txnChunkMem = Vm.getCMARWInstance();
+    private final MemoryCMARW txnPartMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
-    private long chunkId = -1;
-    private int chunkTransactionCount;
+    private long partId = -1;
+    private int partTransactionCount;
 
-    public TableTransactionLogV2(FilesFacade ff, int chunkTransactionCount, int mkDirMode) {
+    public TableTransactionLogV2(FilesFacade ff, int seqPartTransactionCount, int mkDirMode) {
         this.ff = ff;
-        this.chunkTransactionCount = chunkTransactionCount;
+        this.partTransactionCount = seqPartTransactionCount;
         this.mkDirMode = mkDirMode;
         rootPath = new Path();
     }
@@ -74,25 +74,25 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         if (lastTxn < 0) {
             return -1;
         }
-        int chunkTransactionCount = ff.readNonNegativeInt(logFileFd, SEQ_CHUNK_SIZE_32);
-        if (chunkTransactionCount < 1) {
+        int partTransactionCount = ff.readNonNegativeInt(logFileFd, SEQ_PART_SIZE_32);
+        if (partTransactionCount < 1) {
             return -1;
         }
 
-        // Open last chunk and read last structure version
+        // Open last part and read last structure version
         if (lastTxn > 0L) {
             long prevTxn = lastTxn - 1;
-            long chunk = prevTxn / chunkTransactionCount;
+            long part = prevTxn / partTransactionCount;
             int size = path.size();
-            path.concat(TXNLOG_CHUNK_DIR).slash().put(chunk).$();
-            int chunkFd = -1;
+            path.concat(TXNLOG_PARTS_DIR).slash().put(part).$();
+            int partFd = -1;
             try {
-                chunkFd = TableUtils.openRO(ff, path, LOG);
-                long fileReadOffset = (prevTxn % chunkTransactionCount) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET;
-                return ff.readNonNegativeLong(chunkFd, fileReadOffset);
+                partFd = TableUtils.openRO(ff, path, LOG);
+                long fileReadOffset = (prevTxn % partTransactionCount) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET;
+                return ff.readNonNegativeLong(partFd, fileReadOffset);
             } finally {
-                if (chunkFd > -1) {
-                    ff.close(chunkFd);
+                if (partFd > -1) {
+                    ff.close(partFd);
                 }
                 path.trimTo(size);
             }
@@ -101,13 +101,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
-        openTxnChunk();
+        openTxnPart();
 
-        txnChunkMem.putLong(structureVersion);
-        txnChunkMem.putInt(walId);
-        txnChunkMem.putInt(segmentId);
-        txnChunkMem.putInt(segmentTxn);
-        txnChunkMem.putLong(timestamp);
+        txnPartMem.putLong(structureVersion);
+        txnPartMem.putInt(walId);
+        txnPartMem.putInt(segmentId);
+        txnPartMem.putInt(segmentTxn);
+        txnPartMem.putLong(timestamp);
 
         Unsafe.getUnsafe().storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
@@ -118,13 +118,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
-        openTxnChunk();
+        openTxnPart();
 
-        txnChunkMem.putLong(newStructureVersion);
-        txnChunkMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
-        txnChunkMem.putInt(-1);
-        txnChunkMem.putInt(-1);
-        txnChunkMem.putLong(timestamp);
+        txnPartMem.putLong(newStructureVersion);
+        txnPartMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
+        txnPartMem.putInt(-1);
+        txnPartMem.putInt(-1);
+        txnPartMem.putLong(timestamp);
     }
 
     @Override
@@ -136,13 +136,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             }
         }
         txnMem.close(false);
-        txnChunkMem.close(false);
+        txnPartMem.close(false);
         rootPath.close();
     }
 
     public void create(Path path, long tableCreateTimestamp) {
         createTxnFile(path, tableCreateTimestamp);
-        createChunksDir(mkDirMode);
+        createPartsDir(mkDirMode);
     }
 
     @Override
@@ -157,12 +157,12 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public TransactionLogCursor getCursor(long txnLo, Path path) {
         TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
         if (cursor == null) {
-            cursor = new TransactionLogCursorImpl(ff, txnLo, path.$(), chunkTransactionCount);
+            cursor = new TransactionLogCursorImpl(ff, txnLo, path.$(), partTransactionCount);
             tlTransactionLogCursor.set(cursor);
             return cursor;
         }
         try {
-            return cursor.of(ff, txnLo, path, chunkTransactionCount);
+            return cursor.of(ff, txnLo, path, partTransactionCount);
         } catch (Throwable th) {
             cursor.close();
             throw th;
@@ -190,20 +190,20 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         maxTxn.set(lastTxn);
-        chunkTransactionCount = txnMem.getInt(SEQ_CHUNK_SIZE_32);
-        if (chunkTransactionCount < 1) {
-            throw new CairoException().put("invalid sequencer file chunk size [size=").put(chunkTransactionCount).put(", path=").put(path).put(']');
+        partTransactionCount = txnMem.getInt(SEQ_PART_SIZE_32);
+        if (partTransactionCount < 1) {
+            throw new CairoException().put("invalid sequencer file part size [size=").put(partTransactionCount).put(", path=").put(path).put(']');
         }
 
         long maxStructureVersion = 0L;
         if (lastTxn > 0L) {
             long prevTxn = lastTxn - 1;
-            openTxnChunk(prevTxn);
-            long lastChunkTxn = (prevTxn) % chunkTransactionCount;
-            maxStructureVersion = txnChunkMem.getLong(lastChunkTxn * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
+            openTxnPart(prevTxn);
+            long lastPartTxn = (prevTxn) % partTransactionCount;
+            maxStructureVersion = txnPartMem.getLong(lastPartTxn * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
         }
-        openTxnChunk();
-        // Open chunk can leave prev txn append position when chunk is the same
+        openTxnPart();
+        // Open part can leave prev txn append position when part is the same
         setAppendPosition();
         return maxStructureVersion;
     }
@@ -212,9 +212,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnMem.sync(false);
     }
 
-    private void createChunksDir(int mkDirMode) {
+    private void createPartsDir(int mkDirMode) {
         int rootLen = rootPath.size();
-        rootPath.concat(TXNLOG_CHUNK_DIR).$();
+        rootPath.concat(TXNLOG_PARTS_DIR).$();
         try {
             if (!ff.exists(rootPath) && ff.mkdir(rootPath, mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(rootPath).put("']");
@@ -231,25 +231,25 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnMem.putInt(WAL_SEQUENCER_FORMAT_VERSION_V2);
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
-        txnMem.putInt(chunkTransactionCount);
+        txnMem.putInt(partTransactionCount);
         txnMem.sync(false);
     }
 
-    private void openTxnChunk() {
-        openTxnChunk(this.maxTxn.get());
+    private void openTxnPart() {
+        openTxnPart(this.maxTxn.get());
     }
 
-    private void openTxnChunk(long txn) {
-        long chunk = txn / chunkTransactionCount;
-        if (chunkId != chunk) {
+    private void openTxnPart(long txn) {
+        long part = txn / partTransactionCount;
+        if (partId != part) {
             int size = rootPath.size();
             try {
-                rootPath.concat(TXNLOG_CHUNK_DIR).slash().put(chunk).$();
-                long chunkSize = chunkTransactionCount * RECORD_SIZE;
-                txnChunkMem.close(false);
-                txnChunkMem.of(ff, rootPath, chunkSize, chunkSize, MemoryTag.MMAP_TX_LOG);
-                txnChunkMem.jumpTo((txn % chunkTransactionCount) * RECORD_SIZE);
-                chunkId = chunk;
+                rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part).$();
+                long partSize = partTransactionCount * RECORD_SIZE;
+                txnPartMem.close(false);
+                txnPartMem.of(ff, rootPath, partSize, partSize, MemoryTag.MMAP_TX_LOG);
+                txnPartMem.jumpTo((txn % partTransactionCount) * RECORD_SIZE);
+                partId = part;
             } finally {
                 rootPath.trimTo(size);
             }
@@ -268,15 +268,15 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     private void setAppendPosition() {
-        txnChunkMem.jumpTo((this.maxTxn.get() % chunkTransactionCount) * RECORD_SIZE);
+        txnPartMem.jumpTo((this.maxTxn.get() % partTransactionCount) * RECORD_SIZE);
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
         private long address;
-        private int chunkFd = -1;
-        private long chunkId = -1;
-        private long chunkMapSize;
-        private int chunkTransactionCount;
+        private int partFd = -1;
+        private long partId = -1;
+        private long partMapSize;
+        private int partTransactionCount;
         private FilesFacade ff;
         private int headerFd;
         private Path rootPath;
@@ -285,10 +285,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         private long txnLo;
         private long txnOffset;
 
-        public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path, int chunkTransactionCount) {
+        public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path, int partTransactionCount) {
             rootPath = new Path();
             try {
-                of(ff, txnLo, path, chunkTransactionCount);
+                of(ff, txnLo, path, partTransactionCount);
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -301,11 +301,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 ff.close(headerFd);
             }
             if (txnCount > -1 && address > 0) {
-                ff.munmap(address, chunkMapSize, MemoryTag.MMAP_TX_LOG_CURSOR);
+                ff.munmap(address, partMapSize, MemoryTag.MMAP_TX_LOG_CURSOR);
                 txnCount = 0;
                 address = 0;
             }
-            closeChunk();
+            closePart();
         }
 
         public void closePath() {
@@ -338,7 +338,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         @Override
         public long getPartNo() {
-            return (txn - 1) / chunkTransactionCount;
+            return (txn - 1) / partTransactionCount;
         }
 
         @Override
@@ -379,7 +379,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 }
             }
 
-            openChunk(txn);
+            openPart(txn);
             txn++;
             return true;
         }
@@ -392,16 +392,16 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public void toMin() {
             int rootLen = rootPath.size();
-            rootPath.concat(TXNLOG_CHUNK_DIR).slash();
-            long chunkId = txnLo / chunkTransactionCount;
-            long minTxn = chunkId * chunkTransactionCount;
+            rootPath.concat(TXNLOG_PARTS_DIR).slash();
+            long partId = txnLo / partTransactionCount;
+            long minTxn = partId * partTransactionCount;
 
             int rootPathLen = rootPath.size();
             try {
-                for (long chunk = chunkId - 1; chunk > -1L; chunk--) {
-                    rootPath.trimTo(rootPathLen).put(chunk).$();
+                for (long part = partId - 1; part > -1L; part--) {
+                    rootPath.trimTo(rootPathLen).put(part).$();
                     if (ff.exists(rootPath)) {
-                        minTxn = chunk * chunkTransactionCount;
+                        minTxn = part * partTransactionCount;
                     } else {
                         break;
                     }
@@ -410,7 +410,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             } finally {
                 rootPath.trimTo(rootLen);
             }
-            openChunk(minTxn);
+            openPart(minTxn);
             txn = txnLo = minTxn;
         }
 
@@ -431,20 +431,20 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             }
         }
 
-        private void closeChunk() {
-            if (chunkFd > -1) {
-                ff.munmap(address, chunkMapSize, MemoryTag.MMAP_TX_LOG_CURSOR);
-                ff.close(chunkFd);
-                chunkFd = -1;
-                chunkId = -2;
+        private void closePart() {
+            if (partFd > -1) {
+                ff.munmap(address, partMapSize, MemoryTag.MMAP_TX_LOG_CURSOR);
+                ff.close(partFd);
+                partFd = -1;
+                partId = -2;
                 address = 0;
             }
         }
 
         @NotNull
-        private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path, int chunkTransactionCount) {
-            this.chunkTransactionCount = chunkTransactionCount;
-            chunkMapSize = chunkTransactionCount * RECORD_SIZE;
+        private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path, int partTransactionCount) {
+            this.partTransactionCount = partTransactionCount;
+            partMapSize = partTransactionCount * RECORD_SIZE;
             this.ff = ff;
             this.headerFd = openFileRO(ff, path, TXNLOG_FILE_NAME);
             long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
@@ -461,21 +461,21 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             return this;
         }
 
-        private void openChunk(long zeroBasedTxn) {
-            long chunk = zeroBasedTxn / chunkTransactionCount;
-            if (chunk != chunkId) {
-                closeChunk();
+        private void openPart(long zeroBasedTxn) {
+            long part = zeroBasedTxn / partTransactionCount;
+            if (part != partId) {
+                closePart();
                 int size = rootPath.size();
                 try {
-                    rootPath.concat(TXNLOG_CHUNK_DIR).slash().put(chunk).$();
-                    chunkFd = TableUtils.openRO(ff, rootPath, LOG);
-                    address = ff.mmap(chunkFd, chunkMapSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
-                    chunkId = chunk;
+                    rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part).$();
+                    partFd = TableUtils.openRO(ff, rootPath, LOG);
+                    address = ff.mmap(partFd, partMapSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+                    partId = part;
                 } finally {
                     rootPath.trimTo(size);
                 }
             }
-            this.txnOffset = (zeroBasedTxn % chunkTransactionCount) * RECORD_SIZE;
+            this.txnOffset = (zeroBasedTxn % partTransactionCount) * RECORD_SIZE;
         }
     }
 }

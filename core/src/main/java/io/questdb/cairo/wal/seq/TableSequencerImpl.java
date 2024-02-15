@@ -85,7 +85,7 @@ public class TableSequencerImpl implements TableSequencer {
             tableTransactionLog = new TableTransactionLog(
                     ff,
                     configuration.getMkDirMode(),
-                    configuration.getDefaultWalSeqChunkTxnCount()
+                    configuration.getDefaultSeqPartTxnCount()
             );
             microClock = configuration.getMicrosecondClock();
         } catch (Throwable th) {

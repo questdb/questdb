@@ -51,7 +51,7 @@ public class TableTransactionLog implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);
     private static final ThreadLocal<AlterOperation> tlAlterOperation = new ThreadLocal<>();
     private static final ThreadLocal<TableMetadataChangeLogImpl> tlStructChangeCursor = new ThreadLocal<>();
-    private final int defaultChunkSize;
+    private final int defaultSeqPartTxnCount;
     private final FilesFacade ff;
     private final AtomicLong maxMetadataVersion = new AtomicLong();
     private final int mkDirMode;
@@ -60,9 +60,9 @@ public class TableTransactionLog implements Closeable {
     private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
     private TableTransactionLogFile txnLogFile;
 
-    TableTransactionLog(FilesFacade ff, int mkDirMode, int defaultChunkSize) {
+    TableTransactionLog(FilesFacade ff, int mkDirMode, int defaultSeqPartTxnCount) {
         this.ff = ff;
-        this.defaultChunkSize = defaultChunkSize;
+        this.defaultSeqPartTxnCount = defaultSeqPartTxnCount;
         this.mkDirMode = mkDirMode;
     }
 
@@ -149,8 +149,8 @@ public class TableTransactionLog implements Closeable {
 
     private void createTxnLogFileInstance() {
         if (txnLogFile == null) {
-            if (defaultChunkSize > 0) {
-                txnLogFile = new TableTransactionLogV2(ff, defaultChunkSize, mkDirMode);
+            if (defaultSeqPartTxnCount > 0) {
+                txnLogFile = new TableTransactionLogV2(ff, defaultSeqPartTxnCount, mkDirMode);
             } else {
                 txnLogFile = new TableTransactionLogV1(ff);
             }

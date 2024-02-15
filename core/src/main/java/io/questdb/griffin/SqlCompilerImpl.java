@@ -3246,7 +3246,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     mem,
                                     auxPath.trimTo(len),
                                     configuration.getMicrosecondClock().getTicks(),
-                                    configuration.getDefaultWalSeqChunkTxnCount(),
+                                    configuration.getDefaultSeqPartTxnCount(),
                                     configuration.getMkDirMode()
                             );
                             // _txnlog.meta.i

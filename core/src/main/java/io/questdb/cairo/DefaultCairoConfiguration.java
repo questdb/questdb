@@ -244,7 +244,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getDefaultWalSeqChunkTxnCount() {
+    public int getDefaultSeqPartTxnCount() {
         return 0;
     }
 

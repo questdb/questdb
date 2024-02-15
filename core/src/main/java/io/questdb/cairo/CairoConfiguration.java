@@ -148,7 +148,7 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
-    int getDefaultWalSeqChunkTxnCount();
+    int getDefaultSeqPartTxnCount();
 
     int getDetachedMkDirMode();
 

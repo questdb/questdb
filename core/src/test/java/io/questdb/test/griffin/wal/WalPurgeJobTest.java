@@ -80,7 +80,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     public void testChunkedSequencerPartsRemoved() throws Exception {
         assertMemoryLeak(() -> {
             int txnChunkSize = 10;
-            node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, 10);
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
 
             String tableName = testName.getMethodName();
             compile("create table " + tableName + " as (" +
@@ -1172,7 +1172,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     private void assertSeqPartExistence(boolean exists, TableToken tableToken, int partNo) {
         Path path = Path.getThreadLocal(engine.getConfiguration().getRoot());
-        path.of(root).concat(tableToken).concat(SEQ_DIR).concat(WalUtils.TXNLOG_CHUNK_DIR).concat(String.valueOf(partNo)).$();
+        path.of(root).concat(tableToken).concat(SEQ_DIR).concat(WalUtils.TXNLOG_PARTS_DIR).concat(String.valueOf(partNo)).$();
         Assert.assertEquals(Utf8s.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path));
     }
 

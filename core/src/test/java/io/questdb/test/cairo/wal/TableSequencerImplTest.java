@@ -59,7 +59,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     @Test
     public void testCanReadStructureVersionV2() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, rnd.nextInt(20) + 10);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, rnd.nextInt(20) + 10);
         testTableTransactionLogCanReadStructureVersion();
     }
 

@@ -381,7 +381,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
     private long cairoSqlCopyMaxIndexChunkSize;
-    private final int defaultWalSeqChunkTxnCount;
+    private final int defaultSeqPartTxnCount;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private int forceRecvFragmentationChunkSize;
@@ -739,7 +739,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.publicDirectory = new File(root, publicDirectory).getAbsolutePath();
             }
 
-            this.defaultWalSeqChunkTxnCount = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, 0);
+            this.defaultSeqPartTxnCount = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
             // maintain deprecated property name for the time being
             this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT, 64);
             this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_CONNECTION_LIMIT, this.httpNetConnectionLimit);
@@ -2058,8 +2058,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getDefaultWalSeqChunkTxnCount() {
-            return defaultWalSeqChunkTxnCount;
+        public int getDefaultSeqPartTxnCount() {
+            return defaultSeqPartTxnCount;
         }
 
         @Override

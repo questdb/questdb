@@ -61,8 +61,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testChunkedSequencerWalTransactionQueries() throws Exception {
         int chunkSize = TestUtils.generateRandom(LOG).nextInt(100) + 1;
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, chunkSize);
-        chunkSize = node1.getConfiguration().getDefaultWalSeqChunkTxnCount();
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSize);
+        chunkSize = node1.getConfiguration().getDefaultSeqPartTxnCount();
 
         ddl("create table chunk_seq (\n" +
                 "  x long,\n" +
@@ -95,8 +95,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         Rnd rnd = generateRandom(LOG);
         fuzzer.setFuzzCounts(false, 5_000, 200, 20, 10, 20, rnd.nextInt(10), 5, 2);
         setFuzzProperties(rnd);
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, 10);
-        Assert.assertEquals(10, node1.getConfiguration().getDefaultWalSeqChunkTxnCount());
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        Assert.assertEquals(10, node1.getConfiguration().getDefaultSeqPartTxnCount());
         runFuzz(rnd);
     }
 

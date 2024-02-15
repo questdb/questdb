@@ -230,7 +230,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
         int txnCount = Math.max(10, fuzzer.getTransactionCount());
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, walChunk);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, walChunk);
 
         boolean mixedIOSupported = configuration.getFilesFacade().allowMixedIO(root);
         if (mixedIOSupported) {

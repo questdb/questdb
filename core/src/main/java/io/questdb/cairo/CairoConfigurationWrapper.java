@@ -236,8 +236,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getDefaultWalSeqChunkTxnCount() {
-        return getDelegate().getDefaultWalSeqChunkTxnCount();
+    public int getDefaultSeqPartTxnCount() {
+        return getDelegate().getDefaultSeqPartTxnCount();
     }
 
     @Override

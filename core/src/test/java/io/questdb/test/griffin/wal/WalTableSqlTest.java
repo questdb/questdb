@@ -262,7 +262,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testAddWalTxnsExceedingSequencerChunks() throws Exception {
         int txnChunk = 64;
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, txnChunk);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, txnChunk);
         String tableName = testName.getMethodName() + "Â";
         ddl("create table " + tableName + " as (" +
                 "select x, " +

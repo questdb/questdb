@@ -53,7 +53,7 @@ public class WalUtils {
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_SUSPENDED + Byte.BYTES;
     public static final String TABLE_REGISTRY_NAME_FILE = "tables.d";
     public static final String TXNLOG_FILE_NAME = "_txnlog";
-    public static final String TXNLOG_CHUNK_DIR = "_txn_parts";
+    public static final String TXNLOG_PARTS_DIR = "_txn_parts";
     public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
     public static final String TXNLOG_FILE_NAME_META_VAR = "_txnlog.meta.d";
     public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
@@ -85,7 +85,7 @@ public class WalUtils {
                 mem.jumpTo(TableTransactionLogFile.HEADER_SIZE);
                 mem.close(false);
 
-                txnSeqDirPath.trimTo(rootLen).concat(WalUtils.TXNLOG_CHUNK_DIR).$();
+                txnSeqDirPath.trimTo(rootLen).concat(WalUtils.TXNLOG_PARTS_DIR).$();
                 if (!ff.exists(txnSeqDirPath)) {
                     ff.mkdir(txnSeqDirPath, mkDirMode);
                 }

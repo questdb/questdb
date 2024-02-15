@@ -394,7 +394,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private Path setSeqPartPath(TableToken tableName) {
         return path.of(configuration.getRoot())
-                .concat(tableName).concat(WalUtils.SEQ_DIR).concat(WalUtils.TXNLOG_CHUNK_DIR).$();
+                .concat(tableName).concat(WalUtils.SEQ_DIR).concat(WalUtils.TXNLOG_PARTS_DIR).$();
     }
 
     private Path setTablePath(TableToken tableName) {
