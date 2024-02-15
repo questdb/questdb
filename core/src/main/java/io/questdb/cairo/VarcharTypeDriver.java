@@ -173,7 +173,17 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             long dstDataAddr,
             long dstDataOffset
     ) {
-        throw new UnsupportedOperationException();
+        Vect.oooMergeCopyVarcharColumn(
+                timestampMergeIndexAddr,
+                timestampMergeIndexCount,
+                srcAuxAddr1,
+                srcDataAddr1,
+                srcAuxAddr2,
+                srcDataAddr2,
+                dstAuxAddr,
+                dstDataAddr,
+                dstDataOffset
+        );
     }
 
     @Override
@@ -241,14 +251,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount) {
-        // For STRING storage aux vector (mem) contains N+1 offsets. Where N is the
-        // row count. Offset indexes are 0 based, so reading Nth element of the vector gives
-        // the size of the data vector.
-        auxMem.jumpTo((rowCount - 1) << VARCHAR_AUX_SHL);
-        // it is safe to read offset from the raw memory pointer because paged
-        // memories (which MemoryMA is) have power-of-2 page size.
-
         if (rowCount > 0) {
+            auxMem.jumpTo((rowCount - 1) << VARCHAR_AUX_SHL);
             final long dataMemOffset = varcharGetDataVectorSize(auxMem.getAppendAddress());
             auxMem.jumpTo(rowCount << VARCHAR_AUX_SHL);
             return dataMemOffset;
