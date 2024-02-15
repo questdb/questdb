@@ -56,6 +56,15 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         this.ff = ff;
     }
 
+    public static long readMaxStructureVersion(int logFileFd, FilesFacade ff) {
+        long maxTxn = ff.readNonNegativeLong(logFileFd, TableTransactionLogFile.MAX_TXN_OFFSET_64);
+        if (maxTxn < 0) {
+            return -1;
+        }
+        long offset = TableTransactionLogFile.HEADER_SIZE + (maxTxn - 1) * TableTransactionLogFile.RECORD_SIZE;
+        return ff.readNonNegativeLong(logFileFd, offset);
+    }
+
     public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
         txnMem.putLong(structureVersion);
         txnMem.putInt(walId);
@@ -213,6 +222,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
 
         @Override
+        public long getPartNo() {
+            return -1;
+        }
+
+        @Override
         public int getSegmentId() {
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
         }
@@ -258,21 +272,16 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
 
         @Override
+        public void toMin() {
+            toTop();
+        }
+
+        @Override
         public void toTop() {
             if (txnCount > -1L) {
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
                 this.txn = txnLo;
             }
-        }
-
-        @Override
-        public long getPartNo() {
-            return -1;
-        }
-
-        @Override
-        public void toMin() {
-            toTop();
         }
 
         private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {

@@ -69,6 +69,37 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
     }
 
+    public static long readMaxStructureVersion(Path path, int logFileFd, FilesFacade ff) {
+        long lastTxn = ff.readNonNegativeLong(logFileFd, TableTransactionLogFile.MAX_TXN_OFFSET_64);
+        if (lastTxn < 0) {
+            return -1;
+        }
+        int chunkTransactionCount = ff.readNonNegativeInt(logFileFd, SEQ_CHUNK_SIZE_32);
+        if (chunkTransactionCount < 1) {
+            return -1;
+        }
+
+        // Open last chunk and read last structure version
+        if (lastTxn > 0L) {
+            long prevTxn = lastTxn - 1;
+            long chunk = prevTxn / chunkTransactionCount;
+            int size = path.size();
+            path.concat(TXNLOG_CHUNK_DIR).slash().put(chunk).$();
+            int chunkFd = -1;
+            try {
+                chunkFd = TableUtils.openRO(ff, path, LOG);
+                long fileReadOffset = (prevTxn % chunkTransactionCount) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET;
+                return ff.readNonNegativeLong(chunkFd, fileReadOffset);
+            } finally {
+                if (chunkFd > -1) {
+                    ff.close(chunkFd);
+                }
+                path.trimTo(size);
+            }
+        }
+        return 0;
+    }
+
     public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
         openTxnChunk();
 
@@ -329,14 +360,33 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         @Override
+        public long getTxn() {
+            return txn;
+        }
+
+        @Override
         public int getWalId() {
             assert address != 0;
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);
         }
 
         @Override
-        public long getTxn() {
-            return txn;
+        public boolean hasNext() {
+            if (txn >= txnCount) {
+                txnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
+                if (txn >= txnCount) {
+                    return false;
+                }
+            }
+
+            openChunk(txn);
+            txn++;
+            return true;
+        }
+
+        @Override
+        public void setPosition(long txn) {
+            this.txn = txn;
         }
 
         @Override
@@ -362,25 +412,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             }
             openChunk(minTxn);
             txn = txnLo = minTxn;
-        }
-
-        @Override
-        public boolean hasNext() {
-            if (txn >= txnCount) {
-                txnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
-                if (txn >= txnCount) {
-                    return false;
-                }
-            }
-
-            openChunk(txn);
-            txn++;
-            return true;
-        }
-
-        @Override
-        public void setPosition(long txn) {
-            this.txn = txn;
         }
 
         @Override

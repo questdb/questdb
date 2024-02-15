@@ -96,7 +96,42 @@ public class TableTransactionLog implements Closeable {
         }
     }
 
+    public static long readMaxStructureVersion(FilesFacade ff, Path path) {
+        int pathLen = path.size();
+        int logFileFd = TableUtils.openRW(ff, path.concat(TXNLOG_FILE_NAME).$(), LOG, CairoConfiguration.O_NONE);
+        try {
+            int formatVersion = ff.readNonNegativeInt(logFileFd, 0);
+            if (formatVersion < 0) {
+                throw CairoException.critical(0).put("invalid transaction log file: ").put(path).put(", cannot read version at offset 0");
+            }
+
+            switch (formatVersion) {
+                case WAL_SEQUENCER_FORMAT_VERSION_V1:
+                    return TableTransactionLogV1.readMaxStructureVersion(logFileFd, ff);
+                case WAL_SEQUENCER_FORMAT_VERSION_V2:
+                    return TableTransactionLogV2.readMaxStructureVersion(path.trimTo(pathLen), logFileFd, ff);
+                default:
+                    throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
+            }
+        } finally {
+            path.trimTo(pathLen);
+            ff.close(logFileFd);
+        }
+    }
+
     private static TableTransactionLogFile openTxnFile(Path path, FilesFacade ff, int mkDirMode) {
+        int formatVersion = getFormatVersion(path, ff);
+        switch (formatVersion) {
+            case WAL_SEQUENCER_FORMAT_VERSION_V1:
+                return new TableTransactionLogV1(ff);
+            case WAL_SEQUENCER_FORMAT_VERSION_V2:
+                return new TableTransactionLogV2(ff, -1, mkDirMode);
+            default:
+                throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
+        }
+    }
+
+    private static int getFormatVersion(Path path, FilesFacade ff) {
         int pathLen = path.size();
         int logFileFd = TableUtils.openRW(ff, path.concat(TXNLOG_FILE_NAME).$(), LOG, CairoConfiguration.O_NONE);
         int formatVersion;
@@ -109,15 +144,7 @@ public class TableTransactionLog implements Closeable {
             path.trimTo(pathLen);
             ff.close(logFileFd);
         }
-
-        switch (formatVersion) {
-            case WAL_SEQUENCER_FORMAT_VERSION_V1:
-                return new TableTransactionLogV1(ff);
-            case WAL_SEQUENCER_FORMAT_VERSION_V2:
-                return new TableTransactionLogV2(ff, -1, mkDirMode);
-            default:
-                throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
-        }
+        return formatVersion;
     }
 
     private void createTxnLogFileInstance() {
@@ -202,7 +229,7 @@ public class TableTransactionLog implements Closeable {
         return txnLogFile.lastTxn();
     }
 
-    void open(Path path) {
+    public void open(Path path) {
         if (this.rootPath.size() == 0) {
             assert txnLogFile == null;
             this.rootPath.put(path);

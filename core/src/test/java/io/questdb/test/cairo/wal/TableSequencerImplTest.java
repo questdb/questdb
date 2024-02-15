@@ -25,11 +25,14 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -46,6 +49,18 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, Integer.MAX_VALUE);
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Test
+    public void testCanReadStructureVersionV1() throws Exception {
+        testTableTransactionLogCanReadStructureVersion();
+    }
+
+    @Test
+    public void testCanReadStructureVersionV2() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_WAL_SEQ_CHUNK_TXN_COUNT, rnd.nextInt(20) + 10);
+        testTableTransactionLogCanReadStructureVersion();
     }
 
     @Test
@@ -72,7 +87,8 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     } finally {
                         TableUtils.clearThreadLocals();
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -116,7 +132,8 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     } finally {
                         TableUtils.clearThreadLocals();
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -140,7 +157,8 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     } finally {
                         TableUtils.clearThreadLocals();
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -170,7 +188,8 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     } finally {
                         TableUtils.clearThreadLocals();
                     }
-                });
+                }
+        );
     }
 
     private void runAddColumnRace(CyclicBarrier barrier, String tableName, int iterations, int readerThreads, AtomicReference<Throwable> exception, Runnable runnable) throws Exception {
@@ -212,6 +231,32 @@ public class TableSequencerImplTest extends AbstractCairoTest {
             }
         } catch (Throwable e) {
             exception.set(e);
+        }
+    }
+
+    private void testTableTransactionLogCanReadStructureVersion() throws Exception {
+        final String tableName = testName.getMethodName();
+        int iterations = 100;
+
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                .col("int", ColumnType.INT)
+                .timestamp("ts")
+                .wal()) {
+            createTable(model);
+        }
+
+        try (GenericTableRecordMetadata metadata = new GenericTableRecordMetadata();
+             Path path = new Path();
+             WalWriter ww = engine.getWalWriter(engine.verifyTableName(tableName))) {
+
+            path.concat(engine.getConfiguration().getRoot()).concat(ww.getTableToken()).concat(WalUtils.SEQ_DIR);
+            for (int i = 0; i < iterations; i++) {
+                addColumn(ww, "newCol" + i, ColumnType.INT);
+                engine.getTableSequencerAPI().getTableMetadata(ww.getTableToken(), metadata);
+                Assert.assertEquals(i + 1, metadata.getMetadataVersion());
+                long seqMeta = TableTransactionLog.readMaxStructureVersion(engine.getConfiguration().getFilesFacade(), path);
+                Assert.assertEquals(metadata.getMetadataVersion(), seqMeta);
+            }
         }
     }
 }
