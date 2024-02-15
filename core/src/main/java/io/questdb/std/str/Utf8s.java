@@ -1,6 +1,7 @@
 package io.questdb.std.str;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -15,21 +16,19 @@ import org.jetbrains.annotations.Nullable;
  * UTF-8 specific variant of the {@link Chars} utility.
  */
 public final class Utf8s {
-    // the longest varchar in bytes we can encode into aux and data memory
-    // the length is encoded into 28 bits
-    private static final int UTF8_MAX_LENGTH_BYTES = 1 << 28; // exclusive
-
     // Maximum string size in bytes that we can fully inline into auxiliary memory. In such case
     // There is no need to store any part of the string in the data memory.
     // When a string size is longer than this value, we store a first few bytes in the auxiliary memory
     // and the rest in the data memory.
     public static final int UTF8_STORAGE_INLINE_BYTES = 9;
-
     // When a string does not fully fit into the auxiliary memory the we store first few bytes
     // in the auxiliary memory and the rest in the data memory.
     // This constant defines the number of bytes that we store in the auxiliary memory
     // Must be kept in sync with Java_io_questdb_std_Vect_sortVarcharColumn.
     public static final int UTF8_STORAGE_SPLIT_BYTE = 6;
+    // the longest varchar in bytes we can encode into aux and data memory
+    // the length is encoded into 28 bits
+    private static final int UTF8_MAX_LENGTH_BYTES = 1 << 28; // exclusive
 
     private Utf8s() {
     }
@@ -808,8 +807,8 @@ public final class Utf8s {
         auxMem.putInt((int) (offset >> 16));
     }
 
-    public static Utf8Sequence varcharRead(long offset, MemoryR dataMem, MemoryR auxMem, int ab) {
-        int raw = auxMem.getInt(offset);
+    public static Utf8Sequence varcharRead(long auxOffset, MemoryR dataMem, MemoryR auxMem, int ab) {
+        int raw = auxMem.getInt(auxOffset);
         int flags = raw & 0x0f; // 4 bit flags
 
         if ((flags & 4) == 4) {
@@ -822,13 +821,45 @@ public final class Utf8s {
         if ((flags & 1) == 1) {
             // inlined string
             int size = (raw >> 4) & 0x0f;
-            return ab == 1 ? auxMem.getVarcharA(offset + 1, size, ascii) : auxMem.getVarcharB(offset + 1, size, ascii);
+            return ab == 1 ? auxMem.getVarcharA(auxOffset + 1, size, ascii) : auxMem.getVarcharB(auxOffset + 1, size, ascii);
         }
         // string is split, prefix is in auxMem and the suffix is in data mem
         Utf8SplitString utf8SplitString = ab == 1 ? auxMem.borrowUtf8SplitStringA() : auxMem.borrowUtf8SplitStringB();
         return utf8SplitString.of(
-                auxMem.addressOf(offset + 4),
-                dataMem.addressOf(VarcharTypeDriver.varcharGetDataOffset(auxMem, offset)),
+                auxMem.addressOf(auxOffset + 4),
+                dataMem.addressOf(VarcharTypeDriver.varcharGetDataOffset(auxMem, auxOffset)),
+                (raw >> 4) & 0xffffff,
+                ascii
+        );
+    }
+
+    public static Utf8Sequence varcharRead(
+            long auxAddr,
+            long dataAddr,
+            long row,
+            DirectUtf8String utf8view,
+            Utf8SplitString utf8SplitView
+    ) {
+        long auxEntry = auxAddr + (row << ColumnType.VARCHAR_AUX_SHL);
+        int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        int flags = raw & 0x0f; // 4 bit flags
+
+        if ((flags & 4) == 4) {
+            // null flag is set
+            return null;
+        }
+
+        boolean ascii = (flags & 2) == 2;
+
+        if ((flags & 1) == 1) {
+            // inlined string
+            int size = (raw >> 4) & 0x0f;
+            return utf8view.of(auxEntry + 1, auxEntry + size + 1, ascii);
+        }
+        // string is split, prefix is in aux mem and the suffix is in data mem
+        return utf8SplitView.of(
+                auxEntry + 4,
+                dataAddr + VarcharTypeDriver.varcharGetDataOffset(auxEntry),
                 (raw >> 4) & 0xffffff,
                 ascii
         );
