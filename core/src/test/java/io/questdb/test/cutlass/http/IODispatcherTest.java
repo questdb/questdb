@@ -8726,7 +8726,7 @@ public class IODispatcherTest extends AbstractTest {
                             final String ddl = ddls.getQuick(i);
                             boolean isWal = ddl.equals(walTable);
 
-                            engine.drop("drop table if exists tab", executionContext, null);
+                            engine.drop("drop table if exists tab", executionContext);
                             engine.ddl(ddl, executionContext);
                             engine.insert("insert into tab select true, (86400000000*x)::timestamp, null from long_sequence(1000)", executionContext);
                             if (isWal) {
@@ -8743,7 +8743,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
 
                                 try {
-                                    engine.drop("drop table if exists new_tab", executionContext, null);
+                                    engine.drop("drop table if exists new_tab", executionContext);
                                     if (isWal) {
                                         drainWalQueue(engine);
                                     }

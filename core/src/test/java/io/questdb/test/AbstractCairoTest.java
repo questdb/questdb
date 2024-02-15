@@ -1196,7 +1196,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        engine.drop(dropSql, sqlExecutionContext, null);
+        engine.drop(dropSql, sqlExecutionContext);
     }
 
     protected static void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
