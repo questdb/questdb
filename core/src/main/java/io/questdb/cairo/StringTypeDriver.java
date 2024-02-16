@@ -51,6 +51,12 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void configureAuxMemO3RSS(MemoryARW auxMem) {
+        // string starts with 8-byte offset
+        auxMem.putLong(0);
+    }
+
+    @Override
     public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, int fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
         auxMem.ofOffset(
                 ff,
@@ -175,15 +181,17 @@ public class StringTypeDriver implements ColumnTypeDriver {
     ) {
         // srcHi is inclusive, and we also copy 1 extra entry due to N+1 aux vector structure
         final long len = (srcHi + 1 - srcLo + 1) << LEGACY_VAR_SIZE_AUX_SHL;
-        final long fromAddress = src + (srcLo << LEGACY_VAR_SIZE_AUX_SHL);
-        if (mixedIOFlag) {
-            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
-                throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
-                        .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
-            }
-        } else {
-            Vect.memcpy(dstFixAddr, fromAddress, len);
-        }
+        O3Utils.copyFixedSizeCol(
+                ff,
+                src,
+                srcLo,
+                dstFixAddr,
+                dstFixFileOffset,
+                dstFd,
+                mixedIOFlag,
+                len,
+                LEGACY_VAR_SIZE_AUX_SHL
+        );
     }
 
     @Override

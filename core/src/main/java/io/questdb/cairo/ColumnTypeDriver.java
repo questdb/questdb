@@ -147,4 +147,6 @@ public interface ColumnTypeDriver {
     void setDataVectorEntriesToNull(long dataMemAddr, long rowCount);
 
     void shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr);
+
+    void configureAuxMemO3RSS(MemoryARW auxMem);
 }

@@ -84,6 +84,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void configureAuxMemO3RSS(MemoryARW auxMem) {
+        // no-op for varchar
+    }
+
+    @Override
     public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, int fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
         auxMem.ofOffset(
                 ff,
@@ -202,16 +207,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void o3copyAuxVector(FilesFacade ff, long src, long srcLo, long srcHi, long dstFixAddr, long dstFixFileOffset, int dstFd, boolean mixedIOFlag) {
-        final long len = (srcHi - srcLo + 1) << VARCHAR_AUX_SHL;
-        final long fromAddress = src + (srcLo << VARCHAR_AUX_SHL);
-        if (mixedIOFlag) {
-            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
-                throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
-                        .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
-            }
-        } else {
-            Vect.memcpy(dstFixAddr, fromAddress, len);
-        }
+        O3CopyJob.copyFixedSizeCol(ff, src, srcLo, srcHi, dstFixAddr, dstFixFileOffset, dstFd, VARCHAR_AUX_SHL, mixedIOFlag);
     }
 
     @Override

@@ -5269,13 +5269,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void o3OpenColumns() {
         for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) > 0) {
-                MemoryARW mem1 = o3MemColumns1.getQuick(getPrimaryColumnIndex(i));
-                mem1.jumpTo(0);
-                MemoryARW mem2 = o3MemColumns1.getQuick(getSecondaryColumnIndex(i));
-                if (mem2 != null) {
-                    mem2.jumpTo(0);
-                    mem2.putLong(0);
+            final int columnType = metadata.getColumnType(i);
+            if (columnType > 0) {
+                MemoryARW dataMem = o3MemColumns1.getQuick(getPrimaryColumnIndex(i));
+                MemoryARW auxMem = o3MemColumns1.getQuick(getSecondaryColumnIndex(i));
+                dataMem.jumpTo(0);
+                if (ColumnType.isVarSize(columnType)) {
+                    auxMem.jumpTo(0);
+                    ColumnType.getDriver(columnType).configureAuxMemO3RSS(auxMem);
                 }
             }
         }
