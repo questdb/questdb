@@ -41,7 +41,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -643,7 +643,7 @@ public class SqlUtil {
         }
     }
 
-    public static boolean implicitCastUuidAsStr(long lo, long hi, Utf16Sink sink) {
+    public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink<?> sink) {
         if (Uuid.isNull(lo, hi)) {
             return false;
         }

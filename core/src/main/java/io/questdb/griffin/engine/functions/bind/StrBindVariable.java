@@ -32,12 +32,12 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 
 public class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
     private final int floatScale;
     private final StringSink sink = new StringSink();
+    private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private boolean isNull = true;
 
     public StrBindVariable(int floatScale) {
@@ -48,6 +48,7 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     public void clear() {
         isNull = true;
         sink.clear();
+        utf8Sink.clear();
     }
 
     @Override
@@ -55,7 +56,7 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
         if (isNull) {
             utf16Sink.put((CharSequence) null);
         } else {
-            utf16Sink.put(this.sink);
+            utf16Sink.put(sink);
         }
     }
 
@@ -78,6 +79,34 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        if (isNull) {
+            utf8Sink.put((CharSequence) null);
+        } else {
+            utf8Sink.put(this.utf8Sink);
+        }
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+        if (isNull) {
+            utf16Sink.put((CharSequence) null);
+        } else {
+            utf16Sink.put(sink);
+        }
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        return isNull ? null : utf8Sink;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        return isNull ? null : utf8Sink;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }
@@ -87,38 +116,50 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
         if (!isNull) {
             sink.clear();
             TimestampFormatUtils.appendDateTimeUSec(sink, value);
+            utf8Sink.clear();
+            TimestampFormatUtils.appendDateTimeUSec(utf8Sink, value);
         }
     }
 
     public void setUuidValue(long lo, long hi) {
         sink.clear();
         if (SqlUtil.implicitCastUuidAsStr(lo, hi, sink)) {
+            utf8Sink.clear();
+            Numbers.appendUuid(lo, hi, utf8Sink);
             isNull = false;
         }
     }
 
     public void setValue(char value) {
-        sink.clear();
         isNull = false;
+        sink.clear();
         sink.put(value);
+        utf8Sink.clear();
+        utf8Sink.put(value);
     }
 
     public void setValue(long l0, long l1, long l2, long l3) {
-        sink.clear();
         isNull = false;
+        sink.clear();
         Numbers.appendLong256(l0, l1, l2, l3, sink);
+        utf8Sink.clear();
+        Numbers.appendLong256(l0, l1, l2, l3, utf8Sink);
     }
 
     public void setValue(short value) {
-        sink.clear();
         isNull = false;
+        sink.clear();
         sink.put(value);
+        utf8Sink.clear();
+        utf8Sink.put(value);
     }
 
     public void setValue(byte value) {
-        sink.clear();
         isNull = false;
+        sink.clear();
         sink.put(value);
+        utf8Sink.clear();
+        utf8Sink.put((int) value);
     }
 
     public void setValue(long value) {
@@ -126,6 +167,8 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
         if (!isNull) {
             sink.clear();
             sink.put(value);
+            utf8Sink.clear();
+            utf8Sink.put(value);
         }
     }
 
@@ -134,6 +177,8 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
         if (!isNull) {
             sink.clear();
             sink.put(value);
+            utf8Sink.clear();
+            utf8Sink.put(value);
         }
     }
 
@@ -142,6 +187,8 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
         if (!isNull) {
             sink.clear();
             sink.put(value);
+            utf8Sink.clear();
+            utf8Sink.put(value);
         }
     }
 
@@ -150,6 +197,8 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
         if (!isNull) {
             sink.clear();
             sink.put(value, floatScale);
+            utf8Sink.clear();
+            utf8Sink.put(value, floatScale);
         }
     }
 
@@ -160,6 +209,8 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
             isNull = false;
             sink.clear();
             sink.put(value);
+            utf8Sink.clear();
+            utf8Sink.put(value);
         }
     }
 
