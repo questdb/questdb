@@ -31,8 +31,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class CastDateToStrFunctionFactory implements FunctionFactory {
     @Override
@@ -48,14 +48,14 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
             sink.put(func.getDate(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new CastDateToStrFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastDateToStrFunction extends AbstractCastToStrFunction {
+    public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public CastDateToStrFunction(Function arg) {
+        public Func(Function arg) {
             super(arg);
         }
 
@@ -76,7 +76,6 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NaN) {
                 return;
             }
-
             utf16Sink.putISODateMillis(value);
         }
 

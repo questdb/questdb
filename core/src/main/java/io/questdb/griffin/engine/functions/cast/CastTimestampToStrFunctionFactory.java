@@ -32,8 +32,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class CastTimestampToStrFunctionFactory implements FunctionFactory {
     @Override
@@ -49,14 +49,14 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
             sink.put(func.getTimestamp(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new CastTimestampToStrFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastTimestampToStrFunction extends AbstractCastToStrFunction {
+    public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public CastTimestampToStrFunction(Function arg) {
+        public Func(Function arg) {
             super(arg);
         }
 
@@ -77,7 +77,6 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NaN) {
                 return;
             }
-
             TimestampFormatUtils.appendDateTimeUSec(utf16Sink, value);
         }
 

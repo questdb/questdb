@@ -29,51 +29,65 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 
-public class CastByteToStrFunctionFactory implements FunctionFactory {
+public class CastByteToVarcharFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "cast(Bs)";
+        return "cast(Bø)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         Function byteFunc = args.getQuick(0);
         if (byteFunc.isConstant()) {
-            return new StrConstant(String.valueOf(byteFunc.getByte(null)));
+            return new VarcharConstant(String.valueOf(byteFunc));
         }
         return new Func(args.getQuick(0));
     }
 
-    public static class Func extends AbstractCastToStrFunction {
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
+    private static class Func extends AbstractCastToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
 
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            sinkA.clear();
-            sinkA.put(arg.getByte(rec));
-            return sinkA;
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            utf8Sink.put((int) arg.getByte(rec));
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
+        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
             utf16Sink.put(arg.getByte(rec));
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
+        public Utf8Sequence getVarcharA(Record rec) {
+            sinkA.clear();
+            sinkA.put((int) arg.getByte(rec));
+            return sinkA;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
             sinkB.clear();
-            sinkB.put(arg.getByte(rec));
+            sinkB.put((int) arg.getByte(rec));
             return sinkB;
         }
     }

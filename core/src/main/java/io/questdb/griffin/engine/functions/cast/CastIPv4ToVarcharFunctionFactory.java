@@ -29,40 +29,62 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.*;
 
-public class CastIntToStrFunctionFactory implements FunctionFactory {
+public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "cast(Is)";
+        return "cast(Xø)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        Function intFunc = args.getQuick(0);
-        if (intFunc.isConstant()) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        Function ipv4Func = args.getQuick(0);
+        if (ipv4Func.isConstant()) {
             StringSink sink = Misc.getThreadLocalSink();
-            sink.put(intFunc.getInt(null));
-            return new StrConstant(Chars.toString(sink));
+            Numbers.intToIPv4Sink(sink, ipv4Func.getIPv4(null));
+            return new VarcharConstant(Chars.toString(sink));
         }
         return new Func(args.getQuick(0));
     }
 
-    public static class Func extends AbstractCastToStrFunction {
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
+    private static class Func extends AbstractCastToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
 
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            final int value = arg.getIPv4(rec);
+            if (value != Numbers.IPv4_NULL) {
+                Numbers.intToIPv4Sink(utf8Sink, value);
+            }
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+            final int value = arg.getIPv4(rec);
+            if (value != Numbers.IPv4_NULL) {
+                Numbers.intToIPv4Sink(utf16Sink, value);
+            }
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            final int value = arg.getIPv4(rec);
+            if (value == Numbers.IPv4_NULL) {
                 return null;
             }
             sinkA.clear();
@@ -71,18 +93,9 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
-                return;
-            }
-            utf16Sink.put(value);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+        public Utf8Sequence getVarcharB(Record rec) {
+            final int value = arg.getIPv4(rec);
+            if (value == Numbers.IPv4_NULL) {
                 return null;
             }
             sinkB.clear();

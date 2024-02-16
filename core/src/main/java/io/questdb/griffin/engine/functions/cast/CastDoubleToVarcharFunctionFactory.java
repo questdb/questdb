@@ -29,36 +29,41 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.*;
 
-public class CastDoubleToStrFunctionFactory implements FunctionFactory {
+public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "cast(Ds)";
+        return "cast(Dø)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         Function doubleFunc = args.getQuick(0);
         if (doubleFunc.isConstant()) {
             final StringSink sink = Misc.getThreadLocalSink();
             sink.put(doubleFunc.getDouble(null), configuration.getDoubleToStrCastScale());
-            return new StrConstant(Chars.toString(sink));
+            return new VarcharConstant(Chars.toString(sink));
         }
         return new Func(args.getQuick(0), configuration.getDoubleToStrCastScale());
     }
 
-    public static class Func extends AbstractCastToStrFunction {
+    private static class Func extends AbstractCastToVarcharFunction {
         private final int scale;
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
 
         public Func(Function arg, int scale) {
             super(arg);
@@ -66,7 +71,25 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            final double value = arg.getDouble(rec);
+            if (Double.isNaN(value)) {
+                return;
+            }
+            utf8Sink.put(value, scale);
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+            final double value = arg.getDouble(rec);
+            if (Double.isNaN(value)) {
+                return;
+            }
+            utf16Sink.put(value, scale);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
             final double value = arg.getDouble(rec);
             if (Double.isNaN(value)) {
                 return null;
@@ -77,16 +100,7 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
-                return;
-            }
-            utf16Sink.put(value, scale);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
+        public Utf8Sequence getVarcharB(Record rec) {
             final double value = arg.getDouble(rec);
             if (Double.isNaN(value)) {
                 return null;

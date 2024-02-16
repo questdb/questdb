@@ -152,35 +152,35 @@ public abstract class VarcharFunction implements ScalarFunction {
     }
 
     @Override
-    public final CharSequence getStr(Record rec) {
+    public CharSequence getStr(Record rec) {
         Utf8s.utf8ToUtf16(getVarcharA(rec), utf16sinkA);
         return utf16sinkA;
     }
 
     @Override
-    public final void getStr(Record rec, Utf16Sink utf16Sink) {
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
         Utf8s.utf8ToUtf16(getVarcharA(rec), utf16Sink);
     }
 
     @Override
-    public final CharSequence getStrB(Record rec) {
+    public CharSequence getStrB(Record rec) {
         Utf8s.utf8ToUtf16(getVarcharA(rec), utf16sinkB);
         return utf16sinkB;
     }
 
     @Override
-    public final int getStrLen(Record rec) {
+    public int getStrLen(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public final CharSequence getSymbol(Record rec) {
-        throw new UnsupportedOperationException();
+        return getStr(rec);
     }
 
     @Override
     public final CharSequence getSymbolB(Record rec) {
-        throw new UnsupportedOperationException();
+        return getStrB(rec);
     }
 
     @Override

@@ -36,6 +36,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 
 public abstract class UuidFunction implements ScalarFunction {
+
     @Override
     public BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();

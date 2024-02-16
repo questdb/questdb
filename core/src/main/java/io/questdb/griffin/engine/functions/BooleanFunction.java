@@ -30,12 +30,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.*;
 
 public abstract class BooleanFunction implements ScalarFunction {
+    protected static final Utf8String UTF_8_FALSE = new Utf8String("false");
+    protected static final Utf8String UTF_8_TRUE = new Utf8String("true");
+
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -188,25 +188,29 @@ public abstract class BooleanFunction implements ScalarFunction {
 
     @Override
     public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        throw new UnsupportedOperationException();
+        utf16Sink.put(getStr0(rec));
     }
 
     @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        throw new UnsupportedOperationException();
+        utf8Sink.put(getVarchar0(rec));
     }
 
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
-        throw new UnsupportedOperationException();
+        return getVarchar0(rec);
     }
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
-        throw new UnsupportedOperationException();
+        return getVarchar0(rec);
     }
 
     protected String getStr0(Record rec) {
         return getBool(rec) ? "true" : "false";
+    }
+
+    protected Utf8Sequence getVarchar0(Record rec) {
+        return getBool(rec) ? UTF_8_TRUE : UTF_8_FALSE;
     }
 }

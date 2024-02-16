@@ -1157,35 +1157,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new BooleanColumn(i));
                                 break;
                             case ColumnType.BYTE:
-                                castFunctions.add(new CastByteToStrFunctionFactory.CastByteToStrFunction(new ByteColumn(i)));
+                                castFunctions.add(new CastByteToStrFunctionFactory.Func(new ByteColumn(i)));
                                 break;
                             case ColumnType.SHORT:
-                                castFunctions.add(new CastShortToStrFunctionFactory.CastShortToStrFunction(new ShortColumn(i)));
+                                castFunctions.add(new CastShortToStrFunctionFactory.Func(new ShortColumn(i)));
                                 break;
                             case ColumnType.CHAR:
                                 // CharFunction has built-in cast to String
                                 castFunctions.add(new CharColumn(i));
                                 break;
                             case ColumnType.INT:
-                                castFunctions.add(new CastIntToStrFunctionFactory.CastIntToStrFunction(new IntColumn(i)));
+                                castFunctions.add(new CastIntToStrFunctionFactory.Func(new IntColumn(i)));
                                 break;
                             case ColumnType.LONG:
                                 castFunctions.add(new CastLongToStrFunctionFactory.CastLongToStrFunction(new LongColumn(i)));
                                 break;
                             case ColumnType.DATE:
-                                castFunctions.add(new CastDateToStrFunctionFactory.CastDateToStrFunction(new DateColumn(i)));
+                                castFunctions.add(new CastDateToStrFunctionFactory.Func(new DateColumn(i)));
                                 break;
                             case ColumnType.TIMESTAMP:
-                                castFunctions.add(new CastTimestampToStrFunctionFactory.CastTimestampToStrFunction(new TimestampColumn(i)));
+                                castFunctions.add(new CastTimestampToStrFunctionFactory.Func(new TimestampColumn(i)));
                                 break;
                             case ColumnType.FLOAT:
-                                castFunctions.add(new CastFloatToStrFunctionFactory.CastFloatToStrFunction(
+                                castFunctions.add(new CastFloatToStrFunctionFactory.Func(
                                         new FloatColumn(i),
                                         configuration.getFloatToStrCastScale()
                                 ));
                                 break;
                             case ColumnType.DOUBLE:
-                                castFunctions.add(new CastDoubleToStrFunctionFactory.CastDoubleToStrFunction(
+                                castFunctions.add(new CastDoubleToStrFunctionFactory.Func(
                                         new DoubleColumn(i),
                                         configuration.getDoubleToStrCastScale()
                                 ));
@@ -1198,7 +1198,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case ColumnType.SYMBOL:
                                 castFunctions.add(
-                                        new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(
+                                        new CastSymbolToStrFunctionFactory.Func(
                                                 new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))
                                         )
                                 );
@@ -1252,7 +1252,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         break;
                     case ColumnType.SYMBOL:
-                        castFunctions.add(new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(
+                        castFunctions.add(new CastSymbolToStrFunctionFactory.Func(
                                 new SymbolColumn(
                                         i,
                                         castFromMetadata.isSymbolTableStatic(i)

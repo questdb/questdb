@@ -29,7 +29,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8String;
 
 public class StrConstant extends StrFunction implements ConstantFunction {
@@ -72,6 +74,16 @@ public class StrConstant extends StrFunction implements ConstantFunction {
     @Override
     public int getStrLen(Record rec) {
         return length;
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        utf8Sink.put(utf8Value);
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+        utf16Sink.put(value);
     }
 
     @Override

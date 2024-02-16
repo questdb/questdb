@@ -29,10 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -42,6 +39,10 @@ import org.jetbrains.annotations.Nullable;
  * getInt() are not cached.*
  */
 public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
+
+    private final Utf8StringSink utf8SinkA = new Utf8StringSink();
+    private final Utf8StringSink utf8SinkB = new Utf8StringSink();
+
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -188,23 +189,27 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        throw new UnsupportedOperationException();
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        utf8Sink.put(getStr(rec));
     }
 
     @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        throw new UnsupportedOperationException();
+    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+        utf16Sink.put(getStr(rec));
     }
 
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
-        throw new UnsupportedOperationException();
+        utf8SinkA.clear();
+        utf8SinkA.put(getStr(rec));
+        return utf8SinkA;
     }
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
-        throw new UnsupportedOperationException();
+        utf8SinkB.clear();
+        utf8SinkB.put(getStrB(rec));
+        return utf8SinkB;
     }
 
     @Override
