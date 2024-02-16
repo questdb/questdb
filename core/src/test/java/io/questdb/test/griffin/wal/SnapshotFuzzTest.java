@@ -79,6 +79,49 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         runFuzzWithSnapshot(rnd);
     }
 
+    private void copyRecursiveIgnoreErrors(FilesFacade ff, Path src, Path dst, int dirMode) {
+        int dstLen = dst.size();
+        int srcLen = src.size();
+        int len = src.size();
+        long p = ff.findFirst(src.$());
+
+        if (!ff.exists(dst.$()) && -1 == ff.mkdir(dst, dirMode)) {
+            LOG.info().$("failed to copy, cannot create dst dir ").$(src).$(" to ").$(dst)
+                    .$(", errno: ").$(ff.errno()).$();
+        }
+
+        if (p > 0) {
+            try {
+                int res;
+                do {
+                    long name = ff.findName(p);
+                    if (Files.notDots(name)) {
+                        int type = ff.findType(p);
+                        src.trimTo(len);
+                        src.concat(name);
+                        dst.concat(name);
+                        if (type == Files.DT_FILE) {
+                            res = Files.copy(src.$(), dst.$());
+                            if (res != 0) {
+                                LOG.info().$("failed to copy ").$(src).$(" to ").$(dst)
+                                        .$(", errno: ").$(ff.errno()).$();
+                            }
+                        } else {
+                            ff.mkdir(dst.$(), dirMode);
+                            copyRecursiveIgnoreErrors(ff, src, dst, dirMode);
+                        }
+                        src.trimTo(srcLen);
+                        dst.trimTo(dstLen);
+                    }
+                } while (ff.findNext(p) > 0);
+            } finally {
+                ff.findClose(p);
+                src.trimTo(srcLen);
+                dst.trimTo(dstLen);
+            }
+        }
+    }
+
     private void createSnapshot() throws SqlException {
         setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "id_1");
         LOG.info().$("starting snapshot").$();
@@ -93,7 +136,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         ff.mkdirs(snapshotPath, conf.getMkDirMode());
 
         LOG.info().$("copying data to snapshot [from=").$(rootPath).$(", to=").$(snapshotPath).$();
-        ff.copyRecursive(rootPath, snapshotPath, conf.getMkDirMode());
+        copyRecursiveIgnoreErrors(ff, rootPath, snapshotPath, conf.getMkDirMode());
 
         ddl("snapshot complete");
     }
