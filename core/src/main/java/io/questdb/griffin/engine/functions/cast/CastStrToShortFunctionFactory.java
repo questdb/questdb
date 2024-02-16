@@ -46,25 +46,18 @@ public class CastStrToShortFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToShortFunction {
-        private final Function arg;
-
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
         public short getShort(Record rec) {
-            CharSequence sequence = arg.getStr(rec);
+            CharSequence value = arg.getStr(rec);
             try {
-                if (sequence == null) {
+                if (value == null) {
                     return 0;
                 }
-                return (short) Numbers.parseInt(sequence);
+                return (short) Numbers.parseInt(value);
             } catch (NumericException e) {
                 return 0;
             }

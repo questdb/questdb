@@ -113,12 +113,19 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             int memoryTag,
             long opts
     ) {
+        long lo;
+        if (rowLo > 0) {
+            lo = varcharGetDataVectorSize(auxMem, (rowLo - 1) << VARCHAR_AUX_SHL);
+        } else {
+            lo = 0;
+        }
+        long hi = varcharGetDataVectorSize(auxMem, (rowHi - 1) << VARCHAR_AUX_SHL);
         dataMem.ofOffset(
                 ff,
                 dataFd,
                 fileName,
-                varcharGetDataVectorSize(auxMem, rowLo << VARCHAR_AUX_SHL),
-                varcharGetDataVectorSize(auxMem, (rowHi - 1) << VARCHAR_AUX_SHL),
+                lo,
+                hi,
                 memoryTag,
                 opts
         );

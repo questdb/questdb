@@ -287,6 +287,9 @@ public class LineWalAppender {
                                         throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                                     }
                                     break;
+                                case ColumnType.VARCHAR:
+                                    r.putVarchar(columnIndex, entityValue);
+                                    break;
                                 case ColumnType.STRING:
                                     r.putStrUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());
                                     break;

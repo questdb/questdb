@@ -41,6 +41,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -157,14 +158,12 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                     break;
             }
         } else {
-
             if (!setOperation) {
                 expression1.put(name).put('(');
                 expression2.put(name).put('(');
             }
 
             for (int i = 0, n = args.length; i < n; i++) {
-
                 if ((setOperation && i > 1) || (!setOperation && i > 0)) {
                     expression1.put(',');
                     expression2.put(',');
@@ -180,7 +179,8 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                         expression1,
                         expression2,
                         i,
-                        args[i]);
+                        args[i]
+                );
 
                 if (i == 0 && setOperation) {
                     expression1.put(' ').put(name).put(' ').put('(');
@@ -287,16 +287,18 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
     }
 
-    private void printArgument(CharSequence signature,
-                               int signatureTypeOffset,
-                               boolean forceConstant,
-                               GenericRecordMetadata metadata,
-                               boolean b,
-                               boolean constVarArg,
-                               StringSink expression1,
-                               StringSink expression2,
-                               int i,
-                               Object arg) {
+    private void printArgument(
+            CharSequence signature,
+            int signatureTypeOffset,
+            boolean forceConstant,
+            GenericRecordMetadata metadata,
+            boolean b,
+            boolean constVarArg,
+            StringSink expression1,
+            StringSink expression2,
+            int i,
+            Object arg
+    ) {
         final String columnName = "f" + i;
         final boolean constantArg;
         final int argType;
@@ -345,6 +347,15 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 } else {
                     sink.put('\'');
                     sink.put((CharSequence) value);
+                    sink.put('\'');
+                }
+                break;
+            case ColumnType.VARCHAR:
+                if (value == null) {
+                    sink.put("null");
+                } else {
+                    sink.put('\'');
+                    sink.put((Utf8Sequence) value);
                     sink.put('\'');
                 }
                 break;

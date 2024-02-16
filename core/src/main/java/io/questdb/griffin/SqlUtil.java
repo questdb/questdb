@@ -41,7 +41,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -435,6 +435,14 @@ public class SqlUtil {
         return 0;
     }
 
+    public static boolean implicitCastLong256AsStr(Long256 long256, CharSink<?> sink) {
+        if (Long256Impl.isNull(long256)) {
+            return false;
+        }
+        Numbers.appendLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3(), sink);
+        return true;
+    }
+
     @SuppressWarnings("unused")
     // used by the row copier
     public static byte implicitCastLongAsByte(long value) {
@@ -643,7 +651,7 @@ public class SqlUtil {
         }
     }
 
-    public static boolean implicitCastUuidAsStr(long lo, long hi, Utf16Sink sink) {
+    public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink<?> sink) {
         if (Uuid.isNull(lo, hi)) {
             return false;
         }

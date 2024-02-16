@@ -76,6 +76,16 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
         return putAt(keyIndex(key), key, value);
     }
 
+    public void putAll(Utf8SequenceIntHashMap other) {
+        Utf8Sequence[] otherKeys = other.keys;
+        int[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (otherKeys[i] != noEntryKey) {
+                put(otherKeys[i], otherValues[i]);
+            }
+        }
+    }
+
     public boolean putAt(int index, Utf8Sequence key, int value) {
         if (index < 0) {
             values[-index - 1] = value;

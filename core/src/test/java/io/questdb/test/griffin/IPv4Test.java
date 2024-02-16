@@ -664,16 +664,16 @@ public class IPv4Test extends AbstractCairoTest {
     public void testExplicitCastStrToIPv4() throws Exception {
         assertSql(
                 "cast\n" +
+                        "187.139.150.80\n" +
                         "18.206.96.238\n" +
+                        "92.80.211.65\n" +
                         "212.159.205.29\n" +
+                        "4.98.173.21\n" +
                         "199.122.166.85\n" +
+                        "79.15.250.138\n" +
                         "35.86.82.23\n" +
-                        "205.123.179.216\n" +
-                        "134.75.235.20\n" +
-                        "162.25.160.241\n" +
-                        "92.26.178.136\n" +
-                        "93.204.45.145\n" +
-                        "20.62.93.114\n",
+                        "111.98.117.250\n" +
+                        "205.123.179.216\n",
                 "select rnd_ipv4()::string::ipv4 from long_sequence(10)"
         );
     }

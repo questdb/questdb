@@ -32,8 +32,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 
 public class CastVarcharToLongFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Øl)";
@@ -57,7 +59,8 @@ public class CastVarcharToLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            return Numbers.parseLongQuiet(arg.getVarcharA(rec).asAsciiCharSequence());
+            final Utf8Sequence value = arg.getVarcharA(rec);
+            return Numbers.parseLongQuiet(value != null ? value.asAsciiCharSequence() : null);
         }
     }
 }

@@ -47,7 +47,7 @@ public final class Long256Adapter extends AbstractTypeAdapter {
 
     @Override
     public boolean probe(DirectUtf8Sequence text) {
-        return Numbers.extractLong256(text, text.size(), NOOP_LONG256_BUILDER);
+        return Numbers.extractLong256(text, NOOP_LONG256_BUILDER);
     }
 
     @Override

@@ -42,19 +42,16 @@ public class CastStrToIPv4FunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CastStrToIPv4Function(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    private static class CastStrToIPv4Function extends AbstractCastToIPv4Function {
-        public CastStrToIPv4Function(Function arg) {
+    private static class Func extends AbstractCastToIPv4Function {
+        public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public int getIPv4(Record rec) {
-            if (arg.getStr(rec) == null) {
-                return Numbers.IPv4_NULL;
-            }
             return Numbers.parseIPv4Quiet(arg.getStr(rec));
         }
     }

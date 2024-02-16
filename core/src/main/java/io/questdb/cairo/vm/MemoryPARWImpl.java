@@ -841,7 +841,7 @@ public class MemoryPARWImpl implements MemoryARW {
         final long offset = getAppendOffset();
         if (n > 0) {
             if (pageHi - appendPointer < n) {
-                for (int i = 0; i < n; i++) {
+                for (int i = lo; i < hi; i++) {
                     putByte(value.byteAt(i));
                 }
             } else {

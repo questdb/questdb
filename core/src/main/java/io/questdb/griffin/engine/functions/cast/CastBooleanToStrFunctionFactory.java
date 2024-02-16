@@ -35,6 +35,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf16Sink;
 
 public class CastBooleanToStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Ts)";

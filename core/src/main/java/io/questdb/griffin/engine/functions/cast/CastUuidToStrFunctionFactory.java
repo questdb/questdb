@@ -34,10 +34,11 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 public final class CastUuidToStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Zs)";
@@ -87,6 +88,11 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
             long lo = arg.getLong128Lo(rec);
             long hi = arg.getLong128Hi(rec);
             return Uuid.isNull(lo, hi) ? TableUtils.NULL_LEN : Uuid.UUID_LENGTH;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 }

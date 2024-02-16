@@ -31,8 +31,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class CastLongToStrFunctionFactory implements FunctionFactory {
     @Override
@@ -76,7 +76,6 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NaN) {
                 return;
             }
-
             utf16Sink.put(value);
         }
 

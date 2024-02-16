@@ -29,65 +29,85 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 
 public class CastLongToVarcharFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Lø)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             StringSink sink = Misc.getThreadLocalSink();
             sink.put(func.getLong(null));
-            return new StrConstant(Chars.toString(sink));
+            return new VarcharConstant(Chars.toString(sink));
         }
-        return new CastLongToStrFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastLongToStrFunction extends AbstractCastToVarcharFunction {
+    private static class Func extends AbstractCastToVarcharFunction {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
 
-        public CastLongToStrFunction(Function arg) {
+        public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            sinkArg(rec, utf8Sink);
+            final long value = arg.getLong(rec);
+            if (value == Numbers.LONG_NaN) {
+                return;
+            }
+            utf8Sink.put(value);
         }
 
         @Override
         public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            sinkArg(rec, utf16Sink);
+            final long value = arg.getLong(rec);
+            if (value == Numbers.LONG_NaN) {
+                return;
+            }
+            utf16Sink.put(value);
         }
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
+            final long value = arg.getLong(rec);
+            if (value == Numbers.LONG_NaN) {
+                return null;
+            }
             sinkA.clear();
-            sinkArg(rec, sinkA);
+            sinkA.put(value);
             return sinkA;
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
+            final long value = arg.getLong(rec);
+            if (value == Numbers.LONG_NaN) {
+                return null;
+            }
             sinkB.clear();
-            sinkArg(rec, sinkB);
+            sinkB.put(value);
             return sinkB;
         }
 
-        private void sinkArg(Record rec, CharSink<?> sink) {
-            final long value = arg.getLong(rec);
-            if (value == Numbers.LONG_NaN) {
-                return;
-            }
-            sink.put(value);
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 }

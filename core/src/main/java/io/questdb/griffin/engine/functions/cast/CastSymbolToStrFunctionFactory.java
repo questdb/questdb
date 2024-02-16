@@ -47,11 +47,11 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
         if (func.isConstant()) {
             return new StrConstant(Chars.toString(func.getSymbol(null)));
         }
-        return new CastSymbolToStrFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastSymbolToStrFunction extends AbstractCastToStrFunction {
-        public CastSymbolToStrFunction(Function arg) {
+    public static class Func extends AbstractCastToStrFunction {
+        public Func(Function arg) {
             super(arg);
         }
 

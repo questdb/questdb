@@ -34,8 +34,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class CastFloatToStrFunctionFactory implements FunctionFactory {
 
@@ -46,21 +46,21 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        Function intFunc = args.getQuick(0);
-        if (intFunc.isConstant()) {
+        Function floatFunc = args.getQuick(0);
+        if (floatFunc.isConstant()) {
             final StringSink sink = Misc.getThreadLocalSink();
-            sink.put(intFunc.getFloat(null), configuration.getFloatToStrCastScale());
+            sink.put(floatFunc.getFloat(null), configuration.getFloatToStrCastScale());
             return new StrConstant(Chars.toString(sink));
         }
-        return new CastFloatToStrFunction(args.getQuick(0), configuration.getFloatToStrCastScale());
+        return new Func(args.getQuick(0), configuration.getFloatToStrCastScale());
     }
 
-    public static class CastFloatToStrFunction extends AbstractCastToStrFunction {
+    public static class Func extends AbstractCastToStrFunction {
         private final int scale;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public CastFloatToStrFunction(Function arg, int scale) {
+        public Func(Function arg, int scale) {
             super(arg);
             this.scale = scale;
         }

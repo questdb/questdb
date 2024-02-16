@@ -127,7 +127,9 @@ public class SymbolMapUtil {
 
         } finally {
             Misc.free(charMem);
-            offsetMem.close(false);
+            if (offsetMem != null) {
+                offsetMem.close(false);
+            }
             Misc.free(indexWriter);
             path.trimTo(plen);
         }

@@ -27,7 +27,9 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.CharFunction;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8String;
 
 public class CharConstant extends CharFunction implements ConstantFunction {
@@ -37,7 +39,7 @@ public class CharConstant extends CharFunction implements ConstantFunction {
 
     public CharConstant(char value) {
         this.value = value;
-        this.utf8Value = new Utf8String(value);
+        this.utf8Value = value != 0 ? new Utf8String(value) : null;
     }
 
     public static CharConstant newInstance(char value) {
@@ -47,6 +49,20 @@ public class CharConstant extends CharFunction implements ConstantFunction {
     @Override
     public char getChar(Record rec) {
         return value;
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+        if (value != 0) {
+            utf16Sink.put(value);
+        }
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        if (value != 0) {
+            utf8Sink.put(utf8Value);
+        }
     }
 
     @Override

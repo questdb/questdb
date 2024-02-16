@@ -330,6 +330,32 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testConstStrToDateCast() throws SqlException {
+        functions.add(new EqDateFunctionFactory());
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.DATE));
+
+        FunctionParser parser = createFunctionParser();
+        Function function = parseFunction("a='2020-01-01'", metadata, parser);
+        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+        Assert.assertTrue(function.getBool(new Record() {
+            @Override
+            public long getDate(int col) {
+                return 1577836800000L;
+            }
+        }));
+
+        function = parseFunction("'2020-01-01'=a", metadata, parser);
+        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+        Assert.assertTrue(function.getBool(new Record() {
+            @Override
+            public long getDate(int col) {
+                return 1577836800000L;
+            }
+        }));
+    }
+
+    @Test
     public void testConstVarArgFunction() throws SqlException {
         functions.add(new InStrFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -404,7 +430,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testExplicitConstantLong256() throws SqlException {
         CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
-        testConstantPassThru(new Long256Constant(Numbers.parseLong256(tok, tok.length(), new Long256Impl())));
+        testConstantPassThru(new Long256Constant(Numbers.parseLong256(tok, new Long256Impl())));
     }
 
     @Test
@@ -1611,32 +1637,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         Function function = parseFunction("a+b", metadata, functionParser);
         Assert.assertEquals(ColumnType.LONG, function.getType());
         Assert.assertEquals(expected, function.getLong(record));
-    }
-
-    @Test
-    public void testConstStrToDateCast() throws SqlException {
-        functions.add(new EqDateFunctionFactory());
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.DATE));
-
-        FunctionParser parser = createFunctionParser();
-        Function function = parseFunction("a='2020-01-01'", metadata, parser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertTrue(function.getBool(new Record() {
-            @Override
-            public long getDate(int col) {
-                return 1577836800000L;
-            }
-        }));
-
-        function = parseFunction("'2020-01-01'=a", metadata, parser);
-        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-        Assert.assertTrue(function.getBool(new Record() {
-            @Override
-            public long getDate(int col) {
-                return 1577836800000L;
-            }
-        }));
     }
 
     private void assertFail(int expectedPos, String expectedMessage, String expression, GenericRecordMetadata metadata) {

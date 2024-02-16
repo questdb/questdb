@@ -496,6 +496,9 @@ public class GroupByUtils {
             case ColumnType.STRING:
                 func = StrColumn.newInstance(keyColumnIndex - 1);
                 break;
+            case ColumnType.VARCHAR:
+                func = VarcharColumn.newInstance(keyColumnIndex - 1);
+                break;
             case ColumnType.SYMBOL:
                 if (metadata != null) {
                     // must be a column key

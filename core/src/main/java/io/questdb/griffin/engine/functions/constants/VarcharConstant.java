@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.VarcharFunction;
@@ -36,22 +37,44 @@ import io.questdb.std.str.Utf8String;
 public class VarcharConstant extends VarcharFunction implements ConstantFunction {
     public static final VarcharConstant EMPTY = new VarcharConstant("");
     public static final VarcharConstant NULL = new VarcharConstant(null);
+    private final int length;
+    private final String utf16Value;
     private final Utf8String value;
 
     public VarcharConstant(CharSequence value) {
         if (value == null) {
+            this.utf16Value = null;
             this.value = null;
+            this.length = TableUtils.NULL_LEN;
         } else {
             if (Chars.startsWith(value, '\'')) {
-                this.value = new Utf8String(Chars.toString(value, 1, value.length() - 1, value.charAt(0)));
+                this.utf16Value = Chars.toString(value, 1, value.length() - 1, value.charAt(0));
+                this.value = new Utf8String(this.utf16Value);
             } else {
+                this.utf16Value = Chars.toString(value);
                 this.value = new Utf8String(value);
             }
+            this.length = this.utf16Value.length();
         }
     }
 
     public static VarcharConstant newInstance(CharSequence value) {
         return value != null ? new VarcharConstant(value) : NULL;
+    }
+
+    @Override
+    public CharSequence getStr(Record rec) {
+        return utf16Value;
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec) {
+        return utf16Value;
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        return length;
     }
 
     @Override

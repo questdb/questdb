@@ -37,6 +37,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 
 public abstract class LongFunction implements ScalarFunction {
+
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();

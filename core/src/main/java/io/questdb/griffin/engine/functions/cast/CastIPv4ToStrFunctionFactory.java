@@ -31,11 +31,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
-
-import static io.questdb.std.Numbers.IPv4_NULL;
 
 public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
 
@@ -46,20 +44,20 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        Function IPv4Func = args.getQuick(0);
-        if (IPv4Func.isConstant()) {
+        Function ipv4Func = args.getQuick(0);
+        if (ipv4Func.isConstant()) {
             StringSink sink = Misc.getThreadLocalSink();
-            Numbers.intToIPv4Sink(sink, IPv4Func.getIPv4(null));
+            Numbers.intToIPv4Sink(sink, ipv4Func.getIPv4(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new CastIPv4ToStrFunctionFactory.CastIPv4ToStrFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastIPv4ToStrFunction extends AbstractCastToStrFunction {
+    public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public CastIPv4ToStrFunction(Function arg) {
+        public Func(Function arg) {
             super(arg);
         }
 
@@ -72,7 +70,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
         @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
             final int value = arg.getIPv4(rec);
-            if (value != IPv4_NULL) {
+            if (value != Numbers.IPv4_NULL) {
                 Numbers.intToIPv4Sink(utf16Sink, value);
             }
         }
@@ -85,7 +83,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
 
         @Nullable
         private StringSink toSink(int value, StringSink sinkB) {
-            if (value != IPv4_NULL) {
+            if (value != Numbers.IPv4_NULL) {
                 sinkB.clear();
                 Numbers.intToIPv4Sink(sinkB, value);
                 return sinkB;

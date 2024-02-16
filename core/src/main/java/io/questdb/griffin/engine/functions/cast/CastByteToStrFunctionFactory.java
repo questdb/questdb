@@ -30,12 +30,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class CastByteToStrFunctionFactory implements FunctionFactory {
     @Override
@@ -45,20 +43,18 @@ public class CastByteToStrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        Function intFunc = args.getQuick(0);
-        if (intFunc.isConstant()) {
-            StringSink sink = Misc.getThreadLocalSink();
-            sink.put(intFunc.getByte(null));
-            return new StrConstant(Chars.toString(sink));
+        Function byteFunc = args.getQuick(0);
+        if (byteFunc.isConstant()) {
+            return new StrConstant(String.valueOf(byteFunc.getByte(null)));
         }
-        return new CastByteToStrFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastByteToStrFunction extends AbstractCastToStrFunction {
+    public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public CastByteToStrFunction(Function arg) {
+        public Func(Function arg) {
             super(arg);
         }
 

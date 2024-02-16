@@ -71,11 +71,6 @@ public class VarcharColumn extends VarcharFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return true;
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
     }

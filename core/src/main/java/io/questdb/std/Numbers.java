@@ -614,7 +614,8 @@ public final class Numbers {
         return (Double.isNaN(l) && Double.isNaN(r) || Math.abs(l - r) < 0.0000000001 || l == r);
     }
 
-    public static boolean extractLong256(CharSequence value, int len, Long256Acceptor acceptor) {
+    public static boolean extractLong256(@NotNull CharSequence value, @NotNull Long256Acceptor acceptor) {
+        int len = value.length();
         if (len > 2 && ((len & 1) == 0) && len < 67 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
             try {
                 Long256FromCharSequenceDecoder.decode(value, 2, len, acceptor);
@@ -626,10 +627,11 @@ public final class Numbers {
         return false;
     }
 
-    public static boolean extractLong256(Utf8Sequence value, int len, Long256Acceptor acceptor) {
-        if (len > 2 && ((len & 1) == 0) && len < 67 && value.byteAt(0) == '0' && value.byteAt(1) == 'x') {
+    public static boolean extractLong256(@NotNull Utf8Sequence value, @NotNull Long256Acceptor acceptor) {
+        int size = value.size();
+        if (size > 2 && ((size & 1) == 0) && size < 67 && value.byteAt(0) == '0' && value.byteAt(1) == 'x') {
             try {
-                Long256FromCharSequenceDecoder.decode(value.asAsciiCharSequence(), 2, len, acceptor);
+                Long256FromCharSequenceDecoder.decode(value.asAsciiCharSequence(), 2, size, acceptor);
                 return true;
             } catch (ImplicitCastException e) {
                 return false;
@@ -1212,8 +1214,13 @@ public final class Numbers {
     }
 
     @NotNull
-    public static Long256Impl parseLong256(CharSequence text, int len, Long256Impl long256) {
-        return extractLong256(text, len, long256) ? long256 : Long256Impl.NULL_LONG256;
+    public static Long256Impl parseLong256(@NotNull CharSequence text, @NotNull Long256Impl long256) {
+        return extractLong256(text, long256) ? long256 : Long256Impl.NULL_LONG256;
+    }
+
+    @NotNull
+    public static Long256Impl parseLong256(@NotNull Utf8Sequence text, @NotNull Long256Impl long256) {
+        return extractLong256(text, long256) ? long256 : Long256Impl.NULL_LONG256;
     }
 
     public static long parseLongDuration(CharSequence sequence) throws NumericException {
