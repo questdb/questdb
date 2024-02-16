@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
@@ -312,6 +313,14 @@ public class TableReaderSelectedColumnRecord implements Record {
     @Override
     public Utf8Sequence getVarcharA(int columnIndex) {
         return getVarchar(columnIndex, 1);
+    }
+
+    @Override
+    public void getVarchar(int col, Utf16Sink utf16sink) {
+        Utf8Sequence varchar = getVarchar(col, 1);
+        if (varchar != null) {
+            utf16sink.put(varchar);
+        }
     }
 
     @Override
