@@ -134,6 +134,11 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
         public boolean isSymbolTableStatic() {
             return false;
         }
@@ -171,8 +176,7 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
                 symbols.add(str);
                 return str;
             }
-            int idx = lookupMap.valueAt(keyIndex) - 1;
-            return symbols.getQuick(idx);
+            return symbols.getQuick(lookupMap.valueAt(keyIndex));
         }
     }
 }

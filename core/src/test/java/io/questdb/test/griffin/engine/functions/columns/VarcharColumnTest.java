@@ -22,35 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.test.griffin.engine.functions.columns;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8String;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public class CastDoubleToByteFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "cast(Db)";
+public class VarcharColumnTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testVarchar() throws SqlException {
+        call(new Utf8String("abc")).andAssert("abc");
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
-    }
+    protected FunctionFactory getFunctionFactory() {
+        return new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x(Ø)";
+            }
 
-    private static class Func extends AbstractCastToByteFunction {
-        public Func(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public byte getByte(Record rec) {
-            return (byte) arg.getDouble(rec);
-        }
+            @Override
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+                return args.getQuick(0);
+            }
+        };
     }
 }

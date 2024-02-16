@@ -108,5 +108,10 @@ public class CastCharToVarcharFunctionFactory implements FunctionFactory {
             sinkB.put(value);
             return sinkB;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
     }
 }

@@ -40,19 +40,12 @@ public class CastByteToCharFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CastByteToCharFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastByteToCharFunction extends AbstractCastToCharFunction {
-        private final Function arg;
-
-        public CastByteToCharFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+    public static class Func extends AbstractCastToCharFunction {
+        public Func(Function arg) {
+            super(arg);
         }
 
         @Override

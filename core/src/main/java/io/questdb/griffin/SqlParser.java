@@ -1833,7 +1833,6 @@ public class SqlParser {
             boolean hasFrom = false;
 
             while (true) {
-
                 tok = tok(lexer, "column");
                 if (Chars.equals(tok, '*')) {
                     expr = nextLiteral(GenericLexer.immutableOf(tok), lexer.lastTokenPosition());

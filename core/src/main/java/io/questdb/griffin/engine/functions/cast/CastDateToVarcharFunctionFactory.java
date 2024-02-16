@@ -104,5 +104,10 @@ public class CastDateToVarcharFunctionFactory implements FunctionFactory {
             sinkB.putISODateMillis(value);
             return sinkB;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
     }
 }

@@ -31,26 +31,48 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 
-public class CastDoubleToByteFunctionFactory implements FunctionFactory {
+public class CastVarcharToCharFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "cast(Db)";
+        return "cast(Øa)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToByteFunction {
+    private static class Func extends AbstractCastToCharFunction {
+        private final StringSink utf16Sink = new StringSink();
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
-        public byte getByte(Record rec) {
-            return (byte) arg.getDouble(rec);
+        public char getChar(Record rec) {
+            final Utf8Sequence value = arg.getVarcharA(rec);
+            if (value == null) {
+                return 0;
+            }
+            utf16Sink.clear();
+            utf16Sink.put(value);
+            return utf16Sink.length() > 0 ? utf16Sink.charAt(0) : 0;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 }

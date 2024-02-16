@@ -29,28 +29,46 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 
-public class CastDoubleToByteFunctionFactory implements FunctionFactory {
+public class CastVarcharToBooleanFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "cast(Db)";
+        return "cast(Øt)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            return resolveBoolean(arg.getVarcharA(null)) ? BooleanConstant.TRUE : BooleanConstant.FALSE;
+        }
+        return new Func(arg);
     }
 
-    private static class Func extends AbstractCastToByteFunction {
+    private static boolean resolveBoolean(Utf8Sequence str) {
+        return str != null && SqlKeywords.isTrueKeyword(str);
+    }
+
+    private static class Func extends AbstractCastToBooleanFunction {
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
-        public byte getByte(Record rec) {
-            return (byte) arg.getDouble(rec);
+        public boolean getBool(Record rec) {
+            return resolveBoolean(arg.getVarcharA(rec));
         }
     }
 }

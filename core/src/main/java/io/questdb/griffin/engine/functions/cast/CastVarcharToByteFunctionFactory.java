@@ -30,16 +30,25 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 
-public class CastDoubleToByteFunctionFactory implements FunctionFactory {
+public class CastVarcharToByteFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "cast(Db)";
+        return "cast(Øb)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new Func(args.getQuick(0));
     }
 
@@ -50,7 +59,8 @@ public class CastDoubleToByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
-            return (byte) arg.getDouble(rec);
+            final Utf8Sequence value = arg.getVarcharA(rec);
+            return (byte) Numbers.parseIntQuiet(value != null ? value.asAsciiCharSequence() : null);
         }
     }
 }

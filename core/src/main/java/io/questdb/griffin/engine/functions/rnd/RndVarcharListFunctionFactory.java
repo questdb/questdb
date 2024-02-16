@@ -34,7 +34,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.VarcharFunction;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -49,7 +48,7 @@ public class RndVarcharListFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (args == null) {
-            return new RndStrFunction(3, 10, 1);
+            return new RndVarcharFunction(3, 10, 1);
         }
 
         final ObjList<Utf8String> symbols = new ObjList<>(args.size());
@@ -67,11 +66,13 @@ public class RndVarcharListFunctionFactory implements FunctionFactory {
             if (f.isConstant()) {
                 final int typeTag = ColumnType.tagOf(f.getType());
                 if (typeTag == ColumnType.STRING || typeTag == ColumnType.NULL) {
-                    symbols.add(new Utf8String(Chars.toString(f.getStr(null))));
+                    final CharSequence value = f.getStr(null);
+                    symbols.add(value != null ? new Utf8String(value) : null);
                     continue;
                 }
                 if (typeTag == ColumnType.CHAR) {
-                    symbols.add(new Utf8String(String.valueOf(f.getChar(null))));
+                    final char value = f.getChar(null);
+                    symbols.add(value != 0 ? new Utf8String(value) : null);
                     continue;
                 }
             }

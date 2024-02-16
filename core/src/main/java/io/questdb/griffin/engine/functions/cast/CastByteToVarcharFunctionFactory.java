@@ -54,7 +54,7 @@ public class CastByteToVarcharFunctionFactory implements FunctionFactory {
     ) {
         Function byteFunc = args.getQuick(0);
         if (byteFunc.isConstant()) {
-            return new VarcharConstant(String.valueOf(byteFunc));
+            return new VarcharConstant(String.valueOf(byteFunc.getByte(null)));
         }
         return new Func(args.getQuick(0));
     }
@@ -89,6 +89,11 @@ public class CastByteToVarcharFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put((int) arg.getByte(rec));
             return sinkB;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 }

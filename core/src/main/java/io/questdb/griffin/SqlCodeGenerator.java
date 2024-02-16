@@ -985,7 +985,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // BOOLEAN will not be cast to CHAR
                             // in cast of BOOLEAN -> CHAR combination both will be cast to STRING
                             case ColumnType.BYTE:
-                                castFunctions.add(new CastByteToCharFunctionFactory.CastByteToCharFunction(new ByteColumn(i)));
+                                castFunctions.add(new CastByteToCharFunctionFactory.Func(new ByteColumn(i)));
                                 break;
                             case ColumnType.CHAR:
                                 castFunctions.add(new CharColumn(i));
