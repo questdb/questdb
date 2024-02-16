@@ -31,17 +31,18 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 
-public class CastLong256ToStrFunctionFactory implements FunctionFactory {
+public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "cast(Hs)";
+        return "cast(Hø)";
     }
 
     @Override
@@ -55,28 +56,32 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
         return new Func(args.get(0));
     }
 
-    public static class Func extends StrFunction implements UnaryFunction {
-        private final Function arg;
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
+    public static class Func extends AbstractCastToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
 
         public Func(Function arg) {
-            this.arg = arg;
+            super(arg);
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            arg.getLong256(rec, utf8Sink);
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+            arg.getLong256(rec, utf16Sink);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
             sinkA.clear();
             return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkA) ? sinkA : null;
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
+        public Utf8Sequence getVarcharB(Record rec) {
             sinkB.clear();
             return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkB) ? sinkB : null;
         }
@@ -88,7 +93,7 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(arg).val("::string");
+            sink.val(arg).val("::varchar");
         }
     }
 }

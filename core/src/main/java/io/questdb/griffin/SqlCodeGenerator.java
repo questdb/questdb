@@ -1205,7 +1205,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case ColumnType.LONG256:
                                 castFunctions.add(
-                                        new CastLong256ToStrFunctionFactory.CastLong256ToStrFunction(
+                                        new CastLong256ToStrFunctionFactory.Func(
                                                 new Long256Column(i)
                                         )
                                 );

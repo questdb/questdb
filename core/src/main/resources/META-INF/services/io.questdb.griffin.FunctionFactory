@@ -359,6 +359,7 @@ io.questdb.griffin.engine.functions.cast.CastLong256ToLongFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLong256ToFloatFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLong256ToDoubleFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLong256ToStrFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastLong256ToVarcharFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLong256ToDateFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLong256ToTimestampFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLong256ToSymbolFunctionFactory
@@ -487,6 +488,7 @@ io.questdb.griffin.engine.functions.cast.CastVarcharToSymbolFunctionFactory
 
 # cast UUID to ...
 io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory
 
 # cast GROHASH to ...
 io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory

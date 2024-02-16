@@ -2982,6 +2982,36 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLong256ToStr() throws Exception {
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_long256() as string) from long_sequence(10)", "a\n" +
+                "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n" +
+                "0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\n" +
+                "0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\n" +
+                "0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\n" +
+                "0x4b0f595f143e5d722f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4\n" +
+                "0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\n" +
+                "0xa0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88c8b1863d4316f9c7\n" +
+                "0x61b1a0b0a559551538b73d329210d2774cdfb9e29522133c87aa0968faec6879\n" +
+                "0x523eb59d99c647af9840ad8800156d26c718ab5cbb3fd261c1bf6c24be538768\n" +
+                "0x5b9832d4b5522a9474ce62a98a4516952705e02c613acfc405374f5fbcef4819\n", true, true, false);
+    }
+
+    @Test
+    public void testLong256ToVarchar() throws Exception {
+        assertQuery("a\n", "select a from tab", "create table tab (a varchar)", null, "insert into tab select cast(rnd_long256() as varchar) from long_sequence(10)", "a\n" +
+                "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n" +
+                "0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\n" +
+                "0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\n" +
+                "0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\n" +
+                "0x4b0f595f143e5d722f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4\n" +
+                "0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\n" +
+                "0xa0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88c8b1863d4316f9c7\n" +
+                "0x61b1a0b0a559551538b73d329210d2774cdfb9e29522133c87aa0968faec6879\n" +
+                "0x523eb59d99c647af9840ad8800156d26c718ab5cbb3fd261c1bf6c24be538768\n" +
+                "0x5b9832d4b5522a9474ce62a98a4516952705e02c613acfc405374f5fbcef4819\n", true, true, false);
+    }
+
+    @Test
     public void testLongToBoolean() throws Exception {
         assertQuery("a\n", "select a from tab", "create table tab (a boolean)", null, "insert into tab select cast(rnd_long(0,66,100) as boolean) from long_sequence(10)", "a\n" +
                 "true\n" +
@@ -4900,6 +4930,36 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUuidToStr() throws Exception {
+        assertQuery("a\n", "select a from tab", "create table tab (a string)", null, "insert into tab select cast(rnd_uuid4() as string) from long_sequence(10)", "a\n" +
+                "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                "b5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
+                "e8beef38-cd7b-43d8-9b2d-34586f6275fa\n" +
+                "322a2198-864b-4b14-b97f-a69eb8fec6cc\n" +
+                "980eca62-a219-40f1-a846-d7a3aa5aecce\n" +
+                "c1e63128-5c1a-4288-872b-fc5230158059\n" +
+                "716de3d2-5dcc-4d91-9fa2-397a5d8c84c4\n" +
+                "4b0f595f-143e-4d72-af1a-8266e7921e3b\n", true, true, false);
+    }
+
+    @Test
+    public void testUuidToVarchar() throws Exception {
+        assertQuery("a\n", "select a from tab", "create table tab (a varchar)", null, "insert into tab select cast(rnd_uuid4() as varchar) from long_sequence(10)", "a\n" +
+                "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                "b5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
+                "e8beef38-cd7b-43d8-9b2d-34586f6275fa\n" +
+                "322a2198-864b-4b14-b97f-a69eb8fec6cc\n" +
+                "980eca62-a219-40f1-a846-d7a3aa5aecce\n" +
+                "c1e63128-5c1a-4288-872b-fc5230158059\n" +
+                "716de3d2-5dcc-4d91-9fa2-397a5d8c84c4\n" +
+                "4b0f595f-143e-4d72-af1a-8266e7921e3b\n", true, true, false);
+    }
+
+    @Test
     public void testVarcharToBoolean() throws Exception {
         assertQuery(
                 "boolean\n" +
@@ -5012,6 +5072,21 @@ public class CastTest extends AbstractCairoTest {
                 "NaN\n" +
                 "NaN\n" +
                 "4.1500\n", true, true, false);
+    }
+
+    @Test
+    public void testVarcharToIPv4() throws Exception {
+        assertQuery("a\n", "select a from tab", "create table tab (a IPv4)", null, "insert into tab select cast(rnd_varchar('171.30.189.77','111.221.228.130','201.100.238.229',null) as IPv4) from long_sequence(10)", "a\n" +
+                "171.30.189.77\n" +
+                "201.100.238.229\n" +
+                "111.221.228.130\n" +
+                "\n" +
+                "111.221.228.130\n" +
+                "\n" +
+                "201.100.238.229\n" +
+                "\n" +
+                "201.100.238.229\n" +
+                "171.30.189.77\n", true, true, false);
     }
 
     @Test
@@ -5170,5 +5245,27 @@ public class CastTest extends AbstractCairoTest {
                 "\n" +
                 "\n" +
                 "2019-03-11T10:20:33.123897Z\n", true, true, false);
+    }
+
+    @Test
+    public void testVarcharToUuid() throws Exception {
+        assertQuery(
+                "x\n" +
+                        "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                        "\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                        "\n" +
+                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                        "\n" +
+                        "0010cde8-12ce-40ee-8010-a928bb8b9650\n",
+                "select cast(a as uuid) x from tt",
+                "create table tt as (select rnd_varchar('0010cde8-12ce-40ee-8010-a928bb8b9650', '9f9b2131-d49f-4d1d-ab81-39815c50d341', null, '7bcd48d8-c77a-4655-b2a2-15ba0462ad15') a from long_sequence(10))",
+                null,
+                true,
+                true
+        );
     }
 }

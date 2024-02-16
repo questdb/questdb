@@ -25,69 +25,72 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.*;
 
-public final class CastUuidToStrFunctionFactory implements FunctionFactory {
+public final class CastUuidToVarcharFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "cast(Zs)";
+        return "cast(Zø)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             StringSink sink = Misc.getThreadLocalSink();
             if (SqlUtil.implicitCastUuidAsStr(func.getLong128Lo(null), func.getLong128Hi(null), sink)) {
-                return new StrConstant(Chars.toString(sink));
+                return new VarcharConstant(sink);
             } else {
-                return StrConstant.NULL;
+                return VarcharConstant.NULL;
             }
         }
         return new Func(func);
     }
 
-    public static class Func extends AbstractCastToStrFunction implements UnaryFunction {
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
+    public static class Func extends AbstractCastToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
 
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), utf8Sink);
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+            SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), utf16Sink);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
             sinkA.clear();
             return SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkA) ? sinkA : null;
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), utf16Sink);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
+        public Utf8Sequence getVarcharB(Record rec) {
             sinkB.clear();
             return SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkB) ? sinkB : null;
-        }
-
-        @Override
-        public int getStrLen(Record rec) {
-            long lo = arg.getLong128Lo(rec);
-            long hi = arg.getLong128Hi(rec);
-            return Uuid.isNull(lo, hi) ? TableUtils.NULL_LEN : Uuid.UUID_LENGTH;
         }
 
         @Override

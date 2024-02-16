@@ -435,6 +435,14 @@ public class SqlUtil {
         return 0;
     }
 
+    public static boolean implicitCastLong256AsStr(Long256 long256, CharSink<?> sink) {
+        if (Long256Impl.isNull(long256)) {
+            return false;
+        }
+        Numbers.appendLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3(), sink);
+        return true;
+    }
+
     @SuppressWarnings("unused")
     // used by the row copier
     public static byte implicitCastLongAsByte(long value) {
