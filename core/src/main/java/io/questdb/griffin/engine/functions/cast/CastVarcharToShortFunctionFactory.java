@@ -31,16 +31,25 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 
-public class CastLongToShortFunctionFactory implements FunctionFactory {
+public class CastVarcharToShortFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "cast(Le)";
+        return "cast(Øe)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new Func(args.getQuick(0));
     }
 
@@ -51,8 +60,15 @@ public class CastLongToShortFunctionFactory implements FunctionFactory {
 
         @Override
         public short getShort(Record rec) {
-            final long value = arg.getLong(rec);
-            return value != Numbers.LONG_NaN ? (short) value : 0;
+            final Utf8Sequence value = arg.getVarcharA(rec);
+            try {
+                if (value == null) {
+                    return 0;
+                }
+                return (short) Numbers.parseInt(value);
+            } catch (NumericException e) {
+                return 0;
+            }
         }
     }
 }

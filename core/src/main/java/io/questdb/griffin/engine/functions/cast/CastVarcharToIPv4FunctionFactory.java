@@ -24,25 +24,43 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.ShortFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 
-public abstract class AbstractCastToShortFunction extends ShortFunction implements UnaryFunction {
-    protected final Function arg;
+public class CastVarcharToIPv4FunctionFactory implements FunctionFactory {
 
-    public AbstractCastToShortFunction(Function arg) {
-        this.arg = arg;
+    @Override
+    public String getSignature() {
+        return "cast(Øx)";
     }
 
     @Override
-    public Function getArg() {
-        return arg;
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func(args.getQuick(0));
     }
 
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val(getArg()).val("::short");
+    private static class Func extends AbstractCastToIPv4Function {
+        public Func(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public int getIPv4(Record rec) {
+            final Utf8Sequence value = arg.getVarcharA(rec);
+            return Numbers.parseIPv4Quiet(value != null ? value.asAsciiCharSequence() : null);
+        }
     }
 }

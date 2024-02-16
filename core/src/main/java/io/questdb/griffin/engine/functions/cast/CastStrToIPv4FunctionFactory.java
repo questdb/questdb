@@ -52,9 +52,6 @@ public class CastStrToIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public int getIPv4(Record rec) {
-            if (arg.getStr(rec) == null) {
-                return Numbers.IPv4_NULL;
-            }
             return Numbers.parseIPv4Quiet(arg.getStr(rec));
         }
     }

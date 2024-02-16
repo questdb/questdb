@@ -26,13 +26,13 @@ package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.UuidFunction;
 
-public abstract class AbstractCastToShortFunction extends ShortFunction implements UnaryFunction {
+public abstract class AbstractCastToUuidFunction extends UuidFunction implements UnaryFunction {
     protected final Function arg;
 
-    public AbstractCastToShortFunction(Function arg) {
+    public AbstractCastToUuidFunction(Function arg) {
         this.arg = arg;
     }
 
@@ -43,6 +43,6 @@ public abstract class AbstractCastToShortFunction extends ShortFunction implemen
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(getArg()).val("::short");
+        sink.val(getArg()).val("::uuid");
     }
 }

@@ -476,7 +476,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // type constant for 'CAST' operation
 
         final short columnType = ColumnType.tagOf(tok);
-
         if (
                 (columnType >= ColumnType.BOOLEAN && columnType <= ColumnType.BINARY)
                         || columnType == ColumnType.REGCLASS
@@ -504,7 +503,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         // long256
-        if (Numbers.extractLong256(tok, len, long256Sink)) {
+        if (Numbers.extractLong256(tok, long256Sink)) {
             return new Long256Constant(long256Sink); // values are copied from this sink
         }
 

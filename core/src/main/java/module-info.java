@@ -527,7 +527,17 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory,
 
 //                  cast varchar to ...,
+            io.questdb.griffin.engine.functions.cast.CastVarcharToVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastVarcharToShortFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastVarcharToIntFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastVarcharToIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastVarcharToLongFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastVarcharToDateFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastVarcharToTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastVarcharToUuidFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastVarcharToLong256FunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastVarcharToSymbolFunctionFactory,
 
 //                  cast symbol to ...
             io.questdb.griffin.engine.functions.cast.CastSymbolToIntFunctionFactory,

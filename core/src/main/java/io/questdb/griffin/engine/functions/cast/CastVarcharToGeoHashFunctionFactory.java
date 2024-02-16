@@ -25,20 +25,25 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
-public class CastVarcharToLongFunctionFactory implements FunctionFactory {
+import static io.questdb.cairo.ColumnType.GEOLONG_MAX_BITS;
+
+public class CastVarcharToGeoHashFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "cast(Øl)";
+        return "cast(Øg)";
     }
 
     @Override
@@ -48,19 +53,41 @@ public class CastVarcharToLongFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
-        return new Func(args.getQuick(0));
+    ) throws SqlException {
+        Function value = args.getQuick(0);
+        int argPosition = argPositions.getQuick(0);
+        int geoType = args.getQuick(1).getType();
+        if (value.isConstant()) {
+            final int bits = ColumnType.getGeoHashBits(geoType);
+            assert bits > 0 && bits < GEOLONG_MAX_BITS + 1;
+            return Constants.getGeoHashConstantWithType(
+                    parseGeoHash(value.getVarcharA(null), argPosition, bits),
+                    geoType
+            );
+        }
+        return new Func(geoType, value, argPosition);
     }
 
-    private static class Func extends AbstractCastToLongFunction {
-        public Func(Function arg) {
-            super(arg);
+    private static long parseGeoHash(Utf8Sequence value, int position, int typeBits) throws SqlException {
+        if (value == null || value.size() == 0) {
+            return GeoHashes.NULL;
+        }
+        return CastStrToGeoHashFunctionFactory.parseGeoHash(value.asAsciiCharSequence(), position, typeBits);
+    }
+
+    private static class Func extends AbstractCastToGeoHashFunction {
+
+        public Func(int geoType, Function arg, int position) {
+            super(geoType, arg, position);
         }
 
         @Override
-        public long getLong(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
-            return Numbers.parseLongQuiet(value != null ? value.asAsciiCharSequence() : null);
+        protected long getGeoHashLong0(Record rec) {
+            try {
+                return parseGeoHash(arg.getVarcharA(rec), position, bitsPrecision);
+            } catch (SqlException e) {
+                return GeoHashes.NULL;
+            }
         }
     }
 }

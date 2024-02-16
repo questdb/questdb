@@ -31,28 +31,42 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.Utf8Sequence;
 
-public class CastLongToShortFunctionFactory implements FunctionFactory {
+public class CastVarcharToDateFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "cast(Le)";
+        return "cast(Øm)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToShortFunction {
+    private static class Func extends AbstractCastToDateFunction {
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
-        public short getShort(Record rec) {
-            final long value = arg.getLong(rec);
-            return value != Numbers.LONG_NaN ? (short) value : 0;
+        public long getDate(Record rec) {
+            final Utf8Sequence value = arg.getVarcharA(rec);
+            try {
+                return value == null ? Numbers.LONG_NaN : DateFormatUtils.parseDate(value.asAsciiCharSequence());
+            } catch (NumericException e) {
+                return Numbers.LONG_NaN;
+            }
         }
     }
 }

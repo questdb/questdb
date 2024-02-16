@@ -28,17 +28,17 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
+import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
 
-public class CastVarcharToLongFunctionFactory implements FunctionFactory {
+public class CastVarcharToUuidFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "cast(Øl)";
+        return "cast(Øz)";
     }
 
     @Override
@@ -48,19 +48,55 @@ public class CastVarcharToLongFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
-        return new Func(args.getQuick(0));
+    ) throws SqlException {
+        final Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            final Utf8Sequence value = arg.getVarcharA(null);
+            if (value == null || value.size() == 0) {
+                return UuidConstant.NULL;
+            }
+            final Uuid uuid = new Uuid();
+            try {
+                uuid.of(value);
+            } catch (NumericException e) {
+                throw SqlException.$(argPositions.getQuick(0), "invalid UUID constant");
+            }
+            return new UuidConstant(uuid);
+        }
+        return new Func(arg);
     }
 
-    private static class Func extends AbstractCastToLongFunction {
+    private static class Func extends AbstractCastToUuidFunction {
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
-        public long getLong(Record rec) {
+        public long getLong128Hi(Record rec) {
             final Utf8Sequence value = arg.getVarcharA(rec);
-            return Numbers.parseLongQuiet(value != null ? value.asAsciiCharSequence() : null);
+            if (value == null) {
+                return Numbers.LONG_NaN;
+            }
+            try {
+                Uuid.checkDashesAndLength(value.asAsciiCharSequence());
+                return Uuid.parseHi(value.asAsciiCharSequence());
+            } catch (NumericException e) {
+                return Numbers.LONG_NaN;
+            }
+        }
+
+        @Override
+        public long getLong128Lo(Record rec) {
+            final Utf8Sequence value = arg.getVarcharA(rec);
+            if (value == null) {
+                return Numbers.LONG_NaN;
+            }
+            try {
+                Uuid.checkDashesAndLength(value.asAsciiCharSequence());
+                return Uuid.parseLo(value.asAsciiCharSequence());
+            } catch (NumericException e) {
+                return Numbers.LONG_NaN;
+            }
         }
     }
 }

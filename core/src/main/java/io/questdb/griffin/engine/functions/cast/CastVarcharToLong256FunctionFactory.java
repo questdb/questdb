@@ -28,17 +28,17 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
-public class CastVarcharToLongFunctionFactory implements FunctionFactory {
+public class CastVarcharToLong256FunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "cast(Øl)";
+        return "cast(Øh)";
     }
 
     @Override
@@ -48,19 +48,43 @@ public class CastVarcharToLongFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToLongFunction {
+    private static class Func extends AbstractCastToLong256Function {
+        private final Long256Impl long256a = new Long256Impl();
+        private final Long256Impl long256b = new Long256Impl();
+        private final Long256Impl long256builder = new Long256Impl();
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
-        public long getLong(Record rec) {
+        public void getLong256(Record rec, CharSink<?> sink) {
             final Utf8Sequence value = arg.getVarcharA(rec);
-            return Numbers.parseLongQuiet(value != null ? value.asAsciiCharSequence() : null);
+            if (value != null) {
+                CastSymbolToLong256FunctionFactory.appendLong256(value.asAsciiCharSequence(), long256builder, sink);
+            }
+        }
+
+        @Override
+        public Long256 getLong256A(Record rec) {
+            final Utf8Sequence value = arg.getVarcharA(rec);
+            if (value == null) {
+                return Long256Impl.NULL_LONG256;
+            }
+            return Numbers.parseLong256(value, long256a);
+        }
+
+        @Override
+        public Long256 getLong256B(Record rec) {
+            final Utf8Sequence value = arg.getVarcharA(rec);
+            if (value == null) {
+                return Long256Impl.NULL_LONG256;
+            }
+            return Numbers.parseLong256(value, long256b);
         }
     }
 }

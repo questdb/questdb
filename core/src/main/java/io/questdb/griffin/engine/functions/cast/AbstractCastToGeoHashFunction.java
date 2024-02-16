@@ -24,16 +24,26 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.griffin.engine.functions.GeoByteFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
-public abstract class AbstractCastToShortFunction extends ShortFunction implements UnaryFunction {
-    protected final Function arg;
+import static io.questdb.cairo.ColumnType.GEOLONG_MAX_BITS;
 
-    public AbstractCastToShortFunction(Function arg) {
+public abstract class AbstractCastToGeoHashFunction extends GeoByteFunction implements UnaryFunction {
+    protected final Function arg;
+    protected final int bitsPrecision;
+    protected final int position;
+
+    public AbstractCastToGeoHashFunction(int geoType, Function arg, int position) {
+        super(geoType);
         this.arg = arg;
+        this.position = position;
+        this.bitsPrecision = ColumnType.getGeoHashBits(geoType);
+        assert this.bitsPrecision > 0 && this.bitsPrecision < GEOLONG_MAX_BITS + 1;
     }
 
     @Override
@@ -42,7 +52,33 @@ public abstract class AbstractCastToShortFunction extends ShortFunction implemen
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.val(getArg()).val("::short");
+    public byte getGeoByte(Record rec) {
+        assert bitsPrecision < 8;
+        return (byte) getGeoHashLong0(rec);
     }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        assert bitsPrecision >= 16 && bitsPrecision < 32;
+        return (int) getGeoHashLong0(rec);
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        assert bitsPrecision >= 32;
+        return getGeoHashLong0(rec);
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        assert bitsPrecision >= 8 && bitsPrecision < 16;
+        return (short) getGeoHashLong0(rec);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val(arg).val("::geohash");
+    }
+
+    protected abstract long getGeoHashLong0(Record rec);
 }
