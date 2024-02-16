@@ -350,27 +350,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         );
     }
 
-    public static void copyFixedSizeCol(
-            FilesFacade ff,
-            long src,
-            long srcLo,
-            long srcHi,
-            long dstFixAddr,
-            long dstFixFileOffset,
-            int dstFd,
-            final int shl,
-            boolean mixedIOFlag
-    ) {
+    public static void copyFixedSizeCol(FilesFacade ff, long src, long srcLo, long srcHi, long dstFixAddr, long dstFixFileOffset, int dstFd, int shl, boolean mixedIOFlag) {
         final long len = (srcHi - srcLo + 1) << shl;
-        final long fromAddress = src + (srcLo << shl);
-        if (mixedIOFlag) {
-            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
-                throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
-                        .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
-            }
-        } else {
-            Vect.memcpy(dstFixAddr, fromAddress, len);
-        }
+        O3Utils.copyFixedSizeCol(ff, src, srcLo, dstFixAddr, dstFixFileOffset, dstFd, mixedIOFlag, len, shl);
     }
 
     public static void o3ColumnCopy(

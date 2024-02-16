@@ -39,6 +39,18 @@ public class O3Utils {
 
     private static final Log LOG = LogFactory.getLog(O3Utils.class);
 
+    public static void copyFixedSizeCol(FilesFacade ff, long src, long srcLo, long dstFixAddr, long dstFixFileOffset, int dstFd, boolean mixedIOFlag, long len, int legacyVarSizeAuxShl) {
+        final long fromAddress = src + (srcLo << legacyVarSizeAuxShl);
+        if (mixedIOFlag) {
+            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
+                throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
+                        .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
+            }
+        } else {
+            Vect.memcpy(dstFixAddr, fromAddress, len);
+        }
+    }
+
     public static void setupWorkerPool(
             WorkerPool workerPool,
             CairoEngine cairoEngine,
