@@ -602,6 +602,8 @@ public class RecordToRowCopierUtils {
                         case ColumnType.VARCHAR:
                             asm.invokeInterface(wPutVarchar, 2);
                             break;
+                        default:
+                            assert false;
                     }
                     break;
                 case ColumnType.STRING:

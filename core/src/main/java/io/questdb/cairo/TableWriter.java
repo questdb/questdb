@@ -4205,13 +4205,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long o3LagRowCount = 0;
         long maxUncommittedRows = metadata.getMaxUncommittedRows();
-        final int timestampIndex = metadata.getTimestampIndex();
+        final int timestampColumnIndex = metadata.getTimestampIndex();
         lastPartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi);
         // we will check new partitionTimestampHi value against the limit to see if the writer
         // will have to switch partition internally
         long partitionTimestampHiLimit = txWriter.getNextPartitionTimestamp(partitionTimestampHi) - 1;
         try {
-            o3RowCount += o3MoveUncommitted(timestampIndex);
+            o3RowCount += o3MoveUncommitted(timestampColumnIndex);
 
             // we may need to re-use file descriptors when this partition is the "current" one
             // we cannot open file again due to sharing violation
@@ -4352,8 +4352,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // final boolean yep = isAppendLastPartitionOnly(sortedTimestampsAddr, o3TimestampMax);
 
             // reshuffle all columns according to timestamp index
-            long mergeRowCount = o3RowCount;
-            o3Sort(sortedTimestampsAddr, timestampIndex, mergeRowCount, o3RowCount);
+            long sortedTimestampsRowCount = o3RowCount;
+            o3Sort(sortedTimestampsAddr, sortedTimestampsRowCount, timestampColumnIndex);
             LOG.info()
                     .$("sorted [table=").utf8(tableToken.getTableName())
                     .$(", o3RowCount=").$(o3RowCount)
@@ -4361,7 +4361,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             processO3Block(
                     o3LagRowCount,
-                    timestampIndex,
+                    timestampColumnIndex,
                     sortedTimestampsAddr,
                     srcOooMax,
                     o3TimestampMin,
@@ -5416,7 +5416,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         dispatchO3CallbackQueue(queue, queuedCount);
     }
 
-    private void o3Sort(long mergedTimestamps, int timestampIndex, long mergeCount, long rowCount) {
+    private void o3Sort(long sortedTimestampsAddr, long sortedTimestampsRowCount, int timestampIndex) {
         o3ErrorCount.set(0);
         lastErrno = 0;
 
@@ -5437,9 +5437,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 o3DoneLatch,
                                 i,
                                 type,
-                                mergedTimestamps,
-                                mergeCount,
-                                rowCount,
+                                sortedTimestampsAddr,
+                                sortedTimestampsRowCount,
+                                IGNORE,
                                 IGNORE,
                                 IGNORE,
                                 ColumnType.isVarSize(type) ? o3SortVarColumnRef : o3SortFixColumnRef
@@ -5449,7 +5449,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         pubSeq.done(cursor);
                     }
                 } else {
-                    o3SortColumn(mergedTimestamps, mergeCount, i, type, rowCount);
+                    o3SortColumn(sortedTimestampsAddr, sortedTimestampsRowCount, i, type);
                 }
             }
         }
@@ -5458,22 +5458,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         swapO3ColumnsExcept(timestampIndex);
     }
 
-    private void o3SortColumn(long mergedTimestamps, long mergeCount, int i, int type, long rowCount) {
+    private void o3SortColumn(long sortedTimestampsAddr, long sortedTimestampsRowCount, int columnIndex, int type) {
         if (ColumnType.isVarSize(type)) {
-            o3SortVarColumn(i, type, mergedTimestamps, mergeCount, rowCount, IGNORE, IGNORE);
+            o3SortVarColumn(columnIndex, type, sortedTimestampsAddr, sortedTimestampsRowCount, IGNORE, IGNORE, IGNORE);
         } else {
-            o3SortFixColumn(i, type, mergedTimestamps, mergeCount, rowCount, IGNORE, IGNORE);
+            o3SortFixColumn(columnIndex, type, sortedTimestampsAddr, sortedTimestampsRowCount, IGNORE, IGNORE, IGNORE);
         }
     }
 
     private void o3SortFixColumn(
             int columnIndex,
             final int columnType,
-            long mergedTimestampsAddr,
-            long mergeCount,
-            long valueCount,
+            long sortedTimestampsAddr,
+            long sortedTimestampsRowCount,
             long ignore1,
-            long ignore2
+            long ignore2,
+            long ignore3
     ) {
         if (o3ErrorCount.get() > 0) {
             return;
@@ -5484,44 +5484,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final MemoryCARW mem2 = o3MemColumns2.getQuick(columnOffset);
             final int shl = ColumnType.pow2SizeOf(columnType);
             final long src = mem.addressOf(0);
-            mem2.jumpTo(valueCount << shl);
+            mem2.jumpTo(sortedTimestampsRowCount << shl);
             final long tgtDataAddr = mem2.addressOf(0);
             switch (shl) {
                 case 0:
-                    Vect.indexReshuffle8Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                    Vect.indexReshuffle8Bit(src, tgtDataAddr, sortedTimestampsAddr, sortedTimestampsRowCount);
                     break;
                 case 1:
-                    Vect.indexReshuffle16Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                    Vect.indexReshuffle16Bit(src, tgtDataAddr, sortedTimestampsAddr, sortedTimestampsRowCount);
                     break;
                 case 2:
-                    Vect.indexReshuffle32Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                    Vect.indexReshuffle32Bit(src, tgtDataAddr, sortedTimestampsAddr, sortedTimestampsRowCount);
                     break;
                 case 3:
-                    Vect.indexReshuffle64Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                    Vect.indexReshuffle64Bit(src, tgtDataAddr, sortedTimestampsAddr, sortedTimestampsRowCount);
                     break;
                 case 4:
-                    Vect.indexReshuffle128Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                    Vect.indexReshuffle128Bit(src, tgtDataAddr, sortedTimestampsAddr, sortedTimestampsRowCount);
                     break;
                 case 5:
-                    Vect.indexReshuffle256Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                    Vect.indexReshuffle256Bit(src, tgtDataAddr, sortedTimestampsAddr, sortedTimestampsRowCount);
                     break;
                 default:
                     assert false : "col type is unsupported";
                     break;
             }
         } catch (Throwable th) {
-            handleWorkStealingException("sort fixed size column failed", columnIndex, columnType, mergedTimestampsAddr, valueCount, ignore1, ignore2, th);
+            handleWorkStealingException(
+                    "sort fixed size column failed",
+                    columnIndex,
+                    columnType,
+                    sortedTimestampsAddr,
+                    sortedTimestampsRowCount,
+                    ignore1,
+                    ignore2,
+                    th
+            );
         }
     }
 
     private void o3SortVarColumn(
             int columnIndex,
             int columnType,
-            long mergedTimestampsAddr,
-            long mergeCount,
-            long valueCount,
+            long sortedTimestampsAddr,
+            long sortedTimestampsRowCount,
             long ignore1,
-            long ignore2
+            long ignore2,
+            long ignore3
     ) {
         if (o3ErrorCount.get() > 0) {
             return;
@@ -5531,15 +5540,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int secondaryIndex = primaryIndex + 1;
 
             ColumnType.getDriver(columnType).o3sort(
-                    mergedTimestampsAddr,
-                    valueCount,
+                    sortedTimestampsAddr,
+                    sortedTimestampsRowCount,
                     o3Columns.getQuick(primaryIndex),
                     o3Columns.getQuick(secondaryIndex),
                     o3MemColumns2.getQuick(primaryIndex),
                     o3MemColumns2.getQuick(secondaryIndex)
             );
         } catch (Throwable th) {
-            handleWorkStealingException("sort variable size column failed", columnIndex, columnType, mergedTimestampsAddr, valueCount, ignore1, ignore2, th);
+            handleWorkStealingException("sort variable size column failed", columnIndex, columnType, sortedTimestampsAddr, ignore1, ignore2, ignore3, th);
         }
     }
 

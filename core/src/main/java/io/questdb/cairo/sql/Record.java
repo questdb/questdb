@@ -26,10 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.*;
 
 /**
  * Access the value of columns of a table record by column index.
@@ -362,11 +359,11 @@ public interface Record {
     }
 
     default void getVarchar(int col, Utf8Sink utf8Sink) {
-        throw new UnsupportedOperationException();
+        utf8Sink.put(getVarcharA(col));
     }
 
     default void getVarchar(int col, Utf16Sink utf16sink) {
-        throw new UnsupportedOperationException();
+        Utf8s.utf8ToUtf16(getVarcharA(col), utf16sink);
     }
 
     default Utf8Sequence getVarcharA(int col) {

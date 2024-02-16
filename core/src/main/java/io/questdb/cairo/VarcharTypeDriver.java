@@ -145,7 +145,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi) {
-        return getDataVectorSizeAt(auxMemAddr, rowHi) - getDataVectorSizeAt(auxMemAddr, rowLo);
+        if (rowLo > 0) {
+            return getDataVectorSizeAt(auxMemAddr, rowHi) - getDataVectorSizeAt(auxMemAddr, rowLo -1);
+        }
+        return getDataVectorSizeAt(auxMemAddr, rowHi);
     }
 
     @Override
@@ -206,14 +209,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3copyAuxVector(FilesFacade ff, long src, long srcLo, long srcHi, long dstFixAddr, long dstFixFileOffset, int dstFd, boolean mixedIOFlag) {
-        O3CopyJob.copyFixedSizeCol(ff, src, srcLo, srcHi, dstFixAddr, dstFixFileOffset, dstFd, VARCHAR_AUX_SHL, mixedIOFlag);
+    public void o3copyAuxVector(FilesFacade ff, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstFileOffset, int dstFd, boolean mixedIOFlag) {
+        O3CopyJob.copyFixedSizeCol(ff, srcAddr, srcLo, srcHi, dstAddr, dstFileOffset, dstFd, VARCHAR_AUX_SHL, mixedIOFlag);
     }
 
     @Override
     public void o3sort(
-            long timestampMergeIndexAddr,
-            long timestampMergeIndexSize,
+            long sortedTimestampsAddr,
+            long sortedTimestampsRowCount,
             MemoryCR srcDataMem,
             MemoryCR srcAuxMem,
             MemoryCARW dstDataMem,
@@ -223,24 +226,23 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         final long srcDataAddr = srcDataMem.addressOf(0);
         final long srcAuxAddr = srcAuxMem.addressOf(0);
         // exclude the trailing offset from shuffling
-        final long tgtDataAddr = dstDataMem.resize(srcDataMem.size());
-        final long tgtAuxAddr = dstAuxMem.resize(timestampMergeIndexSize << VARCHAR_AUX_SHL);
+        final long tgtAuxAddr = dstAuxMem.resize(getAuxVectorSize(sortedTimestampsRowCount));
+        final long tgtDataAddr = dstDataMem.resize(getDataVectorSizeAt(srcAuxAddr, sortedTimestampsRowCount - 1));
 
-        assert srcDataAddr != 0;
         assert srcAuxAddr != 0;
-        assert tgtDataAddr != 0;
         assert tgtAuxAddr != 0;
 
         // add max offset so that we do not have conditionals inside loop
         final long offset = Vect.sortVarcharColumn(
-                timestampMergeIndexAddr,
-                timestampMergeIndexSize,
+                sortedTimestampsAddr,
+                sortedTimestampsRowCount,
                 srcDataAddr,
                 srcAuxAddr,
                 tgtDataAddr,
                 tgtAuxAddr
         );
         dstDataMem.jumpTo(offset);
+        dstAuxMem.jumpTo(sortedTimestampsRowCount * 16);
     }
 
     @Override

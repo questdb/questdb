@@ -6640,8 +6640,9 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
-                        " rnd_long256() l256" +
-                        " from long_sequence(500)" +
+                        " rnd_long256() l256," +
+                        " rnd_varchar(1,30,0) varc" +
+                        " from long_sequence(1)" +
                         "), index(sym capacity 1024) timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
@@ -6668,8 +6669,9 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
-                        " rnd_long256() l256" +
-                        " from long_sequence(1000)" +
+                        " rnd_long256() l256," +
+                        " rnd_varchar(10,50,0) varc" +
+                        " from long_sequence(1)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
@@ -7804,13 +7806,19 @@ public class O3Test extends AbstractO3Test {
         }
     }
 
-    private static void testXAndIndex(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expectedSql, String assertSql) throws SqlException {
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedSql, assertSql, LOG, true);
+    private static void testXAndIndex(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence referenceSql,
+            String assertSql
+    ) throws SqlException {
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSql, assertSql, LOG, true);
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         // test that after reader is re-opened we can still see the same data
         engine.releaseAllReaders();
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedSql, assertSql, LOG, true);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSql, assertSql, LOG, true);
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
     }
 

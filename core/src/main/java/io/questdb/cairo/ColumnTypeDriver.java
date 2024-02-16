@@ -32,6 +32,8 @@ public interface ColumnTypeDriver {
 
     void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts);
 
+    void configureAuxMemO3RSS(MemoryARW auxMem);
+
     /**
      * Configures AUX memory used by TableWriter to read WAL data. The mapping size will
      * depend on the size of entry for each row.
@@ -102,13 +104,25 @@ public interface ColumnTypeDriver {
             long dstDataOffset
     );
 
+    /**
+     * Copies aux vector from source memory pointer to either the destination memory or directly to file.
+     *
+     * @param ff            the file facade for test simulation
+     * @param srcAddr       the source address where vector is
+     * @param srcLo         the row number, inclusive, where to begin copy from
+     * @param srcHi         the last row number, inclusive, that has to make it into the copy
+     * @param dstAddr       the destination address, when mixedIOFlag is set, the destination address is ignored
+     * @param dstFileOffset the file offset, to be used with mixedIOFlag. It is ignored when mixedIO is false.
+     * @param dstFd         the destination file description, used when mixedIO is true
+     * @param mixedIOFlag   the flag to pick the method of writing data, true means that file io will be used, otherwise mmap copy.
+     */
     void o3copyAuxVector(
             FilesFacade ff,
-            long src,
+            long srcAddr,
             long srcLo,
             long srcHi,
-            long dstFixAddr,
-            long dstFixFileOffset,
+            long dstAddr,
+            long dstFileOffset,
             int dstFd,
             boolean mixedIOFlag
     );
@@ -117,16 +131,16 @@ public interface ColumnTypeDriver {
      * Sorts var size vectors. This method is also responsible for sizing the destination vectors and ensuring the
      * append position after sorting is correct.
      *
-     * @param timestampMergeIndexAddr array of 128-bit entries, second 64 bits are row numbers that drive ordering.
-     * @param timestampMergeIndexSize size of the timestamp index
-     * @param srcDataMem              source data vector
-     * @param srcAuxMem               source aux vector
-     * @param dstDataMem              destination data vector
-     * @param dstAuxMem               destination aux vector
+     * @param sortedTimestampsAddr     array of 128-bit entries, second 64 bits are row numbers that drive ordering.
+     * @param sortedTimestampsRowCount size of the timestamp index
+     * @param srcDataMem               source data vector
+     * @param srcAuxMem                source aux vector
+     * @param dstDataMem               destination data vector
+     * @param dstAuxMem                destination aux vector
      */
     void o3sort(
-            long timestampMergeIndexAddr,
-            long timestampMergeIndexSize,
+            long sortedTimestampsAddr,
+            long sortedTimestampsRowCount,
             MemoryCR srcDataMem,
             MemoryCR srcAuxMem,
             MemoryCARW dstDataMem,
@@ -147,6 +161,4 @@ public interface ColumnTypeDriver {
     void setDataVectorEntriesToNull(long dataMemAddr, long rowCount);
 
     void shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr);
-
-    void configureAuxMemO3RSS(MemoryARW auxMem);
 }

@@ -28,6 +28,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
 
 public class UnionRecord extends AbstractUnionRecord {
 
@@ -241,5 +242,21 @@ public class UnionRecord extends AbstractUnionRecord {
             return recordA.getTimestamp(col);
         }
         return recordB.getTimestamp(col);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        if (useA) {
+            return recordA.getVarcharA(col);
+        }
+        return recordB.getVarcharA(col);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        if (useA) {
+            return recordA.getVarcharB(col);
+        }
+        return recordB.getVarcharB(col);
     }
 }

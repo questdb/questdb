@@ -1751,6 +1751,9 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
                         Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
                         break;
+                    case ColumnType.VARCHAR:
+                        Assert.assertTrue(Utf8s.equals(rr.getVarcharA(i), lr.getVarcharA(i)));
+                        break;
                     default:
                         // Unknown record type.
                         assert false;

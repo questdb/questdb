@@ -30,6 +30,8 @@ import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public class UnionCastRecord extends AbstractUnionRecord {
 
@@ -144,8 +146,6 @@ public class UnionCastRecord extends AbstractUnionRecord {
         }
         return castFunctionsB.getQuick(col).getGeoShort(recordB);
     }
-
-    // symbol is not supported by set functions
 
     @Override
     public int getIPv4(int col) {
@@ -265,5 +265,39 @@ public class UnionCastRecord extends AbstractUnionRecord {
             return castFunctionsA.getQuick(col).getTimestamp(recordA);
         }
         return castFunctionsB.getQuick(col).getTimestamp(recordB);
+    }
+
+    @Override
+    public void getVarchar(int col, Utf8Sink utf8Sink) {
+        if (useA) {
+            castFunctionsA.getQuick(col).getVarchar(recordA, utf8Sink);
+        } else {
+            castFunctionsB.getQuick(col).getVarchar(recordB, utf8Sink);
+        }
+    }
+
+    @Override
+    public void getVarchar(int col, Utf16Sink utf16sink) {
+        if (useA) {
+            castFunctionsA.getQuick(col).getVarchar(recordA, utf16sink);
+        } else {
+            castFunctionsB.getQuick(col).getVarchar(recordB, utf16sink);
+        }
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getVarcharA(recordA);
+        }
+        return castFunctionsB.getQuick(col).getVarcharB(recordB);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getVarcharB(recordA);
+        }
+        return castFunctionsB.getQuick(col).getVarcharB(recordB);
     }
 }

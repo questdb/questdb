@@ -171,11 +171,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public void o3copyAuxVector(
             FilesFacade ff,
-            long src,
+            long srcAddr,
             long srcLo,
             long srcHi,
-            long dstFixAddr,
-            long dstFixFileOffset,
+            long dstAddr,
+            long dstFileOffset,
             int dstFd,
             boolean mixedIOFlag
     ) {
@@ -183,10 +183,10 @@ public class StringTypeDriver implements ColumnTypeDriver {
         final long len = (srcHi + 1 - srcLo + 1) << LEGACY_VAR_SIZE_AUX_SHL;
         O3Utils.copyFixedSizeCol(
                 ff,
-                src,
+                srcAddr,
                 srcLo,
-                dstFixAddr,
-                dstFixFileOffset,
+                dstAddr,
+                dstFileOffset,
                 dstFd,
                 mixedIOFlag,
                 len,
@@ -196,8 +196,8 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void o3sort(
-            long timestampMergeIndexAddr,
-            long timestampMergeIndexSize,
+            long sortedTimestampsAddr,
+            long sortedTimestampsRowCount,
             MemoryCR srcDataMem,
             MemoryCR srcAuxMem,
             MemoryCARW dstDataMem,
@@ -207,8 +207,8 @@ public class StringTypeDriver implements ColumnTypeDriver {
         final long srcDataAddr = srcDataMem.addressOf(0);
         final long srcAuxAddr = srcAuxMem.addressOf(0);
         // exclude the trailing offset from shuffling
-        final long tgtDataAddr = dstDataMem.resize(srcDataMem.size());
-        final long tgtAuxAddr = dstAuxMem.resize(timestampMergeIndexSize * Long.BYTES);
+        final long tgtAuxAddr = dstAuxMem.resize(getAuxVectorSize(sortedTimestampsRowCount));
+        final long tgtDataAddr = dstDataMem.resize(getDataVectorSizeAt(srcAuxAddr, sortedTimestampsRowCount - 1));
 
         assert srcDataAddr != 0;
         assert srcAuxAddr != 0;
@@ -217,15 +217,15 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
         // add max offset so that we do not have conditionals inside loop
         final long offset = Vect.sortVarColumn(
-                timestampMergeIndexAddr,
-                timestampMergeIndexSize,
+                sortedTimestampsAddr,
+                sortedTimestampsRowCount,
                 srcDataAddr,
                 srcAuxAddr,
                 tgtDataAddr,
                 tgtAuxAddr
         );
         dstDataMem.jumpTo(offset);
-        dstAuxMem.jumpTo(timestampMergeIndexSize * Long.BYTES);
+        dstAuxMem.jumpTo(sortedTimestampsRowCount * Long.BYTES);
         dstAuxMem.putLong(offset);
     }
 
