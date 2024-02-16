@@ -35,8 +35,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.std.Numbers.IPv4_NULL;
-
 public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
 
     @Override
@@ -72,7 +70,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
         @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
             final int value = arg.getIPv4(rec);
-            if (value != IPv4_NULL) {
+            if (value != Numbers.IPv4_NULL) {
                 Numbers.intToIPv4Sink(utf16Sink, value);
             }
         }
@@ -85,7 +83,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
 
         @Nullable
         private StringSink toSink(int value, StringSink sinkB) {
-            if (value != IPv4_NULL) {
+            if (value != Numbers.IPv4_NULL) {
                 sinkB.clear();
                 Numbers.intToIPv4Sink(sinkB, value);
                 return sinkB;
