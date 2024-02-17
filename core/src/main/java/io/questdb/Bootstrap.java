@@ -53,15 +53,15 @@ import java.util.zip.ZipInputStream;
 
 public class Bootstrap {
 
+    public static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
     private static final String CONFIG_FILE = "/server.conf";
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
-    private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
+    protected final Log log;
     private final String banner;
     private final BuildInformation buildInformation;
     private final ServerConfiguration config;
-    private final Log log;
     private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
     private final String rootDirectory;
@@ -151,7 +151,7 @@ public class Bootstrap {
         try {
             if (bootstrapConfiguration.useSite()) {
                 // site
-                extractSite();
+                extractSite(getSiteResource());
             }
 
             final ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);
@@ -272,11 +272,8 @@ public class Bootstrap {
         }
     }
 
-    public void extractSite() throws IOException {
-        URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
-        if (resource == null) {
-            log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
-        } else {
+    public void extractSite(URL resource) throws IOException {
+        if (resource != null) {
             long thisVersion = resource.openConnection().getLastModified();
             final String publicDir = rootDirectory + Files.SEPARATOR + "public";
             final byte[] buffer = new byte[1024 * 1024];
@@ -348,6 +345,14 @@ public class Bootstrap {
 
     public String getRootDirectory() {
         return rootDirectory;
+    }
+
+    public URL getSiteResource() {
+        final URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
+        if (resource == null) {
+            log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
+        }
+        return resource;
     }
 
     @NotNull
@@ -447,7 +452,7 @@ public class Bootstrap {
     }
 
     private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
-        try (final InputStream is = ServerMain.class.getResourceAsStream(PUBLIC_ZIP)) {
+        try (final InputStream is = getSiteInputStream()) {
             if (is != null) {
                 try (ZipInputStream zip = new ZipInputStream(is)) {
                     ZipEntry ze;
@@ -459,8 +464,6 @@ public class Bootstrap {
                         zip.closeEntry();
                     }
                 }
-            } else {
-                log.errorW().$("could not find site [resource=").$(PUBLIC_ZIP).$(']').$();
             }
         }
         setPublicVersion(publicDir, thisVersion);
@@ -599,6 +602,14 @@ public class Bootstrap {
                 r.$('\t').$("http://").$ip(bindIP).$(':').$(bindPort).$('\n').$();
             }
         }
+    }
+
+    protected InputStream getSiteInputStream() {
+        final InputStream is = ServerMain.class.getResourceAsStream(PUBLIC_ZIP);
+        if (is == null) {
+            log.errorW().$("could not find site [resource=").$(PUBLIC_ZIP).$(']').$();
+        }
+        return is;
     }
 
     public static class BootstrapException extends RuntimeException {
