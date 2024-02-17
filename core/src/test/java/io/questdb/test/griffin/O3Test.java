@@ -2138,7 +2138,8 @@ public class O3Test extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,30,1) varc" +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2157,6 +2158,7 @@ public class O3Test extends AbstractO3Test {
         engine.ddl("alter table x add column v11 string", sqlExecutionContext);
         engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
         engine.ddl("alter table x add column v9 long", sqlExecutionContext);
+        engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
 
         engine.insert(
                 "insert into x " +
@@ -2179,6 +2181,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1,1,1) varc," +
                         // ---- new columns ----
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -2192,7 +2195,8 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
+                        " rnd_long() v9," +
+                        " rnd_varchar(1,1,1) v13" +
                         " from long_sequence(10)",
                 sqlExecutionContext
         );
@@ -2218,6 +2222,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1,50,1) varc," +
                         // --------- new columns -----------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -2231,7 +2236,8 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
+                        " rnd_long() v9," +
+                        " rnd_varchar(1,20,1) v13," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext

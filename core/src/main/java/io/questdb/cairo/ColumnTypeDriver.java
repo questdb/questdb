@@ -32,6 +32,8 @@ public interface ColumnTypeDriver {
 
     void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts);
 
+    void configureAuxMemMA(MemoryMA auxMem);
+
     void configureAuxMemO3RSS(MemoryARW auxMem);
 
     /**

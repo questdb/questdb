@@ -290,7 +290,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
         if (useA) {
             return castFunctionsA.getQuick(col).getVarcharA(recordA);
         }
-        return castFunctionsB.getQuick(col).getVarcharB(recordB);
+        return castFunctionsB.getQuick(col).getVarcharA(recordB);
     }
 
     @Override

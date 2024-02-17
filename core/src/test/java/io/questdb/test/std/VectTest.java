@@ -630,7 +630,7 @@ public class VectTest {
         String[] strings = new String[rowCount];
         StringSink sink = new StringSink();
         for (int i = 0; i < rowCount; i++) {
-            Utf8Sequence utf8Sequence = Utf8s.varcharRead(i * 16L, dataMemA, auxMemA, 1);
+            Utf8Sequence utf8Sequence = Utf8s.varcharRead(i, dataMemA, auxMemA, 1);
             if (utf8Sequence == null) {
                 strings[i] = null;
             } else {

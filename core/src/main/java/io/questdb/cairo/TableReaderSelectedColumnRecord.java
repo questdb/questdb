@@ -356,13 +356,13 @@ public class TableReaderSelectedColumnRecord implements Record {
     @Nullable
     private Utf8Sequence getVarchar(int columnIndex, int ab) {
         final int col = deferenceColumn(columnIndex);
-        final long offset = VarcharTypeDriver.INSTANCE.getAuxVectorOffset(getAdjustedRecordIndex(col));
+        final long rowNum = getAdjustedRecordIndex(col);
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-                offset,
+                rowNum,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
         return Utf8s.varcharRead(
-                offset,
+                rowNum,
                 reader.getColumn(absoluteColumnIndex),
                 reader.getColumn(absoluteColumnIndex + 1),
                 ab

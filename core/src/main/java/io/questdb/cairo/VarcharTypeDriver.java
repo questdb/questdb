@@ -71,6 +71,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void configureAuxMemMA(MemoryMA auxMem) {
+        // noop
+    }
+
+    @Override
     public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts) {
         auxMem.of(
                 ff,
@@ -153,7 +158,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     @Override
     public long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi) {
         if (rowLo > 0) {
-            return getDataVectorSizeAt(auxMemAddr, rowHi) - getDataVectorSizeAt(auxMemAddr, rowLo -1);
+            return getDataVectorSizeAt(auxMemAddr, rowHi) - getDataVectorSizeAt(auxMemAddr, rowLo - 1);
         }
         return getDataVectorSizeAt(auxMemAddr, rowHi);
     }

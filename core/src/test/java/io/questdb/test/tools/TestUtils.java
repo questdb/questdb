@@ -1752,7 +1752,7 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
                         break;
                     case ColumnType.VARCHAR:
-                        Assert.assertTrue(Utf8s.equals(rr.getVarcharA(i), lr.getVarcharA(i)));
+                        Assert.assertTrue(Utf8s.equalsNc(rr.getVarcharA(i), lr.getVarcharA(i)));
                         break;
                     default:
                         // Unknown record type.

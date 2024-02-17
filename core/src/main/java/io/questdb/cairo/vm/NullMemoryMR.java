@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8SplitString;
 
 public class NullMemoryMR implements MemoryMR {
 
@@ -37,6 +38,16 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public long addressOf(long offset) {
         return 0;
+    }
+
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringA() {
+        return null;
+    }
+
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringB() {
+        return null;
     }
 
     @Override

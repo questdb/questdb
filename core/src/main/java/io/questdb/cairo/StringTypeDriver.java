@@ -37,6 +37,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
 
     @Override
+    public void configureAuxMemMA(MemoryMA auxMem) {
+        auxMem.putLong(0);
+    }
+
+    @Override
     public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts) {
         auxMem.of(
                 ff,
@@ -109,7 +114,9 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
-        return findVarOffset(auxMemAddr, row);
+        long result = Unsafe.getUnsafe().getLong(auxMemAddr + row * Long.BYTES);
+        assert (row == 0 && result == 0) || result > 0;
+        return result;
     }
 
     @Override
@@ -288,10 +295,5 @@ public class StringTypeDriver implements ColumnTypeDriver {
     ) {
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
     }
-
-    static long findVarOffset(long srcFixAddr, long srcLo) {
-        long result = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
-        assert (srcLo == 0 && result == 0) || result > 0;
-        return result;
-    }
 }
+

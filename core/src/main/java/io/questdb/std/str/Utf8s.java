@@ -231,6 +231,18 @@ public final class Utf8s {
         return true;
     }
 
+    public static boolean equalsNc(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
+        if (l == null && r == null) {
+            return true;
+        }
+
+        if (l == null || r == null) {
+            return false;
+        }
+
+        return equals(l, r);
+    }
+
     public static boolean equalsNcAscii(@NotNull CharSequence asciiSeq, @Nullable Utf8Sequence seq) {
         return seq != null && equalsAscii(asciiSeq, seq);
     }
@@ -807,7 +819,8 @@ public final class Utf8s {
         auxMem.putInt((int) (offset >> 16));
     }
 
-    public static Utf8Sequence varcharRead(long auxOffset, MemoryR dataMem, MemoryR auxMem, int ab) {
+    public static Utf8Sequence varcharRead(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
+        final long auxOffset = rowNum << 4;
         int raw = auxMem.getInt(auxOffset);
         int flags = raw & 0x0f; // 4 bit flags
 
@@ -825,12 +838,16 @@ public final class Utf8s {
         }
         // string is split, prefix is in auxMem and the suffix is in data mem
         Utf8SplitString utf8SplitString = ab == 1 ? auxMem.borrowUtf8SplitStringA() : auxMem.borrowUtf8SplitStringB();
-        return utf8SplitString.of(
-                auxMem.addressOf(auxOffset + 4),
-                dataMem.addressOf(VarcharTypeDriver.varcharGetDataOffset(auxMem, auxOffset)),
-                (raw >> 4) & 0xffffff,
-                ascii
-        );
+
+        if (utf8SplitString != null) {
+            return utf8SplitString.of(
+                    auxMem.addressOf(auxOffset + 4),
+                    dataMem.addressOf(VarcharTypeDriver.varcharGetDataOffset(auxMem, auxOffset)),
+                    (raw >> 4) & 0xffffff,
+                    ascii
+            );
+        }
+        return null;
     }
 
     public static Utf8Sequence varcharRead(

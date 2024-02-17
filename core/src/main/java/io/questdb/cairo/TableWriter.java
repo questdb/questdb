@@ -5622,9 +5622,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             // configure append position for variable length columns
-            MemoryMA mem2 = getSecondaryColumn(columnCount - 1);
-            if (mem2 != null) {
-                mem2.putLong(0);
+            if (ColumnType.isVarSize(columnType)) {
+                ColumnType.getDriver(columnType).configureAuxMemMA(getSecondaryColumn(columnCount - 1));
             }
 
             LOG.info().$("ADDED column '").utf8(name)
@@ -7455,12 +7454,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void truncateColumns() {
         for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) >= 0) {
+            final int columnType = metadata.getColumnType(i);
+            if (columnType >= 0) {
                 getPrimaryColumn(i).truncate();
-                MemoryMA mem = getSecondaryColumn(i);
-                if (mem != null && mem.isOpen()) {
-                    mem.truncate();
-                    mem.putLong(0);
+                if (ColumnType.isVarSize(columnType)) {
+                    MemoryMA auxMem = getSecondaryColumn(i);
+                    auxMem.truncate();
+                    ColumnType.getDriver(columnType).configureAuxMemMA(auxMem);
                 }
             }
         }

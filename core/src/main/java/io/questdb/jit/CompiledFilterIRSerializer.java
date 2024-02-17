@@ -563,70 +563,70 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeBindVariable(final ExpressionNode node) throws SqlException {
-        if (!predicateContext.isActive()) {
+        if (predicateContext.isActive()) {
+            Function varFunction = getBindVariableFunction(node.position, node.token);
+
+            final int columnType = varFunction.getType();
+            // Treat string bind variable to be of symbol type
+            if (columnType == ColumnType.STRING) {
+                // We're going to backfill this variable later since we may
+                // not have symbol column index at this point
+                long offset = memory.getAppendOffset();
+                backfillNodes.put(offset, node);
+                putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
+                return;
+            }
+
+            final int columnTypeTag = ColumnType.tagOf(columnType);
+            int typeCode = bindVariableTypeCode(columnTypeTag);
+            if (typeCode == UNDEFINED_CODE) {
+                throw SqlException.position(node.position)
+                        .put("unsupported bind variable type: ")
+                        .put(ColumnType.nameOf(columnTypeTag));
+            }
+
+            bindVarFunctions.add(varFunction);
+            int index = bindVarFunctions.size() - 1;
+            putOperand(VAR, typeCode, index);
+        } else {
             throw SqlException.position(node.position)
                     .put("bind variable outside of predicate: ")
                     .put(node.token);
         }
-
-        Function varFunction = getBindVariableFunction(node.position, node.token);
-
-        final int columnType = varFunction.getType();
-        // Treat string bind variable to be of symbol type
-        if (columnType == ColumnType.STRING) {
-            // We're going to backfill this variable later since we may
-            // not have symbol column index at this point
-            long offset = memory.getAppendOffset();
-            backfillNodes.put(offset, node);
-            putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
-            return;
-        }
-
-        final int columnTypeTag = ColumnType.tagOf(columnType);
-        int typeCode = bindVariableTypeCode(columnTypeTag);
-        if (typeCode == UNDEFINED_CODE) {
-            throw SqlException.position(node.position)
-                    .put("unsupported bind variable type: ")
-                    .put(ColumnType.nameOf(columnTypeTag));
-        }
-
-        bindVarFunctions.add(varFunction);
-        int index = bindVarFunctions.size() - 1;
-        putOperand(VAR, typeCode, index);
     }
 
     private void serializeColumn(int position, final CharSequence token) throws SqlException {
-        if (!predicateContext.isActive()) {
+        if (predicateContext.isActive()) {
+            final int index = metadata.getColumnIndexQuiet(token);
+            if (index == -1) {
+                throw SqlException.invalidColumn(position, token);
+            }
+
+            final int columnType = metadata.getColumnType(index);
+            final int columnTypeTag = ColumnType.tagOf(columnType);
+            int typeCode = columnTypeCode(columnTypeTag);
+            if (typeCode == UNDEFINED_CODE) {
+                throw SqlException.position(position)
+                        .put("unsupported column type: ")
+                        .put(ColumnType.nameOf(columnTypeTag));
+            }
+
+            // In case of a top level boolean column, expand it to "boolean_column = true" expression.
+            if (predicateContext.singleBooleanColumn && columnTypeTag == ColumnType.BOOLEAN) {
+                // "true" constant
+                putOperand(IMM, I1_TYPE, 1);
+                // column
+                putOperand(MEM, typeCode, index);
+                // =
+                putOperator(EQ);
+                return;
+            }
+            putOperand(MEM, typeCode, index);
+        } else {
             throw SqlException.position(position)
                     .put("non-boolean column outside of predicate: ")
                     .put(token);
         }
-
-        final int index = metadata.getColumnIndexQuiet(token);
-        if (index == -1) {
-            throw SqlException.invalidColumn(position, token);
-        }
-
-        final int columnType = metadata.getColumnType(index);
-        final int columnTypeTag = ColumnType.tagOf(columnType);
-        int typeCode = columnTypeCode(columnTypeTag);
-        if (typeCode == UNDEFINED_CODE) {
-            throw SqlException.position(position)
-                    .put("unsupported column type: ")
-                    .put(ColumnType.nameOf(columnTypeTag));
-        }
-
-        // In case of a top level boolean column, expand it to "boolean_column = true" expression.
-        if (predicateContext.singleBooleanColumn && columnTypeTag == ColumnType.BOOLEAN) {
-            // "true" constant
-            putOperand(IMM, I1_TYPE, 1);
-            // column
-            putOperand(MEM, typeCode, index);
-            // =
-            putOperator(EQ);
-            return;
-        }
-        putOperand(MEM, typeCode, index);
     }
 
     private void serializeConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
@@ -709,15 +709,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeConstantStub(final ExpressionNode node) throws SqlException {
-        if (!predicateContext.isActive()) {
+        if (predicateContext.isActive()) {
+            long offset = memory.getAppendOffset();
+            backfillNodes.put(offset, node);
+            putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
+        } else {
             throw SqlException.position(node.position)
                     .put("constant outside of predicate: ")
                     .put(node.token);
         }
-
-        long offset = memory.getAppendOffset();
-        backfillNodes.put(offset, node);
-        putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
     }
 
     private void serializeGeoHash(long offset, int position, final ConstantFunction geoHashConstant, int typeCode) throws SqlException {

@@ -86,7 +86,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     driver.setColumnRefs(auxMem.addressOf(auxOffset * 2 * Long.BYTES), dataOffset, n);
 
                     for (int i = 0; i < n; i++) {
-                        Assert.assertNull(Utf8s.varcharRead((i + auxOffset) * 16L, dataMem, auxMem, 1));
+                        Assert.assertNull(Utf8s.varcharRead((i + auxOffset) , dataMem, auxMem, 1));
                         Assert.assertEquals(dataOffset, VarcharTypeDriver.varcharGetDataVectorSize(auxMem, (i + auxOffset) * 16L));
                     }
                 }
@@ -126,7 +126,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     final String expectedStr = utf8Sink.toString();
 
                     for (int i = auxLo; i < n; i++) {
-                        Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMemA, auxMemA, 1);
+                        Utf8Sequence varchar = Utf8s.varcharRead(i, dataMemA, auxMemA, 1);
                         Assert.assertEquals(expectedOffsets.getQuick(i - auxLo), VarcharTypeDriver.varcharGetDataVectorSize(auxMemA, i * 16L));
                         Assert.assertNotNull(varchar);
                         TestUtils.assertEquals(expectedStr, varchar.asAsciiCharSequence());
@@ -140,7 +140,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     driver.shiftCopyAuxVector(shift, auxMemA.addressOf(0), auxLo, n, auxMemB.addressOf(0));
 
                     for (int i = 0; i < n - auxLo; i++) {
-                        Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMemB, auxMemB, 1);
+                        Utf8Sequence varchar = Utf8s.varcharRead(i, dataMemB, auxMemB, 1);
                         Assert.assertEquals("offset mismatch: i=" + i + ", n=" + n, expectedOffsets.getQuick(i) - shift, VarcharTypeDriver.varcharGetDataVectorSize(auxMemB, i * 16L));
                         Assert.assertNotNull(varchar);
                         TestUtils.assertEquals(expectedStr, varchar.asAsciiCharSequence());
@@ -175,7 +175,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     }
 
                     for (int i = auxLo; i < n; i++) {
-                        Assert.assertNull(Utf8s.varcharRead(i * 16L, dataMemA, auxMemA, 1));
+                        Assert.assertNull(Utf8s.varcharRead(i, dataMemA, auxMemA, 1));
                         Assert.assertEquals(expectedOffsets.getQuick(i - auxLo), VarcharTypeDriver.varcharGetDataVectorSize(auxMemA, i * 16L));
                     }
 
@@ -186,7 +186,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     driver.shiftCopyAuxVector(shift, auxMemA.addressOf(0), auxLo, n, auxMemB.addressOf(0));
 
                     for (int i = 0; i < n - auxLo; i++) {
-                        Assert.assertNull(Utf8s.varcharRead(i * 16L, dataMemB, auxMemB, 1));
+                        Assert.assertNull(Utf8s.varcharRead(i, dataMemB, auxMemB, 1));
                         Assert.assertEquals("offset mismatch: i=" + i + ", n=" + n, expectedOffsets.getQuick(i) - shift, VarcharTypeDriver.varcharGetDataVectorSize(auxMemB, i * 16L));
                     }
                 }
@@ -234,8 +234,8 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 driver.o3sort(tsIndexMem.addressOf(0), n, dataMemA, auxMemA, dataMemB, auxMemB);
 
                 for (int i = 0; i < n; i++) {
-                    Utf8Sequence varcharA = Utf8s.varcharRead((n - i - 1) * 16L, dataMemA, auxMemA, 1);
-                    Utf8Sequence varcharB = Utf8s.varcharRead(i * 16L, dataMemB, auxMemB, 1);
+                    Utf8Sequence varcharA = Utf8s.varcharRead((n - i - 1), dataMemA, auxMemA, 1);
+                    Utf8Sequence varcharB = Utf8s.varcharRead(i, dataMemB, auxMemB, 1);
                     Assert.assertTrue((varcharA != null && varcharB != null) || (varcharA == null && varcharB == null));
                     if (varcharA != null) {
                         Assert.assertEquals(varcharA.isAscii(), varcharB.isAscii());
@@ -286,8 +286,8 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 driver.o3sort(tsIndexMem.addressOf(0), n, dataMemA, auxMemA, dataMemB, auxMemB);
 
                 for (int i = 0; i < n; i++) {
-                    Utf8Sequence varcharA = Utf8s.varcharRead(i * 16L, dataMemA, auxMemA, 1);
-                    Utf8Sequence varcharB = Utf8s.varcharRead(i * 16L, dataMemB, auxMemB, 1);
+                    Utf8Sequence varcharA = Utf8s.varcharRead(i, dataMemA, auxMemA, 1);
+                    Utf8Sequence varcharB = Utf8s.varcharRead(i, dataMemB, auxMemB, 1);
                     // offsets should match since the data is in-order
                     Assert.assertEquals(VarcharTypeDriver.varcharGetDataVectorSize(auxMemA, i * 16L), VarcharTypeDriver.varcharGetDataVectorSize(auxMemB, i * 16L));
                     Assert.assertTrue((varcharA != null && varcharB != null) || (varcharA == null && varcharB == null));
@@ -369,7 +369,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 minCut = Math.min(minCut, cut);
                 for (int i = 0; i < n; i++) {
                     stringSink.clear();
-                    Utf8Sequence varchar = Utf8s.varcharRead(i * 16L, dataMem, auxMem, 1);
+                    Utf8Sequence varchar = Utf8s.varcharRead(i, dataMem, auxMem, 1);
                     if (i % 15 == 0) {
                         Assert.assertNull(varchar);
                     } else {
