@@ -344,7 +344,7 @@ public class TableReaderRecord implements Record, Sinkable {
 
     @Nullable
     private Utf8Sequence getVarchar(int col, int ab) {
-        final long offset = getAdjustedRecordIndex(col) * 16L;
+        final long offset = VarcharTypeDriver.INSTANCE.getAuxVectorOffset(getAdjustedRecordIndex(col));
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
                 offset,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
