@@ -356,7 +356,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     @Nullable
     private Utf8Sequence getVarchar(int columnIndex, int ab) {
         final int col = deferenceColumn(columnIndex);
-        final long offset = getAdjustedRecordIndex(col) * 16L;
+        final long offset = VarcharTypeDriver.INSTANCE.getAuxVectorOffset(getAdjustedRecordIndex(col));
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
                 offset,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
