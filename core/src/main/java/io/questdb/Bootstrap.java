@@ -53,15 +53,15 @@ import java.util.zip.ZipInputStream;
 
 public class Bootstrap {
 
-    public static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
     private static final String CONFIG_FILE = "/server.conf";
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
-    protected final Log log;
+    private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
     private final String banner;
     private final BuildInformation buildInformation;
     private final ServerConfiguration config;
+    private final Log log;
     private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
     private final String rootDirectory;
@@ -276,50 +276,49 @@ public class Bootstrap {
         final URL resource = getResourceClass().getResource(getPublicZipPath());
         if (resource == null) {
             log.infoW().$("Web Console build [").$(getPublicZipPath()).$("] not found").$();
-            return;
-        }
-
-        long thisVersion = resource.openConnection().getLastModified();
-        final String publicDir = rootDirectory + Files.SEPARATOR + "public";
-        final byte[] buffer = new byte[1024 * 1024];
-
-        boolean extracted = false;
-        final String oldSwVersion = getPublicVersion(publicDir);
-        final CharSequence newSwVersion = buildInformation.getSwVersion();
-        if (oldSwVersion == null) {
-            if (thisVersion != 0) {
-                extractSite0(publicDir, buffer, Long.toString(thisVersion));
-            } else {
-                extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
-            }
-            extracted = true;
         } else {
-            // This is a hack to deal with RT package problem
-            // in this package "thisVersion" is always 0, and we need to fall back
-            // to the database version.
-            if (thisVersion == 0) {
-                if (!Chars.equals(oldSwVersion, newSwVersion)) {
+            long thisVersion = resource.openConnection().getLastModified();
+            final String publicDir = rootDirectory + Files.SEPARATOR + "public";
+            final byte[] buffer = new byte[1024 * 1024];
+
+            boolean extracted = false;
+            final String oldSwVersion = getPublicVersion(publicDir);
+            final CharSequence newSwVersion = buildInformation.getSwVersion();
+            if (oldSwVersion == null) {
+                if (thisVersion != 0) {
+                    extractSite0(publicDir, buffer, Long.toString(thisVersion));
+                } else {
                     extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
-                    extracted = true;
                 }
+                extracted = true;
             } else {
-                // it is possible that old version is the database version
-                // which means user might have switched from RT distribution to no-JVM on the same data dir
-                // in this case we might fail to parse the version string
-                try {
-                    final long oldVersion = Numbers.parseLong(oldSwVersion);
-                    if (thisVersion > oldVersion) {
+                // This is a hack to deal with RT package problem
+                // in this package "thisVersion" is always 0, and we need to fall back
+                // to the database version.
+                if (thisVersion == 0) {
+                    if (!Chars.equals(oldSwVersion, newSwVersion)) {
+                        extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
+                        extracted = true;
+                    }
+                } else {
+                    // it is possible that old version is the database version
+                    // which means user might have switched from RT distribution to no-JVM on the same data dir
+                    // in this case we might fail to parse the version string
+                    try {
+                        final long oldVersion = Numbers.parseLong(oldSwVersion);
+                        if (thisVersion > oldVersion) {
+                            extractSite0(publicDir, buffer, Long.toString(thisVersion));
+                            extracted = true;
+                        }
+                    } catch (NumericException e) {
                         extractSite0(publicDir, buffer, Long.toString(thisVersion));
                         extracted = true;
                     }
-                } catch (NumericException e) {
-                    extractSite0(publicDir, buffer, Long.toString(thisVersion));
-                    extracted = true;
                 }
             }
-        }
-        if (!extracted) {
-            log.infoW().$("Web Console is up to date").$();
+            if (!extracted) {
+                log.infoW().$("Web Console is up to date").$();
+            }
         }
     }
 
