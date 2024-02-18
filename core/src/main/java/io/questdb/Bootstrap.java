@@ -151,7 +151,7 @@ public class Bootstrap {
         try {
             if (bootstrapConfiguration.useSite()) {
                 // site
-                extractSite(getSiteResource());
+                extractSite();
             }
 
             final ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);
@@ -272,50 +272,54 @@ public class Bootstrap {
         }
     }
 
-    public void extractSite(URL resource) throws IOException {
-        if (resource != null) {
-            long thisVersion = resource.openConnection().getLastModified();
-            final String publicDir = rootDirectory + Files.SEPARATOR + "public";
-            final byte[] buffer = new byte[1024 * 1024];
+    public void extractSite() throws IOException {
+        final URL resource = getResourceClass().getResource(getPublicZipPath());
+        if (resource == null) {
+            log.infoW().$("Web Console build [").$(getPublicZipPath()).$("] not found").$();
+            return;
+        }
 
-            boolean extracted = false;
-            final String oldSwVersion = getPublicVersion(publicDir);
-            final CharSequence newSwVersion = buildInformation.getSwVersion();
-            if (oldSwVersion == null) {
-                if (thisVersion != 0) {
-                    extractSite0(publicDir, buffer, Long.toString(thisVersion));
-                } else {
-                    extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
-                }
-                extracted = true;
+        long thisVersion = resource.openConnection().getLastModified();
+        final String publicDir = rootDirectory + Files.SEPARATOR + "public";
+        final byte[] buffer = new byte[1024 * 1024];
+
+        boolean extracted = false;
+        final String oldSwVersion = getPublicVersion(publicDir);
+        final CharSequence newSwVersion = buildInformation.getSwVersion();
+        if (oldSwVersion == null) {
+            if (thisVersion != 0) {
+                extractSite0(publicDir, buffer, Long.toString(thisVersion));
             } else {
-                // This is a hack to deal with RT package problem
-                // in this package "thisVersion" is always 0, and we need to fall back
-                // to the database version.
-                if (thisVersion == 0) {
-                    if (!Chars.equals(oldSwVersion, newSwVersion)) {
-                        extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
-                        extracted = true;
-                    }
-                } else {
-                    // it is possible that old version is the database version
-                    // which means user might have switched from RT distribution to no-JVM on the same data dir
-                    // in this case we might fail to parse the version string
-                    try {
-                        final long oldVersion = Numbers.parseLong(oldSwVersion);
-                        if (thisVersion > oldVersion) {
-                            extractSite0(publicDir, buffer, Long.toString(thisVersion));
-                            extracted = true;
-                        }
-                    } catch (NumericException e) {
+                extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
+            }
+            extracted = true;
+        } else {
+            // This is a hack to deal with RT package problem
+            // in this package "thisVersion" is always 0, and we need to fall back
+            // to the database version.
+            if (thisVersion == 0) {
+                if (!Chars.equals(oldSwVersion, newSwVersion)) {
+                    extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
+                    extracted = true;
+                }
+            } else {
+                // it is possible that old version is the database version
+                // which means user might have switched from RT distribution to no-JVM on the same data dir
+                // in this case we might fail to parse the version string
+                try {
+                    final long oldVersion = Numbers.parseLong(oldSwVersion);
+                    if (thisVersion > oldVersion) {
                         extractSite0(publicDir, buffer, Long.toString(thisVersion));
                         extracted = true;
                     }
+                } catch (NumericException e) {
+                    extractSite0(publicDir, buffer, Long.toString(thisVersion));
+                    extracted = true;
                 }
             }
-            if (!extracted) {
-                log.infoW().$("Web Console is up to date").$();
-            }
+        }
+        if (!extracted) {
+            log.infoW().$("Web Console is up to date").$();
         }
     }
 
@@ -345,14 +349,6 @@ public class Bootstrap {
 
     public String getRootDirectory() {
         return rootDirectory;
-    }
-
-    public URL getSiteResource() {
-        final URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
-        if (resource == null) {
-            log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
-        }
-        return resource;
     }
 
     @NotNull
@@ -452,7 +448,7 @@ public class Bootstrap {
     }
 
     private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
-        try (final InputStream is = getSiteInputStream()) {
+        try (final InputStream is = getResourceClass().getResourceAsStream(getPublicZipPath())) {
             if (is != null) {
                 try (ZipInputStream zip = new ZipInputStream(is)) {
                     ZipEntry ze;
@@ -464,6 +460,8 @@ public class Bootstrap {
                         zip.closeEntry();
                     }
                 }
+            } else {
+                log.errorW().$("could not find site [resource=").$(getPublicZipPath()).$(']').$();
             }
         }
         setPublicVersion(publicDir, thisVersion);
@@ -604,12 +602,12 @@ public class Bootstrap {
         }
     }
 
-    protected InputStream getSiteInputStream() {
-        final InputStream is = ServerMain.class.getResourceAsStream(PUBLIC_ZIP);
-        if (is == null) {
-            log.errorW().$("could not find site [resource=").$(PUBLIC_ZIP).$(']').$();
-        }
-        return is;
+    protected String getPublicZipPath() {
+        return PUBLIC_ZIP;
+    }
+
+    protected Class<?> getResourceClass() {
+        return ServerMain.class;
     }
 
     public static class BootstrapException extends RuntimeException {
