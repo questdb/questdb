@@ -298,7 +298,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long srcHi,
             long dstAddr
     ) {
-        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
+        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi + 1, dstAddr);
     }
 }
 

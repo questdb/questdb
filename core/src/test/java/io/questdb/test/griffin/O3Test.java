@@ -253,6 +253,7 @@ public class O3Test extends AbstractO3Test {
         executeWithPool(0, O3Test::testColumnTopLastDataOOOData0);
     }
 
+    // TODO(puzpuzpuz): this test is flaky
     @Test
     public void testColumnTopLastDataOOODataParallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopLastDataOOOData0);

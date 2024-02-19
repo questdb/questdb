@@ -208,7 +208,7 @@ public class CopyWalSegmentUtils {
                     dataStartOffset,
                     auxMemAddr,
                     startRowNumber,
-                    startRowNumber + rowCount,
+                    startRowNumber + rowCount - 1, // inclusive
                     newAuxMemAddr
             );
 

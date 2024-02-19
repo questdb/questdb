@@ -4919,7 +4919,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             dataOffset - destOffset,
                             srcAuxMem.addressOf(columnTypeDriver.getAuxVectorOffset(columnDataRowOffset)),
                             0,
-                            copyToLagRowCount, // No need to do +1 here, hi is inclusive
+                            copyToLagRowCount - 1, // inclusive
                             dstAuxMem.addressOf(columnTypeDriver.getAuxVectorOffset(existingLagRows))
                     );
                     dstDataMem.jumpTo(destOffset + dataSize);
@@ -5043,7 +5043,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // add one row to where we shift from
                             colAuxMemAddr + alignedExtraLen + columnTypeDriver.getAuxVectorOffset(1),
                             0,
-                            transientRowsAdded - 1,
+                            transientRowsAdded - 1, // inclusive
                             o3auxMem.addressOf(o3auxMemAppendOffset)
                     );
 
@@ -5179,7 +5179,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             shift,
                             o3srcAuxMem.addressOf(committedAuxOffset),
                             0,
-                            copyRowCount,
+                            copyRowCount - 1, // inclusive
                             Math.abs(o3dstAuxAddr)
                     );
                 } finally {

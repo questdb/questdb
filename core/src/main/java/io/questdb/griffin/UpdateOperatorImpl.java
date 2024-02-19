@@ -135,7 +135,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     Record masterRecord = recordCursor.getRecord();
 
                     long prevRow = 0;
-                    long minRow = -1L;
+                    long minRow = -1;
                     long lastRowId = Long.MIN_VALUE;
                     while (recordCursor.hasNext()) {
                         long rowId = masterRecord.getUpdateRowId();
@@ -618,12 +618,12 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             long copyToOffset = dstDataMem.getAppendOffset();
             dstDataMem.putBlockOfBytes(srcDataAddr, srcDataSize);
             dstFixMem.extend(columnTypeDriver.getAuxVectorSize(rowHi));
+            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorOffset(rowLo));
             columnTypeDriver.shiftCopyAuxVector(
                     dataOffsetLo - copyToOffset,
-                    // TODO: we should be using getAuxVectorOffset here
-                    srcFixMem.addressOf(columnTypeDriver.getAuxVectorSize(rowLo)),
+                    srcFixMem.addressOf(columnTypeDriver.getAuxVectorOffset(rowLo)),
                     0,
-                    rowHi - rowLo - 1,
+                    rowHi - rowLo - 1, // inclusive
                     dstFixMem.getAppendAddress()
             );
             dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(rowHi));

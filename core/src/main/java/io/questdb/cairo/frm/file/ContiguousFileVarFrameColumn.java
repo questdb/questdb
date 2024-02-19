@@ -144,7 +144,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                             srcDataOffset - targetDataOffset,
                             srcAuxMemAddr,
                             0,
-                            sourceHi,
+                            sourceHi - 1, // inclusive
                             fixAddr
                     );
 

@@ -321,12 +321,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // we need to shift copy the original column so that new block points at strings "below" the
                     // nulls we created above
-                    // STOP. DON'T ADD +1 HERE. srcHi is inclusive, no need to do +1
                     columnTypeDriver.shiftCopyAuxVector(
                             -reservedBytesForColTopNulls,
                             srcAuxAddr,
                             0,
-                            auxRowCount,
+                            auxRowCount - 1, // inclusive
                             srcAuxAddr + wouldBeAuxSize
                     );
 
@@ -393,7 +392,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstDataSize -= columnTypeDriver.getDataVectorSize(srcAuxAddr, prefixLo, prefixHi - initialSrcDataTop);
             }
 
-            dstVarAddr = dstDataSize > 0 ?mapRW(ff, dstDataFd, dstDataSize, MemoryTag.MMAP_O3) : 0;
+            dstVarAddr = dstDataSize > 0 ? mapRW(ff, dstDataFd, dstDataSize, MemoryTag.MMAP_O3) : 0;
             if (!mixedIOFlag) {
                 ff.madvise(dstVarAddr, dstDataSize, Files.POSIX_MADV_RANDOM);
             }
