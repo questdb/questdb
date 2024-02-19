@@ -371,12 +371,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             iFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn);
             dstAuxFd = openRW(ff, pathToNewPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-            dstAuxSize = columnTypeDriver.getAuxVectorSize(srcOooHi - srcOooLo) +
+            dstAuxSize = columnTypeDriver.auxRowsToBytes(srcOooHi - srcOooLo + 1) +
                     columnTypeDriver.getAuxVectorSize(srcDataMax - srcDataTop);
 
             if (prefixType == O3_BLOCK_NONE) {
                 // split partition
-                dstAuxSize -= columnTypeDriver.getAuxVectorSize(prefixHi - srcDataTop);
+                dstAuxSize -= columnTypeDriver.auxRowsToBytes(prefixHi + 1 - srcDataTop);
             }
             dstAuxAddr = mapRW(ff, dstAuxFd, dstAuxSize, MemoryTag.MMAP_O3);
             if (!mixedIOFlag) {
@@ -399,13 +399,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
 
             if (prefixType == O3_BLOCK_DATA) {
-                dstAuxAppendOffset1 = columnTypeDriver.getAuxVectorSize(prefixHi - prefixLo - srcDataTop);
+                dstAuxAppendOffset1 = columnTypeDriver.auxRowsToBytes(prefixHi - prefixLo + 1 - srcDataTop);
                 prefixHi -= srcDataTop;
             } else if (prefixType == O3_BLOCK_NONE) {
                 // split partition
                 dstAuxAppendOffset1 = 0;
             } else {
-                dstAuxAppendOffset1 = columnTypeDriver.getAuxVectorSize(prefixHi - prefixLo);
+                dstAuxAppendOffset1 = columnTypeDriver.auxRowsToBytes(prefixHi - prefixLo + 1);
             }
 
             if (suffixType == O3_BLOCK_DATA && srcDataTop > 0) {

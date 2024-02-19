@@ -30,6 +30,16 @@ import io.questdb.std.str.LPSZ;
 
 public interface ColumnTypeDriver {
 
+    /**
+     * Returns bytes count for the given row count. This method is similar to {@link #getAuxVectorSize(long)}
+     * except it is used in the intermediate calculations and must return exact bytes for the row
+     * disregarding the N+1 storage model.
+     *
+     * @param rowCount the row count
+     * @return returns size of storage in bytes
+     */
+    long auxRowsToBytes(long rowCount);
+
     void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts);
 
     void configureAuxMemMA(MemoryMA auxMem);
@@ -62,7 +72,9 @@ public interface ColumnTypeDriver {
     long getAuxVectorOffset(long row);
 
     /**
-     * Calculates size in bytes that is required to store the given number of rows.
+     * Calculates size in bytes that is required to store the given number of rows in the
+     * entire vector. If storage model is N+1, this method must reflect that. Calculation
+     * is similar to {@link #auxRowsToBytes(long)}, which ignored N+1 storage model.
      *
      * @param storageRowCount the number of rows to store in the aux vector
      * @return the size of the required vector.

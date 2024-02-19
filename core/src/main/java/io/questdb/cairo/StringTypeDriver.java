@@ -37,6 +37,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
 
     @Override
+    public long auxRowsToBytes(long rowCount) {
+        return rowCount << LEGACY_VAR_SIZE_AUX_SHL;
+    }
+
+    @Override
     public void configureAuxMemMA(MemoryMA auxMem) {
         auxMem.putLong(0);
     }
@@ -114,7 +119,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
-        long result = Unsafe.getUnsafe().getLong(auxMemAddr + row * Long.BYTES);
+        long result = Unsafe.getUnsafe().getLong(auxMemAddr + (row << LEGACY_VAR_SIZE_AUX_SHL));
         assert (row == 0 && result == 0) || result > 0;
         return result;
     }
@@ -232,7 +237,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
                 tgtAuxAddr
         );
         dstDataMem.jumpTo(offset);
-        dstAuxMem.jumpTo(sortedTimestampsRowCount * Long.BYTES);
+        dstAuxMem.jumpTo(sortedTimestampsRowCount << LEGACY_VAR_SIZE_AUX_SHL);
         dstAuxMem.putLong(offset);
     }
 
@@ -256,11 +261,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
             // Jump to the number of records written to read length of var column correctly
-            auxMem.jumpTo(pos * Long.BYTES);
+            auxMem.jumpTo(pos << LEGACY_VAR_SIZE_AUX_SHL);
             long m1pos = Unsafe.getUnsafe().getLong(auxMem.getAppendAddress());
             // Jump to the end of file to correctly trim the file
-            auxMem.jumpTo((pos + 1) * Long.BYTES);
-            long dataSizeBytes = m1pos + (pos + 1) * Long.BYTES;
+            auxMem.jumpTo((pos + 1) << LEGACY_VAR_SIZE_AUX_SHL);
+            long dataSizeBytes = m1pos + ((pos + 1) << LEGACY_VAR_SIZE_AUX_SHL);
             dataMem.jumpTo(m1pos);
             return dataSizeBytes;
         }

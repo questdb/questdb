@@ -71,6 +71,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public long auxRowsToBytes(long rowCount) {
+        return rowCount << VARCHAR_AUX_SHL;
+    }
+
+    @Override
     public void configureAuxMemMA(MemoryMA auxMem) {
         // noop
     }
@@ -254,7 +259,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 tgtAuxAddr
         );
         dstDataMem.jumpTo(offset);
-        dstAuxMem.jumpTo(sortedTimestampsRowCount * 16);
+        dstAuxMem.jumpTo(sortedTimestampsRowCount << VARCHAR_AUX_SHL);
     }
 
     @Override

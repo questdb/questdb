@@ -80,6 +80,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             final long targetDataOffset = getDataAppendOffsetBytes(appendOffsetRowCount);
 
             // Map source offset file, it will be used to copy data from anyway.
+            // sourceHi is exclusive
             long srcAuxMemSize = columnTypeDriver.getAuxVectorSize(sourceHi - sourceLo);
 
             final long srcAuxMemAddr = TableUtils.mapAppendColumnBuffer(
