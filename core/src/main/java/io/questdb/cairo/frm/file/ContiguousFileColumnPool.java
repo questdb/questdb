@@ -70,7 +70,16 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private class ColumnTypePool implements FrameColumnTypePool {
 
         @Override
-        public FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, int indexBlockCapacity, long columnTop, int columnIndex, boolean isEmpty) {
+        public FrameColumn create(
+                Path partitionPath,
+                CharSequence columnName,
+                long columnTxn,
+                int columnType,
+                int indexBlockCapacity,
+                long columnTop,
+                int columnIndex,
+                boolean isEmpty
+        ) {
             boolean isIndexed = indexBlockCapacity > 0;
             switch (columnType) {
                 case ColumnType.SYMBOL:
@@ -91,6 +100,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
                 }
 
                 case ColumnType.STRING:
+                case ColumnType.VARCHAR:
                 case ColumnType.BINARY: {
                     ContiguousFileVarFrameColumn column = getVarColumn();
                     if (canWrite) {

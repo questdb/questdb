@@ -31,7 +31,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Os;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -111,6 +114,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
@@ -119,6 +123,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     engine.ddl("alter table x add column k int", executionContext);
                     engine.ddl("alter table x add column sym symbol index ", executionContext);
                     engine.ddl("alter table x add column ks string", executionContext);
+                    engine.ddl("alter table x add column kv varchar", executionContext);
 
                     compiler.compile(
                             "create table y as (" +
@@ -126,10 +131,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
                                     " 1 as k," +
                                     " rnd_symbol(null,'5','16','2') as sym," +
-                                    " rnd_str(5,16,2) as ks" +
+                                    " rnd_str(5,16,2) as ks," +
+                                    " rnd_varchar(5,16,2) as kv" +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -140,10 +147,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-05T14:01:07', 60*1000000L) ts," +
                                     " 1 as k," +
                                     " rnd_symbol(null,'5','16','2') as sym," +
-                                    " rnd_str(5,16,2) as ks" +
+                                    " rnd_str(5,16,2) as ks," +
+                                    " rnd_varchar(5,16,2) as kv" +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -153,10 +162,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "i int," +
                                     "j long," +
                                     "str string," +
+                                    "v varchar," +
                                     "ts timestamp, " +
                                     "k int," +
                                     "sym symbol," +
-                                    "ks string)",
+                                    "ks string," +
+                                    "kv varchar)",
                             executionContext
                     );
 
@@ -322,13 +333,14 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Test
     public void testSplitLastPartitionWithColumnTop() throws Exception {
         executeWithPool(workerCount,
-                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
+                (engine, compiler, executionContext) -> {
                     compiler.compile(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
@@ -340,9 +352,11 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "i int," +
                                     "j long," +
                                     "str string," +
+                                    "v varchar," +
                                     "ts timestamp, " +
                                     "k int," +
                                     "ks string, " +
+                                    "kv varchar, " +
                                     "sym symbol" +
                                     ")",
                             executionContext
@@ -354,16 +368,18 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-05T14:01:07', 60*100000L) ts" +
                                     " from long_sequence(100))",
                             executionContext
                     );
-                    compiler.compile("insert into zz(i,j,str,ts) select i,j,str,ts from x", executionContext);
-                    compiler.compile("insert into zz(i,j,str,ts) select i,j,str,ts from z", executionContext);
-                    compiler.compile("insert into x(i,j,str,ts) select i,j,str,ts from z", executionContext);
+                    compiler.compile("insert into zz(i,j,str,v,ts) select i,j,str,v,ts from x", executionContext);
+                    compiler.compile("insert into zz(i,j,str,v,ts) select i,j,str,v,ts from z", executionContext);
+                    compiler.compile("insert into x(i,j,str,v,ts) select i,j,str,v,ts from z", executionContext);
 
                     engine.ddl("alter table x add column k int", executionContext);
                     engine.ddl("alter table x add column ks string", executionContext);
+                    engine.ddl("alter table x add column kv varchar", executionContext);
                     engine.ddl("alter table x add column sym symbol index ", executionContext);
 
                     compiler.compile(
@@ -372,9 +388,11 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-05T00:01:07', 60*100000L) ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
+                                    " rnd_varchar(5,16,2) as kv," +
                                     " rnd_symbol(null,'5','16','2') as sym" +
                                     " from long_sequence(1000))",
                             executionContext
@@ -400,17 +418,14 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Test
     public void testSplitMidPartition() throws Exception {
         executeWithPool(workerCount,
-                (
-                        CairoEngine engine,
-                        SqlCompiler compiler,
-                        SqlExecutionContext executionContext
-                ) -> {
+                (engine, compiler, executionContext) -> {
                     compiler.compile(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2)" +
                                     ") timestamp (ts) partition by DAY",
@@ -423,6 +438,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
                                     " from long_sequence(50))",
                             executionContext
@@ -445,13 +461,9 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     }
 
     @Test
-    public void testSplitMidPartitionAfterUpdate() throws Exception {
+    public void testSplitMidPartitionAfterStringColumnUpdate() throws Exception {
         executeWithPool(workerCount,
-                (
-                        CairoEngine engine,
-                        SqlCompiler compiler,
-                        SqlExecutionContext executionContext
-                ) -> {
+                (engine, compiler, executionContext) -> {
                     FilesFacade ff = FilesFacadeImpl.INSTANCE;
                     compiler.compile(
                             "create table x as (" +
@@ -505,68 +517,77 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     }
 
     @Test
-    public void testSplitOverrunLastPartition() throws Exception {
-        executeWithPool(workerCount, (
-                CairoEngine engine,
-                SqlCompiler compiler,
-                SqlExecutionContext executionContext
-        ) -> {
-            compiler.compile(
-                    "create table x as (" +
-                            "select" +
-                            " cast(x as int) i," +
-                            " -x j," +
-                            " rnd_str(5,16,2) as str," +
-                            " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
-                            " from long_sequence(60*24*2+300)" +
-                            ") timestamp (ts) partition by DAY",
-                    executionContext
-            );
+    public void testSplitMidPartitionAfterVarcharColumnUpdate() throws Exception {
+        executeWithPool(workerCount,
+                (engine, compiler, executionContext) -> {
+                    FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " -x j," +
+                                    " rnd_varchar(5,16,2) as v," +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " from long_sequence(60*24*2)" +
+                                    ") timestamp (ts) partition by DAY",
+                            executionContext
+                    );
 
-            compiler.compile(
-                    "create table z as (" +
-                            "select" +
-                            " cast(x as int) * 1000000 i," +
-                            " -x - 1000000L as j," +
-                            " rnd_str(5,16,2) as str," +
-                            " timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts" +
-                            " from long_sequence(1000))",
-                    executionContext
-            );
+                    engine.update("update x set v = v where ts >= '2020-02-04'", executionContext);
 
-            compiler.compile(
-                    "create table y as (select * from x union all select * from z)",
-                    executionContext
-            );
+                    LPSZ colVer = dFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v", -1);
+                    LOG.info().$("deleting ").$(colVer).$();
+                    Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer));
 
-            compiler.compile("insert into x select * from z", executionContext);
+                    colVer = iFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v", -1);
+                    LOG.info().$("deleting ").$(colVer).$();
+                    Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer));
 
-            TestUtils.assertEquals(
-                    compiler,
-                    executionContext,
-                    "y order by ts",
-                    "x"
-            );
-        });
+                    engine.releaseInactive();
+
+                    compiler.compile(
+                            "create table z as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_varchar(5,16,2) as v," +
+                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
+                                    " from long_sequence(50))",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table y as (select * from x union all select * from z)",
+                            executionContext
+                    );
+
+                    compiler.compile("insert into x select * from z", executionContext);
+
+                    TestUtils.assertEquals(
+                            compiler,
+                            executionContext,
+                            "y order by ts",
+                            "x"
+                    );
+                });
     }
 
     @Test
-    public void testSplitPartitionWithColumnTop() throws Exception {
+    public void testSplitOverrunLastPartition() throws Exception {
         executeWithPool(workerCount,
-                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
+                (engine, compiler, executionContext) -> {
                     compiler.compile(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
                             executionContext
                     );
-                    engine.ddl("alter table x add column k int", executionContext);
-                    engine.ddl("alter table x add column ks string", executionContext);
 
                     compiler.compile(
                             "create table z as (" +
@@ -574,9 +595,59 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
+                                    " timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts" +
+                                    " from long_sequence(1000))",
+                            executionContext
+                    );
+
+                    compiler.compile(
+                            "create table y as (select * from x union all select * from z)",
+                            executionContext
+                    );
+
+                    compiler.compile("insert into x select * from z", executionContext);
+
+                    TestUtils.assertEquals(
+                            compiler,
+                            executionContext,
+                            "y order by ts",
+                            "x"
+                    );
+                });
+    }
+
+    @Test
+    public void testSplitPartitionWithColumnTop() throws Exception {
+        executeWithPool(workerCount,
+                (engine, compiler, executionContext) -> {
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " -x j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " from long_sequence(60*24*2+300)" +
+                                    ") timestamp (ts) partition by DAY",
+                            executionContext
+                    );
+                    engine.ddl("alter table x add column k int", executionContext);
+                    engine.ddl("alter table x add column ks string", executionContext);
+                    engine.ddl("alter table x add column kv varchar", executionContext);
+
+                    compiler.compile(
+                            "create table z as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
                                     " 1 as k," +
-                                    " rnd_str(5,16,2) as ks" +
+                                    " rnd_str(5,16,2) as ks," +
+                                    " rnd_varchar(5,16,2) as kv" +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -595,13 +666,14 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Test
     public void testSplitPartitionWithColumnTopResultsInSplitWithColumnTop() throws Exception {
         executeWithPool(workerCount,
-                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
+                (engine, compiler, executionContext) -> {
                     compiler.compile(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
@@ -609,6 +681,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     );
                     engine.ddl("alter table x add column k int", executionContext);
                     engine.ddl("alter table x add column ks string", executionContext);
+                    engine.ddl("alter table x add column kv varchar", executionContext);
 
                     compiler.compile(
                             "create table y as (" +
@@ -616,9 +689,11 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-05T20:01:05', 60*1000000L) ts," +
                                     " 1 as k," +
-                                    " rnd_str(5,16,2) as ks" +
+                                    " rnd_str(5,16,2) as ks," +
+                                    " rnd_varchar(5,16,2) as kv" +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -629,9 +704,11 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-05T21:01:05.2', 60*1000000L) ts," +
                                     " 1 as k," +
-                                    " rnd_str(5,16,2) as ks" +
+                                    " rnd_str(5,16,2) as ks," +
+                                    " rnd_varchar(5,16,2) as kv" +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -651,13 +728,14 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Test
     public void testSplitPartitionWithColumnTopResultsInSplitWithColumnTop2() throws Exception {
         executeWithPool(workerCount,
-                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
+                (engine, compiler, executionContext) -> {
                     compiler.compile(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
@@ -665,6 +743,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     );
                     engine.ddl("alter table x add column k int", executionContext);
                     engine.ddl("alter table x add column ks string", executionContext);
+                    engine.ddl("alter table x add column kv varchar", executionContext);
 
                     compiler.compile(
                             "create table y as (" +
@@ -672,9 +751,11 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-05T20:01:05', 60*1000000L) ts," +
                                     " 1 as k," +
-                                    " rnd_str(5,16,2) as ks" +
+                                    " rnd_str(5,16,2) as ks," +
+                                    " rnd_varchar(5,16,2) as kv" +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -685,9 +766,11 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v," +
                                     " timestamp_sequence('2020-02-05T17:01:07', 60*1000000L) ts," +
                                     " 1 as k," +
-                                    " rnd_str(5,16,2) as ks" +
+                                    " rnd_str(5,16,2) as ks," +
+                                    " rnd_varchar(5,16,2) as kv" +
                                     " from long_sequence(1000))",
                             executionContext
                     );

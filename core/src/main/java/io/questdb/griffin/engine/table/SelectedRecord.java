@@ -30,6 +30,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 class SelectedRecord implements Record {
     private final IntList columnCrossIndex;
@@ -192,6 +194,26 @@ class SelectedRecord implements Record {
     @Override
     public long getUpdateRowId() {
         return base.getUpdateRowId();
+    }
+
+    @Override
+    public void getVarchar(int col, Utf8Sink utf8Sink) {
+        base.getVarchar(getColumnIndex(col), utf8Sink);
+    }
+
+    @Override
+    public void getVarchar(int col, Utf16Sink utf16sink) {
+        base.getVarchar(getColumnIndex(col), utf16sink);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        return base.getVarcharA(getColumnIndex(col));
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        return base.getVarcharB(getColumnIndex(col));
     }
 
     private int getColumnIndex(int columnIndex) {

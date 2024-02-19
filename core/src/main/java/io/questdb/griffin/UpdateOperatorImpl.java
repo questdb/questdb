@@ -36,6 +36,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cairo.ColumnType.isVarSize;
 import static io.questdb.cairo.TableUtils.dFile;
@@ -78,7 +79,6 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     }
 
     public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws TableReferenceOutOfDateException {
-
         TableToken tableToken = tableWriter.getTableToken();
         LOG.info().$("updating [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();
         QueryRegistry queryRegistry = sqlExecutionContext.getCairoEngine().getQueryRegistry();
@@ -304,6 +304,11 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     ) {
         final short columnTag = ColumnType.tagOf(columnType);
         switch (columnTag) {
+            case ColumnType.VARCHAR:
+                for (long row = fromRow; row < toRow; row++) {
+                    Utf8s.varcharAppend(dstVarMem, dstFixMem, null);
+                }
+                break;
             case ColumnType.STRING:
                 for (long row = fromRow; row < toRow; row++) {
                     dstFixMem.putLong(dstVarMem.putNullStr());
@@ -436,6 +441,9 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 case ColumnType.STRING:
                     dstFixMem.putLong(dstVarMem.putStr(masterRecord.getStr(i)));
                     break;
+                case ColumnType.VARCHAR:
+                    Utf8s.varcharAppend(dstVarMem, dstFixMem, masterRecord.getVarcharA(i));
+                    break;
                 case ColumnType.BINARY:
                     dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));
                     break;
@@ -464,6 +472,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     dstColumns.add(null);
                     break;
                 case ColumnType.STRING:
+                case ColumnType.VARCHAR:
                 case ColumnType.BINARY:
                     // Primary and secondary
                     srcColumns.add(Vm.getCMRInstance());
@@ -694,7 +703,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 }
                 if (forWrite) {
                     if (isVarSize(columnType)) {
-                        ((MemoryCMARW) columns.get(2 * i)).putLong(0);
+                        ColumnType.getDriver(columnType).configureAuxMemMA((MemoryCMARW) columns.get(2 * i));
                     }
                 }
             }
