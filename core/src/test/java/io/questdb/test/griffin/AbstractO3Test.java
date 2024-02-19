@@ -44,6 +44,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -212,8 +213,8 @@ public class AbstractO3Test extends AbstractTest {
             final CairoEngine engine,
             final SqlCompiler compiler,
             final SqlExecutionContext sqlExecutionContext,
-            final String referenceTableDDL,
-            final String o3InsertSQL
+            final @Nullable String referenceTableDDL,
+            final @Nullable String o3InsertSQL
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         if (referenceTableDDL != null) {
