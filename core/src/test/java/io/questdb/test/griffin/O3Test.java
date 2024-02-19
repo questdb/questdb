@@ -3375,12 +3375,13 @@ public class O3Test extends AbstractO3Test {
     private static void testColumnTopMidDataMergeData0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext ectx
     ) throws SqlException {
 
         engine.ddl(
                 "create table x as (" +
                         "select" +
+                        " 0 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3397,29 +3398,36 @@ public class O3Test extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1, 40, 1) varc," +
+                        " rnd_varchar(1, 1, 1) varc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                ectx
         );
 
-        engine.ddl("alter table x add column v double", sqlExecutionContext);
-        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
-        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
-        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
-        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
-        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
-        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
-        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
-        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
-        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
-        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
-        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
-        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
+        engine.ddl("alter table x add column v double", ectx);
+        engine.ddl("alter table x add column v1 float", ectx);
+        engine.ddl("alter table x add column v2 int", ectx);
+        engine.ddl("alter table x add column v3 byte", ectx);
+        engine.ddl("alter table x add column v4 short", ectx);
+        engine.ddl("alter table x add column v5 boolean", ectx);
+        engine.ddl("alter table x add column v6 date", ectx);
+        engine.ddl("alter table x add column v7 timestamp", ectx);
+        engine.ddl("alter table x add column v8 symbol", ectx);
+        engine.ddl("alter table x add column v10 char", ectx);
+        engine.ddl("alter table x add column v11 string", ectx);
+        engine.ddl("alter table x add column v12 binary", ectx);
+        engine.ddl("alter table x add column v9 long", ectx);
+        engine.ddl("alter table x add column v13 varchar", ectx);
+        engine.ddl("alter table x add column v14 varchar", ectx);
 
-        engine.insert(
-                "insert into x " +
+        engine.ddl("create table w as (select * from x)", ectx);
+
+        engine.ddl(
+                "create table append1 as ( " +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3437,6 +3445,8 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1, 40, 1) varc," +
+                        " rnd_varchar(1, 1, 1) varc2," +
 //        --------     new columns here ---------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -3450,14 +3460,18 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
-                        " from long_sequence(1000)",
-                sqlExecutionContext
+                        " rnd_long() v9," +
+                        " rnd_varchar(1, 40, 1) v13," +
+                        " rnd_varchar(1, 1, 1) v14," +
+                        " from long_sequence(1000)" +
+                        ")",
+                ectx
         );
 
         engine.ddl(
-                "create table append as (" +
+                "create table append2 as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3475,6 +3489,8 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1, 40, 1) varc," +
+                        " rnd_varchar(1, 1, 1) varc2," +
 //        --------     new columns here ---------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -3488,24 +3504,29 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
+                        " rnd_long() v9," +
+                        " rnd_varchar(1, 40, 1) v13," +
+                        " rnd_varchar(1, 1, 1) v14," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
+                ectx
         );
 
-        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from (x union all append)", sink);
+        engine.insert("insert into x select * from append1", ectx);
+
+        TestUtils.printSql(compiler, ectx, "select count() from (x union all append2)", sink2);
+        TestUtils.printSql(compiler, ectx, "select max(ts) from (x union all append2)", sink);
         final String expectedMaxTimestamp = Chars.toString(sink);
-        engine.insert("insert into x select * from append", sqlExecutionContext);
 
-        assertSqlResultAgainstFile(
+        assertO3DataConsistencyStableSort(
+                engine,
                 compiler,
-                sqlExecutionContext,
-                "x",
-                "/o3/testColumnTopMidDataMergeData.txt"
+                ectx,
+                "create table y as (select * from w union all append1 union all append2)",
+                "insert into x select * from append2"
         );
-        assertXCount(compiler, sqlExecutionContext);
+
+        assertXCount(compiler, ectx);
 
         assertMaxTimestamp(
                 engine,
@@ -5352,6 +5373,7 @@ public class O3Test extends AbstractO3Test {
         engine.ddl(
                 "create table x as (" +
                         "select" +
+                        " 0 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5369,7 +5391,9 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
-                        " cast(now() as long256) l256" +
+                        " cast(now() as long256) l256," +
+                        " rnd_varchar(1, 30, 1) varc," +
+                        " rnd_varchar(1, 1, 0) varc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -5378,6 +5402,7 @@ public class O3Test extends AbstractO3Test {
         engine.ddl(
                 "create table middle as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -5395,38 +5420,41 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
-                        " cast(now() as long256) l256" +
+                        " cast(now() as long256) l256," +
+                        " rnd_varchar(1, 30, 1) varc," +
+                        " rnd_varchar(1, 1, 0) varc2," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
-        assertO3DataCursors(
+        assertO3DataConsistencyStableSort(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
-                "y order by ts, i desc",
-                "insert into x select * from middle",
-                "x",
-                "y",
-                "x"
+                "insert into x select * from middle"
         );
 
         // check that reader can process out of order partition layout after fresh open
-        String filteredColumnSelect = "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,j,ts,l,m,n,t from x";
         engine.releaseAllReaders();
-        assertSqlResultAgainstFile(
+
+        assertO3DataConsistencyStableSort(
+                engine,
                 compiler,
                 sqlExecutionContext,
-                filteredColumnSelect,
-                "/o3/testPartitionedDataMergeData.txt"
+                null,
+                null
         );
 
-        assertSqlResultAgainstFile(compiler, sqlExecutionContext,
-                filteredColumnSelect + " where sym = 'googl'",
-                "/o3/testPartitionedDataMergeData_Index.txt"
+        // create third table, which will contain both X and 1AM
+        TestUtils.assertEqualsExactOrder(
+                compiler,
+                sqlExecutionContext,
+                "y where sym = 'googl' order by ts, commit",
+                "x where sym = 'googl'"
         );
+
         assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
@@ -6091,7 +6119,9 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
-                        " rnd_long256() l256" +
+                        " rnd_long256() l256," +
+                        " rnd_varchar(1, 30, 1) varc," +
+                        " rnd_varchar(1, 1, 0) varc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -6119,7 +6149,9 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
-                        " rnd_long256() l256" +
+                        " rnd_long256() l256," +
+                        " rnd_varchar(1, 30, 1) varc," +
+                        " rnd_varchar(1, 1, 0) varc2," +
                         " from long_sequence(500)" +
                         ")",
                 sqlExecutionContext
@@ -6145,7 +6177,9 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
-                        " rnd_long256() l256" +
+                        " rnd_long256() l256," +
+                        " rnd_varchar(1, 30, 1) varc," +
+                        " rnd_varchar(1, 1, 0) varc2," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
