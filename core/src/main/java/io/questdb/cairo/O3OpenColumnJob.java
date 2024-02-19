@@ -305,7 +305,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // in the variable len file. Each null value takes 4 bytes for string
                     final long reservedBytesForColTopNulls = srcDataTop * columnTypeDriver.getDataVectorMinEntrySize();
                     srcDataSize += reservedBytesForColTopNulls + srcDataSize;
-                    srcDataAddr = mapRW(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3);
+                    srcDataAddr = srcDataSize > 0 ? mapRW(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : srcDataAddr;
                     ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
 
                     // Set var column values to null first srcDataTop times
@@ -353,7 +353,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataFixOffset = 0;
 
                     srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, auxRowCount - 1);
-                    srcDataAddr = mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3);
+                    srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
                     ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
                 }
             } else {
@@ -362,7 +362,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
                 srcDataFixOffset = 0;
                 srcDataSize = columnTypeDriver.getDataVectorSizeAt(srcAuxAddr, srcDataMax - 1);
-                srcDataAddr = mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3);
+                srcDataAddr = srcDataSize > 0 ? mapRO(ff, srcVarFd, srcDataSize, MemoryTag.MMAP_O3) : 0;
                 ff.madvise(srcDataAddr, srcDataSize, Files.POSIX_MADV_SEQUENTIAL);
             }
 
@@ -393,7 +393,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstDataSize -= columnTypeDriver.getDataVectorSize(srcAuxAddr, prefixLo, prefixHi - initialSrcDataTop);
             }
 
-            dstVarAddr = mapRW(ff, dstDataFd, dstDataSize, MemoryTag.MMAP_O3);
+            dstVarAddr = dstDataSize > 0 ?mapRW(ff, dstDataFd, dstDataSize, MemoryTag.MMAP_O3) : 0;
             if (!mixedIOFlag) {
                 ff.madvise(dstVarAddr, dstDataSize, Files.POSIX_MADV_RANDOM);
             }
