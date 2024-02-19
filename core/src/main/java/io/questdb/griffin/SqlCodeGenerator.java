@@ -1170,7 +1170,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastIntToStrFunctionFactory.Func(new IntColumn(i)));
                                 break;
                             case ColumnType.LONG:
-                                castFunctions.add(new CastLongToStrFunctionFactory.CastLongToStrFunction(new LongColumn(i)));
+                                castFunctions.add(new CastLongToStrFunctionFactory.Func(new LongColumn(i)));
                                 break;
                             case ColumnType.DATE:
                                 castFunctions.add(new CastDateToStrFunctionFactory.Func(new DateColumn(i)));

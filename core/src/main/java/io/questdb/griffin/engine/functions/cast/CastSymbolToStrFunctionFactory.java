@@ -69,5 +69,10 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
         public CharSequence getStrB(Record rec) {
             return arg.getSymbolB(rec);
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return arg.isReadThreadSafe();
+        }
     }
 }

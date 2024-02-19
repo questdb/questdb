@@ -520,6 +520,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastStrToByteFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToStrFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastStrToVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToCharFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToDateFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory,

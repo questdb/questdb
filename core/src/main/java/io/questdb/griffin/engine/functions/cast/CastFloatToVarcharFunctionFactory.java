@@ -109,10 +109,5 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
             sinkB.put(value, 4);
             return sinkB;
         }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
     }
 }

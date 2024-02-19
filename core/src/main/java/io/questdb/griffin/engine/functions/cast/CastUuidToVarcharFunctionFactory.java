@@ -92,10 +92,5 @@ public final class CastUuidToVarcharFunctionFactory implements FunctionFactory {
             sinkB.clear();
             return SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkB) ? sinkB : null;
         }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
     }
 }

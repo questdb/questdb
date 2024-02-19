@@ -109,10 +109,5 @@ public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
             sinkB.put(value, scale);
             return sinkB;
         }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
     }
 }

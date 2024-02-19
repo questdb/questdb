@@ -84,5 +84,10 @@ public class CastSymbolToVarcharFunctionFactory implements FunctionFactory {
         public Utf8Sequence getVarcharB(Record rec) {
             return arg.getVarcharB(rec);
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return arg.isReadThreadSafe();
+        }
     }
 }

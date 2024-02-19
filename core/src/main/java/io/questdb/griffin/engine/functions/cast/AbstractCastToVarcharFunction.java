@@ -42,6 +42,11 @@ public abstract class AbstractCastToVarcharFunction extends VarcharFunction impl
     }
 
     @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(getArg()).val("::varchar");
     }

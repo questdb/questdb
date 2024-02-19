@@ -69,5 +69,10 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
         public CharSequence getStrB(Record rec) {
             return arg.getStrB(rec);
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return arg.isReadThreadSafe();
+        }
     }
 }

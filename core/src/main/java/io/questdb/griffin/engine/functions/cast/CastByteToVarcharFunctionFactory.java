@@ -90,10 +90,5 @@ public class CastByteToVarcharFunctionFactory implements FunctionFactory {
             sinkB.put((int) arg.getByte(rec));
             return sinkB;
         }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
     }
 }

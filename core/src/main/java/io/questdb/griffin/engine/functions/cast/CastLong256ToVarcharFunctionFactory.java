@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.IntList;
@@ -84,16 +83,6 @@ public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
         public Utf8Sequence getVarcharB(Record rec) {
             sinkB.clear();
             return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkB) ? sinkB : null;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(arg).val("::varchar");
         }
     }
 }

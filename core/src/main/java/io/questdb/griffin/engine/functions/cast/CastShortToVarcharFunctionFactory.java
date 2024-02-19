@@ -90,10 +90,5 @@ public class CastShortToVarcharFunctionFactory implements FunctionFactory {
             sinkB.put(arg.getShort(rec));
             return sinkB;
         }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
     }
 }

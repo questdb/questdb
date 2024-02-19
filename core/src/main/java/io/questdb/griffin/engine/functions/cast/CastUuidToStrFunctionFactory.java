@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
@@ -58,7 +57,7 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         return new Func(func);
     }
 
-    public static class Func extends AbstractCastToStrFunction implements UnaryFunction {
+    public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
@@ -88,11 +87,6 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
             long lo = arg.getLong128Lo(rec);
             long hi = arg.getLong128Hi(rec);
             return Uuid.isNull(lo, hi) ? TableUtils.NULL_LEN : Uuid.UUID_LENGTH;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
         }
     }
 }
