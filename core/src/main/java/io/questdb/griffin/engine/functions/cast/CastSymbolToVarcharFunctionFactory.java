@@ -59,7 +59,7 @@ public class CastSymbolToVarcharFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToVarcharFunction {
+    public static class Func extends AbstractCastToVarcharFunction {
 
         public Func(Function arg) {
             super(arg);

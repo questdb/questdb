@@ -29,36 +29,54 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Chars;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
-import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.*;
 
 public class VarcharConstant extends VarcharFunction implements ConstantFunction {
     public static final VarcharConstant EMPTY = new VarcharConstant("");
-    public static final VarcharConstant NULL = new VarcharConstant(null);
+    public static final VarcharConstant NULL = new VarcharConstant((Utf8Sequence) null);
     private final int length;
     private final String utf16Value;
     private final Utf8String value;
 
-    public VarcharConstant(CharSequence value) {
+    public VarcharConstant(Utf8Sequence value) {
         if (value == null) {
+            this.value = null;
+            this.utf16Value = null;
+            this.length = TableUtils.NULL_LEN;
+        } else {
+            if (Utf8s.startsWithAscii(value, "'")) {
+                this.utf16Value = Utf8s.toString(value, 1, value.size() - 1, value.byteAt(0));
+                this.value = new Utf8String(utf16Value);
+            } else {
+                this.value = Utf8String.newInstance(value);
+                this.utf16Value = Utf8s.toString(value);
+            }
+            this.length = this.utf16Value.length();
+        }
+    }
+
+    public VarcharConstant(CharSequence utf16Value) {
+        if (utf16Value == null) {
             this.utf16Value = null;
             this.value = null;
             this.length = TableUtils.NULL_LEN;
         } else {
-            if (Chars.startsWith(value, '\'')) {
-                this.utf16Value = Chars.toString(value, 1, value.length() - 1, value.charAt(0));
+            if (Chars.startsWith(utf16Value, '\'')) {
+                this.utf16Value = Chars.toString(utf16Value, 1, utf16Value.length() - 1, utf16Value.charAt(0));
                 this.value = new Utf8String(this.utf16Value);
             } else {
-                this.utf16Value = Chars.toString(value);
-                this.value = new Utf8String(value);
+                this.utf16Value = Chars.toString(utf16Value);
+                this.value = new Utf8String(utf16Value);
             }
             this.length = this.utf16Value.length();
         }
     }
 
     public static VarcharConstant newInstance(CharSequence value) {
+        return value != null ? new VarcharConstant(value) : NULL;
+    }
+
+    public static VarcharConstant newInstance(Utf8Sequence value) {
         return value != null ? new VarcharConstant(value) : NULL;
     }
 

@@ -139,6 +139,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.array.IntArrayDereferenceHackFunctionFactory,
             // '=' operators
             io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory,

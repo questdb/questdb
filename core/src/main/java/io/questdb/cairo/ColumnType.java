@@ -205,7 +205,7 @@ public final class ColumnType {
     }
 
     public static boolean isSymbolOrString(int columnType) {
-        return columnType == SYMBOL || columnType == STRING;
+        return columnType == SYMBOL || columnType == STRING || columnType == VARCHAR;
     }
 
     public static boolean isTimestamp(int columnType) {

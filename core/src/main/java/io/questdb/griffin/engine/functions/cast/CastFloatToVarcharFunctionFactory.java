@@ -60,7 +60,7 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), configuration.getFloatToStrCastScale());
     }
 
-    private static class Func extends AbstractCastToVarcharFunction {
+    public static class Func extends AbstractCastToVarcharFunction {
         private final int scale;
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();

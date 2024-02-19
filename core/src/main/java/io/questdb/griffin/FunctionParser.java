@@ -832,9 +832,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
                 }
                 break;
+            case ColumnType.VARCHAR:
+                if (toType == ColumnType.UUID) {
+                    return new CastVarcharToUuidFunctionFactory.Func(function);
+                }
+                if (toType == ColumnType.TIMESTAMP) {
+                    return new CastVarcharToTimestampFunctionFactory.Func(function);
+                }
+                if (ColumnType.isGeoHash(toType)) {
+                    return CastVarcharToGeoHashFunctionFactory.newInstance(position, toType, function);
+                }
+                break;
             case ColumnType.UUID:
                 if (toType == ColumnType.STRING) {
                     return new CastUuidToStrFunctionFactory.Func(function);
+                }
+                if (toType == ColumnType.VARCHAR) {
+                    return new CastUuidToVarcharFunctionFactory.Func(function);
                 }
                 break;
             case ColumnType.CHAR:
@@ -974,6 +988,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return function;
                 } else {
                     return StrConstant.newInstance(function.getStr(null));
+                }
+            case ColumnType.VARCHAR:
+                if (function instanceof VarcharConstant) {
+                    return function;
+                } else {
+                    return VarcharConstant.newInstance(function.getVarcharA(null));
                 }
             case ColumnType.SYMBOL:
                 if (function instanceof SymbolConstant) {

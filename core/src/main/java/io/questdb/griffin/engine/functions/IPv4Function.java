@@ -39,6 +39,8 @@ import static io.questdb.std.Numbers.IPv4_NULL;
 public abstract class IPv4Function implements ScalarFunction {
     private final StringSink sinkA = new StringSink();
     private final StringSink sinkB = new StringSink();
+    private final Utf8StringSink utf8SinkA = new Utf8StringSink();
+    private final Utf8StringSink utf8SinkB = new Utf8StringSink();
 
     @Override
     public final BinarySequence getBin(Record rec) {
@@ -157,7 +159,7 @@ public abstract class IPv4Function implements ScalarFunction {
 
     @Override
     public final void getStr(Record rec, Utf16Sink utf16Sink) {
-        int value = getIPv4(rec);
+        final int value = getIPv4(rec);
         if (value != IPv4_NULL) {
             Numbers.intToIPv4Sink(utf16Sink, value);
         }
@@ -195,22 +197,40 @@ public abstract class IPv4Function implements ScalarFunction {
 
     @Override
     public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        throw new UnsupportedOperationException();
+        final int value = getIPv4(rec);
+        if (value != Numbers.IPv4_NULL) {
+            Numbers.intToIPv4Sink(utf16Sink, value);
+        }
     }
 
     @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        throw new UnsupportedOperationException();
+        final int value = getIPv4(rec);
+        if (value != Numbers.IPv4_NULL) {
+            Numbers.intToIPv4Sink(utf8Sink, value);
+        }
     }
 
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
-        throw new UnsupportedOperationException();
+        final int value = getIPv4(rec);
+        if (value == Numbers.IPv4_NULL) {
+            return null;
+        }
+        utf8SinkA.clear();
+        Numbers.intToIPv4Sink(utf8SinkA, value);
+        return utf8SinkA;
     }
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
-        throw new UnsupportedOperationException();
+        final int value = getIPv4(rec);
+        if (value == Numbers.IPv4_NULL) {
+            return null;
+        }
+        utf8SinkB.clear();
+        Numbers.intToIPv4Sink(utf8SinkB, value);
+        return utf8SinkB;
     }
 
     @Nullable

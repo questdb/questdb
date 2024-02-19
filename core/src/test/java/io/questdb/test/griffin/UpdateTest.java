@@ -1064,6 +1064,27 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateGeohashToVarcharConst() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " rnd_geohash(15) as geo3," +
+                    " rnd_geohash(25) as geo5 " +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+
+            update("UPDATE up SET geo3 = 'questdb'::varchar, geo5 = 'questdb'::varchar WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+
+            assertSql("ts\tgeo3\tgeo5\n" +
+                    "1970-01-01T00:00:00.000000Z\t9v1\t46swg\n" +
+                    "1970-01-01T00:00:01.000000Z\tjnw\tzfuqd\n" +
+                    "1970-01-01T00:00:02.000000Z\tque\tquest\n" +
+                    "1970-01-01T00:00:03.000000Z\tque\tquest\n" +
+                    "1970-01-01T00:00:04.000000Z\tmmt\t71ftm\n", "up");
+        });
+    }
+
+    @Test
     public void testUpdateIdentical() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table up as" +
@@ -1783,7 +1804,6 @@ public class UpdateTest extends AbstractCairoTest {
 
     @Test
     public void testUpdateTableNameCaseInsensitive() throws Exception {
-
         assertMemoryLeak(() -> {
             ddl("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
@@ -1979,8 +1999,182 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table up as" +
+                            " (select" +
+                            " rnd_varchar('foo','bar') as v," +
+                            " timestamp_sequence(0, 1000000) ts," +
+                            " x" +
+                            " from long_sequence(5)) timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""),
+                    sqlExecutionContext
+            );
+
+            // char
+            update("update up set v = 'a' where v = 'bar'");
+            assertSql("v\tts\tx\n" +
+                    "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "a\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "a\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "a\t1970-01-01T00:00:04.000000Z\t5\n", "up");
+
+            // string
+            update("update up set v = 'baz' where v = 'a'");
+            assertSql("v\tts\tx\n" +
+                    "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "baz\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "baz\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "baz\t1970-01-01T00:00:04.000000Z\t5\n", "up");
+
+            // UUID
+            update("update up set v = cast('11111111-1111-1111-1111-111111111111' as uuid) where v = 'baz'");
+            assertSql("v\tts\tx\n" +
+                    "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:04.000000Z\t5\n", "up");
+        });
+    }
+
+    @Test
+    public void testUpdateVarcharColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table up as" +
+                    " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
+                    " x as lng2" +
+                    " from long_sequence(10)" +
+                    " )" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+
+            update("UPDATE up SET v1 = 'questdb' WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
+
+            assertSql("ts\tv1\tlng2\n" +
+                    "1970-01-01T00:00:00.000000Z\t15\t1\n" +
+                    "1970-01-01T06:00:00.000000Z\t15\t2\n" +
+                    "1970-01-01T12:00:00.000000Z\tquestdb\t3\n" +
+                    "1970-01-01T18:00:00.000000Z\t1\t4\n" +
+                    "1970-01-02T00:00:00.000000Z\tquestdb\t5\n" +
+                    "1970-01-02T06:00:00.000000Z\t1\t6\n" +
+                    "1970-01-02T12:00:00.000000Z\tquestdb\t7\n" +
+                    "1970-01-02T18:00:00.000000Z\t\t8\n" +
+                    "1970-01-03T00:00:00.000000Z\tquestdb\t9\n" +
+                    "1970-01-03T06:00:00.000000Z\t\t10\n", "up");
+        });
+    }
+
+    @Test
+    public void testUpdateVarcharColumnPageSize() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table up as" +
+                    " (select timestamp_sequence(0, 1000000L) ts," +
+                    " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
+                    " x as lng2" +
+                    " from long_sequence(100000)" +
+                    " )" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+
+            update("UPDATE up SET v1 = 'questdb' WHERE ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
+            assertSql("count\n" +
+                    "7201\n", "select count() from up where v1 = 'questdb'");
+            assertSql("count\n" +
+                    "7201\n", "select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
+        });
+    }
+
+    @Test
+    public void testUpdateVarcharColumnUpdate1Value() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table up as" +
+                    " (select timestamp_sequence(0, 6 * 30 * 1000000L) ts," +
+                    " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
+                    " x as lng2" +
+                    " from long_sequence(10)" +
+                    " )" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+
+            ddl("alter table up add column v2 varchar", sqlExecutionContext);
+
+            ddl("insert into up select * from " +
+                    " (select timestamp_sequence('1970-01-01T00:30', 6 * 60 * 1000000L) ts," +
+                    " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
+                    " x + 10 as lng2," +
+                    " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v2" +
+                    " from long_sequence(10))", sqlExecutionContext);
+
+            update("UPDATE up SET v1 = 'questdb2', v2 = 'questdb2' WHERE ts = '1970-01-01T01:18:00.000000Z'");
+
+            assertSql("ts\tv1\tlng2\tv2\n" +
+                    "1970-01-01T00:00:00.000000Z\t15\t1\t\n" +
+                    "1970-01-01T00:03:00.000000Z\t15\t2\t\n" +
+                    "1970-01-01T00:06:00.000000Z\t\t3\t\n" +
+                    "1970-01-01T00:09:00.000000Z\t1\t4\t\n" +
+                    "1970-01-01T00:12:00.000000Z\t1\t5\t\n" +
+                    "1970-01-01T00:15:00.000000Z\t1\t6\t\n" +
+                    "1970-01-01T00:18:00.000000Z\t190232\t7\t\n" +
+                    "1970-01-01T00:21:00.000000Z\t\t8\t\n" +
+                    "1970-01-01T00:24:00.000000Z\t15\t9\t\n" +
+                    "1970-01-01T00:27:00.000000Z\t\t10\t\n" +
+                    "1970-01-01T00:30:00.000000Z\t\t11\t190232\n" +
+                    "1970-01-01T00:36:00.000000Z\t\t12\t\n" +
+                    "1970-01-01T00:42:00.000000Z\t\t13\t15\n" +
+                    "1970-01-01T00:48:00.000000Z\t15\t14\t\n" +
+                    "1970-01-01T00:54:00.000000Z\trdgb\t15\t\n" +
+                    "1970-01-01T01:00:00.000000Z\t\t16\trdgb\n" +
+                    "1970-01-01T01:06:00.000000Z\t15\t17\t1\n" +
+                    "1970-01-01T01:12:00.000000Z\trdgb\t18\t\n" +
+                    "1970-01-01T01:18:00.000000Z\tquestdb2\t19\tquestdb2\n" +
+                    "1970-01-01T01:24:00.000000Z\t\t20\t15\n", "up");
+        });
+    }
+
+    @Test
+    public void testUpdateVarcharColumnWithColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table up as" +
+                    " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
+                    " x as lng2" +
+                    " from long_sequence(10)" +
+                    " )" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+
+            ddl("alter table up add column v2 varchar", sqlExecutionContext);
+            ddl("insert into up select * from " +
+                    " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
+                    " x + 10 as lng2," +
+                    " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v2" +
+                    " from long_sequence(5))", sqlExecutionContext);
+
+            update("UPDATE up SET v1 = 'questdb1', v2 = 'questdb2' WHERE lng2 in (6, 8, 10, 12, 14)");
+
+            assertSql("ts\tv1\tlng2\tv2\n" +
+                    "1970-01-01T00:00:00.000000Z\t15\t1\t\n" +
+                    "1970-01-01T06:00:00.000000Z\t15\t2\t\n" +
+                    "1970-01-01T12:00:00.000000Z\t\t3\t\n" +
+                    "1970-01-01T18:00:00.000000Z\t1\t4\t\n" +
+                    "1970-01-02T00:00:00.000000Z\t1\t5\t\n" +
+                    "1970-01-02T06:00:00.000000Z\tquestdb1\t6\tquestdb2\n" +
+                    "1970-01-02T12:00:00.000000Z\t190232\t7\t\n" +
+                    "1970-01-02T18:00:00.000000Z\tquestdb1\t8\tquestdb2\n" +
+                    "1970-01-03T00:00:00.000000Z\t15\t9\t\n" +
+                    "1970-01-03T06:00:00.000000Z\tquestdb1\t10\tquestdb2\n" +
+                    "1970-01-07T22:40:00.000000Z\t\t11\t190232\n" +
+                    "1970-01-08T04:40:00.000000Z\tquestdb1\t12\tquestdb2\n" +
+                    "1970-01-08T10:40:00.000000Z\t\t13\t15\n" +
+                    "1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2\n" +
+                    "1970-01-08T22:40:00.000000Z\trdgb\t15\t\n", "up");
+        });
+    }
+
+    @Test
     public void testUpdateWith2TableJoinInWithClause() throws Exception {
-        //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
+        // this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
@@ -2360,6 +2554,33 @@ public class UpdateTest extends AbstractCairoTest {
                             "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
                             "VTJ\t1970-01-01T00:00:04.000000Z\t5\n", "up"
             );
+        });
+    }
+
+    @Test
+    public void testVarcharToIpv4() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table up as" +
+                            " (select timestamp_sequence(0, 1000000) ts," +
+                            " cast(case when x = 1 then null else rnd_ipv4() end as varchar) as v," +
+                            " cast(null as ipv4) as ip " +
+                            " from long_sequence(5))" +
+                            " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+
+            update("UPDATE up SET ip = v");
+
+            String data = "ts\tv\tip\n" +
+                    "1970-01-01T00:00:00.000000Z\t\t\n" +
+                    "1970-01-01T00:00:01.000000Z\t187.139.150.80\t187.139.150.80\n" +
+                    "1970-01-01T00:00:02.000000Z\t18.206.96.238\t18.206.96.238\n" +
+                    "1970-01-01T00:00:03.000000Z\t92.80.211.65\t92.80.211.65\n" +
+                    "1970-01-01T00:00:04.000000Z\t212.159.205.29\t212.159.205.29\n";
+            assertSql(data, "up");
+
+            update("UPDATE up set v = 'abc'");
+            update("UPDATE up set v = ip");
+            assertSql(data, "up");
         });
     }
 

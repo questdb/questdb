@@ -41,6 +41,18 @@ import static io.questdb.cairo.ColumnType.GEOLONG_MAX_BITS;
 
 public class CastVarcharToGeoHashFunctionFactory implements FunctionFactory {
 
+    public static Function newInstance(int argPosition, int geoType, Function value) throws SqlException {
+        if (value.isConstant()) {
+            final int bits = ColumnType.getGeoHashBits(geoType);
+            assert bits > 0 && bits < GEOLONG_MAX_BITS + 1;
+            return Constants.getGeoHashConstantWithType(
+                    parseGeoHash(value.getVarcharA(null), argPosition, bits),
+                    geoType
+            );
+        }
+        return new Func(geoType, value, argPosition);
+    }
+
     @Override
     public String getSignature() {
         return "cast(Øg)";

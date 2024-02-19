@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.*;
@@ -97,8 +98,9 @@ public abstract class VarcharFunction implements ScalarFunction {
     }
 
     @Override
-    public int getIPv4(Record rec) {
-        throw new UnsupportedOperationException();
+    public final int getIPv4(Record rec) {
+        final Utf8Sequence value = getVarcharA(rec);
+        return SqlUtil.implicitCastStrAsIPv4(value != null ? value.asAsciiCharSequence() : null);
     }
 
     @Override

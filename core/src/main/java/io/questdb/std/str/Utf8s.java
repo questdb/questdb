@@ -510,6 +510,19 @@ public final class Utf8s {
         return b.toString();
     }
 
+    public static String toString(@NotNull Utf8Sequence us, int start, int end, byte unescapeAscii) {
+        final Utf8Sink sink = Misc.getThreadLocalUtf8Sink();
+        final int lastChar = end - 1;
+        for (int i = start; i < end; i++) {
+            byte b = us.byteAt(i);
+            sink.put(b);
+            if (b == unescapeAscii && i < lastChar && us.byteAt(i + 1) == unescapeAscii) {
+                i++;
+            }
+        }
+        return sink.toString();
+    }
+
     public static String toString(@Nullable Utf8Sequence s) {
         return s == null ? null : s.toString();
     }

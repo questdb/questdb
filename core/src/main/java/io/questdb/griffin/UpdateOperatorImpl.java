@@ -601,8 +601,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     }
 
     private void copyValues(
-            long loRowNum,
-            long hiRowNum, // exclusive
+            long rowLo,
+            long rowHi, // exclusive
             MemoryCMR srcFixMem,
             MemoryCMR srcDataMem,
             MemoryCMARW dstFixMem,
@@ -612,24 +612,25 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     ) {
         if (ColumnType.isVarSize(columnType)) {
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-            long dataOffsetLo = columnTypeDriver.getDataVectorOffset(srcFixMem.addressOf(0), loRowNum);
-            long srcDataSize = columnTypeDriver.getDataVectorSize(srcFixMem.addressOf(0), loRowNum, hiRowNum - 1);
+            long dataOffsetLo = columnTypeDriver.getDataVectorOffset(srcFixMem.addressOf(0), rowLo);
+            long srcDataSize = columnTypeDriver.getDataVectorSize(srcFixMem.addressOf(0), rowLo, rowHi - 1);
             long srcDataAddr = srcDataMem.addressOf(dataOffsetLo);
             long copyToOffset = dstDataMem.getAppendOffset();
             dstDataMem.putBlockOfBytes(srcDataAddr, srcDataSize);
-            dstFixMem.extend(columnTypeDriver.getAuxVectorSize(hiRowNum));
+            dstFixMem.extend(columnTypeDriver.getAuxVectorSize(rowHi));
             columnTypeDriver.shiftCopyAuxVector(
                     dataOffsetLo - copyToOffset,
-                    srcFixMem.addressOf(columnTypeDriver.getAuxVectorOffset(loRowNum + 1)),
+                    // TODO: we should be using getAuxVectorOffset here
+                    srcFixMem.addressOf(columnTypeDriver.getAuxVectorSize(rowLo)),
                     0,
-                    hiRowNum - loRowNum - 1,
+                    rowHi - rowLo - 1,
                     dstFixMem.getAppendAddress()
             );
-            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(hiRowNum));
+            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(rowHi));
         } else {
             dstFixMem.putBlockOfBytes(
-                    srcFixMem.addressOf(loRowNum << shl),
-                    (hiRowNum - loRowNum) << shl
+                    srcFixMem.addressOf(rowLo << shl),
+                    (rowHi - rowLo) << shl
             );
         }
     }

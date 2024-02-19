@@ -66,7 +66,7 @@ public class CastVarcharToUuidFunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
-    private static class Func extends AbstractCastToUuidFunction {
+    public static class Func extends AbstractCastToUuidFunction {
         public Func(Function arg) {
             super(arg);
         }

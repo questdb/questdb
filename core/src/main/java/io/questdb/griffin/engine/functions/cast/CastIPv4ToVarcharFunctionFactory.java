@@ -88,7 +88,7 @@ public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkA.clear();
-            sinkA.put(value);
+            Numbers.intToIPv4Sink(sinkA, value);
             return sinkA;
         }
 
@@ -99,7 +99,7 @@ public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkB.clear();
-            sinkB.put(value);
+            Numbers.intToIPv4Sink(sinkB, value);
             return sinkB;
         }
     }

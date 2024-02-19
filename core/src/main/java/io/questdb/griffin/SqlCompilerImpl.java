@@ -386,7 +386,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private static boolean isIPv4UpdateCast(int from, int to) {
         return (from == ColumnType.STRING && to == ColumnType.IPv4)
-                || (from == ColumnType.IPv4 && to == ColumnType.STRING);
+                || (from == ColumnType.IPv4 && to == ColumnType.STRING)
+                || (from == ColumnType.VARCHAR && to == ColumnType.IPv4)
+                || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
     }
 
     private void alterTable(SqlExecutionContext executionContext) throws SqlException {

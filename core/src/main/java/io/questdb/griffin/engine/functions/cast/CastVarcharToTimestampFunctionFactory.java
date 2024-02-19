@@ -54,7 +54,7 @@ public class CastVarcharToTimestampFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToTimestampFunction {
+    public static class Func extends AbstractCastToTimestampFunction {
         public Func(Function arg) {
             super(arg);
         }
