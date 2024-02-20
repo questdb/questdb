@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.http.client;
 
-public interface Response extends Chunk {
-    void recv();
+public interface Response {
+    Fragment recv();
 
-    void recv(int timeout);
+    Fragment recv(int timeout);
 }

@@ -750,11 +750,10 @@ public abstract class HttpClient implements QuietCloseable {
             clear();
         }
 
-        public ChunkedResponse getChunkedResponse() {
-            return chunkedResponse;
-        }
-
         public Response getResponse() {
+            if (isChunked()) {
+                return chunkedResponse;
+            }
             return response;
         }
 
