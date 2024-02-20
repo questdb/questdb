@@ -1024,12 +1024,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 HttpConnectionContext context
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (rejectCode == HTTP_UNAUTHORIZED) {
-                if (authenticationType == SecurityContext.AUTH_TYPE_CREDENTIALS) {
-                    // Special case, include WWW-Authenticate header
-                    simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
-                } else {
-                    simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED);
-                }
+                simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED);
             } else {
                 simpleResponse().sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
             }
