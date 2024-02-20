@@ -5359,12 +5359,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 size = o3RowCount << ColumnType.pow2SizeOf(columnType);
             } else {
                 // Var size column
+                ColumnTypeDriver driver = ColumnType.getDriver(columnType);
                 if (o3RowCount > 0) {
-                    size = o3IndexMem.getLong(o3RowCount * 8);
+                    size = driver.getDataVectorSizeAt(o3IndexMem.addressOf(0), o3RowCount - 1);
                 } else {
                     size = 0;
                 }
-                o3IndexMem.jumpTo((o3RowCount + 1) * 8);
+                o3IndexMem.jumpTo(driver.getAuxVectorSize(o3RowCount));
             }
 
             o3DataMem.jumpTo(size);
