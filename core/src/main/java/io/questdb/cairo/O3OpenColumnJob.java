@@ -1211,7 +1211,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     public static void o3VarSizePartitionAppend(
             AtomicInteger columnCounter,
             int columnType,
-            long srcOooFixAddr,
+            long srcOooAuxAddr,
             long srcOooVarAddr,
             long srcOooLo,
             long srcOooHi,
@@ -1238,19 +1238,19 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long dstAuxAddr = 0;
         long dstAuxOffset;
         long dstAuxFileOffset;
-        long dstVarAddr = 0;
-        long dstVarOffset;
-        long dstVarAdjust;
-        long dstVarSize = 0;
+        long dstDataAddr = 0;
+        long dstDataOffset;
+        long dstDataAdjust;
+        long dstDataSize = 0;
         long dstAuxSize = 0;
         final FilesFacade ff = tableWriter.getFilesFacade();
         try {
             ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
-            long o3auxSize = columnTypeDriver.getDataVectorSize(srcOooFixAddr, srcOooLo, srcOooHi);
+            long o3DataSize = columnTypeDriver.getDataVectorSize(srcOooAuxAddr, srcOooLo, srcOooHi);
             dstAuxSize = columnTypeDriver.getAuxVectorSize(dstRowCount);
 
-            if (dstAuxMem == null || dstAuxMem.getAppendAddressSize() < dstAuxSize || dstDataMem.getAppendAddressSize() < o3auxSize) {
+            if (dstAuxMem == null || dstAuxMem.getAppendAddressSize() < dstAuxSize || dstDataMem.getAppendAddressSize() < o3DataSize) {
                 assert dstAuxMem == null || dstAuxMem.getAppendOffset() - columnTypeDriver.getMinAuxVectorSize() == columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
 
                 dstAuxOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
@@ -1258,14 +1258,14 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstAuxAddr = mapRW(ff, Math.abs(activeFixFd), dstAuxSize, MemoryTag.MMAP_O3);
 
                 if (dstAuxOffset > 0) {
-                    dstVarOffset = Unsafe.getUnsafe().getLong(dstAuxAddr + dstAuxOffset);
+                    dstDataOffset = columnTypeDriver.getDataVectorSizeAt(dstAuxAddr, srcDataMax - 1 - srcDataTop);
                 } else {
-                    dstVarOffset = 0;
+                    dstDataOffset = 0;
                 }
 
-                dstVarSize = o3auxSize + dstVarOffset;
-                dstVarAddr = mapRW(ff, Math.abs(activeVarFd), dstVarSize, MemoryTag.MMAP_O3);
-                dstVarAdjust = 0;
+                dstDataSize = o3DataSize + dstDataOffset;
+                dstDataAddr = dstDataSize > 0 ? mapRW(ff, Math.abs(activeVarFd), dstDataSize, MemoryTag.MMAP_O3) : 0;
+                dstDataAdjust = 0;
             } else {
                 assert dstAuxMem.getAppendOffset() >= columnTypeDriver.getMinAuxVectorSize();
                 assert dstAuxMem.getAppendOffset() - columnTypeDriver.getMinAuxVectorSize() == columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
@@ -1274,19 +1274,19 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 // this formula is a derivative of:
                 // dstAuxMem.getAppendOffset() - columnTypeDriver.getMinAuxVectorSize() == columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
                 dstAuxAddr = dstAuxMem.getAppendAddress() - (dstAuxMem.getAppendOffset() - dstAuxFileOffset);
-                dstVarAddr = dstDataMem.getAppendAddress();
+                dstDataAddr = dstDataMem.getAppendAddress();
                 dstAuxOffset = 0;
                 dstAuxSize = -dstAuxSize;
-                dstVarOffset = 0;
-                dstVarSize = -o3auxSize;
-                dstVarAdjust = dstDataMem.getAppendOffset();
+                dstDataOffset = 0;
+                dstDataSize = -o3DataSize;
+                dstDataAdjust = dstDataMem.getAppendOffset();
             }
         } catch (Throwable e) {
             LOG.error().$("append var error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             O3Utils.unmapAndClose(ff, activeFixFd, dstAuxAddr, dstAuxSize);
-            O3Utils.unmapAndClose(ff, activeVarFd, dstVarAddr, dstVarSize);
+            O3Utils.unmapAndClose(ff, activeVarFd, dstDataAddr, dstDataSize);
             freeTimestampIndex(
                     columnCounter,
                     0,
@@ -1319,7 +1319,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 srcOooHi,
                 srcDataTop,
                 srcDataMax,
-                srcOooFixAddr,
+                srcOooAuxAddr,
                 srcOooVarAddr,
                 srcOooLo,
                 srcOooHi,
@@ -1334,10 +1334,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstAuxFileOffset,
                 dstAuxSize,
                 activeVarFd,
-                dstVarAddr,
-                dstVarOffset,
-                dstVarAdjust,
-                dstVarSize,
+                dstDataAddr,
+                dstDataOffset,
+                dstDataAdjust,
+                dstDataSize,
                 0,
                 0,
                 0,

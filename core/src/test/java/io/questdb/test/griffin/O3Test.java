@@ -3245,7 +3245,7 @@ public class O3Test extends AbstractO3Test {
         engine.ddl(
                 "create table x as (" +
                         "select" +
-                        " 1 as commit," +
+                        " 0 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3262,7 +3262,10 @@ public class O3Test extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_long256() l256," +
+                        " rnd_varchar(1, 30, 1) varc," +
+                        " rnd_varchar(1, 1, 0) varc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -3281,11 +3284,16 @@ public class O3Test extends AbstractO3Test {
         engine.ddl("alter table x add column v11 string", sqlExecutionContext);
         engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
         engine.ddl("alter table x add column v9 long", sqlExecutionContext);
+        engine.ddl("alter table x add column v13 long256", sqlExecutionContext);
+        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
+        engine.ddl("alter table x add column v15 varchar", sqlExecutionContext);
 
-        engine.insert(
-                "insert into x " +
+        engine.ddl("create table w as (select * from x)", sqlExecutionContext);
+
+        engine.ddl(
+                "create table append1 as (" +
                         "select" +
-                        " 2 as commit," +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3303,6 +3311,9 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_long256() l256," +
+                        " rnd_varchar(1, 30, 1) varc," +
+                        " rnd_varchar(1, 1, 0) varc2," +
                         // ---- new columns ----
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -3316,15 +3327,19 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
-                        " from long_sequence(1000)",
+                        " rnd_long() v9," +
+                        " rnd_long256() v13," +
+                        " rnd_varchar(1, 30, 1) v14," +
+                        " rnd_varchar(1, 1, 0) v15," +
+                        " from long_sequence(1000)" +
+                        ")",
                 sqlExecutionContext
         );
 
         engine.ddl(
-                "create table append as (" +
+                "create table append2 as (" +
                         "select" +
-                        " 3 as commit," +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3342,6 +3357,9 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_long256() l256," +
+                        " rnd_varchar(1, 30, 1) varc," +
+                        " rnd_varchar(1, 1, 0) varc2," +
                         // --------- new columns -----------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -3355,18 +3373,22 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
+                        " rnd_long() v9," +
+                        " rnd_long256() v13," +
+                        " rnd_varchar(1, 30, 1) v14," +
+                        " rnd_varchar(1, 1, 0) v15," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
+        engine.ddl("insert into x select * from append1", sqlExecutionContext);
         assertO3DataConsistencyStableSort(
                 engine,
                 compiler,
                 sqlExecutionContext,
-                "create table y as (x union all append)",
-                "insert into x select * from append"
+                "create table y as (w union all append1 union all append2)",
+                "insert into x select * from append2"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
