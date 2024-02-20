@@ -5041,7 +5041,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnTypeDriver.shiftCopyAuxVector(
                             colDataOffset - o3dataOffset,
                             // add one row to where we shift from
-                            colAuxMemAddr + alignedExtraLen + columnTypeDriver.getAuxVectorOffset(1),
+                            colAuxMemAddr + alignedExtraLen + columnTypeDriver.getAuxVectorSize(0),
                             0,
                             transientRowsAdded - 1, // inclusive
                             o3auxMem.addressOf(o3auxMemAppendOffset)
@@ -5070,9 +5070,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Linux requires the mmap offset to be page aligned
                     long alignedOffset = Files.floorPageSize(colDataOffset);
                     long alignedExtraLen = colDataOffset - alignedOffset;
-                    sourceAddress = mapRO(ff, colDataMem.getFd(), colDataExtraSize + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
-                    Vect.memcpy(o3dataAddr, sourceAddress + alignedExtraLen, colDataExtraSize);
-                    ff.munmap(sourceAddress, colDataExtraSize + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
+                    long size = colDataExtraSize + alignedExtraLen;
+                    if (size > 0) {
+                        sourceAddress = mapRO(ff, colDataMem.getFd(), size, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
+                        Vect.memcpy(o3dataAddr, sourceAddress + alignedExtraLen, colDataExtraSize);
+                        ff.munmap(sourceAddress, size, MemoryTag.MMAP_TABLE_WRITER);
+                    }
                 }
                 colDataMem.jumpTo(colDataOffset);
             } else {

@@ -6660,7 +6660,9 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
-                        " rnd_long256() l256" +
+                        " rnd_long256() l256," +
+                        " rnd_varchar(1, 1, 1) varc," +
+                        " rnd_varchar(1, 40, 1) varc2," +
                         " from long_sequence(1000)" +
                         ")",
                 sqlExecutionContext
@@ -6676,8 +6678,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        final String sqlTemplate = "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,ts,l,n,t,m from ";
-
+        final String sqlTemplate = "select * from ";
         printSqlResult(compiler, sqlExecutionContext, sqlTemplate + "y");
 
         String expected = Chars.toString(sink);
