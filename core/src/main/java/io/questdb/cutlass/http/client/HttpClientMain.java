@@ -40,7 +40,7 @@ public class HttpClientMain {
             for (int i = 0; i < 1; i++) {
                 HttpClient.Request req = client.newRequest("localhost", 9000);
                 try (
-                        HttpClient.ResponseHeaders rsp = req
+                        HttpClient.ResponseHeaders responseHeaders = req
                                 .GET()
                                 .url("/exec")
                                 //.query("query", "cpu%20limit%20400000")
@@ -51,23 +51,21 @@ public class HttpClientMain {
                                 .authBasic("vlad", "hello")
                                 .send()
                 ) {
-                    rsp.await();
+                    responseHeaders.await();
 
-                    if (rsp.isChunked()) {
-                        jsonToTableSerializer.clear();
+                    jsonToTableSerializer.clear();
 
-                        ChunkedResponse chunkedRsp = rsp.getChunkedResponse();
-                        Chunk chunk;
+                    Response response = responseHeaders.getResponse();
+                    Fragment fragment;
 
-                        long t = System.currentTimeMillis();
-                        int chunkCount = 0;
-                        while ((chunk = chunkedRsp.recv()) != null) {
-                            jsonToTableSerializer.parse(chunk.lo(), chunk.hi());
-                            chunkCount++;
-                        }
-                        System.out.println(System.currentTimeMillis() - t);
-                        System.out.println("done: " + i + ", chunks: " + chunkCount);
+                    long t = System.currentTimeMillis();
+                    int chunkCount = 0;
+                    while ((fragment = response.recv()) != null) {
+                        jsonToTableSerializer.parse(fragment.lo(), fragment.hi());
+                        chunkCount++;
                     }
+                    System.out.println(System.currentTimeMillis() - t);
+                    System.out.println("done: " + i + ", chunks: " + chunkCount);
                 }
             }
         }

@@ -24,12 +24,11 @@
 
 package io.questdb.cutlass.http.client;
 
-import io.questdb.std.Vect;
-
-public abstract class AbstractResponse implements Response {
+public abstract class AbstractResponse implements Response, Fragment {
     private final long bufHi;
     private final long bufLo;
     private final int defaultTimeout;
+    private long bytesReceived;
     private long contentLength;
     private long dataHi;
     private long dataLo;
@@ -45,7 +44,8 @@ public abstract class AbstractResponse implements Response {
         this.dataLo = lo;
         this.dataHi = hi;
         this.contentLength = contentLength;
-        this.receive = (hi - lo) < contentLength;
+        this.bytesReceived = 0;
+        this.receive = (lo == hi);
     }
 
     @Override
@@ -59,31 +59,27 @@ public abstract class AbstractResponse implements Response {
     }
 
     @Override
-    public void recv(int timeout) {
-        while (receive) {
-            compactBuffer();
-            dataHi += recvOrDie(dataHi, bufHi, timeout);
-            receive = (dataHi - dataLo) < contentLength;
+    public Fragment recv(int timeout) {
+        if (bytesReceived >= contentLength) {
+            return null;
         }
+        if (receive) {
+            dataLo = bufLo;
+            dataHi = bufLo;
+            int len = 0;
+            while (len == 0) {
+                len = recvOrDie(dataHi, bufHi, timeout);
+            }
+            dataHi += len;
+        }
+        bytesReceived += dataHi - dataLo;
+        receive = true;
+        return this;
     }
 
     @Override
-    public void recv() {
-        recv(defaultTimeout);
-    }
-
-    private void compactBuffer() {
-        // move unprocessed data to the front of the buffer
-        // to maximise
-        if (dataLo > bufLo) {
-            final long len = dataHi - dataLo;
-            assert len > -1;
-            if (len > 0) {
-                Vect.memmove(bufLo, dataLo, len);
-            }
-            dataLo = bufLo;
-            dataHi = bufLo + len;
-        }
+    public Fragment recv() {
+        return recv(defaultTimeout);
     }
 
     protected abstract int recvOrDie(long bufLo, long bufHi, int timeout);

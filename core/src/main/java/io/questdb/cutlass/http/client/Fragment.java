@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.http.client;
 
-public interface Chunk {
+public interface Fragment {
     long hi();
 
     long lo();
