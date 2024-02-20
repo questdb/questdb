@@ -417,7 +417,11 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT("cairo.wal.segment.rollover.row.count"),
     CAIRO_WAL_SEGMENT_ROLLOVER_SIZE("cairo.wal.segment.rollover.size"),
     CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.wal.writer.data.append.page.size"),
+
+    CAIRO_WAL_WRITER_EVENT_APPEND_PAGE_SIZE("cairo.wal.writer.event.append.page.size"),
     CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.wal.writer.data.append.page.size"),
+
+    CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE("cairo.system.wal.writer.event.append.page.size"),
     WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
     WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
     WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
@@ -490,13 +494,13 @@ public enum PropertyKey implements ConfigPropertyKey {
     }
 
     @Override
-    public boolean isSensitive() {
-        return sensitive;
+    public boolean isDebug() {
+        return debug;
     }
 
     @Override
-    public boolean isDebug() {
-        return debug;
+    public boolean isSensitive() {
+        return sensitive;
     }
 
     @Override

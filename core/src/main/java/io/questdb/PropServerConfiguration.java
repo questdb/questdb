@@ -323,6 +323,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int systemO3ColumnMemorySize;
     private final String systemTableNamePrefix;
     private final long systemWalWriterDataAppendPageSize;
+    private final long systemWalWriterEventAppendPageSize;
     private final long systemWriterDataAppendPageSize;
     private final boolean tableTypeConversionEnabled;
     private final TelemetryConfiguration telemetryConfiguration = new PropTelemetryConfiguration();
@@ -361,6 +362,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean walSupported;
     private final int walTxnNotificationQueueCapacity;
     private final long walWriterDataAppendPageSize;
+    private final long walWriterEventAppendPageSize;
     private final int walWriterPoolMaxSegments;
     private final long workStealTimeoutNanos;
     private final long writerAsyncCommandBusyWaitTimeout;
@@ -576,7 +578,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             throw CairoException.critical(0).put("cairo.wal.segment.rollover.size must be 0 (disabled) or >= 1024 (1KiB)");
         }
         this.walWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, Numbers.SIZE_1MB));
+        this.walWriterEventAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WAL_WRITER_EVENT_APPEND_PAGE_SIZE, 128 * 1024));
         this.systemWalWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 256 * 1024));
+        this.systemWalWriterEventAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE, 16 * 1024));
         this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, "20.0");
         this.walMaxLagTxnCount = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
         this.walMaxLagSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 75 * Numbers.SIZE_1MB);
@@ -2651,6 +2655,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSystemWalEventAppendPageSize() {
+            return systemWalWriterEventAppendPageSize;
+        }
+
+        @Override
         public long getTableRegistryAutoReloadFrequency() {
             return cairoTableRegistryAutoReloadFrequency;
         }
@@ -2707,6 +2716,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getWalEnabledDefault() {
             return walEnabledDefault;
+        }
+
+        @Override
+        public long getWalEventAppendPageSize() {
+            return walWriterEventAppendPageSize;
         }
 
         @Override

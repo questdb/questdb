@@ -837,6 +837,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSystemWalEventAppendPageSize() {
+        return 128 * 1024;
+    }
+
+    @Override
     public long getTableRegistryAutoReloadFrequency() {
         return 500;
     }
@@ -894,6 +899,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return false;
+    }
+
+    @Override
+    public long getWalEventAppendPageSize() {
+        return 64 * 1024;
     }
 
     @Override
