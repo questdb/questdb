@@ -833,7 +833,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSystemWalDataAppendPageSize() {
-        return 256 * 1024;
+        return 16 * 1024;
     }
 
     @Override
