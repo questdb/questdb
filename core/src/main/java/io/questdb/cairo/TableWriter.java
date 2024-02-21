@@ -5041,7 +5041,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnTypeDriver.shiftCopyAuxVector(
                             colDataOffset - o3dataOffset,
                             // add one row to where we shift from
-                            colAuxMemAddr + alignedExtraLen + columnTypeDriver.getAuxVectorSize(0),
+                            colAuxMemAddr + alignedExtraLen + columnTypeDriver.getMinAuxVectorSize(),
                             0,
                             transientRowsAdded - 1, // inclusive
                             o3auxMem.addressOf(o3auxMemAppendOffset)

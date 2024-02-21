@@ -199,9 +199,9 @@ public class CreateTableTestUtils {
 
     public static TableModel getAllTypesModel(CairoConfiguration configuration, int partitionBy) {
         return new TableModel(configuration, "all", partitionBy)
-                .col("int", ColumnType.INT)
-                .col("short", ColumnType.SHORT)
-                .col("byte", ColumnType.BYTE)
+                .col("int", ColumnType.INT) // 0
+                .col("short", ColumnType.SHORT) // 1
+                .col("byte", ColumnType.BYTE) // 2
                 .col("double", ColumnType.DOUBLE)
                 .col("float", ColumnType.FLOAT)
                 .col("long", ColumnType.LONG)
@@ -209,7 +209,8 @@ public class CreateTableTestUtils {
                 .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
                 .col("bool", ColumnType.BOOLEAN)
                 .col("bin", ColumnType.BINARY)
-                .col("date", ColumnType.DATE);
+                .col("date", ColumnType.DATE) // 10
+                .col("varchar", ColumnType.VARCHAR); // 11
     }
 
     public static TableModel getAllTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
