@@ -114,7 +114,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
@@ -123,7 +124,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     engine.ddl("alter table x add column k int", executionContext);
                     engine.ddl("alter table x add column sym symbol index ", executionContext);
                     engine.ddl("alter table x add column ks string", executionContext);
-                    engine.ddl("alter table x add column kv varchar", executionContext);
+                    engine.ddl("alter table x add column kv1 varchar", executionContext);
+                    engine.ddl("alter table x add column kv2 varchar", executionContext);
 
                     compiler.compile(
                             "create table y as (" +
@@ -131,12 +133,14 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
                                     " 1 as k," +
                                     " rnd_symbol(null,'5','16','2') as sym," +
                                     " rnd_str(5,16,2) as ks," +
-                                    " rnd_varchar(5,16,2) as kv" +
+                                    " rnd_varchar(5,16,2) as kv1," +
+                                    " rnd_varchar(1,1,1) as kv2," +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -147,12 +151,14 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-05T14:01:07', 60*1000000L) ts," +
                                     " 1 as k," +
                                     " rnd_symbol(null,'5','16','2') as sym," +
                                     " rnd_str(5,16,2) as ks," +
-                                    " rnd_varchar(5,16,2) as kv" +
+                                    " rnd_varchar(5,16,2) as kv1," +
+                                    " rnd_varchar(1,1,1) as kv2," +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -162,12 +168,15 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "i int," +
                                     "j long," +
                                     "str string," +
-                                    "v varchar," +
+                                    "v1 varchar," +
+                                    "v2 varchar," +
                                     "ts timestamp, " +
                                     "k int," +
                                     "sym symbol," +
                                     "ks string," +
-                                    "kv varchar)",
+                                    "kv1 varchar," +
+                                    "kv2 varchar" +
+                                    ")",
                             executionContext
                     );
 
@@ -340,7 +349,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
@@ -352,11 +362,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "i int," +
                                     "j long," +
                                     "str string," +
-                                    "v varchar," +
+                                    "v1 varchar," +
+                                    "v2 varchar," +
                                     "ts timestamp, " +
                                     "k int," +
                                     "ks string, " +
-                                    "kv varchar, " +
+                                    "kv1 varchar, " +
+                                    "kv2 varchar, " +
                                     "sym symbol" +
                                     ")",
                             executionContext
@@ -368,18 +380,20 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-05T14:01:07', 60*100000L) ts" +
                                     " from long_sequence(100))",
                             executionContext
                     );
-                    compiler.compile("insert into zz(i,j,str,v,ts) select i,j,str,v,ts from x", executionContext);
-                    compiler.compile("insert into zz(i,j,str,v,ts) select i,j,str,v,ts from z", executionContext);
-                    compiler.compile("insert into x(i,j,str,v,ts) select i,j,str,v,ts from z", executionContext);
+                    compiler.compile("insert into zz(i,j,str,v1,v2,ts) select i,j,str,v1,v2,ts from x", executionContext);
+                    compiler.compile("insert into zz(i,j,str,v1,v2,ts) select i,j,str,v1,v2,ts from z", executionContext);
+                    compiler.compile("insert into x(i,j,str,v1,v2,ts) select i,j,str,v1,v2,ts from z", executionContext);
 
                     engine.ddl("alter table x add column k int", executionContext);
                     engine.ddl("alter table x add column ks string", executionContext);
-                    engine.ddl("alter table x add column kv varchar", executionContext);
+                    engine.ddl("alter table x add column kv1 varchar", executionContext);
+                    engine.ddl("alter table x add column kv2 varchar", executionContext);
                     engine.ddl("alter table x add column sym symbol index ", executionContext);
 
                     compiler.compile(
@@ -388,11 +402,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-05T00:01:07', 60*100000L) ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
-                                    " rnd_varchar(5,16,2) as kv," +
+                                    " rnd_varchar(5,16,2) as kv1," +
+                                    " rnd_varchar(1,1,1) as kv2," +
                                     " rnd_symbol(null,'5','16','2') as sym" +
                                     " from long_sequence(1000))",
                             executionContext
@@ -425,7 +441,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2)" +
                                     ") timestamp (ts) partition by DAY",
@@ -438,7 +455,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
                                     " from long_sequence(50))",
                             executionContext
@@ -526,22 +544,33 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "select" +
                                     " cast(x as int) i," +
                                     " -x j," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2)" +
                                     ") timestamp (ts) partition by DAY",
                             executionContext
                     );
 
-                    engine.update("update x set v = v where ts >= '2020-02-04'", executionContext);
+                    engine.update("update x set v1 = v1 where ts >= '2020-02-04'", executionContext);
 
-                    LPSZ colVer = dFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v", -1);
-                    LOG.info().$("deleting ").$(colVer).$();
-                    Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer));
+                    LPSZ colVer1 = dFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v1", -1);
+                    LOG.info().$("deleting ").$(colVer1).$();
+                    Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer1));
 
-                    colVer = iFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v", -1);
-                    LOG.info().$("deleting ").$(colVer).$();
-                    Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer));
+                    colVer1 = iFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v1", -1);
+                    LOG.info().$("deleting ").$(colVer1).$();
+                    Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer1));
+
+                    engine.update("update x set v2 = v2 where ts >= '2020-02-04'", executionContext);
+
+                    LPSZ colVer2 = dFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v2", -1);
+                    LOG.info().$("deleting ").$(colVer2).$();
+                    Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer2));
+
+                    colVer2 = iFile(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(engine.verifyTableName("x")).concat("2020-02-04"), "v2", -1);
+                    LOG.info().$("deleting ").$(colVer2).$();
+                    Assert.assertTrue(Os.isWindows() || ff.removeQuiet(colVer2));
 
                     engine.releaseInactive();
 
@@ -550,7 +579,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
                                     " from long_sequence(50))",
                             executionContext
@@ -582,7 +612,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
@@ -595,7 +626,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts" +
                                     " from long_sequence(1000))",
                             executionContext
@@ -627,7 +659,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
@@ -635,7 +668,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     );
                     engine.ddl("alter table x add column k int", executionContext);
                     engine.ddl("alter table x add column ks string", executionContext);
-                    engine.ddl("alter table x add column kv varchar", executionContext);
+                    engine.ddl("alter table x add column kv1 varchar", executionContext);
+                    engine.ddl("alter table x add column kv2 varchar", executionContext);
 
                     compiler.compile(
                             "create table z as (" +
@@ -643,11 +677,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
-                                    " rnd_varchar(5,16,2) as kv" +
+                                    " rnd_varchar(5,16,2) as kv1," +
+                                    " rnd_varchar(1,1,1) as kv2," +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -673,7 +709,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
@@ -681,7 +718,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     );
                     engine.ddl("alter table x add column k int", executionContext);
                     engine.ddl("alter table x add column ks string", executionContext);
-                    engine.ddl("alter table x add column kv varchar", executionContext);
+                    engine.ddl("alter table x add column kv1 varchar", executionContext);
+                    engine.ddl("alter table x add column kv2 varchar", executionContext);
 
                     compiler.compile(
                             "create table y as (" +
@@ -689,11 +727,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-05T20:01:05', 60*1000000L) ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
-                                    " rnd_varchar(5,16,2) as kv" +
+                                    " rnd_varchar(5,16,2) as kv1," +
+                                    " rnd_varchar(1,1,1) as kv2," +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -704,11 +744,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-05T21:01:05.2', 60*1000000L) ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
-                                    " rnd_varchar(5,16,2) as kv" +
+                                    " rnd_varchar(5,16,2) as kv," +
+                                    " rnd_varchar(1,1,1) as kv2," +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -735,7 +777,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) i," +
                                     " -x j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
                                     " from long_sequence(60*24*2+300)" +
                                     ") timestamp (ts) partition by DAY",
@@ -743,7 +786,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     );
                     engine.ddl("alter table x add column k int", executionContext);
                     engine.ddl("alter table x add column ks string", executionContext);
-                    engine.ddl("alter table x add column kv varchar", executionContext);
+                    engine.ddl("alter table x add column kv1 varchar", executionContext);
+                    engine.ddl("alter table x add column kv2 varchar", executionContext);
 
                     compiler.compile(
                             "create table y as (" +
@@ -751,11 +795,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-05T20:01:05', 60*1000000L) ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
-                                    " rnd_varchar(5,16,2) as kv" +
+                                    " rnd_varchar(5,16,2) as kv1," +
+                                    " rnd_varchar(1,1,1) as kv2," +
                                     " from long_sequence(1000))",
                             executionContext
                     );
@@ -766,11 +812,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " cast(x as int) * 1000000 i," +
                                     " -x - 1000000L as j," +
                                     " rnd_str(5,16,2) as str," +
-                                    " rnd_varchar(5,16,2) as v," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
                                     " timestamp_sequence('2020-02-05T17:01:07', 60*1000000L) ts," +
                                     " 1 as k," +
                                     " rnd_str(5,16,2) as ks," +
-                                    " rnd_varchar(5,16,2) as kv" +
+                                    " rnd_varchar(5,16,2) as kv1," +
+                                    " rnd_varchar(1,1,1) as kv2," +
                                     " from long_sequence(1000))",
                             executionContext
                     );
