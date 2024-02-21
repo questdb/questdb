@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -232,7 +233,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
     @Override
     public void putLong256(long l0, long l1, long l2, long l3) {
-       mem.putLong256(l0, l1, l2, l3);
+        mem.putLong256(l0, l1, l2, l3);
     }
 
     @Override
@@ -269,6 +270,25 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     @Override
     public void putTimestamp(long value) {
         putLong(value);
+    }
+
+    @Override
+    public void putVarchar(Utf8Sequence value) {
+        if (value != null) {
+            mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
+            recordOffset += 8;
+            if (value.isAscii()) {
+                // ASCII flag is signaled with negative sign
+                mem.putInt(varAppendOffset, -value.size());
+            } else {
+                mem.putInt(varAppendOffset, value.size());
+            }
+            varAppendOffset += 4;
+            mem.putVarchar(varAppendOffset, value);
+            varAppendOffset += value.size();
+        } else {
+            putNull();
+        }
     }
 
     @Override
@@ -464,6 +484,30 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         @Override
         public CharSequence getSymB(int col) {
             return symbolTableResolver.getSymbolTable(col).valueBOf(getInt(col));
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            long offset = varWidthColumnOffset(col);
+            if (offset == -1) {
+                return null;
+            }
+            int sizeRaw = mem.getInt(offset);
+            int size = Math.abs(sizeRaw);
+            boolean ascii = sizeRaw < 0;
+            return mem.getVarcharA(offset + 4, size, ascii);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(int col) {
+            long offset = varWidthColumnOffset(col);
+            if (offset == -1) {
+                return null;
+            }
+            int sizeRaw = mem.getInt(offset);
+            int size = Math.abs(sizeRaw);
+            boolean ascii = sizeRaw < 0;
+            return mem.getVarcharB(offset + 4, size, ascii);
         }
 
         private long fixedWithColumnOffset(int index) {

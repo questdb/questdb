@@ -113,6 +113,7 @@ open module io.questdb {
     exports io.questdb.std.bytes;
     exports io.questdb.std.histogram.org.HdrHistogram.packedarray;
     exports io.questdb.client.impl;
+    exports io.questdb.griffin.engine.groupby.hyperloglog;
 
     provides FunctionFactory with
             // query activity functions
@@ -693,6 +694,13 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.CountDistinctIPv4GroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountDistinctIntGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountDistinctUuidGroupByFunctionFactory,
+//                  'approx_count_distinct' group by function
+            io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIntGroupByDefaultFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByDefaultFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByDefaultFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByFunctionFactory,
             //      'haversine_dist_degree' group by function
             io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory,
             //      'approx_percentile' group by function

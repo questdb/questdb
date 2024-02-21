@@ -29,6 +29,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public class UnionRecord extends AbstractUnionRecord {
 
@@ -242,6 +243,24 @@ public class UnionRecord extends AbstractUnionRecord {
             return recordA.getTimestamp(col);
         }
         return recordB.getTimestamp(col);
+    }
+
+    @Override
+    public void getVarchar(int col, Utf8Sink utf8Sink) {
+        if (useA) {
+            recordA.getVarchar(col, utf8Sink);
+        } else {
+            recordB.getVarchar(col, utf8Sink);
+        }
+    }
+
+    @Override
+    public void getVarchar(int col, Utf16Sink utf16sink) {
+        if (useA) {
+            recordA.getVarchar(col, utf16sink);
+        } else {
+            recordB.getVarchar(col, utf16sink);
+        }
     }
 
     @Override

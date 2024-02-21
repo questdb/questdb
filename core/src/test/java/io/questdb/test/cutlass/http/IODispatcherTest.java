@@ -8227,8 +8227,8 @@ public class IODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run(engine -> {
-                    StringSink expected = new StringSink();
-                    StringSink actual = new StringSink();
+                    Utf8StringSink expected = new Utf8StringSink();
+                    Utf8StringSink actual = new Utf8StringSink();
                     final TestCases testCases = new TestCases();
 
                     // create tables
