@@ -393,7 +393,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(120_000, configuration.getCairoConfiguration().getInactiveWalWriterTTL());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getWalTxnNotificationQueueCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isWalSupported());
-        Assert.assertFalse(configuration.getCairoConfiguration().getWalEnabledDefault());
+        Assert.assertTrue(configuration.getCairoConfiguration().getWalEnabledDefault());
         Assert.assertTrue(configuration.getCairoConfiguration().isWalApplyEnabled());
         Assert.assertTrue(configuration.getWalApplyPoolConfiguration().isEnabled());
         Assert.assertFalse(configuration.getWalApplyPoolConfiguration().haltOnError());
@@ -1388,7 +1388,6 @@ public class PropServerConfigurationTest {
     public void testMinimum4SharedWorkers() throws Exception {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-        FilesFacade ff = configuration.getCairoConfiguration().getFilesFacade();
         Assert.assertEquals("shared", configuration.getWorkerPoolConfiguration().getPoolName());
         Assert.assertTrue("must be minimum of 4 shared workers", configuration.getWorkerPoolConfiguration().getWorkerCount() >= 4);
     }

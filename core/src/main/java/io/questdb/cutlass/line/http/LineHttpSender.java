@@ -243,10 +243,10 @@ public final class LineHttpSender implements Sender {
         if (!response.isChunked()) {
             return;
         }
-        ChunkedResponse chunkedRsp = response.getChunkedResponse();
-        Chunk chunk;
-        while ((chunk = chunkedRsp.recv()) != null) {
-            sink.putUtf8(chunk.lo(), chunk.hi());
+        Response chunkedRsp = response.getResponse();
+        Fragment fragment;
+        while ((fragment = chunkedRsp.recv()) != null) {
+            sink.putUtf8(fragment.lo(), fragment.hi());
         }
     }
 
@@ -285,9 +285,9 @@ public final class LineHttpSender implements Sender {
         if (!response.isChunked()) {
             return;
         }
-        ChunkedResponse chunkedRsp = response.getChunkedResponse();
+        Response chunkedRsp = response.getResponse();
         while ((chunkedRsp.recv()) != null) {
-            // we don't care about the response, just consume it so it won't stay in the socket receive buffer
+            // we don't care about the response, just consume it, so it won't stay in the socket receive buffer
         }
     }
 
@@ -449,7 +449,7 @@ public final class LineHttpSender implements Sender {
                 jsonErrorParser = new JsonErrorParser();
             }
             jsonErrorParser.reset();
-            LineSenderException ex = jsonErrorParser.toException(response.getChunkedResponse(), statusCode);
+            LineSenderException ex = jsonErrorParser.toException(response.getResponse(), statusCode);
             client.disconnect();
             throw ex;
         }
@@ -618,19 +618,19 @@ public final class LineHttpSender implements Sender {
             jsonSink.clear();
         }
 
-        LineSenderException toException(ChunkedResponse chunkedRsp, DirectUtf8Sequence httpStatus) {
-            Chunk chunk;
+        LineSenderException toException(Response chunkedRsp, DirectUtf8Sequence httpStatus) {
+            Fragment fragment;
             LineSenderException exception = new LineSenderException("Could not flush buffer: ");
-            while ((chunk = chunkedRsp.recv()) != null) {
+            while ((fragment = chunkedRsp.recv()) != null) {
                 try {
-                    jsonSink.putUtf8(chunk.lo(), chunk.hi());
-                    lexer.parse(chunk.lo(), chunk.hi(), this);
+                    jsonSink.putUtf8(fragment.lo(), fragment.hi());
+                    lexer.parse(fragment.lo(), fragment.hi(), this);
                 } catch (JsonException e) {
                     // we failed to parse JSON, but we still want to show the error message.
                     // if we cannot parse it then we show the whole response as is.
                     // let's make sure we have the whole message - there might be more chunks
-                    while ((chunk = chunkedRsp.recv()) != null) {
-                        jsonSink.putUtf8(chunk.lo(), chunk.hi());
+                    while ((fragment = chunkedRsp.recv()) != null) {
+                        jsonSink.putUtf8(fragment.lo(), fragment.hi());
                     }
                     exception.put(jsonSink).put(" [http-status=").put(httpStatus.asAsciiCharSequence()).put(']');
                     reset();
