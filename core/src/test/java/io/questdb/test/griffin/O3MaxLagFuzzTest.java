@@ -96,7 +96,8 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
                 " rnd_char() t," +
-                " rnd_varchar(6, 16, 2) v" +
+                " rnd_varchar(6, 16, 2) v1," +
+                " rnd_varchar(1, 1, 1) v2," +
                 " from long_sequence(" + nTotalRows + ")" +
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
@@ -199,7 +200,8 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
                 " rnd_char() t," +
-                " rnd_varchar(5, 16, 2) v" +
+                " rnd_varchar(5, 16, 2) v1," +
+                " rnd_varchar(1, 1, 1) v2," +
                 " from long_sequence(" + nTotalRows + ")" +
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
