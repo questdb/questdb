@@ -272,8 +272,10 @@ class WalWriterEvents implements Closeable {
                 ff,
                 path.trimTo(pathLen).concat(EVENT_FILE_NAME).$(),
                 systemTable ? configuration.getSystemWalEventAppendPageSize() : configuration.getWalEventAppendPageSize(),
+                -1,
                 MemoryTag.MMAP_TABLE_WAL_WRITER,
-                CairoConfiguration.O_NONE
+                CairoConfiguration.O_NONE,
+                Files.POSIX_MADV_RANDOM
         );
         indexFd = ff.openRW(path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), CairoConfiguration.O_NONE);
         longBuffer = Unsafe.malloc(Long.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
