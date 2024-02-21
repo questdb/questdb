@@ -137,23 +137,23 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                     }
                 }
 
-                long dstAuxOffset = columnTypeDriver.getAuxVectorOffset(appendOffsetRowCount);
+                final long dstAuxOffset = columnTypeDriver.getAuxVectorOffset(appendOffsetRowCount);
                 TableUtils.allocateDiskSpaceToPage(ff, auxFd, dstAuxOffset + srcAuxMemSize);
-                long fixAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, dstAuxOffset, srcAuxMemSize, true, MEMORY_TAG);
+                final long dstAuxAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, dstAuxOffset, srcAuxMemSize, true, MEMORY_TAG);
                 try {
                     columnTypeDriver.shiftCopyAuxVector(
                             srcDataOffset - targetDataOffset,
                             srcAuxMemAddr,
                             0,
                             sourceHi - 1, // inclusive
-                            fixAddr
+                            dstAuxAddr
                     );
 
                     if (commitMode != CommitMode.NOSYNC) {
-                        TableUtils.msync(ff, fixAddr, srcAuxMemSize, commitMode == CommitMode.ASYNC);
+                        TableUtils.msync(ff, dstAuxAddr, srcAuxMemSize, commitMode == CommitMode.ASYNC);
                     }
                 } finally {
-                    TableUtils.mapAppendColumnBufferRelease(ff, fixAddr, dstAuxOffset, srcAuxMemSize, MEMORY_TAG);
+                    TableUtils.mapAppendColumnBufferRelease(ff, dstAuxAddr, dstAuxOffset, srcAuxMemSize, MEMORY_TAG);
                 }
 
                 this.appendOffsetRowCount = appendOffsetRowCount + (sourceHi - sourceLo);
@@ -196,13 +196,13 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
 
             // Set pointers to nulls
             long srcAuxSize = columnTypeDriver.getAuxVectorSize(sourceColumnTop);
-            long srcAuxOffset = columnTypeDriver.getAuxVectorOffset(rowCount + 1);
+            long srcAuxOffset = columnTypeDriver.getAuxVectorSize(rowCount);
             TableUtils.allocateDiskSpaceToPage(ff, auxFd, srcAuxOffset + srcAuxSize);
             long targetAuxMemAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, srcAuxOffset, srcAuxSize, true, MEMORY_TAG);
             try {
                 columnTypeDriver.setColumnRefs(
                         targetAuxMemAddr,
-                        targetDataOffset + columnTypeDriver.getAuxVectorOffset(1),
+                        targetDataOffset,
                         sourceColumnTop
                 );
                 if (commitMode != CommitMode.NOSYNC) {
