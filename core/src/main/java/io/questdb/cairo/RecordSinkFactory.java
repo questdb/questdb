@@ -97,6 +97,7 @@ public class RecordSinkFactory {
         final int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         final int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
         final int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
+        final int rGetVarchar = asm.poolInterfaceMethod(Record.class, "getVarcharA", "(I)Lio/questdb/std/str/Utf8Sequence;");
         final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
@@ -120,6 +121,7 @@ public class RecordSinkFactory {
         final int fGetFloat = asm.poolInterfaceMethod(Function.class, "getFloat", "(Lio/questdb/cairo/sql/Record;)F");
         final int fGetDouble = asm.poolInterfaceMethod(Function.class, "getDouble", "(Lio/questdb/cairo/sql/Record;)D");
         final int fGetStr = asm.poolInterfaceMethod(Function.class, "getStr", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
+        final int fGetVarchar = asm.poolInterfaceMethod(Function.class, "getVarchar", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/str/Utf8Sequence;");
         final int fGetSym = asm.poolInterfaceMethod(Function.class, "getSymbol", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
         final int fGetBin = asm.poolInterfaceMethod(Function.class, "getBin", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/BinarySequence;");
         final int fGetRecord = asm.poolInterfaceMethod(Function.class, "getRecord", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/sql/Record;");
@@ -136,6 +138,7 @@ public class RecordSinkFactory {
         final int wPutFloat = asm.poolInterfaceMethod(RecordSinkSPI.class, "putFloat", "(F)V");
         final int wPutDouble = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDouble", "(D)V");
         final int wPutStr = asm.poolInterfaceMethod(RecordSinkSPI.class, "putStr", "(Ljava/lang/CharSequence;)V");
+        final int wPutVarchar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putVarchar", "(Lio/questdb/std/str/Utf8Sequence;)V");
         final int wPutDate = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDate", "(J)V");
         final int wPutTimestamp = asm.poolInterfaceMethod(RecordSinkSPI.class, "putTimestamp", "(J)V");
         final int wPutBin = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBin", "(Lio/questdb/std/BinarySequence;)V");
@@ -291,6 +294,13 @@ public class RecordSinkFactory {
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetStr, 1);
                     asm.invokeInterface(wPutStr, 1);
+                    break;
+                case ColumnType.VARCHAR:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    asm.invokeInterface(rGetVarchar, 1);
+                    asm.invokeInterface(wPutVarchar, 1);
                     break;
                 case ColumnType.BINARY:
                     asm.aload(2);
@@ -481,6 +491,14 @@ public class RecordSinkFactory {
                     asm.aload(1);
                     asm.invokeInterface(fGetStr, 1);
                     asm.invokeInterface(wPutStr, 1);
+                    break;
+                case ColumnType.VARCHAR:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetVarchar, 1);
+                    asm.invokeInterface(wPutVarchar, 1);
                     break;
                 case ColumnType.BINARY:
                     asm.aload(2);

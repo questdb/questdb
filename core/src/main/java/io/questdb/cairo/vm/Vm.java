@@ -138,7 +138,6 @@ public class Vm {
         if (s == null) {
             return STRING_LENGTH_BYTES;
         }
-
         return STRING_LENGTH_BYTES + s.length() * 2;
     }
 

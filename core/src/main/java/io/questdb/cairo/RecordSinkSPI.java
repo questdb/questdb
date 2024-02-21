@@ -27,8 +27,10 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.str.Utf8Sequence;
 
 public interface RecordSinkSPI {
+
     void putBin(BinarySequence value);
 
     void putBool(boolean value);
@@ -53,6 +55,8 @@ public interface RecordSinkSPI {
 
     void putLong256(long l0, long l1, long l2, long l3);
 
+    // Used in RecordSinkFactory
+    @SuppressWarnings("unused")
     void putRecord(Record value);
 
     void putShort(short value);
@@ -70,6 +74,8 @@ public interface RecordSinkSPI {
     }
 
     void putTimestamp(long value);
+
+    void putVarchar(Utf8Sequence value);
 
     void skip(int bytes);
 }

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -711,6 +712,11 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public void putVarchar(Utf8Sequence value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void skip(int bytes) {
             appendAddress += bytes;
         }
@@ -1017,6 +1023,12 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void putTimestamp(long value) {
             putLong(value);
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
+            // TODO(puzpuzpuz)
+            throw new UnsupportedOperationException();
         }
 
         @Override

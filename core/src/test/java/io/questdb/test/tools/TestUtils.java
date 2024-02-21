@@ -375,6 +375,22 @@ public final class TestUtils {
     }
 
     public static void assertEquals(Utf8Sequence expected, Utf8Sequence actual) {
+        if (expected == null && actual == null) {
+            return;
+        }
+
+        if (expected != null && actual == null) {
+            Assert.fail("Expected: \n`" + expected + "`but have NULL");
+        }
+
+        if (expected == null) {
+            Assert.fail("Expected: NULL but have \n`" + actual + "`\n");
+        }
+
+        if (expected.size() != actual.size()) {
+            Assert.assertEquals(expected, actual);
+        }
+
         StringSink sink = getTlSink();
         Utf8s.utf8ToUtf16(expected, sink);
         String expectedStr = sink.toString();
