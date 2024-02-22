@@ -63,7 +63,6 @@ public class WalWriter implements TableWriterAPI {
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
     private final CairoConfiguration configuration;
-    private final long dataAppendPageSize;
     private final DdlListener ddlListener;
     private final WalWriterEvents events;
     private final FilesFacade ff;
@@ -133,11 +132,6 @@ public class WalWriter implements TableWriterAPI {
         this.metrics = metrics;
         this.open = true;
         this.symbolMapMem = Vm.getMARInstance(configuration.getCommitMode());
-        if (tableToken.isSystem()) {
-            this.dataAppendPageSize = configuration.getSystemWalDataAppendPageSize();
-        } else {
-            this.dataAppendPageSize = configuration.getWalDataAppendPageSize();
-        }
 
         try {
             lockWal();
@@ -155,7 +149,7 @@ public class WalWriter implements TableWriterAPI {
             initialSymbolCounts = new AtomicIntList(columnCount);
             localSymbolIds = new IntList(columnCount);
 
-            events = new WalWriterEvents(ff);
+            events = new WalWriterEvents(configuration);
             events.of(symbolMaps, initialSymbolCounts, symbolMapNullFlags);
 
             configureColumns();
@@ -1169,6 +1163,10 @@ public class WalWriter implements TableWriterAPI {
         path.trimTo(walDirLength);
     }
 
+    private long getDataAppendPageSize() {
+        return tableToken.isSystem() ? configuration.getSystemWalDataAppendPageSize() : configuration.getWalDataAppendPageSize();
+    }
+
     private void openColumnFiles(CharSequence columnName, int columnType, int columnIndex, int pathTrimToLen) {
         try {
             final MemoryMA dataMem = getDataColumn(columnIndex);
@@ -1176,7 +1174,7 @@ public class WalWriter implements TableWriterAPI {
             dataMem.of(
                     ff,
                     dFile(path.trimTo(pathTrimToLen), columnName),
-                    dataAppendPageSize,
+                    getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
                     configuration.getWriterFileOpenOpts(),
@@ -1191,7 +1189,7 @@ public class WalWriter implements TableWriterAPI {
                         ff,
                         auxMem,
                         iFile(path.trimTo(pathTrimToLen), columnName),
-                        dataAppendPageSize,
+                        getDataAppendPageSize(),
                         MemoryTag.MMAP_TABLE_WRITER,
                         configuration.getWriterFileOpenOpts(),
                         Files.POSIX_MADV_RANDOM
@@ -1242,7 +1240,7 @@ public class WalWriter implements TableWriterAPI {
 
             segmentRowCount = 0;
             metadata.switchTo(path, segmentPathLen, isTruncateFilesOnClose());
-            events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose());
+            events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose(), tableToken.isSystem());
             if (commitMode != CommitMode.NOSYNC) {
                 events.sync();
             }
@@ -1394,7 +1392,7 @@ public class WalWriter implements TableWriterAPI {
             events.rollback();
         }
         path.trimTo(rootLen).slash().put(newSegmentId);
-        events.openEventFile(path, path.size(), isTruncateFilesOnClose());
+        events.openEventFile(path, path.size(), isTruncateFilesOnClose(), tableToken.isSystem());
         if (isCommittingData) {
             // When current transaction is not a data transaction but a column add transaction
             // there is no need to add a record about it to the new segment event file.

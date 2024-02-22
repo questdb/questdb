@@ -8780,45 +8780,45 @@ public class IODispatcherTest extends AbstractTest {
                                     long start = System.currentTimeMillis();
 
                                     //wait until query appears in registry and get query id
-                                    try {
-                                        while (true) {
-                                            Os.sleep(1);
-                                            testHttpClient.assertGetRegexp(
-                                                    "/query",
-                                                    ".*dataset.*",
-                                                    "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
-                                                    null, null, null,
-                                                    new CharSequenceObjHashMap<String>() {{
-                                                        put("nm", "true");
-                                                    }},
-                                                    "200"
-                                            );
-                                            String response = testHttpClient.getSink().toString();
-                                            int startIdx = response.indexOf("\"dataset\":[[");
-                                            if (startIdx > -1) {
-                                                startIdx += "\"dataset\":[[".length();
-                                                int endIdx = response.indexOf("]]", startIdx);
-                                                queryId = Numbers.parseLong(response, startIdx, endIdx);
-                                                break;
-                                            }
-                                            if (System.currentTimeMillis() - start > TIMEOUT) {
-                                                throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
-                                            }
-                                            if (queryError.get() != null) {
-                                                throw new RuntimeException("Query to cancel failed!", queryError.get());
-                                            }
+                                    while (true) {
+                                        Os.sleep(1);
+                                        testHttpClient.assertGetRegexp(
+                                                "/query",
+                                                ".*dataset.*",
+                                                "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
+                                                null, null, null,
+                                                new CharSequenceObjHashMap<String>() {{
+                                                    put("nm", "true");
+                                                }},
+                                                "200"
+                                        );
+                                        String response = testHttpClient.getSink().toString();
+                                        int startIdx = response.indexOf("\"dataset\":[[");
+                                        if (startIdx > -1) {
+                                            startIdx += "\"dataset\":[[".length();
+                                            int endIdx = response.indexOf("]]", startIdx);
+                                            queryId = Numbers.parseLong(response, startIdx, endIdx);
+                                            break;
                                         }
+                                        if (System.currentTimeMillis() - start > TIMEOUT) {
+                                            throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                        }
+                                        if (queryError.get() != null) {
+                                            throw new RuntimeException("Query to cancel failed!", queryError.get());
+                                        }
+                                    }
+
+                                    try {
+                                        testHttpClient.assertGetRegexp(
+                                                "/query",
+                                                ".*(query to cancel not found in registry|\"ddl\":\"OK\").*",
+                                                "cancel query " + queryId,
+                                                null, null,
+                                                "200"
+                                        );
                                     } finally {
                                         registryListener.queryFound.countDown();
                                     }
-
-                                    testHttpClient.assertGetRegexp(
-                                            "/query",
-                                            ".*(query to cancel not found in registry|\"ddl\":\"OK\").*",
-                                            "cancel query " + queryId,
-                                            null, null,
-                                            "200"
-                                    );
 
                                     start = System.currentTimeMillis();
 
