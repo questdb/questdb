@@ -120,7 +120,12 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
         long result = Unsafe.getUnsafe().getLong(auxMemAddr + (row << LEGACY_VAR_SIZE_AUX_SHL));
-        assert (row == 0 && result == 0) || result > 0;
+
+        // It's tempting to assert as the line bellow.
+        //        assert (row == 0 && result == 0) || result > 0;
+        // However, we can't do that, because the partition attach/detach mechanism has to be able to gracefully
+        // recover from attempts to attach damaged partition data. Throwing AssertError makes it impossible,
+        // unless we want to catch AssertError in the partition attach code.
         return result;
     }
 

@@ -2622,26 +2622,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long columnNameTxn,
             Path partitionPath,
             long partitionTimestamp,
-            int columnIndex
-    ) throws CairoException {
+            int columnIndex,
+            int columnType) throws CairoException {
         long columnSize = partitionSize - columnTop;
         if (columnSize == 0) {
             return;
         }
 
         int pathLen = partitionPath.size();
-        TableUtils.dFile(partitionPath, columnName, columnNameTxn);
-        long dataLength = ff.length(partitionPath.$());
-
-        if (dataLength > 0) {
-            partitionPath.trimTo(pathLen);
-            TableUtils.iFile(partitionPath, columnName, columnNameTxn);
-
-            int typeSize = Long.BYTES;
+        TableUtils.iFile(partitionPath, columnName, columnNameTxn);
+        long indexLength = ff.length(partitionPath.$());
+        if (indexLength > 0) {
             int indexFd = openRO(ff, partitionPath, LOG);
             try {
                 long fileSize = ff.length(indexFd);
-                long expectedFileSize = (columnSize + 1) * typeSize;
+                ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                long expectedFileSize = driver.getAuxVectorSize(columnSize);
                 if (fileSize < expectedFileSize) {
                     throw CairoException.critical(0)
                             .put("Column file is too small. ")
@@ -2656,12 +2652,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long mappedAddr = mapRO(ff, indexFd, expectedFileSize, MemoryTag.MMAP_DEFAULT);
                 try {
+                    partitionPath.trimTo(pathLen);
+                    TableUtils.dFile(partitionPath, columnName, columnNameTxn);
+                    long dataLength = ff.length(partitionPath.$());
                     long prevDataAddress = dataLength;
-                    for (long offset = columnSize * typeSize; offset >= 0; offset -= typeSize) {
-                        long dataAddress = Unsafe.getUnsafe().getLong(mappedAddr + offset);
+                    for (long row = columnSize - 1; row >= 0; row--) {
+                        long dataAddress = driver.getDataVectorOffset(mappedAddr, row);
                         if (dataAddress < 0 || dataAddress > dataLength) {
                             throw CairoException.critical(0).put("Variable size column has invalid data address value [path=").put(path)
-                                    .put(", indexOffset=").put(offset)
+                                    .put(", row=").put(row)
                                     .put(", dataAddress=").put(dataAddress)
                                     .put(", dataFileSize=").put(dataLength)
                                     .put(']');
@@ -2670,7 +2669,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Check that addresses are monotonic
                         if (dataAddress > prevDataAddress) {
                             throw CairoException.critical(0).put("Variable size column has invalid data address value [path=").put(partitionPath)
-                                    .put(", indexOffset=").put(offset)
+                                    .put(", row=").put(row)
                                     .put(", dataAddress=").put(dataAddress)
                                     .put(", prevDataAddress=").put(prevDataAddress)
                                     .put(", dataFileSize=").put(dataLength)
@@ -2912,9 +2911,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         case ColumnType.IPv4:
                             attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
                             break;
+                        case ColumnType.VARCHAR:
                         case ColumnType.STRING:
                         case ColumnType.BINARY:
-                            attachPartitionCheckFilesMatchVarLenColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
+                            attachPartitionCheckFilesMatchVarLenColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex, columnType);
                             break;
                         case ColumnType.SYMBOL:
                             attachPartitionCheckSymbolColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);

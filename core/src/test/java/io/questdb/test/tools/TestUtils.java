@@ -26,7 +26,6 @@ package io.questdb.test.tools;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -939,6 +938,9 @@ public final class TestUtils {
                 case ColumnType.STRING:
                     sql.append("CAST(x as STRING) ").append(colName);
                     break;
+                case ColumnType.VARCHAR:
+                    sql.append("CAST(x as VARCHAR) ").append(colName);
+                    break;
                 case ColumnType.LONG:
                     sql.append("x ").append(colName);
                     break;
@@ -1269,6 +1271,9 @@ public final class TestUtils {
                     break;
                 case ColumnType.STRING:
                     insertFromSelect.append("CAST(x as STRING) ").append(colName);
+                    break;
+                case ColumnType.VARCHAR:
+                    insertFromSelect.append("CAST(x as VARCHAR) ").append(colName);
                     break;
                 case ColumnType.LONG:
                     insertFromSelect.append("x ").append(colName);

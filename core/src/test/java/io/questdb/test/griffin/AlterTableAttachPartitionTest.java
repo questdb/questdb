@@ -529,6 +529,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         assertSchemaMatch(dst -> dst.col("byt", ColumnType.BYTE), idx++);
         assertSchemaMatch(dst -> dst.col("ch", ColumnType.CHAR), idx++);
         assertSchemaMatch(dst -> dst.col("sh", ColumnType.SHORT), idx);
+        assertSchemaMatch(dst -> dst.col("vch", ColumnType.VARCHAR), idx);
     }
 
     @Test
@@ -1055,6 +1056,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         src.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .col("str", ColumnType.STRING)
+                                .col("vch", ColumnType.VARCHAR)
                                 .timestamp("ts"),
                         partitionRowCount,
                         "2020-01-09",
@@ -1065,6 +1067,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         dst.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .col("str", ColumnType.STRING)
+                                .col("vch", ColumnType.VARCHAR)
                                 .timestamp("ts"),
                         partitionRowCount - 3,
                         "2020-01-09",
@@ -1087,19 +1090,19 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     Assert.assertTrue(dstReader.reload());
                     try (TableReader srcReader = getReader(src.getTableName())) {
                         String expected =
-                                "l\ti\tstr\tts\n" +
-                                        "1\t1\t1\t2020-01-09T09:35:59.800000Z\n" +
-                                        "2\t2\t2\t2020-01-09T19:11:59.600000Z\n" +
-                                        "3\t3\t3\t2020-01-10T04:47:59.400000Z\n" +
-                                        "4\t4\t4\t2020-01-10T14:23:59.200000Z\n" +
-                                        "5\t5\t5\t2020-01-10T23:59:59.000000Z\n";
+                                "l\ti\tstr\tvch\tts\n" +
+                                        "1\t1\t1\t1\t2020-01-09T09:35:59.800000Z\n" +
+                                        "2\t2\t2\t2\t2020-01-09T19:11:59.600000Z\n" +
+                                        "3\t3\t3\t3\t2020-01-10T04:47:59.400000Z\n" +
+                                        "4\t4\t4\t4\t2020-01-10T14:23:59.200000Z\n" +
+                                        "5\t5\t5\t5\t2020-01-10T23:59:59.000000Z\n";
                         assertCursor(expected, srcReader.getCursor(), srcReader.getMetadata(), true);
 
                         // Check that first 2 lines of partition 2020-01-09 match for src and dst tables
-                        assertCursor("l\ti\tstr\tts\n" +
-                                        "1\t1\t1\t2020-01-09T09:35:59.800000Z\n" +
-                                        "2\t2\t2\t2020-01-09T19:11:59.600000Z\n" +
-                                        "2\t2\t2\t2020-01-10T23:59:59.000000Z\n",
+                        assertCursor("l\ti\tstr\tvch\tts\n" +
+                                        "1\t1\t1\t1\t2020-01-09T09:35:59.800000Z\n" +
+                                        "2\t2\t2\t2\t2020-01-09T19:11:59.600000Z\n" +
+                                        "2\t2\t2\t2\t2020-01-10T23:59:59.000000Z\n",
                                 dstReader.getCursor(),
                                 dstReader.getMetadata(),
                                 true);
