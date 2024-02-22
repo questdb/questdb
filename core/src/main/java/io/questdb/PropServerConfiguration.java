@@ -626,10 +626,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
         int cpuSpare = 0;
-        if (cpuAvailable > 32) {
-            cpuSpare = 2;
+        int cpuIoWorkers = 0;
+        int cpuWalApplyWorkers = 2;
+
+        if (cpuAvailable > 8) {
+            cpuWalApplyWorkers = 3;
         } else if (cpuAvailable > 16) {
+            cpuWalApplyWorkers = 4;
             cpuSpare = 1;
+            // tested on 4/32/48 core servers
+            cpuIoWorkers = cpuAvailable / 2;
+        } else if (cpuAvailable > 32) {
+            cpuWalApplyWorkers = 4;
+            cpuSpare = 2;
+            // tested on 4/32/48 core servers
+            cpuIoWorkers = cpuAvailable / 2;
         }
 
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
@@ -873,13 +884,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.forceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
             }
 
-            int walApplyWorkers = 2;
-            if (cpuAvailable > 16) {
-                walApplyWorkers = 4;
-            } else if (cpuAvailable > 8) {
-                walApplyWorkers = 3;
-            }
-            this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, walApplyWorkers);
+            this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, cpuWalApplyWorkers);
             this.walApplyWorkerAffinity = getAffinity(properties, env, PropertyKey.WAL_APPLY_WORKER_AFFINITY, walApplyWorkerCount);
             this.walApplyWorkerHaltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
             this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10_000);
@@ -1159,9 +1164,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpWriterWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD, 10);
                 this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD, 10_000);
                 this.symbolCacheWaitUsBeforeReload = getLong(properties, env, PropertyKey.LINE_TCP_SYMBOL_CACHE_WAIT_US_BEFORE_RELOAD, 500_000);
-
-                // tested on 4/32/48 core servers
-                this.lineTcpIOWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_IO_WORKER_COUNT, cpuAvailable > 16 ? cpuAvailable / 2 : cpuAvailable);
+                this.lineTcpIOWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_IO_WORKER_COUNT, cpuIoWorkers);
                 this.lineTcpIOWorkerAffinity = getAffinity(properties, env, PropertyKey.LINE_TCP_IO_WORKER_AFFINITY, lineTcpIOWorkerCount);
                 this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_IO_HALT_ON_ERROR, false);
                 this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_IO_WORKER_YIELD_THRESHOLD, 10);
@@ -1216,7 +1219,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
             this.ilpAutoCreateNewTables = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_TABLES, true);
-
             this.sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(4, cpuAvailable - cpuSpare - cpuUsed));
             this.sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.SHARED_WORKER_AFFINITY, sharedWorkerCount);
             this.sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
