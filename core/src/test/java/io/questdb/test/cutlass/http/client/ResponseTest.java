@@ -26,55 +26,72 @@ package io.questdb.test.cutlass.http.client;
 
 
 import io.questdb.cutlass.http.client.AbstractResponse;
+import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ResponseTest {
 
     @Test
     public void testNoSplit() {
-        String[] fragments = {
+        String[] expectedFragments = {
                 "abcdefghjklzxnmd0123456789"
         };
-        assertResponse("abcdefghjklzxnmd0123456789", fragments);
+        String[] actualFragments = {
+                "abcdefghjklzxnmd0123456789"
+        };
+        assertResponse(expectedFragments, actualFragments);
     }
 
     @Test
     public void testSplit1() {
-        String[] fragments = {
+        String[] expectedFragments = {
                 "abcdefghjklzxnmd",
                 "0123456789"
         };
-        assertResponse("abcdefghjklzxnmd0123456789", fragments);
+        String[] actualFragments = {
+                "abcdefghjklzxnmd",
+                "0123456789"
+        };
+        assertResponse(expectedFragments, actualFragments);
     }
 
     @Test
     public void testSplit2() {
-        String[] fragments = {
+        String[] expectedFragments = {
+                "abcdefghjklzxnmd0123456789"
+        };
+        String[] actualFragments = {
                 "",
                 "",
                 "",
                 "",
                 "abcdefghjklzxnmd0123456789"
         };
-        assertResponse("abcdefghjklzxnmd0123456789", fragments);
+        assertResponse(expectedFragments, actualFragments);
     }
 
     @Test
     public void testSplit3() {
-        String[] fragments = {
+        String[] expectedFragments = {
                 "abcdefg",
                 "hjklzxnmd",
                 "0123456789"
         };
-        assertResponse("abcdefghjklzxnmd0123456789", fragments);
+        String[] actualFragments = {
+                "abcdefg",
+                "hjklzxnmd",
+                "0123456789"
+        };
+        assertResponse(expectedFragments, actualFragments);
     }
 
-    private static void assertResponse(CharSequence expected, String[] fragments) {
+    private static void assertResponse(String[] expectedFragments, String[] actualFragments) {
         long memSize = 4096;
         long mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -84,7 +101,7 @@ public class ResponseTest {
 
                 @Override
                 protected int recvOrDie(long bufLo, long bufHi, int timeout) {
-                    String frag = fragments[fragIndex];
+                    String frag = actualFragments[fragIndex];
                     int fragLen = frag.length() - fragOffset;
                     int bufRemaining = (int) (bufHi - bufLo);
 
@@ -106,12 +123,17 @@ public class ResponseTest {
             };
 
             StringSink sink = new StringSink();
-            rsp.begin(mem, mem, expected.length());
-            rsp.recv();
-            for (long p = rsp.lo(); p < rsp.hi(); p++) {
-                sink.put((char) Unsafe.getUnsafe().getByte(p));
+            for (String expectedFragment : expectedFragments) {
+                rsp.begin(mem, mem, expectedFragment.length());
+                Fragment fragment = rsp.recv();
+                Assert.assertNotNull(fragment);
+                sink.clear();
+                for (long p = rsp.lo(); p < rsp.hi(); p++) {
+                    sink.put((char) Unsafe.getUnsafe().getByte(p));
+                }
+                TestUtils.assertEquals(expectedFragment, sink);
             }
-            TestUtils.assertEquals(expected, sink);
+            Assert.assertNull(rsp.recv());
         } finally {
             Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
         }

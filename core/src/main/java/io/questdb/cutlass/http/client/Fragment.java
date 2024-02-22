@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.http.client;
 
-public interface Response {
-    Fragment recv();
+public interface Fragment {
+    long hi();
 
-    Fragment recv(int timeout);
+    long lo();
 }

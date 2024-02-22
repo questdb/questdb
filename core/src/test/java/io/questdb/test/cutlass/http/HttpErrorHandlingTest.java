@@ -8,7 +8,7 @@ import io.questdb.cutlass.http.HttpResponseHeader;
 import io.questdb.cutlass.http.client.*;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.BootstrapTest;
 import io.questdb.test.tools.TestUtils;
@@ -133,20 +133,20 @@ public class HttpErrorHandlingTest extends BootstrapTest {
     ) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
         request.GET().url("/exec").query("query", sql);
-        try (HttpClient.ResponseHeaders response = request.send()) {
-            response.await();
+        try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
+            responseHeaders.await();
 
-            TestUtils.assertEquals(String.valueOf(expectedHttpStatusCode), response.getStatusCode());
+            TestUtils.assertEquals(String.valueOf(expectedHttpStatusCode), responseHeaders.getStatusCode());
 
-            final StringSink sink = new StringSink();
+            final Utf8StringSink sink = new Utf8StringSink();
 
-            Chunk chunk;
-            final ChunkedResponse chunkedResponse = response.getChunkedResponse();
-            while ((chunk = chunkedResponse.recv()) != null) {
-                Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), sink);
+            Fragment fragment;
+            final Response response = responseHeaders.getResponse();
+            while ((fragment = response.recv()) != null) {
+                Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
             }
 
-            TestUtils.assertEquals(expectedHttpResponse, sink);
+            TestUtils.assertEquals(expectedHttpResponse, sink.toString());
             sink.clear();
         }
     }

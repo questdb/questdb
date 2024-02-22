@@ -24,10 +24,10 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.cutlass.http.client.Chunk;
-import io.questdb.cutlass.http.client.ChunkedResponse;
+import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.metrics.*;
 import io.questdb.network.DefaultIODispatcherConfiguration;
@@ -261,12 +261,12 @@ public class MetricsIODispatcherTest {
                         }
 
                         Assert.assertTrue(response.isChunked());
-                        ChunkedResponse chunkedResponse = response.getChunkedResponse();
+                        Response chunkedResponse = response.getResponse();
 
                         utf16Sink.clear();
-                        Chunk chunk;
-                        while ((chunk = chunkedResponse.recv(5_000)) != null) {
-                            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), utf16Sink);
+                        Fragment fragment;
+                        while ((fragment = chunkedResponse.recv(5_000)) != null) {
+                            Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), utf16Sink);
                         }
                         TestUtils.assertEquals(expectedResponse, utf16Sink);
                     }

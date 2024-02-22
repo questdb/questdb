@@ -22,10 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.client;
+package io.questdb.griffin.engine.functions.groupby;
 
-public interface Chunk {
-    long hi();
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-    long lo();
+public class ApproxCountDistinctIPv4GroupByDefaultFunctionFactory implements FunctionFactory {
+
+    @Override
+    public String getSignature() {
+        return "approx_count_distinct(X)";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position,
+                                ObjList<Function> args,
+                                IntList argPositions,
+                                CairoConfiguration configuration,
+                                SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new ApproxCountDistinctIPv4GroupByFunction(args.getQuick(0));
+    }
 }
