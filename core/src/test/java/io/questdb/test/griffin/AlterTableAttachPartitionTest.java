@@ -129,7 +129,8 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         1,
                         src.timestamp("ts")
                                 .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
+                                .col("l", ColumnType.LONG)
+                                .col("vch", ColumnType.VARCHAR),
                         10000,
                         "2020-01-01",
                         11);
@@ -269,7 +270,8 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             try (TableModel dst = new TableModel(configuration, "dst9", PartitionBy.DAY)) {
                 CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                        .col("l", ColumnType.LONG)
+                        .col("vch", ColumnType.VARCHAR));
 
                 String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'";
                 try {
@@ -284,11 +286,13 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testAttachNonExisting() throws Exception {
+        // todo: what's the different between this and testAttachMissingPartition() ?
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst10", PartitionBy.DAY)) {
                 CreateTableTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                        .col("l", ColumnType.LONG)
+                        .col("vch", ColumnType.VARCHAR));
 
                 String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'";
 
@@ -314,6 +318,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         1,
                         src.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
+                                .col("vch", ColumnType.VARCHAR)
                                 .timestamp("ts"),
                         10000,
                         "2020-01-01",
@@ -551,7 +556,8 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
                                 .col("s", ColumnType.SYMBOL).indexed(true, 128)
-                                .col("str", ColumnType.STRING),
+                                .col("str", ColumnType.STRING)
+                                .col("vch", ColumnType.VARCHAR),
                         8,
                         "2022-08-01",
                         4);
@@ -566,6 +572,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         .col("l", ColumnType.LONG)
                         .col("s", ColumnType.SYMBOL).indexed(true, 128)
                         .col("str", ColumnType.STRING)
+                        .col("vch", ColumnType.VARCHAR)
                 );
 
                 copyPartitionToAttachable(srcTableToken, "2022-08-02", dstTableToken.getDirName(), "2022-08-02");
@@ -573,9 +580,9 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                 engine.clear();
                 assertQuery(
-                        "ts\ti\tl\ts\tstr\n" +
-                                "2022-08-02T11:59:59.625000Z\tNaN\t3\t\t\n" +
-                                "2022-08-02T23:59:59.500000Z\tNaN\t4\t\t\n",
+                        "ts\ti\tl\ts\tstr\tvch\n" +
+                                "2022-08-02T11:59:59.625000Z\tNaN\t3\t\t\t檲$2G\uDAC6\uDED3ڎ+o뤻\n" +
+                                "2022-08-02T23:59:59.500000Z\tNaN\t4\t\t\t \uDB87\uDFA3Qʜ\uDB8D\uDE4Eᯤt篸N\uD9D7\uDFE5\uDAE9\uDF46-3г\uDBAE\uDD12\n",
                         dst.getName(),
                         "ts",
                         true,
@@ -597,7 +604,8 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         src.timestamp("ts")
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 128),
+                                .col("s", ColumnType.SYMBOL).indexed(true, 128)
+                                .col("vch", ColumnType.VARCHAR),
                         partitionRowCount,
                         "2022-08-01",
                         4);
@@ -623,6 +631,8 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                 Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("s.k").$()));
                 Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("s.v").$()));
                 Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("l.d").$()));
+                Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("vch.d").$()));
+                Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("vch.i").$()));
 
                 engine.clear();
                 assertQuery(
