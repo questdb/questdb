@@ -27,8 +27,12 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -38,7 +42,7 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 public class PageFrameCursorTest extends AbstractCairoTest {
     @Test
-    public void testSimple() throws Exception {
+    public void testStringSimple() throws Exception {
         assertMemoryLeak(
                 () -> {
                     ddl("create table x as (select" +
@@ -97,7 +101,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVarColumnWithColumnTop() throws Exception {
+    public void testStringColumnWithColumnTop() throws Exception {
         assertMemoryLeak(
                 () -> {
                     ddl("create table x as (select" +
@@ -162,5 +166,93 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testVarcharLongSimple() throws Exception {
+        assertMemoryLeak(() -> {testSimple(40);});
+    }
+
+    @Test
+    public void testVarcharShortSimple() throws Exception {
+        assertMemoryLeak(() -> {testSimple(1);});
+    }
+
+    @Test
+    public void testVarcharLongColumnTop() throws Exception {
+        assertMemoryLeak(() -> {testColumnTop(40);});
+    }
+
+    @Test
+    public void testVarcharShortColumnTop() throws Exception {
+        assertMemoryLeak(() -> {testColumnTop(1);});
+    }
+
+    private void testSimple(int maxLength) throws SqlException {
+        ddl("create table x as (select" +
+                " rnd_int() a," +
+                " rnd_varchar(1, " + maxLength + ", 1) b," +
+                " timestamp_sequence(0, 100000000) t" +
+                " from long_sequence(1000)" +
+                ") timestamp (t) partition by DAY"
+        );
+
+        readFromPageFrame();
+    }
+
+    private void testColumnTop(int maxLength) throws SqlException {
+        ddl("create table x as (select" +
+                " rnd_int() a," +
+                " rnd_varchar(1, " + maxLength + ", 1) b," +
+                " timestamp_sequence(to_timestamp('2022-01-13T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000L) t" +
+                " from long_sequence(10)" +
+                ") timestamp (t) partition by DAY"
+        );
+
+        ddl("alter table x add column c varchar");
+
+        insert(
+                "insert into x " +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_varchar(1, " + maxLength + ", 1) b," +
+                        " timestamp_sequence(to_timestamp('2022-01-13T00:00:01', 'yyyy-MM-ddTHH:mm:ss'), 100000L) t," +
+                        " rnd_varchar(1, " + maxLength + ", 1) c," +
+                        " from long_sequence(10)"
+        );
+
+        readFromPageFrame();
+    }
+
+    private static void readFromPageFrame() throws SqlException {
+        TestUtils.printSql(
+                engine,
+                sqlExecutionContext,
+                "select b from x",
+                sink
+        );
+
+        final Utf8SplitString utf8SplitView = new Utf8SplitString();
+        final DirectUtf8String utf8view = new DirectUtf8String();
+
+        final StringSink actualSink = new StringSink();
+        // header
+        actualSink.put("b\n");
+
+        try (RecordCursorFactory factory = select("x")) {
+            try (PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                PageFrame frame;
+                while ((frame = pageFrameCursor.next()) != null) {
+                    final long dataTopAddress = frame.getPageAddress(1);
+                    final long auxTopAddress = frame.getIndexPageAddress(1);
+                    final long count = frame.getPartitionHi() - frame.getPartitionLo();
+                    for (int row = 0; row < count; row++) {
+                        actualSink.put(Utf8s.varcharRead(auxTopAddress, dataTopAddress, row, utf8view, utf8SplitView));
+                        actualSink.put('\n');
+                    }
+                }
+                TestUtils.assertEquals(sink, actualSink);
+            }
+        }
     }
 }
