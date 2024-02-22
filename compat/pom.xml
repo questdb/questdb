@@ -52,6 +52,7 @@
         <dependency>
             <groupId>org.questdb</groupId>
             <artifactId>questdb</artifactId>
+            <scope>test</scope>
             <version>${project.version}</version>
         </dependency>
         <dependency>
