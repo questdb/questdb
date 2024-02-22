@@ -49,16 +49,26 @@ class RndVarcharFunction extends VarcharFunction implements Function {
 
     @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        if ((rnd.nextPositiveInt() % nullRate) == 0) {
+            return;
+        }
         sinkRnd(utf8Sink);
     }
 
     @Override
     public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        Utf8s.utf8ToUtf16(getVarcharB(rec), utf16Sink);
+        Utf8Sequence seq = getVarcharB(rec);
+        if (seq == null) {
+            return;
+        }
+        Utf8s.utf8ToUtf16(seq, utf16Sink);
     }
 
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
+        if ((rnd.nextPositiveInt() % nullRate) == 0) {
+            return null;
+        }
         utf8sinkA.clear();
         sinkRnd(utf8sinkA);
         return utf8sinkA;
@@ -66,6 +76,9 @@ class RndVarcharFunction extends VarcharFunction implements Function {
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
+        if ((rnd.nextPositiveInt() % nullRate) == 0) {
+            return null;
+        }
         utf8sinkB.clear();
         sinkRnd(utf8sinkB);
         return utf8sinkB;

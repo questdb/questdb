@@ -52,14 +52,14 @@ public class RndVarcharFunctionFactory implements FunctionFactory {
         int hi = args.getQuick(1).getInt(null);
         int nullRate = args.getQuick(2).getInt(null);
 
-        if (nullRate < 0) {
-            throw SqlException.position(argPositions.getQuick(2)).put("rate must be positive");
+        if (nullRate <= 0) {
+            throw SqlException.position(argPositions.getQuick(2)).put("null rate must be positive");
         }
 
         if (lo < hi && lo > 0) {
-            return new RndVarcharFunction(lo, hi, nullRate + 1);
+            return new RndVarcharFunction(lo, hi, nullRate);
         } else if (lo == hi) {
-            return new RndFixedVarcharFunction(lo, nullRate + 1);
+            return new RndFixedVarcharFunction(lo, nullRate);
         }
 
         throw SqlException.position(position).put("invalid range");
@@ -81,16 +81,26 @@ public class RndVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            if ((rnd.nextPositiveInt() % nullRate) == 0) {
+                return;
+            }
             sinkRnd(utf8Sink);
         }
 
         @Override
         public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            Utf8s.utf8ToUtf16(getVarcharA(rec), utf16Sink);
+            Utf8Sequence seq = getVarcharA(rec);
+            if (seq == null) {
+                return;
+            }
+            Utf8s.utf8ToUtf16(seq, utf16Sink);
         }
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
+            if ((rnd.nextPositiveLong() % nullRate) == 0) {
+                return null;
+            }
             utf8SinkA.clear();
             sinkRnd(utf8SinkA);
             return utf8SinkA;
@@ -98,6 +108,9 @@ public class RndVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
+            if ((rnd.nextPositiveInt() % nullRate) == 0) {
+                return null;
+            }
             utf8SinkB.clear();
             sinkRnd(utf8SinkB);
             return utf8SinkB;
