@@ -547,8 +547,10 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testAttachPartitionsDeletedColumnFromSrc() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, testName.getMethodName() + "_src", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, testName.getMethodName() + "_dst", PartitionBy.DAY)) {
+            try (
+                    TableModel src = new TableModel(configuration, testName.getMethodName() + "_src", PartitionBy.DAY);
+                    TableModel dst = new TableModel(configuration, testName.getMethodName() + "_dst", PartitionBy.DAY)
+            ) {
 
                 TableToken srcTableToken = createPopulateTable(
                         1,

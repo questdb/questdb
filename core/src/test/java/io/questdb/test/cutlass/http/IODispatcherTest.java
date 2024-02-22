@@ -5443,7 +5443,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     }
             )) {
-                HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+                try (HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
                     public void close() {
                     }
@@ -5457,38 +5457,39 @@ public class IODispatcherTest extends AbstractTest {
                     public HttpRequestProcessor select(Utf8Sequence url) {
                         return null;
                     }
-                };
+                }) {
 
-                AtomicBoolean serverRunning = new AtomicBoolean(true);
-                SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
+                    AtomicBoolean serverRunning = new AtomicBoolean(true);
+                    SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
-                new Thread(() -> {
+                    new Thread(() -> {
+                        try {
+                            do {
+                                dispatcher.run(0);
+                                dispatcher.processIOQueue(
+                                        (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                );
+                            } while (serverRunning.get());
+                        } finally {
+                            serverHaltLatch.countDown();
+                        }
+                    }).start();
+
+                    IntList openFds = new IntList();
+
+                    final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                    final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
                     try {
-                        do {
-                            dispatcher.run(0);
-                            dispatcher.processIOQueue(
-                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
-                            );
-                        } while (serverRunning.get());
+                        for (int i = 0; i < 10; i++) {
+                            testMaxConnections0(dispatcher, sockAddr, openFds, buf);
+                        }
                     } finally {
-                        serverHaltLatch.countDown();
+                        Net.freeSockAddr(sockAddr);
+                        Unsafe.free(buf, 4096, MemoryTag.NATIVE_DEFAULT);
+                        Assert.assertFalse(configuration.getLimit() < dispatcher.getConnectionCount());
+                        serverRunning.set(false);
+                        serverHaltLatch.await();
                     }
-                }).start();
-
-                IntList openFds = new IntList();
-
-                final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    for (int i = 0; i < 10; i++) {
-                        testMaxConnections0(dispatcher, sockAddr, openFds, buf);
-                    }
-                } finally {
-                    Net.freeSockAddr(sockAddr);
-                    Unsafe.free(buf, 4096, MemoryTag.NATIVE_DEFAULT);
-                    Assert.assertFalse(configuration.getLimit() < dispatcher.getConnectionCount());
-                    serverRunning.set(false);
-                    serverHaltLatch.await();
                 }
             }
         });
@@ -7594,17 +7595,19 @@ public class IODispatcherTest extends AbstractTest {
             final AtomicInteger requestsReceived = new AtomicInteger();
             final AtomicBoolean finished = new AtomicBoolean(false);
             final SOCountDownLatch senderHalt = new SOCountDownLatch(senderCount);
-            try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
-                    new DefaultIODispatcherConfiguration() {
-                        @Override
-                        public boolean getPeerNoLinger() {
-                            return true;
-                        }
-                    },
-                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
-            )) {
+            try (
+                    IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
+                            new DefaultIODispatcherConfiguration() {
+                                @Override
+                                public boolean getPeerNoLinger() {
+                                    return true;
+                                }
+                            },
+                            (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
+                    );
+                    final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024)
+            ) {
                 // server will publish status of each request to this queue
-                final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024);
                 final MPSequence pubSeq = new MPSequence(queue.getCycle());
                 SCSequence subSeq = new SCSequence();
                 pubSeq.then(subSeq).then(pubSeq);
@@ -7658,7 +7661,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             };
 
-                            HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+                            try (HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                                 @Override
                                 public void close() {
                                 }
@@ -7672,18 +7675,19 @@ public class IODispatcherTest extends AbstractTest {
                                 public HttpRequestProcessor select(Utf8Sequence url) {
                                     return null;
                                 }
-                            };
+                            }) {
 
-                            try {
-                                while (serverRunning.get()) {
-                                    dispatcher.run(0);
-                                    dispatcher.processIOQueue(
-                                            (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
-                                    );
+                                try {
+                                    while (serverRunning.get()) {
+                                        dispatcher.run(0);
+                                        dispatcher.processIOQueue(
+                                                (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                        );
+                                    }
+                                } finally {
+                                    Unsafe.free(responseBuf, 32, MemoryTag.NATIVE_DEFAULT);
+                                    serverHaltLatch.countDown();
                                 }
-                            } finally {
-                                Unsafe.free(responseBuf, 32, MemoryTag.NATIVE_DEFAULT);
-                                serverHaltLatch.countDown();
                             }
                         }).start();
                     }

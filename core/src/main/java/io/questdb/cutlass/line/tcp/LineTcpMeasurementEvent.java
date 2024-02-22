@@ -34,6 +34,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
@@ -98,37 +99,37 @@ class LineTcpMeasurementEvent implements Closeable {
         TableWriter.Row row = null;
         try {
             final TableWriterAPI writer = tableUpdateDetails.getWriter();
-            long offset = buffer.getAddress();
-            final long metadataVersion = buffer.readLong(offset);
-            offset += Long.BYTES;
+            long address = buffer.getAddress();
+            final long metadataVersion = buffer.readLong(address);
+            address += Long.BYTES;
             if (metadataVersion > writer.getMetadataVersion()) {
                 // I/O thread has a more recent version of the WAL table metadata than the writer.
                 // Let the WAL writer commit, so that it refreshes its metadata copy.
                 // TODO: this method is not used for WAL tables, check if the below commit still needed
                 writer.commit();
             }
-            long timestamp = buffer.readLong(offset);
-            offset += Long.BYTES;
+            long timestamp = buffer.readLong(address);
+            address += Long.BYTES;
             if (timestamp == LineTcpParser.NULL_TIMESTAMP) {
                 timestamp = clock.getTicks();
             }
             row = writer.newRow(timestamp);
-            final int nEntities = buffer.readInt(offset);
-            offset += Integer.BYTES;
+            final int nEntities = buffer.readInt(address);
+            address += Integer.BYTES;
             final long writerMetadataVersion = writer.getMetadataVersion();
             for (int nEntity = 0; nEntity < nEntities; nEntity++) {
-                int colIndex = buffer.readInt(offset);
-                offset += Integer.BYTES;
+                int colIndex = buffer.readInt(address);
+                address += Integer.BYTES;
                 final byte entityType;
                 if (colIndex > -1) {
-                    entityType = buffer.readByte(offset);
-                    offset += Byte.BYTES;
+                    entityType = buffer.readByte(address);
+                    address += Byte.BYTES;
                     // Did the I/O thread have the latest structure version when it serialized the row?
                     if (metadataVersion < writerMetadataVersion) {
                         // Nope. For WAL tables, it could mean that the column is already dropped. Let's check it.
                         if (!writer.getMetadata().hasColumn(colIndex)) {
                             // The column was dropped, so we skip it.
-                            offset += buffer.columnValueLength(entityType, offset);
+                            address += buffer.columnValueLength(entityType, address);
                             continue;
                         }
                     }
@@ -139,16 +140,16 @@ class LineTcpMeasurementEvent implements Closeable {
                     // have column index.
 
                     // Column name will be UTF16 encoded already
-                    final CharSequence columnName = buffer.readUtf16Chars(offset, -colIndex);
-                    offset += -colIndex * 2L;
+                    final CharSequence columnName = buffer.readUtf16Chars(address, -colIndex);
+                    address += -colIndex * 2L;
                     // Column name is followed with the principal name.
-                    int principalLen = buffer.readInt(offset);
-                    offset += Integer.BYTES;
-                    final CharSequence principal = buffer.readUtf16CharsB(offset, principalLen);
-                    offset += principalLen * 2L;
+                    int principalLen = buffer.readInt(address);
+                    address += Integer.BYTES;
+                    final CharSequence principal = buffer.readUtf16CharsB(address, principalLen);
+                    address += principalLen * 2L;
 
-                    entityType = buffer.readByte(offset);
-                    offset += Byte.BYTES;
+                    entityType = buffer.readByte(address);
+                    address += Byte.BYTES;
                     colIndex = writer.getMetadata().getColumnIndexQuiet(columnName);
                     if (colIndex < 0) {
                         // we have to cancel "active" row to avoid writer committing when
@@ -156,9 +157,6 @@ class LineTcpMeasurementEvent implements Closeable {
                         row.cancel();
                         row = null;
                         final int colType = defaultColumnTypes.MAPPED_COLUMN_TYPES[entityType];
-                        // we have to commit before adding a new column as WalWriter doesn't do that automatically
-                        // TODO: this method is not used for WAL tables, check if the below commit still needed
-                        writer.commit();
                         try {
                             writer.addColumn(columnName, colType, principalOnlySecurityContext.of(principal));
                         } catch (CairoException e) {
@@ -171,7 +169,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         }
 
                         // Seek to beginning of entities
-                        offset = buffer.getAddressAfterHeader();
+                        address = buffer.getAddressAfterHeader();
                         nEntity = -1;
                         row = writer.newRow(timestamp);
                         continue;
@@ -181,72 +179,79 @@ class LineTcpMeasurementEvent implements Closeable {
                 CharSequence cs;
                 switch (entityType) {
                     case LineTcpParser.ENTITY_TYPE_TAG:
-                        cs = buffer.readUtf16Chars(offset);
+                        cs = buffer.readUtf16Chars(address);
                         row.putSym(colIndex, cs);
-                        offset += cs.length() * 2L + Integer.BYTES;
+                        address += cs.length() * 2L + Integer.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_CACHED_TAG:
-                        row.putSymIndex(colIndex, buffer.readInt(offset));
-                        offset += Integer.BYTES;
+                        row.putSymIndex(colIndex, buffer.readInt(address));
+                        address += Integer.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_LONG:
                     case LineTcpParser.ENTITY_TYPE_GEOLONG:
-                        row.putLong(colIndex, buffer.readLong(offset));
-                        offset += Long.BYTES;
+                        row.putLong(colIndex, buffer.readLong(address));
+                        address += Long.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_INTEGER:
                     case LineTcpParser.ENTITY_TYPE_GEOINT:
-                        row.putInt(colIndex, buffer.readInt(offset));
-                        offset += Integer.BYTES;
+                        row.putInt(colIndex, buffer.readInt(address));
+                        address += Integer.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_SHORT:
                     case LineTcpParser.ENTITY_TYPE_GEOSHORT:
-                        row.putShort(colIndex, buffer.readShort(offset));
-                        offset += Short.BYTES;
+                        row.putShort(colIndex, buffer.readShort(address));
+                        address += Short.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_BYTE:
                     case LineTcpParser.ENTITY_TYPE_GEOBYTE:
-                        row.putByte(colIndex, buffer.readByte(offset));
-                        offset += Byte.BYTES;
+                        row.putByte(colIndex, buffer.readByte(address));
+                        address += Byte.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_DATE:
-                        row.putDate(colIndex, buffer.readLong(offset));
-                        offset += Long.BYTES;
+                        row.putDate(colIndex, buffer.readLong(address));
+                        address += Long.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_DOUBLE:
-                        row.putDouble(colIndex, buffer.readDouble(offset));
-                        offset += Double.BYTES;
+                        row.putDouble(colIndex, buffer.readDouble(address));
+                        address += Double.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_FLOAT:
-                        row.putFloat(colIndex, buffer.readFloat(offset));
-                        offset += Float.BYTES;
+                        row.putFloat(colIndex, buffer.readFloat(address));
+                        address += Float.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_BOOLEAN:
-                        row.putBool(colIndex, buffer.readByte(offset) == 1);
-                        offset += Byte.BYTES;
+                        row.putBool(colIndex, buffer.readByte(address) == 1);
+                        address += Byte.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_STRING:
-                        cs = buffer.readUtf16Chars(offset);
+                        cs = buffer.readUtf16Chars(address);
                         row.putStr(colIndex, cs);
-                        offset += cs.length() * 2L + Integer.BYTES;
+                        address += cs.length() * 2L + Integer.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_CHAR:
-                        row.putChar(colIndex, buffer.readChar(offset));
-                        offset += Character.BYTES;
+                        row.putChar(colIndex, buffer.readChar(address));
+                        address += Character.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_LONG256:
-                        cs = buffer.readUtf16Chars(offset);
+                        cs = buffer.readUtf16Chars(address);
                         row.putLong256(colIndex, cs);
-                        offset += cs.length() * 2L + Integer.BYTES;
+                        address += cs.length() * 2L + Integer.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_TIMESTAMP:
-                        row.putTimestamp(colIndex, buffer.readLong(offset));
-                        offset += Long.BYTES;
+                        row.putTimestamp(colIndex, buffer.readLong(address));
+                        address += Long.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_UUID:
-                        row.putLong128(colIndex, buffer.readLong(offset), buffer.readLong(offset + Long.BYTES));
-                        offset += Long.BYTES * 2;
+                        row.putLong128(colIndex, buffer.readLong(address), buffer.readLong(address + Long.BYTES));
+                        address += Long.BYTES * 2;
                         break;
+                    case LineTcpParser.ENTITY_TYPE_VARCHAR: {
+                        final boolean ascii = buffer.readByte(address++) == 0;
+                        Utf8Sequence s = buffer.readVarchar(address, ascii);
+                        row.putVarchar(colIndex, s);
+                        address += Integer.BYTES + s.size();
+                    }
+                    break;
                     case ENTITY_TYPE_NULL:
                         // ignored, default nulls is used
                         break;
@@ -436,6 +441,9 @@ class LineTcpMeasurementEvent implements Closeable {
                                 break;
                             case ColumnType.STRING:
                                 offset = buffer.addString(offset, entityValue, parser.hasNonAsciiChars());
+                                break;
+                            case ColumnType.VARCHAR:
+                                offset = buffer.addVarchar(offset, entityValue, parser.hasNonAsciiChars());
                                 break;
                             case ColumnType.CHAR:
                                 if (entityValue.size() == 1 && entityValue.byteAt(0) > -1) {

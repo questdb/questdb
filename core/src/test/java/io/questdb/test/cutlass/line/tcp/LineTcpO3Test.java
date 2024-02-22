@@ -110,7 +110,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
         try (InputStream is = LineTcpO3Test.class.getResourceAsStream(name)) {
             File mimeTypesFile = new File(new File(root, PropServerConfiguration.CONFIG_DIRECTORY), "mime.types");
             if (!mimeTypesFile.exists()) {
-                mimeTypesFile.getParentFile().mkdirs();
+                Assert.assertTrue(mimeTypesFile.getParentFile().mkdirs());
                 FileOutputStream fos = new FileOutputStream(mimeTypesFile);
                 fos.write('\n');
                 fos.close();

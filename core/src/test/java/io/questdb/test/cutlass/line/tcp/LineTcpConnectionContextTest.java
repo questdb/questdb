@@ -1024,6 +1024,33 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testInsertIntoExistingVarcharColumn() throws Exception {
+        String table = "tableExistAlready";
+        runInContext(() -> {
+            ddl("create table " + table + " (location SYMBOL, slog VARCHAR, timestamp TIMESTAMP) timestamp(timestamp);");
+            recvBuffer =
+                    table + ",location=us-midwest slog=\"82\",timestamp=1465839830100100t 1465839830100300200\n" +
+                            table + ",location=us-midwest slog=\"hello\" 1465839830100500200\n" +
+                            table + ",location=us-eastcoast,city=york,city=london slog=\"baba yaga\" 1465839830101400200\n" +
+                            table + ",location=us-midwest,city=london slog=\"mexico\" 1465839830102300200\n" +
+                            table + ",location=us-eastcoast slog=\"pub crawl\" 1465839830102400200\n" +
+                            table + ",location=us-eastcoast slog=\"dont fix what's not broken\" 1465839830102400200\n" +
+                            table + ",location=us-westcost slog=\"are we there yet?\",timestamp=1465839830102500t\n";
+            handleIO();
+            closeContext();
+            String expected = "location\tslog\ttimestamp\tcity\n" +
+                    "us-midwest\t82\t2016-06-13T17:43:50.100100Z\t\n" +
+                    "us-midwest\thello\t2016-06-13T17:43:50.100500Z\t\n" +
+                    "us-eastcoast\tbaba yaga\t2016-06-13T17:43:50.101400Z\tyork\n" +
+                    "us-midwest\tmexico\t2016-06-13T17:43:50.102300Z\tlondon\n" +
+                    "us-eastcoast\tpub crawl\t2016-06-13T17:43:50.102400Z\t\n" +
+                    "us-eastcoast\tdont fix what's not broken\t2016-06-13T17:43:50.102400Z\t\n" +
+                    "us-westcost\tare we there yet?\t2016-06-13T17:43:50.102500Z\t\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
     public void testDuplicateFieldWhenTableExistsAlreadyNonASCIIFirstRow() throws Exception {
         String table = "dupField";
         runInContext(() -> {
