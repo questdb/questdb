@@ -125,6 +125,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         columnTypes.add(ColumnType.FLOAT);
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.STRING);
+        columnTypes.add(ColumnType.VARCHAR);
         columnTypes.add(ColumnType.BINARY);
         columnTypes.add(ColumnType.LONG256);
         columnTypes.add(ColumnType.GEOBYTE);
@@ -692,6 +693,13 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             recordedTypes.add(ColumnType.TIMESTAMP);
             return 1;
         }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.VARCHAR);
+            return new Utf8String("abc");
+        }
     }
 
     private static class TestRecordSink implements RecordSinkSPI {
@@ -780,6 +788,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         @Override
         public void putTimestamp(long value) {
             recordedTypes.add(ColumnType.TIMESTAMP);
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
+            recordedTypes.add(ColumnType.VARCHAR);
         }
 
         @Override

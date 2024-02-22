@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
@@ -288,6 +289,18 @@ public class RecordChainTest extends AbstractCairoTest {
                         Assert.assertEquals(cs1.length(), actual.getStrLen(i));
                     }
                     break;
+                case ColumnType.VARCHAR:
+                    Utf8Sequence us = expected.getVarcharA(i);
+                    Utf8Sequence us1 = actual.getVarcharA(i);
+                    Utf8Sequence us2 = actual.getVarcharB(i);
+                    TestUtils.assertEquals(us, us1);
+                    Assert.assertFalse(us1 != null && us1 == us2);
+                    TestUtils.assertEquals(us, us2);
+                    if (us != null && us1 != null && us2 != null) {
+                        Assert.assertEquals(us.isAscii(), us1.isAscii());
+                        Assert.assertEquals(us.isAscii(), us2.isAscii());
+                    }
+                    break;
                 case ColumnType.BINARY:
                     TestUtils.assertEquals(expected.getBin(i), actual.getBin(i), actual.getBinLen(i));
                     break;
@@ -316,7 +329,6 @@ public class RecordChainTest extends AbstractCairoTest {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
                 RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
                 try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
-
                     populateChain(chain, reader);
                     assertChain(chain, N, reader);
 

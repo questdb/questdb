@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.cairo.*;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
@@ -92,7 +93,8 @@ public class CreateTableTestUtils {
                         .col("j", ColumnType.SYMBOL)
                         .col("k", ColumnType.BOOLEAN)
                         .col("l", ColumnType.BINARY)
-                        .col("m", ColumnType.UUID);
+                        .col("m", ColumnType.UUID)
+                        .col("n", ColumnType.VARCHAR);
                 TestUtils.create(model, engine);
             }
         } catch (RuntimeException e) {
@@ -105,6 +107,7 @@ public class CreateTableTestUtils {
             }
         }
 
+        Utf8StringSink utf8Sink = new Utf8StringSink();
         try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"))) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
@@ -174,6 +177,20 @@ public class CreateTableTestUtils {
                 } else {
                     row.putLong128(12, rnd.nextLong(), rnd.nextLong());
                 }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putVarchar(13, null);
+                } else {
+                    utf8Sink.clear();
+                    if (rnd.nextInt() % 4 == 0) {
+                        rnd.nextUtf8AsciiStr(5, utf8Sink);
+                        row.putVarchar(13, utf8Sink);
+                    } else {
+                        rnd.nextUtf8Str(5, utf8Sink);
+                        row.putVarchar(13, utf8Sink);
+                    }
+                }
+
                 row.append();
             }
             writer.commit();

@@ -29,6 +29,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public class JoinRecord implements Record {
     protected final int split;
@@ -281,6 +283,40 @@ public class JoinRecord implements Record {
     @Override
     public long getUpdateRowId() {
         return master.getUpdateRowId();
+    }
+
+    @Override
+    public void getVarchar(int col, Utf8Sink utf8Sink) {
+        if (col < split) {
+            master.getVarchar(col, utf8Sink);
+        } else {
+            slave.getVarchar(col - split, utf8Sink);
+        }
+    }
+
+    @Override
+    public void getVarchar(int col, Utf16Sink utf16sink) {
+        if (col < split) {
+            master.getVarchar(col, utf16sink);
+        } else {
+            slave.getVarchar(col - split, utf16sink);
+        }
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        if (col < split) {
+            return master.getVarcharA(col);
+        }
+        return slave.getVarcharA(col - split);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        if (col < split) {
+            return master.getVarcharB(col);
+        }
+        return slave.getVarcharB(col - split);
     }
 
     void of(Record master, Record slave) {

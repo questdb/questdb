@@ -29,7 +29,10 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Rows;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -293,16 +296,6 @@ public class TableReaderRecord implements Record, Sinkable {
     @Override
     public long getUpdateRowId() {
         return getRowId();
-    }
-
-    @Override
-    public void getVarchar(int col, Utf8Sink utf8Sink) {
-        utf8Sink.put(getVarchar(col, 1));
-    }
-
-    @Override
-    public void getVarchar(int col, Utf16Sink utf16sink) {
-        utf16sink.put(getVarchar(col, 1));
     }
 
     @Override

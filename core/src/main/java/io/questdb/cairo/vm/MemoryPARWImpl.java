@@ -36,7 +36,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
 
-//paged appendable readable writable
+// paged appendable readable writable
 public class MemoryPARWImpl implements MemoryARW {
     private static final Log LOG = LogFactory.getLog(MemoryPARWImpl.class);
     protected final LongList pages = new LongList(4, 0);
@@ -61,6 +61,7 @@ public class MemoryPARWImpl implements MemoryARW {
     private long pageLo = -1;
     private long roOffsetHi = 0;
     private long roOffsetLo = 0;
+
     public MemoryPARWImpl(long pageSize, int maxPages, int memoryTag) {
         setExtendSegmentSize(pageSize);
         this.maxPages = maxPages;
@@ -836,6 +837,20 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
+    public void putVarchar(long offset, @Nullable Utf8Sequence value, int lo, int hi) {
+        if (value != null) {
+            final int n = hi - lo;
+            if (roOffsetLo < offset && offset < roOffsetHi - n) {
+                value.writeTo(absolutePointer + offset, lo, hi);
+            } else {
+                for (int i = 0; i < n; i++) {
+                    putByte(offset + i, value.byteAt(lo + i));
+                }
+            }
+        }
+    }
+
+    @Override
     public long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
         final int n = hi - lo;
         final long offset = getAppendOffset();
@@ -847,7 +862,6 @@ public class MemoryPARWImpl implements MemoryARW {
             } else {
                 value.writeTo(appendPointer, lo, hi);
                 appendPointer += n;
-
             }
         }
         return offset;

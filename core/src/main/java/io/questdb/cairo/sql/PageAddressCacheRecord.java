@@ -311,16 +311,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public void getVarchar(int columnIndex, Utf8Sink utf8Sink) {
-        utf8Sink.put(getVarchar(columnIndex, utf8viewA, utf8SplitViewA));
-    }
-
-    @Override
-    public void getVarchar(int columnIndex, Utf16Sink utf16sink) {
-        utf16sink.put(getVarchar(columnIndex, utf8viewA, utf8SplitViewA));
-    }
-
-    @Override
     public Utf8Sequence getVarcharA(int columnIndex) {
         return getVarchar(columnIndex, utf8viewA, utf8SplitViewA);
     }

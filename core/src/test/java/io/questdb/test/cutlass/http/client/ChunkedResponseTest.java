@@ -26,7 +26,7 @@ package io.questdb.test.cutlass.http.client;
 
 
 import io.questdb.cutlass.http.client.AbstractChunkedResponse;
-import io.questdb.cutlass.http.client.Chunk;
+import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -224,10 +224,10 @@ public class ChunkedResponseTest {
             };
 
             StringSink sink = new StringSink();
-            Chunk chunk;
+            Fragment fragment;
             rsp.begin(mem, mem);
-            while ((chunk = rsp.recv()) != null) {
-                for (long p = chunk.lo(); p < chunk.hi(); p++) {
+            while ((fragment = rsp.recv()) != null) {
+                for (long p = fragment.lo(); p < fragment.hi(); p++) {
                     sink.put((char) Unsafe.getUnsafe().getByte(p));
                 }
             }
