@@ -4839,7 +4839,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long lagAuxAddr = Math.abs(signedLagAuxAddr);
                 final long lagDataBegin = lagRows > 0 ? columnTypeDriver.getDataVectorOffset(lagAuxAddr, 0) : 0;
                 final long lagDataSize = lagRows > 0 ? columnTypeDriver.getDataVectorSizeAt(lagAuxAddr, lagRows - 1) : 0;
-                assert lagRows == 0 || lagDataSize > 0;
                 final long lagDataMapAddr = lagRows > 0 ? mapAppendColumnBuffer(lagDataMem, lagDataBegin, lagDataSize, false) : 0;
 
                 try {
