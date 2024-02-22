@@ -841,6 +841,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSystemWalEventAppendPageSize() {
+        return getDelegate().getSystemWalEventAppendPageSize();
+    }
+
+    @Override
     public long getTableRegistryAutoReloadFrequency() {
         return getDelegate().getTableRegistryAutoReloadFrequency();
     }
@@ -898,6 +903,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return getDelegate().getWalEnabledDefault();
+    }
+
+    @Override
+    public long getWalEventAppendPageSize() {
+        return getDelegate().getWalEventAppendPageSize();
     }
 
     @Override

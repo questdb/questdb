@@ -220,10 +220,6 @@ public class Utf8StringIntHashMap implements Mutable {
         values[index] = noEntryValue;
     }
 
-    private int hash(CharSequence k) {
-        return Chars.hashCode(k) & mask;
-    }
-
     private void move(int from, int to) {
         keys[to] = keys[from];
         hashCodes[to] = hashCodes[from];

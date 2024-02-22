@@ -838,7 +838,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSystemWalDataAppendPageSize() {
-        return 256 * 1024;
+        return 16 * 1024;
+    }
+
+    @Override
+    public long getSystemWalEventAppendPageSize() {
+        return 128 * 1024;
     }
 
     @Override
@@ -899,6 +904,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return false;
+    }
+
+    @Override
+    public long getWalEventAppendPageSize() {
+        return 64 * 1024;
     }
 
     @Override

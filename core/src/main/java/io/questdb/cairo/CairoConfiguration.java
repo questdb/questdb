@@ -471,6 +471,8 @@ public interface CairoConfiguration {
 
     long getSystemWalDataAppendPageSize();
 
+    long getSystemWalEventAppendPageSize();
+
     long getTableRegistryAutoReloadFrequency();
 
     int getTableRegistryCompactionThreshold();
@@ -495,6 +497,8 @@ public interface CairoConfiguration {
     long getWalApplyTableTimeQuota();
 
     long getWalDataAppendPageSize();
+
+    long getWalEventAppendPageSize();
 
     boolean getWalEnabledDefault();
 
