@@ -49,7 +49,7 @@ class RndVarcharFunction extends VarcharFunction implements Function {
 
     @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        if ((rnd.nextPositiveInt() % nullRate) == 0) {
+        if ((rnd.nextInt() % nullRate) == 1) {
             return;
         }
         sinkRnd(utf8Sink);
@@ -66,7 +66,7 @@ class RndVarcharFunction extends VarcharFunction implements Function {
 
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
-        if ((rnd.nextPositiveInt() % nullRate) == 0) {
+        if ((rnd.nextInt() % nullRate) == 1) {
             return null;
         }
         utf8sinkA.clear();
@@ -76,7 +76,7 @@ class RndVarcharFunction extends VarcharFunction implements Function {
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
-        if ((rnd.nextPositiveInt() % nullRate) == 0) {
+        if ((rnd.nextInt() % nullRate) == 1) {
             return null;
         }
         utf8sinkB.clear();
@@ -91,7 +91,7 @@ class RndVarcharFunction extends VarcharFunction implements Function {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("rnd_varchar(").val(lo).val(',').val(range + lo - 1).val(',').val(nullRate).val(')');
+        sink.val("rnd_varchar(").val(lo).val(',').val(range + lo - 1).val(',').val(nullRate - 1).val(')');
     }
 
     private void sinkRnd(Utf8Sink utf8Sink) {

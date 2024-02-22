@@ -46,20 +46,25 @@ public class RndVarcharFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         int lo = args.getQuick(0).getInt(null);
         int hi = args.getQuick(1).getInt(null);
         int nullRate = args.getQuick(2).getInt(null);
 
-        if (nullRate <= 0) {
+        if (nullRate < 0) {
             throw SqlException.position(argPositions.getQuick(2)).put("null rate must be positive");
         }
 
         if (lo < hi && lo > 0) {
-            return new RndVarcharFunction(lo, hi, nullRate);
+            return new RndVarcharFunction(lo, hi, nullRate + 1);
         } else if (lo == hi) {
-            return new RndFixedVarcharFunction(lo, nullRate);
+            return new RndFixedVarcharFunction(lo, nullRate + 1);
         }
 
         throw SqlException.position(position).put("invalid range");
@@ -81,7 +86,7 @@ public class RndVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            if ((rnd.nextPositiveInt() % nullRate) == 0) {
+            if ((rnd.nextInt() % nullRate) == 1) {
                 return;
             }
             sinkRnd(utf8Sink);
@@ -98,7 +103,7 @@ public class RndVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            if ((rnd.nextPositiveLong() % nullRate) == 0) {
+            if ((rnd.nextInt() % nullRate) == 1) {
                 return null;
             }
             utf8SinkA.clear();
@@ -108,7 +113,7 @@ public class RndVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            if ((rnd.nextPositiveInt() % nullRate) == 0) {
+            if ((rnd.nextInt() % nullRate) == 1) {
                 return null;
             }
             utf8SinkB.clear();

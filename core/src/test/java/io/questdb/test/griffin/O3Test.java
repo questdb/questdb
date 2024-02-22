@@ -253,7 +253,6 @@ public class O3Test extends AbstractO3Test {
         executeWithPool(0, O3Test::testColumnTopLastDataOOOData0);
     }
 
-    // TODO(puzpuzpuz): this test is flaky
     @Test
     public void testColumnTopLastDataOOODataParallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopLastDataOOOData0);
@@ -4094,11 +4093,11 @@ public class O3Test extends AbstractO3Test {
 
         engine.insert("insert into 'привет от штиблет' select * from append2", sqlExecutionContext);
         assertO3DataConsistencyStableSort(
-            engine,
-            compiler,
-            sqlExecutionContext,
-            "create table y as (select * from w union all append1 union all append2)",
-            "create table x as (select * from 'привет от штиблет')"
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (select * from w union all append1 union all append2)",
+                "create table x as (select * from 'привет от штиблет')"
         );
 
         printSqlResult(compiler, sqlExecutionContext, "select count() from 'привет от штиблет'");

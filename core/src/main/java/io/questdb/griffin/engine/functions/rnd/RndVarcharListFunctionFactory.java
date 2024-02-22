@@ -117,7 +117,7 @@ public class RndVarcharListFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("rnd_str(").val((Sinkable) symbols).val(')');
+            sink.val("rnd_varchar(").val((Sinkable) symbols).val(')');
         }
 
         private Utf8String rndSymbol() {
