@@ -1289,7 +1289,7 @@ public final class TestUtils {
                     insertFromSelect.append("CAST(x as STRING) ").append(colName);
                     break;
                 case ColumnType.VARCHAR:
-                    insertFromSelect.append("CAST(x as VARCHAR) ").append(colName);
+                    insertFromSelect.append("rnd_varchar(1, 15, 1) ").append(colName);
                     break;
                 case ColumnType.LONG:
                     insertFromSelect.append("x ").append(colName);
