@@ -130,7 +130,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
-                                .col("s2", ColumnType.SYMBOL),
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("vch", ColumnType.VARCHAR),
                         10,
                         "2022-06-01",
                         3
@@ -179,7 +180,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
-                                .col("s2", ColumnType.SYMBOL),
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("vch", ColumnType.VARCHAR),
                         10,
                         "2022-06-01",
                         3
@@ -233,7 +235,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
-                                .col("s2", ColumnType.SYMBOL),
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("vch", ColumnType.VARCHAR),
                         10,
                         "2022-06-01",
                         3
@@ -454,9 +457,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 );
 
                 compile("alter table " + tableName + " add column str string");
+                compile("alter table " + tableName + " add column vch varchar");
 
                 compile("insert into " + tableName +
-                        " select x, rnd_int(), timestamp_sequence('2020-01-02T23:59:59', 1000000L * 60 * 20), rnd_str('a', 'b', 'c', null)" +
+                        " select x, rnd_int(), timestamp_sequence('2020-01-02T23:59:59', 1000000L * 60 * 20), rnd_str('a', 'b', 'c', null), rnd_varchar('a', 'b', 'c', null)" +
                         " from long_sequence(100)");
 
                 compile("alter table " + tableName + " detach partition list '2020-01-02', '2020-01-03'");
@@ -464,11 +468,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 assertSql(
                         "first\tstr\n" +
                                 "2020-01-01T00:28:47.990000Z\t\n" +
-                                "2020-01-04T00:19:59.000000Z\ta\n" +
-                                "2020-01-04T00:39:59.000000Z\tc\n" +
-                                "2020-01-04T01:19:59.000000Z\tb\n" +
+                                "2020-01-04T00:19:59.000000Z\tb\n" +
+                                "2020-01-04T00:39:59.000000Z\ta\n" +
+                                "2020-01-04T00:59:59.000000Z\tb\n" +
                                 "2020-01-04T01:39:59.000000Z\t\n" +
-                                "2020-01-04T01:59:59.000000Z\ta\n", "select first(ts), str from " + tableName + " sample by 1d"
+                                "2020-01-04T05:19:59.000000Z\tc\n", "select first(ts), str from " + tableName + " sample by 1d"
                 );
 
                 renameDetachedToAttachable(tableName, "2020-01-02", "2020-01-03");
@@ -479,14 +483,15 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 "2020-01-01T00:28:47.990000Z\t\n" +
                                 "2020-01-02T00:57:35.480000Z\t\n" +
                                 "2020-01-02T23:59:59.000000Z\tc\n" +
+                                "2020-01-03T00:19:59.000000Z\tb\n" +
                                 "2020-01-03T00:39:59.000000Z\t\n" +
-                                "2020-01-03T01:19:59.000000Z\ta\n" +
-                                "2020-01-03T02:39:59.000000Z\tb\n" +
-                                "2020-01-03T02:59:59.000000Z\tc\n" +
-                                "2020-01-04T00:39:59.000000Z\tc\n" +
-                                "2020-01-04T01:19:59.000000Z\tb\n" +
+                                "2020-01-03T00:59:59.000000Z\ta\n" +
+                                "2020-01-03T01:59:59.000000Z\tc\n" +
+                                "2020-01-03T05:39:59.000000Z\tb\n" +
+                                "2020-01-04T00:39:59.000000Z\ta\n" +
+                                "2020-01-04T00:59:59.000000Z\tb\n" +
                                 "2020-01-04T01:39:59.000000Z\t\n" +
-                                "2020-01-04T01:59:59.000000Z\ta\n", "select first(ts), str from " + tableName + " sample by 1d"
+                                "2020-01-04T05:19:59.000000Z\tc\n", "select first(ts), str from " + tableName + " sample by 1d"
                 );
             }
         });
