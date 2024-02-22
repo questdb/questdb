@@ -84,6 +84,11 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
 
     TableToken getTableToken();
 
+    /**
+     * @return whether the data frame applies time interval(s) to the underlying table.
+     */
+    boolean hasInterval();
+
     boolean supportTableRowId(TableToken tableToken);
 
     /**

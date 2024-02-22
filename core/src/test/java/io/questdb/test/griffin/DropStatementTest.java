@@ -38,6 +38,7 @@ import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class DropStatementTest extends AbstractCairoTest {
     /* **
@@ -62,7 +63,7 @@ public class DropStatementTest extends AbstractCairoTest {
             drop("DROP ALL TABLES");
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
-            Assert.assertEquals(getSystemTablesCount(), tableBucket.size());
+            Assert.assertEquals(getSystemTablesCount(engine), tableBucket.size());
         });
     }
 
@@ -202,7 +203,7 @@ public class DropStatementTest extends AbstractCairoTest {
             }
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
-            Assert.assertEquals(1 + getSystemTablesCount(), tableBucket.size());
+            Assert.assertEquals(1 + getSystemTablesCount(engine), tableBucket.size());
             assertTableBucketContains(tab0);
         });
     }
@@ -227,7 +228,7 @@ public class DropStatementTest extends AbstractCairoTest {
             }
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
-            Assert.assertEquals(1 + getSystemTablesCount(), tableBucket.size());
+            Assert.assertEquals(1 + getSystemTablesCount(engine), tableBucket.size());
             assertTableBucketContains(tab0);
         });
     }
@@ -240,9 +241,5 @@ public class DropStatementTest extends AbstractCairoTest {
         }
 
         Assert.fail("Table name: " + tableName + " not found in table bucket");
-    }
-
-    protected int getSystemTablesCount() {
-        return 0;
     }
 }

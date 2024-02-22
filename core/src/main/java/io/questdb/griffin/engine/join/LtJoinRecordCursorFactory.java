@@ -62,7 +62,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             ColumnFilter masterTableKeyColumns
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        Map joinKeyMap = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
+        Map joinKeyMap = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
         int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
@@ -142,7 +142,9 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
                 RecordValueSink valueSink,
-                ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster, IntList slaveColumnIndex
+                ColumnFilter masterTableKeyColumns,
+                int slaveWrappedOverMaster,
+                IntList slaveColumnIndex
         ) {
             super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex);
             this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, slaveWrappedOverMaster, masterTableKeyColumns);

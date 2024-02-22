@@ -273,9 +273,9 @@ public class Bootstrap {
     }
 
     public void extractSite() throws IOException {
-        URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
+        final URL resource = getResourceClass().getResource(getPublicZipPath());
         if (resource == null) {
-            log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
+            log.infoW().$("Web Console build [").$(getPublicZipPath()).$("] not found").$();
         } else {
             long thisVersion = resource.openConnection().getLastModified();
             final String publicDir = rootDirectory + Files.SEPARATOR + "public";
@@ -447,7 +447,7 @@ public class Bootstrap {
     }
 
     private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
-        try (final InputStream is = ServerMain.class.getResourceAsStream(PUBLIC_ZIP)) {
+        try (final InputStream is = getResourceClass().getResourceAsStream(getPublicZipPath())) {
             if (is != null) {
                 try (ZipInputStream zip = new ZipInputStream(is)) {
                     ZipEntry ze;
@@ -460,7 +460,7 @@ public class Bootstrap {
                     }
                 }
             } else {
-                log.errorW().$("could not find site [resource=").$(PUBLIC_ZIP).$(']').$();
+                log.errorW().$("could not find site [resource=").$(getPublicZipPath()).$(']').$();
             }
         }
         setPublicVersion(publicDir, thisVersion);
@@ -599,6 +599,14 @@ public class Bootstrap {
                 r.$('\t').$("http://").$ip(bindIP).$(':').$(bindPort).$('\n').$();
             }
         }
+    }
+
+    protected String getPublicZipPath() {
+        return PUBLIC_ZIP;
+    }
+
+    protected Class<?> getResourceClass() {
+        return ServerMain.class;
     }
 
     public static class BootstrapException extends RuntimeException {

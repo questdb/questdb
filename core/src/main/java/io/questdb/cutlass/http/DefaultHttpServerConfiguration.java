@@ -26,6 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -34,6 +35,7 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -77,8 +79,8 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
-        public boolean isAuthenticationRequired() {
-            return true;
+        public byte getRequiredAuthType() {
+            return SecurityContext.AUTH_TYPE_CREDENTIALS;
         }
     };
 
@@ -144,6 +146,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public byte getRequiredAuthType() {
+        return SecurityContext.AUTH_TYPE_NONE;
+    }
+
+    @Override
     public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
         return staticContentProcessorConfiguration;
     }
@@ -184,11 +191,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public boolean isHealthCheckAuthenticationRequired() {
-        return true;
-    }
-
-    @Override
     public boolean isPessimisticHealthCheckEnabled() {
         return false;
     }
@@ -199,11 +201,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     public class DefaultJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
-        @Override
-        public MillisecondClock getClock() {
-            return httpContextConfiguration.getClock();
-        }
-
         @Override
         public int getConnectionCheckFrequency() {
             return 1_000_000;
@@ -237,6 +234,16 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public long getMaxQueryResponseRowLimit() {
             return Long.MAX_VALUE;
+        }
+
+        @Override
+        public MillisecondClock getMillisecondClock() {
+            return httpContextConfiguration.getMillisecondClock();
+        }
+
+        @Override
+        public NanosecondClock getNanosecondClock() {
+            return httpContextConfiguration.getNanosecondClock();
         }
     }
 

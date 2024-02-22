@@ -136,12 +136,27 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                     .$(", cache=").$(cache != null)
                     .$(", capacity=").$(symbolCapacity)
                     .I$();
+
+            // trust _txn file, not the key count in the files
+            indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
         } catch (Throwable e) {
             close();
             throw e;
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    public static long keyToOffset(int key) {
+        return HEADER_SIZE + key * 8L;
+    }
+
+    public static void mergeSymbols(final MapWriter dst, final SymbolMapReader src, final MemoryMARW map) {
+        map.jumpTo(0);
+        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
+            map.putInt(dst.put(src.valueOf(srcId)));
+        }
+        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
     }
 
     public static boolean mergeSymbols(final MapWriter dst, final SymbolMapReader src) {
@@ -153,14 +168,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         }
         dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
         return remapped;
-    }
-
-    public static void mergeSymbols(final MapWriter dst, final SymbolMapReader src, final MemoryMARW map) {
-        map.jumpTo(0);
-        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
-            map.putInt(dst.put(src.valueOf(srcId)));
-        }
-        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
     }
 
     @Override
@@ -295,16 +302,20 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     private int put0(CharSequence symbol, int hash, SymbolValueCountCollector countCollector) {
-        long offsetOffset = offsetMem.getAppendOffset() - Long.BYTES;
-        offsetMem.putLong(charMem.putStr(symbol));
-        indexWriter.add(hash, offsetOffset);
-        final int symIndex = offsetToKey(offsetOffset);
+        // offsetMem has N+1 entries, where N is the number of symbols
+        // Last entry is the length of the symbol (.c) file after N symbols are already written
+        final long nOffsetOffset = offsetMem.getAppendOffset() - 8L;
+        final long nPlusOneValue = charMem.putStr(symbol);
+
+        // Here we're adding the offset of in the offset file where the symbol started
+        indexWriter.add(hash, nOffsetOffset);
+
+        // Here we are adding a new symbol and writing offset file the offset AFTER the new symbol
+        offsetMem.putLong(nPlusOneValue);
+
+        final int symIndex = offsetToKey(nOffsetOffset);
         countCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);
         return symIndex;
-    }
-
-    static long keyToOffset(int key) {
-        return HEADER_SIZE + key * 8L;
     }
 
     static int offsetToKey(long offset) {

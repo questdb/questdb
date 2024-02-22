@@ -268,8 +268,11 @@ public class TestCases {
         // CrossJoinRecordCursorFactory
         addTestCase("select * from x cross join y");
 
-        // AsOfJoinNoKeyRecordCursorFactory
+        // AsOfJoinNoKeyFastRecordCursorFactory
         addTestCase("select * from x asof join y");
+
+        // AsOfJoinNoKeyRecordCursorFactory
+        addTestCase("select * from x asof join (y where i >= 0)");
 
         // AsOfJoinRecordCursorFactory
         addTestCase("with yy as (select ts, max(l) l from y sample by 1h) select * from x asof join (yy timestamp(ts)) on (l)");
@@ -277,8 +280,11 @@ public class TestCases {
         // AsOfJoinLightRecordCursorFactory
         addTestCase("select * from x asof join y on (sym)");
 
-        // LtJoinNoKeyRecordCursorFactory
+        // LtJoinNoKeyFastRecordCursorFactory
         addTestCase("select * from x lt join y");
+
+        // LtJoinNoKeyRecordCursorFactory
+        addTestCase("select * from x lt join (y where i >= 0)");
 
         // LtJoinRecordCursorFactory
         addTestCase("with yy as (select ts, max(l) l from y sample by 1h) select * from x lt join (yy timestamp(ts)) on (l)");

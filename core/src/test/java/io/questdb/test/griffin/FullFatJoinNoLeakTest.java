@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.test.AbstractCairoTest;
@@ -65,21 +66,21 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
 
     private void createTablesToJoin() throws SqlException {
         // ASKS
-        ddl("create table asks(ask int, ts timestamp) timestamp(ts) partition by none");
+        ddl("create table asks (ask int, ts timestamp) timestamp(ts) partition by none");
         insert("insert into asks values(100, 0)");
         insert("insert into asks values(101, 2);");
         insert("insert into asks values(102, 4);");
 
         // BIDS
-        ddl("create table bids(bid int, ts timestamp) timestamp(ts) partition by none");
+        ddl("create table bids (bid int, ts timestamp) timestamp(ts) partition by none");
         insert("insert into bids values(101, 1);");
         insert("insert into bids values(102, 3);");
         insert("insert into bids values(103, 5);");
     }
 
     private void testJoinThrowsLimitOverflowException(String sql) throws Exception {
-        configOverrideSqlJoinMetadataPageSize(10);
-        configOverrideSqlJoinMetadataMaxResizes(0);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 10);
+        node1.setProperty(PropertyKey.CAIRO_SQL_JOIN_METADATA_MAX_RESIZES, 0);
 
         assertMemoryLeak(() -> {
             try {

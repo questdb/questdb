@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.table;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -186,7 +187,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
     }
 
     private void testBwdPageFrameCursor(int rowCount, int maxSize, int startTopAt) throws Exception {
-        pageFrameMaxRows = maxSize;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, maxSize);
 
         TestUtils.assertMemoryLeak(() -> {
             TableToken tableToekn;
@@ -258,7 +259,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             true
                     );
 
-                    Assert.assertTrue(factory.supportPageFrameCursor());
+                    Assert.assertTrue(factory.supportsPageFrameCursor());
 
                     long ts = (rowCount + 1) * increment;
                     int rowIndex = rowCount - 1;
@@ -304,7 +305,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
     }
 
     private void testFwdPageFrameCursor(int rowCount, int maxSize, int startTopAt) throws Exception {
-        pageFrameMaxRows = maxSize;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, maxSize);
 
         TestUtils.assertMemoryLeak(() -> {
             TableToken tt;
@@ -368,7 +369,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             true
                     );
 
-                    Assert.assertTrue(factory.supportPageFrameCursor());
+                    Assert.assertTrue(factory.supportsPageFrameCursor());
 
                     rnd.reset();
                     long ts = 0;

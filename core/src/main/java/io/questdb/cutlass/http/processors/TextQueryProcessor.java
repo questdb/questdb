@@ -66,8 +66,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final int doubleScale;
     private final CairoEngine engine;
     private final int floatScale;
+    private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
     private final QueryLogger queryLogger;
+    private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
     @TestOnly
@@ -87,13 +89,15 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) {
         this.configuration = configuration;
         this.floatScale = configuration.getFloatScale();
-        this.clock = configuration.getClock();
+        this.clock = configuration.getMillisecondClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
         this.doubleScale = configuration.getDoubleScale();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
         this.engine = engine;
         queryLogger = engine.getConfiguration().getQueryLogger();
+        maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+        requiredAuthType = configuration.getRequiredAuthType();
     }
 
     @Override
@@ -148,7 +152,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                             runQuery = false;
                         } catch (TableReferenceOutOfDateException e) {
-                            if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPTS) {
+                            if (retries == maxSqlRecompileAttempts) {
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
                             info(state).$(e.getFlyweightMessage()).$();
@@ -183,6 +187,11 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
             readyForNextRequest(context);
         }
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return requiredAuthType;
     }
 
     @Override

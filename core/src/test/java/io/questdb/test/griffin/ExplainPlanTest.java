@@ -174,7 +174,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
                         "    SelectedRecord\n" +
                         "        Nested Loop Left Join\n" +
-                        "          filter: ((a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts) and a.age=10)\n" +
+                        "          filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts and a.age=10)\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_1\n" +
@@ -194,7 +194,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and b.age = 10 ",
                 "SelectedRecord\n" +
                         "    Nested Loop Left Join\n" +
-                        "      filter: ((a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts) and b.age=10)\n" +
+                        "      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts and b.age=10)\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: table_1\n" +
@@ -284,8 +284,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a asof join b on ts where a.i = b.ts::int",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts::int\n" +
-                            "        AsOf Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        AsOf Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -306,8 +305,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select ts, ts1, i, i1 from (select * from a asof join b on ts ) where i/10 = i1",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i/10=b.i\n" +
-                            "        AsOf Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        AsOf Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -327,8 +325,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a asof join b on ts",
                     "SelectedRecord\n" +
-                            "    AsOf Join Light\n" +
-                            "      condition: b.ts=a.ts\n" +
+                            "    AsOf Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -348,8 +345,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a asof join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
-                            "    AsOf Join Light\n" +
-                            "      condition: _xQdbA1.ts=a.ts\n" +
+                            "    AsOf Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -370,8 +366,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
-                            "    AsOf Join Light\n" +
-                            "      condition: _xQdbA1.ts=a.ts\n" +
+                            "    AsOf Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -396,10 +391,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "asof join b on ts " +
                             "asof join a c on ts",
                     "SelectedRecord\n" +
-                            "    AsOf Join Light\n" +
-                            "      condition: c.ts=a.ts\n" +
-                            "        AsOf Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        AsOf Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -426,7 +419,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "where a.i = b.i",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.i\n" +
-                            "        AsOf Join\n" +
+                            "        AsOf Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -467,13 +460,75 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKey() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a asof join b where a.i > 0",
+                    "SelectedRecord\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: 0<i\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinNoKeyFast1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertPlan(
                     "select * from a asof join b",
                     "SelectedRecord\n" +
-                            "    AsOf Join\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinNoKeyFast2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a asof join b on(ts)",
+                    "SelectedRecord\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinNoKeyFast3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (ts timestamp, i int) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a asof join b on(ts)",
+                    "SelectedRecord\n" +
+                            "    AsOf Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -1700,7 +1755,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: s is not null\n" +
@@ -1710,7 +1765,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null and s != 'A1000'",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and s!='A1000')\n" +
@@ -1722,7 +1777,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A100");
             assertPlan("select s, count() from trips where s is not null and s != :s1",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and s!=:s1::string)\n" +
@@ -1732,7 +1787,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null and l != 0",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 and s is not null)\n" +
@@ -1742,7 +1797,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null or l != 0",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null or l!=0)\n" +
@@ -1752,7 +1807,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where l != 0 and s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 and s is not null)\n" +
@@ -1762,7 +1817,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where l != 0 or s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 or s is not null)\n" +
@@ -1772,7 +1827,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: ((100<l or l!=0) and s is not null)\n" +
@@ -1813,7 +1868,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "timestamp(ts) partition by month");
 
             assertPlan("select s, count() from trips where s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: s is not null\n" +
@@ -1833,7 +1888,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: s is not null\n" +
@@ -1843,7 +1898,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null and s != 'A1000'",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and s!='A1000')\n" +
@@ -1855,7 +1910,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A100");
             assertPlan("select s, count() from trips where s is not null and s != :s1",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and s!=:s1::string)\n" +
@@ -1865,7 +1920,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null and l != 0",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and l!=0)\n" +
@@ -1875,7 +1930,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where s is not null or l != 0",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null or l!=0)\n" +
@@ -1885,7 +1940,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where l != 0 and s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 and s is not null)\n" +
@@ -1895,7 +1950,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where l != 0 or s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 or s is not null)\n" +
@@ -1905,7 +1960,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: ((100<l or l!=0) and s is not null)\n" +
@@ -2093,7 +2148,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         GenericRecordMetadata cursorMetadata = new GenericRecordMetadata();
         cursorMetadata.add(new TableColumnMetadata("s", ColumnType.STRING));
         constFuncs.put(ColumnType.CURSOR, list(new CursorFunction(new EmptyTableRecordCursorFactory(cursorMetadata) {
-            public boolean supportPageFrameCursor() {
+            public boolean supportsPageFrameCursor() {
                 return true;
             }
         })));
@@ -2260,6 +2315,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             } else if (factory instanceof RndIPv4CCFunctionFactory) {
                                 args.add(new StrConstant("4.12.22.11/12"));
                                 args.add(new IntConstant(2));
+                            } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
+                                args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                             } else if (!useConst) {
                                 args.add(colFuncs.get(sigArgType));
                             } else if (factory instanceof WalTransactionsFunctionFactory && sigArgType == ColumnType.STRING) {
@@ -2354,7 +2411,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (l long, b boolean)",
                 "select b, min(l)  from a where b = true group by b",
-                "Async Group By workers: 1\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  keys: [b]\n" +
                         "  values: [min(l)]\n" +
                         "  filter: b=true\n" +
@@ -2462,12 +2519,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (s symbol, ts timestamp) timestamp(ts) partition by year;",
                 "select s as symbol, count() from a",
                 "GroupBy vectorized: true workers: 1\n" +
-                        "  keys: [symbol]\n" +
+                        "  keys: [s]\n" +
                         "  values: [count(*)]\n" +
-                        "    SelectedRecord\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n"
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 
@@ -2597,7 +2653,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (i int, d double)",
                 "select i from a where d < 42 group by i",
-                "Async Group By workers: 1\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  keys: [i]\n" +
                         "  filter: d<42\n" +
                         "    DataFrame\n" +
@@ -2639,7 +2695,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (i long, j long, d double)",
                 "select i, j from a where d > 42 group by i, j",
-                "Async Group By workers: 1\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  keys: [i,j]\n" +
                         "  filter: 42<d\n" +
                         "    DataFrame\n" +
@@ -2667,7 +2723,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (s symbol, d double)",
                 "select s from a where d = 42 group by s",
-                "Async Group By workers: 1\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  keys: [s]\n" +
                         "  filter: d=42\n" +
                         "    DataFrame\n" +
@@ -2824,7 +2880,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select max(i) from a where i < 10",
-                "Async Group By workers: 1\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  values: [max(i)]\n" +
                         "  filter: i<10\n" +
                         "    DataFrame\n" +
@@ -2898,7 +2954,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (l long, s1 string, s2 string)",
                 "select s1||s2 s, avg(l) a from a where l > 42",
-                "Async Group By workers: 1\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  keys: [s]\n" +
                         "  values: [avg(l)]\n" +
                         "  filter: 42<l\n" +
@@ -3023,7 +3079,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where y = 5 group by x limit 10",
                 "Limit lo: 10\n" +
-                        "    Async Group By workers: 1\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
                         "      filter: y=5\n" +
@@ -3039,7 +3095,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select x, count(*) from di where y = 5 group by x limit -10",
                 "Limit lo: -10\n" +
-                        "    Async Group By workers: 1\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
                         "      filter: y=5\n" +
@@ -3104,7 +3160,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [ts desc]\n" +
-                        "    Async Group By workers: 1\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      keys: [ts]\n" +
                         "      values: [count(*)]\n" +
                         "      filter: y=5\n" +
@@ -3674,7 +3730,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);",
                 "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2",
                 "LatestByAllSymbolsFiltered\n" +
-                        "  filter: ((s1 in [S1,S2] and s2='S3') and 0<i)\n" +
+                        "  filter: (s1 in [S1,S2] and s2='S3' and 0<i)\n" +
                         "    Row backward scan\n" +
                         "      expectedSymbolsCount: 2\n" +
                         "    Frame backward scan on: a\n"
@@ -4331,10 +4387,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
+            compile("CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
 
             String[] joinTypes = {"LEFT", "LT", "ASOF"};
-            String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join", "AsOf Join"};
+            String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join Fast Scan", "AsOf Join Fast Scan"};
 
             for (int i = 0; i < joinTypes.length; i++) {
                 // do not push down predicate to the 'right' table of left join but apply it after join
@@ -4540,7 +4596,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  and s3 like 'a%'  and s4 ilike 'a%' " +
                             "  and s5 like '%a%' and s6 ilike '%a%';",
                     "Async Filter workers: 1\n" +
-                            "  filter: (((((s1 like %a and s2 ilike %a) and s3 like a%) and s4 ilike a%) and s5 like %a%) and s6 ilike %a%)\n" +
+                            "  filter: ((s1 like %a and s2 ilike %a and s3 like a% and s4 ilike a%) and s5 like %a% and s6 ilike %a%)\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -4558,8 +4614,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2",
                     "SelectedRecord\n" +
                             "    Filter filter: a.ts::long*a.i<b.ts::long*b.i\n" +
-                            "        Lt Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4579,8 +4634,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join b on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "      condition: b.ts=a.ts\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4603,8 +4657,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4625,8 +4678,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4647,7 +4699,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4667,8 +4719,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "      condition: _xQdbA1.ts=a.ts\n" +
+                            "    Lt Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4709,6 +4760,88 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtJoinNoKey1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a lt join b where a.i > 0",
+                    "SelectedRecord\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: 0<i\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLtJoinNoKey2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a lt join b",
+                    "SelectedRecord\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLtJoinNoKey3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a lt join b on(ts)",
+                    "SelectedRecord\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLtJoinNoKey4() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (ts timestamp, i int) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a lt join b on(ts)",
+                    "SelectedRecord\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
     public void testLtOfJoin3() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -4717,8 +4850,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "      condition: _xQdbA1.ts=a.ts\n" +
+                            "    Lt Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4743,10 +4875,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "lt join b on ts " +
                             "lt join a c on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "      condition: c.ts=a.ts\n" +
-                            "        Lt Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -6001,9 +6131,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // no where clause, distinct column
             assertPlan("SELECT count_distinct(s) FROM test",
                     "Count\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    Async JIT Group By workers: 1\n" +
                             "      keys: [s]\n" +
-                            "      filter: s is not null \n" +
+                            "      filter: s is not null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -6013,17 +6143,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [s]\n" +
-                            "      filter: (s like %abc% and s is not null )\n" +
+                            "      filter: (s like %abc% and s is not null)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
 
             // no where clause, distinct expression 1
-            assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test ",
+            assertPlan("SELECT count_distinct(substring(s,1,1)) FROM test;",
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [substring]\n" +
-                            "      filter: substring(s,1,1) is not null \n" +
+                            "      filter: substring(s,1,1) is not null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -6033,7 +6163,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [substring]\n" +
-                            "      filter: (s like %abc% and substring(s,1,1) is not null )\n" +
+                            "      filter: (s like %abc% and substring(s,1,1) is not null)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -6043,7 +6173,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [substring]\n" +
-                            "      filter: ((s like %abc% and substring is not null ) and substring(s,1,1) is not null )\n" +
+                            "      filter: (s like %abc% and substring is not null and substring(s,1,1) is not null)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -6051,7 +6181,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // where clause, distinct expression 3
             assertPlan("SELECT count_distinct(x+1) FROM test where x > 5",
                     "Count\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
                             "      filter: (5<x and null!=x+1)\n" +
                             "        DataFrame\n" +
@@ -6061,7 +6191,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // where clause, distinct expression, col alias
             assertPlan("SELECT count_distinct(x+1) cnt_dst FROM test where x > 5",
                     "Count\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
                             "      filter: (5<x and null!=x+1)\n" +
                             "        DataFrame\n" +
@@ -6075,7 +6205,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // where clause, distinct expression, table alias
             assertPlan("SELECT count_distinct(x+1) FROM test tab where x > 5",
                     "Count\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
                             "      filter: (5<x and null!=x+1)\n" +
                             "        DataFrame\n" +
@@ -6349,7 +6479,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count(*) from (select * from a lt join a b) ",
                 "Count\n" +
                         "    SelectedRecord\n" +
-                        "        Lt Join\n" +
+                        "        Lt Join Fast Scan\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -6366,7 +6496,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count(*) from (select * from a asof join a b) ",
                 "Count\n" +
                         "    SelectedRecord\n" +
-                        "        AsOf Join\n" +
+                        "        AsOf Join Fast Scan\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -6438,7 +6568,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (i long, j long, d double)",
                 "select count(*) from (select i, j from a where d > 42 group by i, j)",
                 "Count\n" +
-                        "    Async Group By workers: 1\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      keys: [i,j]\n" +
                         "      filter: 42<d\n" +
                         "        DataFrame\n" +
@@ -6588,7 +6718,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s string, l long )",
                 "select count_distinct(l) from tab",
                 "Count\n" +
-                        "    Async Group By workers: 1\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      keys: [l]\n" +
                         "      filter: null!=l\n" +
                         "        DataFrame\n" +
@@ -8191,13 +8321,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testSelectWithJittedFilter27() throws Exception {
+        assertPlan(
+                "create table tab ( s string, ts timestamp);",
+                "select * from tab where s = null ",
+                "Async JIT Filter workers: 1\n" +
+                        "  filter: s is null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
+        );
+    }
+
     @Test // TODO: this one should use jit !
     public void testSelectWithJittedFilter3() throws Exception {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ",
                 "Async Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) and ts=1640995200000000)\n" +
+                        "  filter: (100<l and l<1000 and ts=1640995200000000)\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8210,7 +8353,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and l = 20",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) and l=20)\n" +
+                        "  filter: (100<l and l<1000 and l=20)\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8559,19 +8702,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // jit filter doesn't work for string type
-    public void testSelectWithNonJittedFilter8() throws Exception {
-        assertPlan(
-                "create table tab ( s string, ts timestamp);",
-                "select * from tab where s = null ",
-                "Async Filter workers: 1\n" +
-                        "  filter: s is null\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
-        );
-    }
-
     @Test // jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter9() throws Exception {
         assertPlan(
@@ -8765,15 +8895,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "from a where l::short<i ) " +
                         "where mil + mini> 1 ",
                 "Filter filter: 1<mil+mini\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [k]\n" +
                         "      values: [max(i*l),min(l),min(i)]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: l::short<i\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n"
+                        "      filter: l::short<i\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
         );
     }
 
@@ -8816,7 +8944,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Sort light lo: 10 partiallySorted: true\n" +
                             "          keys: [ts, l]\n" +
                             "            DataFrame\n" +
@@ -8840,7 +8968,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "lt join " +
                             "(select * from a) order by ts asc",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Limit lo: 10\n" +
                             "            Sort light\n" +
                             "              keys: [ts, l]\n" +
@@ -8892,7 +9020,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "lt join (select * from a) " +
                             "order by ts asc",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Limit lo: 10\n" +
                             "            Sort\n" +
                             "              keys: [ts, l]\n" +

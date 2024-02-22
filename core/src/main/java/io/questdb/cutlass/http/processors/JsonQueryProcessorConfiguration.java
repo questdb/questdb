@@ -25,12 +25,12 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface JsonQueryProcessorConfiguration {
-
-    MillisecondClock getClock();
 
     int getConnectionCheckFrequency();
 
@@ -45,4 +45,12 @@ public interface JsonQueryProcessorConfiguration {
     CharSequence getKeepAliveHeader();
 
     long getMaxQueryResponseRowLimit();
+
+    MillisecondClock getMillisecondClock();
+
+    NanosecondClock getNanosecondClock();
+
+    default byte getRequiredAuthType() {
+        return SecurityContext.AUTH_TYPE_CREDENTIALS;
+    }
 }

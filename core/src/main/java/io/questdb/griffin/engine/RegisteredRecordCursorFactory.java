@@ -123,6 +123,11 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+        return base.getTimeFrameCursor(executionContext);
+    }
+
+    @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
     }
@@ -133,8 +138,13 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean supportPageFrameCursor() {
-        return base.supportPageFrameCursor();
+    public boolean supportsPageFrameCursor() {
+        return base.supportsPageFrameCursor();
+    }
+
+    @Override
+    public boolean supportsTimeFrameCursor() {
+        return base.supportsTimeFrameCursor();
     }
 
     @Override
@@ -179,12 +189,12 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public io.questdb.cairo.sql.Record getRecord() {
+        public Record getRecord() {
             return base.getRecord();
         }
 
         @Override
-        public io.questdb.cairo.sql.Record getRecordB() {
+        public Record getRecordB() {
             return base.getRecordB();
         }
 

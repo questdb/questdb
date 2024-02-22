@@ -69,10 +69,9 @@ public class Unordered16Map implements Map, Reopenable {
 
     static final long KEY_SIZE = 2 * Long.BYTES;
     private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
-    private static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int MIN_KEY_CAPACITY = 16;
     private final Unordered16MapCursor cursor;
     private final long entrySize;
-    private final int initialKeyCapacity;
     private final Key key;
     private final double loadFactor;
     private final int maxResizes;
@@ -83,6 +82,7 @@ public class Unordered16Map implements Map, Reopenable {
     private final Unordered16MapValue value3;
     private int free;
     private boolean hasZero;
+    private int initialKeyCapacity;
     private int keyCapacity;
     private long keyMemStart; // Key look-up memory start pointer.
     private int mask;
@@ -115,7 +115,7 @@ public class Unordered16Map implements Map, Reopenable {
         this.memoryTag = memoryTag;
         this.loadFactor = loadFactor;
         this.keyCapacity = (int) (keyCapacity / loadFactor);
-        this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_INITIAL_CAPACITY);
+        this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
         this.maxResizes = maxResizes;
         mask = this.keyCapacity - 1;
         free = (int) (this.keyCapacity * loadFactor);
@@ -208,6 +208,7 @@ public class Unordered16Map implements Map, Reopenable {
         return cursor.init(memStart, memLimit, 0, size);
     }
 
+    @Override
     public int getKeyCapacity() {
         return keyCapacity;
     }
@@ -220,20 +221,27 @@ public class Unordered16Map implements Map, Reopenable {
     @Override
     public void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
         assert this != srcMap;
-        if (srcMap.size() == 0) {
+        long srcSize = srcMap.size();
+        if (srcSize == 0) {
             return;
         }
         Unordered16Map src16Map = (Unordered16Map) srcMap;
 
         // First, we handle zero key.
-        if (src16Map.hasZero && hasZero) {
-            mergeFunc.merge(
-                    valueAt(zeroMemStart),
-                    src16Map.valueAt(src16Map.zeroMemStart)
-            );
-        } else if (src16Map.hasZero) {
-            Vect.memcpy(zeroMemStart, src16Map.zeroMemStart, entrySize);
-            hasZero = true;
+        if (src16Map.hasZero) {
+            if (hasZero) {
+                mergeFunc.merge(
+                        valueAt(zeroMemStart),
+                        src16Map.valueAt(src16Map.zeroMemStart)
+                );
+            } else {
+                Vect.memcpy(zeroMemStart, src16Map.zeroMemStart, entrySize);
+                hasZero = true;
+            }
+            // Check if zero was the only element in the source map.
+            if (srcSize == 1) {
+                return;
+            }
         }
 
         // Then we handle all non-zero keys.
@@ -267,6 +275,15 @@ public class Unordered16Map implements Map, Reopenable {
             if (--free == 0) {
                 rehash();
             }
+        }
+    }
+
+    @Override
+    public void reopen(int keyCapacity, int pageSize) {
+        if (memStart == 0) {
+            keyCapacity = (int) (keyCapacity / loadFactor);
+            initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);
+            restoreInitialCapacity();
         }
     }
 

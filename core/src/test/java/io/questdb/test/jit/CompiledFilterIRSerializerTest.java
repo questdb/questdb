@@ -96,6 +96,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     .col("atimestamp", ColumnType.TIMESTAMP)
                     .col("adouble", ColumnType.DOUBLE)
                     .col("astring", ColumnType.STRING)
+                    .col("astring2", ColumnType.STRING)
+                    .col("abinary", ColumnType.BINARY)
+                    .col("abinary2", ColumnType.BINARY)
                     .col("auuid", ColumnType.UUID)
                     .col("along128", ColumnType.LONG128)
                     .timestamp();
@@ -111,7 +114,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         }
 
         factory = select("select * from x");
-        Assert.assertTrue(factory.supportPageFrameCursor());
+        Assert.assertTrue(factory.supportsPageFrameCursor());
         metadata = factory.getMetadata();
     }
 
@@ -355,6 +358,42 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testStringNullConstant() throws Exception {
+        serialize("astring <> null");
+        assertIR("(i32 -1L)(string_header astring)(<>)(ret)");
+        serialize("astring = null");
+        assertIR("(i32 -1L)(string_header astring)(=)(ret)");
+    }
+
+    @Test
+    public void testBinaryNullConstant() throws Exception {
+        serialize("abinary <> null");
+        assertIR("(i64 -1L)(binary_header abinary)(<>)(ret)");
+        serialize("abinary = null");
+        assertIR("(i64 -1L)(binary_header abinary)(=)(ret)");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedStringEquality() throws Exception {
+        serialize("astring = astring2");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedStringInequality() throws Exception {
+        serialize("astring <> astring2");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedBinaryEquality() throws Exception {
+        serialize("abinary = abinary2");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedBinaryInequality() throws Exception {
+        serialize("abinary <> abinary2");
+    }
+
+    @Test
     public void testNullConstantValues() throws Exception {
         String[][] columns = new String[][]{
                 {"anint", "i32", Numbers.INT_NaN + "L"},
@@ -469,6 +508,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("atimestamp <> null", 8);
         filterToOptions.put("adouble = 0", 8);
         filterToOptions.put("adouble = 0 and along = 0", 8);
+        filterToOptions.put("astring = null", 8);
+        filterToOptions.put("abinary = null", 8);
         // 16B
         filterToOptions.put("auuid = '11111111-1111-1111-1111-111111111111'", 16);
         filterToOptions.put("auuid = null", 16);
@@ -616,11 +657,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedMixedUuidAndStringColumns() throws Exception {
         serialize("auuid = astring");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedNullType() throws Exception {
-        serialize("astring <> null");
     }
 
     @Test(expected = SqlException.class)
@@ -898,6 +934,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     return "f64";
                 case I16_TYPE:
                     return "i128";
+                case STRING_HEADER_TYPE:
+                    return "string_header";
+                case BINARY_HEADER_TYPE:
+                    return "binary_header";
                 default:
                     return "unknown: " + type;
             }

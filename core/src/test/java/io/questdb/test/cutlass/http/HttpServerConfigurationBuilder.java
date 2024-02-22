@@ -25,6 +25,7 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -32,9 +33,7 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Numbers;
-import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -45,21 +44,28 @@ public class HttpServerConfigurationBuilder {
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private boolean dumpTraffic;
     private FactoryProvider factoryProvider;
-    private Boolean healthCheckAuthRequired;
+    private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
     private String httpProtocolVersion = "HTTP/1.1 ";
+    private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private long multipartIdleSpinCount = -1;
+    private NanosecondClock nanosecondClock = StationaryNanosClock.INSTANCE;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private boolean pessimisticHealthCheck = false;
+    private int port = -1;
     private int receiveBufferSize = 1024 * 1024;
     private int rerunProcessingQueueSize = 4096;
     private int sendBufferSize = 1024 * 1024;
     private boolean serverKeepAlive = true;
-    private Boolean staticContentAuthRequired;
     private int tcpSndBufSize;
     private int workerCount;
 
     public DefaultHttpServerConfiguration build() {
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+            @Override
+            public int getBindPort() {
+                return port != -1 ? port : super.getBindPort();
+            }
+
             @Override
             public NetworkFacade getNetworkFacade() {
                 return nf;
@@ -73,11 +79,6 @@ public class HttpServerConfigurationBuilder {
 
         return new DefaultHttpServerConfiguration() {
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
-                @Override
-                public MillisecondClock getClock() {
-                    return () -> 0;
-                }
-
                 @Override
                 public int getConnectionCheckFrequency() {
                     return 1_000_000;
@@ -112,6 +113,16 @@ public class HttpServerConfigurationBuilder {
                 public long getMaxQueryResponseRowLimit() {
                     return configuredMaxQueryResponseRowLimit;
                 }
+
+                @Override
+                public MillisecondClock getMillisecondClock() {
+                    return StationaryMillisClock.INSTANCE;
+                }
+
+                @Override
+                public NanosecondClock getNanosecondClock() {
+                    return nanosecondClock;
+                }
             };
             private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
                 @Override
@@ -140,8 +151,8 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public boolean isAuthenticationRequired() {
-                    return staticContentAuthRequired != null ? staticContentAuthRequired : true;
+                public byte getRequiredAuthType() {
+                    return httpStaticContentAuthType;
                 }
             };
 
@@ -156,11 +167,6 @@ public class HttpServerConfigurationBuilder {
                     @Override
                     public boolean allowDeflateBeforeSend() {
                         return allowDeflateBeforeSend;
-                    }
-
-                    @Override
-                    public MillisecondClock getClock() {
-                        return StationaryMillisClock.INSTANCE;
                     }
 
                     @Override
@@ -179,9 +185,19 @@ public class HttpServerConfigurationBuilder {
                     }
 
                     @Override
+                    public MillisecondClock getMillisecondClock() {
+                        return StationaryMillisClock.INSTANCE;
+                    }
+
+                    @Override
                     public long getMultipartIdleSpinCount() {
                         if (multipartIdleSpinCount < 0) return super.getMultipartIdleSpinCount();
                         return multipartIdleSpinCount;
+                    }
+
+                    @Override
+                    public NanosecondClock getNanosecondClock() {
+                        return nanosecondClock;
                     }
 
                     @Override
@@ -209,6 +225,11 @@ public class HttpServerConfigurationBuilder {
             @Override
             public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
                 return jsonQueryProcessorConfiguration;
+            }
+
+            @Override
+            public byte getRequiredAuthType() {
+                return httpHealthCheckAuthType;
             }
 
             @Override
@@ -247,18 +268,13 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
-            public boolean isHealthCheckAuthenticationRequired() {
-                return healthCheckAuthRequired != null ? healthCheckAuthRequired : super.isHealthCheckAuthenticationRequired();
+            public int getWorkerCount() {
+                return workerCount == 0 ? super.getWorkerCount() : workerCount;
             }
 
             @Override
             public boolean isPessimisticHealthCheckEnabled() {
                 return pessimisticHealthCheck;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount == 0 ? super.getWorkerCount() : workerCount;
             }
         };
     }
@@ -288,8 +304,8 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
-    public HttpServerConfigurationBuilder withHealthCheckAuthRequired(boolean healthCheckAuthRequired) {
-        this.healthCheckAuthRequired = healthCheckAuthRequired;
+    public HttpServerConfigurationBuilder withHealthCheckAuthRequired(byte httpHealthCheckAuthType) {
+        this.httpHealthCheckAuthType = httpHealthCheckAuthType;
         return this;
     }
 
@@ -303,6 +319,11 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
+    public HttpServerConfigurationBuilder withNanosClock(NanosecondClock nanosecondClock) {
+        this.nanosecondClock = nanosecondClock;
+        return this;
+    }
+
     public HttpServerConfigurationBuilder withNetwork(NetworkFacade nf) {
         this.nf = nf;
         return this;
@@ -310,6 +331,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withPessimisticHealthCheck(boolean pessimisticHealthCheck) {
         this.pessimisticHealthCheck = pessimisticHealthCheck;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withPort(int port) {
+        this.port = port;
         return this;
     }
 
@@ -333,8 +359,8 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
-    public HttpServerConfigurationBuilder withStaticContentAuthRequired(boolean staticContentAuthRequired) {
-        this.staticContentAuthRequired = staticContentAuthRequired;
+    public HttpServerConfigurationBuilder withStaticContentAuthRequired(byte httpStaticContentAuthType) {
+        this.httpStaticContentAuthType = httpStaticContentAuthType;
         return this;
     }
 

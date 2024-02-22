@@ -110,7 +110,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             NanosecondClock nanosecondClock,
             int floatScale,
             int doubleScale,
-            CharSequence keepAliveHeader) {
+            CharSequence keepAliveHeader
+    ) {
         this.httpConnectionContext = httpConnectionContext;
         resumeActions.extendAndSet(QUERY_SETUP_FIRST_RECORD, this::onSetupFirstRecord);
         resumeActions.extendAndSet(QUERY_PREFIX, this::onQueryPrefix);
@@ -663,6 +664,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             if (timings) {
                 response.putAscii(',').putAsciiQuoted("timings").putAscii(':')
                         .putAscii('{')
+                        .putAsciiQuoted("authentication").putAscii(':').put(httpConnectionContext.getAuthenticationNanos()).putAscii(',')
                         .putAsciiQuoted("compiler").putAscii(':').put(compilerNanos).putAscii(',')
                         .putAsciiQuoted("execute").putAscii(':').put(nanosecondClock.getTicks() - executeStartNanos).putAscii(',')
                         .putAsciiQuoted("count").putAscii(':').put(recordCountNanos)
@@ -833,6 +835,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         cursorHasRows = true;
     }
 
+    static void prepareBadRequestResponse(
+            HttpChunkedResponse response,
+            CharSequence message,
+            DirectUtf8Sequence query
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        response.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query.asAsciiCharSequence()).putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
+                .putAsciiQuoted("position").putAscii(':').put(0)
+                .putAscii('}');
+        response.sendChunk(true);
+    }
+
     static void prepareExceptionJson(
             HttpChunkedResponse response,
             int position,
@@ -843,19 +858,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query).putAscii(',')
                 .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
                 .putAsciiQuoted("position").putAscii(':').put(position)
-                .putAscii('}');
-        response.sendChunk(true);
-    }
-
-    static void prepareBadRequestResponse(
-            HttpChunkedResponse response,
-            CharSequence message,
-            DirectUtf8Sequence query
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.putAscii('{')
-                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query.asAsciiCharSequence()).putAscii(',')
-                .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
-                .putAsciiQuoted("position").putAscii(':').put(0)
                 .putAscii('}');
         response.sendChunk(true);
     }

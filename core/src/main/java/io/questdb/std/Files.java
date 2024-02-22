@@ -177,8 +177,7 @@ public final class Files {
     public static native int fsync(int fd);
 
     public static long getDirSize(Path path) {
-        long pathUtf8Ptr = path.ptr();
-        long pFind = findFirst(pathUtf8Ptr);
+        long pFind = findFirst(path.ptr());
         if (pFind > 0L) {
             int len = path.size();
             try {
@@ -482,8 +481,7 @@ public final class Files {
      * @return true on success
      */
     public static boolean rmdir(Path path, boolean haltOnFail) {
-        long pathUtf8Ptr = path.ptr();
-        long pFind = findFirst(pathUtf8Ptr);
+        long pFind = findFirst(path.ptr());
         if (pFind > 0L) {
             int len = path.size();
             boolean res;
@@ -495,11 +493,11 @@ public final class Files {
                     path.trimTo(len).concat(nameUtf8Ptr).$();
                     type = findType(pFind);
                     if (type == Files.DT_FILE) {
-                        if (!remove(pathUtf8Ptr) && haltOnFail) {
+                        if (!remove(path.ptr()) && haltOnFail) {
                             return false;
                         }
                     } else if (notDots(nameUtf8Ptr)) {
-                        res = type == Files.DT_LNK ? unlink(pathUtf8Ptr) == 0 : rmdir(path, haltOnFail);
+                        res = type == Files.DT_LNK ? unlink(path.ptr()) == 0 : rmdir(path, haltOnFail);
                         if (!res && haltOnFail) {
                             return false;
                         }
@@ -511,10 +509,10 @@ public final class Files {
                 path.trimTo(len).$();
             }
 
-            if (isSoftLink(pathUtf8Ptr)) {
-                return unlink(pathUtf8Ptr) == 0;
+            if (isSoftLink(path.ptr())) {
+                return unlink(path.ptr()) == 0;
             }
-            return rmdir(pathUtf8Ptr);
+            return rmdir(path.ptr());
         }
         return false;
     }

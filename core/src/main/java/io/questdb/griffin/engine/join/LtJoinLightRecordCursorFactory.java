@@ -57,12 +57,13 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
-            JoinContext joinContext) {
+            JoinContext joinContext
+    ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
 
-        Map joinKeyMap = MapFactory.createOrderedMap(configuration, joinColumnTypes, valueTypes);
+        Map joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
         this.cursor = new LtJoinLightRecordCursor(
                 columnSplit,
                 joinKeyMap,

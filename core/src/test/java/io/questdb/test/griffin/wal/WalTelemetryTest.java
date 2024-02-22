@@ -31,11 +31,13 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import static io.questdb.PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY;
+
 @SuppressWarnings("SameParameterValue")
 public class WalTelemetryTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        walTxnNotificationQueueCapacity = 8;
+        setProperty(CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 8);
         AbstractCairoTest.setUpStatic();
     }
 
@@ -75,7 +77,7 @@ public class WalTelemetryTest extends AbstractCairoTest {
             CharSequence sysPrefix = configuration.getSystemTableNamePrefix();
             assertSql("created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency\n" +
                     "1970-01-01T00:00:00.004000Z\t103\t4\t1\t1\t-1\t-1\t2.0000\n" +
-                    "1970-01-01T00:00:00.004000Z\t105\t4\t1\t1\t5\t0\t0.0000\n" +
+                    "1970-01-01T00:00:00.004000Z\t105\t4\t1\t1\t5\t5\t0.0000\n" +
                     "1970-01-01T00:00:00.004000Z\t103\t4\t1\t2\t-1\t-1\t1.0000\n" +
                     "1970-01-01T00:00:00.004000Z\t105\t4\t1\t2\t1\t1\t0.0000\n", sysPrefix + TelemetryWalTask.TABLE_NAME);
 

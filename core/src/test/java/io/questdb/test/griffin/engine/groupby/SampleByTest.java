@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -1337,7 +1338,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByBufferExceeded() throws Exception {
-        configOverrideSampleByIndexSearchPageSize(16);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 16);
 
         assertQuery(
                 "k\ts\tlat\tlon\n",
@@ -1720,7 +1721,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByMicro() throws Exception {
-        configOverrideSampleByIndexSearchPageSize(256);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 256);
 
         assertSampleByIndexQuery(
                 "k\tfirst\n" +
@@ -2690,7 +2691,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "  values: [first(val),avg(val),last(val),max(val)]\n" +
                             "    SelectedRecord\n" +
                             "        Async Filter workers: 1\n" +
-                            "          filter: ((ts2>=1669852800000000 and sym='B') and 0<length(sym)*ts2::long)\n" +
+                            "          filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
@@ -2828,7 +2829,7 @@ public class SampleByTest extends AbstractCairoTest {
                     continue;
                 }
 
-                String plan = "Filter filter: ((tstmp>=1669852800000000 and sym='B') and 0<length(sym)*tstmp::long)\n" +
+                String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
                         "    SampleBy\n" +
                         (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                         "      keys: [tstmp,sym]\n" +

@@ -359,6 +359,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMaxSqlRecompileAttempts() {
+        return 10;
+    }
+
+    @Override
     public int getMaxSwapFileCount() {
         return 30;
     }
@@ -537,6 +542,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getSpinLockTimeout() {
         return 5000;
+    }
+
+    @Override
+    public int getSqlAsOfJoinLookAhead() {
+        return 100;
     }
 
     @Override
@@ -758,7 +768,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlUnorderedMapMaxEntrySize() {
-        return 32;
+        return 16;
     }
 
     @Override

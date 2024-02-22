@@ -24,11 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-public interface SecurityContext {
+public interface SecurityContext extends Mutable {
     // Implementations are free to define unique authentication types.
     // The user authenticated with credentials.
     byte AUTH_TYPE_CREDENTIALS = 1;
@@ -112,6 +113,14 @@ public interface SecurityContext {
      */
     void checkEntityEnabled();
 
+    /**
+     * Clears per-statement state stored in the security context, e.g. entity defined by OWNED BY clause.
+     */
+    @Override
+    default void clear() {
+        // no-op
+    }
+
     default CharSequence getAssumedServiceAccount() {
         final CharSequence principal = getPrincipal();
         final CharSequence sessionPrincipal = getSessionPrincipal();
@@ -129,5 +138,12 @@ public interface SecurityContext {
      */
     default CharSequence getSessionPrincipal() {
         return getPrincipal();
+    }
+
+    /**
+     * User account is stored in an external system, e.g. OpenID Connect provider.
+     */
+    default boolean isExternal() {
+        return false;
     }
 }

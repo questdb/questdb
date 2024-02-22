@@ -166,7 +166,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 return -1;
             }
             if (rowCount > 0) {
-
                 final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);

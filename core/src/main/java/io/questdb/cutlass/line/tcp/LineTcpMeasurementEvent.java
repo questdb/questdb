@@ -38,7 +38,7 @@ import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
-import static io.questdb.cutlass.line.tcp.IlpException.*;
+import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 

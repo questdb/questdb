@@ -24,14 +24,14 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.cutlass.http.client.Chunk;
-import io.questdb.cutlass.http.client.ChunkedResponse;
+import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -40,8 +40,8 @@ import org.junit.Assert;
 import java.util.regex.Pattern;
 
 public class TestHttpClient implements QuietCloseable {
-    private final HttpClient httpClient = HttpClientFactory.newInstance();
-    private final StringSink sink = new StringSink();
+    private final HttpClient httpClient = HttpClientFactory.newPlainTextInstance();
+    private final Utf8StringSink sink = new Utf8StringSink();
     private boolean keepConnection;
 
     public void assertGet(CharSequence expectedResponse, CharSequence sql) {
@@ -84,10 +84,8 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence token
     ) {
         try {
-            HttpClient.Request req = httpClient.newRequest();
-            req
-                    .GET()
-                    .url(url);
+            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            req.GET().url(url);
 
             if (queryParams != null) {
                 for (int i = 0, n = queryParams.size(); i < n; i++) {
@@ -147,7 +145,7 @@ public class TestHttpClient implements QuietCloseable {
             toSink0(url, sql, sink, username, password, token, queryParams, expectedStatus);
             Pattern pattern = Pattern.compile(expectedResponseRegexp);
             String message = "Expected response to match regexp " + expectedResponseRegexp + " but got " + sink + " which does not match";
-            Assert.assertTrue(message, pattern.matcher(sink).matches());
+            Assert.assertTrue(message, pattern.matcher(sink.toString()).matches());
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();
@@ -171,7 +169,7 @@ public class TestHttpClient implements QuietCloseable {
         Misc.free(httpClient);
     }
 
-    public StringSink getSink() {
+    public Utf8StringSink getSink() {
         return sink;
     }
 
@@ -179,7 +177,7 @@ public class TestHttpClient implements QuietCloseable {
         this.keepConnection = keepConnection;
     }
 
-    public void toSink(CharSequence url, CharSequence sql, StringSink sink) {
+    public void toSink(CharSequence url, CharSequence sql, Utf8StringSink sink) {
         try {
             toSink0(url, sql, sink, null, null, null, null, null);
         } finally {
@@ -191,7 +189,7 @@ public class TestHttpClient implements QuietCloseable {
 
     private void reqToSink(
             HttpClient.Request req,
-            StringSink sink,
+            Utf8StringSink sink,
             @Nullable CharSequence username,
             @Nullable CharSequence password,
             @Nullable CharSequence token,
@@ -215,37 +213,34 @@ public class TestHttpClient implements QuietCloseable {
             }
         }
 
-        HttpClient.ResponseHeaders rsp = req.send("localhost", 9001);
+        HttpClient.ResponseHeaders rsp = req.send();
         rsp.await();
 
         if (expectedStatus != null) {
             TestUtils.assertEquals(expectedStatus, rsp.getStatusCode());
         }
 
-        ChunkedResponse chunkedResponse = rsp.getChunkedResponse();
-        Chunk chunk;
+        Response chunkedResponse = rsp.getResponse();
+        Fragment fragment;
 
         sink.clear();
-        while ((chunk = chunkedResponse.recv()) != null) {
-            Utf8s.utf8ToUtf16(chunk.lo(), chunk.hi(), sink);
+        while ((fragment = chunkedResponse.recv()) != null) {
+            Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
         }
     }
 
     private void toSink0(
             CharSequence url,
             CharSequence sql,
-            StringSink sink,
+            Utf8StringSink sink,
             @Nullable CharSequence username,
             @Nullable CharSequence password,
             @Nullable CharSequence token,
             CharSequenceObjHashMap<String> queryParams,
             CharSequence expectedStatus
     ) {
-        HttpClient.Request req = httpClient.newRequest();
-        req
-                .GET()
-                .url(url)
-                .query("query", sql);
+        HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+        req.GET().url(url).query("query", sql);
 
         reqToSink(req, sink, username, password, token, queryParams, expectedStatus);
     }

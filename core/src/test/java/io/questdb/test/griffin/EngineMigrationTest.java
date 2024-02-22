@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.griffin.SqlException;
@@ -143,7 +144,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
     @Test
     public void testMig702HandlesMissingTxn() throws SqlException {
-        node1.getConfigurationOverrides().setRepeatMigrationsFromVersion(426);
+        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
         compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
         compile("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
@@ -178,7 +179,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
     @Test
     public void testMig702NonRepeatable() throws SqlException {
-        node1.getConfigurationOverrides().setRepeatMigrationsFromVersion(-1);
+        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, -1);
         // Run migration
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
 
@@ -211,7 +212,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
     @Test
     public void testMig702Repeatable() throws SqlException, NumericException {
-        node1.getConfigurationOverrides().setRepeatMigrationsFromVersion(426);
+        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
         compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
         TableToken token = engine.verifyTableName("abc");

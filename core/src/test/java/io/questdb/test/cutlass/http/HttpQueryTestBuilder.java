@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -43,9 +44,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
@@ -63,17 +62,18 @@ public class HttpQueryTestBuilder {
     private String copyInputRoot;
     private FactoryProvider factoryProvider;
     private FilesFacade filesFacade = new TestFilesFacadeImpl();
-    private Boolean healthCheckAuthRequired;
+    private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
+    private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private long maxWriterWaitTimeout = 30_000L;
     private Metrics metrics;
     private MicrosecondClock microsecondClock;
+    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private long queryTimeout = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
     private ObjList<SqlExecutionContextImpl> sqlExecutionContexts;
     private long startWriterWaitTimeout = 500;
-    private Boolean staticContentAuthRequired;
     private boolean telemetry;
     private String temp;
     private HttpRequestProcessorBuilder textImportProcessor;
@@ -97,8 +97,9 @@ public class HttpQueryTestBuilder {
             final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
                     .withBaseDir(baseDir)
                     .withFactoryProvider(factoryProvider)
-                    .withStaticContentAuthRequired(staticContentAuthRequired != null ? staticContentAuthRequired : true)
-                    .withHealthCheckAuthRequired(healthCheckAuthRequired != null ? healthCheckAuthRequired : true)
+                    .withStaticContentAuthRequired(httpStaticContentAuthType)
+                    .withHealthCheckAuthRequired(httpHealthCheckAuthType)
+                    .withNanosClock(nanosecondClock)
                     .build();
             if (metrics == null) {
                 metrics = Metrics.enabled();
@@ -205,7 +206,7 @@ public class HttpQueryTestBuilder {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 workerPool.getWorkerCount()
-                        ) : new TextImportProcessor(engine);
+                        ) : new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
 
@@ -333,8 +334,8 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withHealthCheckAuthRequired(boolean healthCheckAuthRequired) {
-        this.healthCheckAuthRequired = healthCheckAuthRequired;
+    public HttpQueryTestBuilder withHealthCheckAuthRequired(byte httpHealthCheckAuthType) {
+        this.httpHealthCheckAuthType = httpHealthCheckAuthType;
         return this;
     }
 
@@ -358,6 +359,11 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
+    public HttpQueryTestBuilder withNanosClock(NanosecondClock nanosecondClock) {
+        this.nanosecondClock = nanosecondClock;
+        return this;
+    }
+
     public HttpQueryTestBuilder withQueryFutureUpdateListener(QueryFutureUpdateListener queryFutureUpdateListener) {
         this.queryFutureUpdateListener = queryFutureUpdateListener;
         return this;
@@ -368,8 +374,8 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withStaticContentAuthRequired(boolean staticContentAuthRequired) {
-        this.staticContentAuthRequired = staticContentAuthRequired;
+    public HttpQueryTestBuilder withStaticContentAuthRequired(byte httpStaticContentAuthType) {
+        this.httpStaticContentAuthType = httpStaticContentAuthType;
         return this;
     }
 

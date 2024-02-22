@@ -30,6 +30,9 @@ import io.questdb.std.str.Utf8String;
 public final class Hash {
 
     private static final long M2 = 0x7a646e4d;
+    private static final int MURMUR3_SEED = 95967;
+    private static final long MURMUR3_X64_128_C1 = 0x87c37b91114253d5L;
+    private static final long MURMUR3_X64_128_C2 = 0x4cf5ad432745937fL;
     private static final int SPREAD_HASH_BITS = 0x7fffffff;
 
     private Hash() {
@@ -44,6 +47,11 @@ public final class Hash {
      */
     public static int boundedHash(CharSequence seq, int max) {
         return seq == null ? -1 : (Chars.hashCode(seq) & 0xFFFFFFF) & max;
+    }
+
+    public static int hashInt(int k) {
+        long h = Integer.toUnsignedLong(k) * M2;
+        return (int) (h ^ h >>> 32);
     }
 
     public static int hashLong(long k) {
@@ -101,7 +109,7 @@ public final class Hash {
      */
     public static int hashMem32(long p, long len) {
         long h = 0;
-        int i = 0;
+        long i = 0;
         for (; i + 7 < len; i += 8) {
             h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
         }
@@ -122,6 +130,20 @@ public final class Hash {
      */
     public static int hashMem32(DirectUtf8Sequence seq) {
         return hashMem32(seq.lo(), seq.size());
+    }
+
+    /**
+     * The Murmur3 128-bit variant. Returns the 8 most significant bytes of the hash.
+     */
+    public static long murmur3ToLong(long key) {
+        return murmur3ToLong(key, Long.BYTES);
+    }
+
+    /**
+     * The Murmur3 128-bit variant. Returns the 8 most significant bytes of the hash.
+     */
+    public static long murmur3ToLong(int key) {
+        return murmur3ToLong(key & 0xffffffffL, Integer.BYTES);
     }
 
     /**
@@ -146,5 +168,41 @@ public final class Hash {
      */
     public static int spread(int h) {
         return (h ^ (h >>> 16)) & SPREAD_HASH_BITS;
+    }
+
+    private static long fmix64(long h) {
+        h ^= (h >>> 33);
+        h *= 0xff51afd7ed558ccdL;
+        h ^= (h >>> 33);
+        h *= 0xc4ceb9fe1a85ec53L;
+        h ^= (h >>> 33);
+        return h;
+    }
+
+    /**
+     * This is an implementation of the Murmur3 128-bit variant, based on the MurmurHash3_x64_128
+     * function from the original MurmurHash3 C++ code
+     * (<a href="https://github.com/aappleby/smhasher/blob/master/src/MurmurHash3.cpp">SMHasher</a>).
+     * <p>
+     * Returns the 8 most significant bytes of the hash.
+     */
+    private static long murmur3ToLong(long key, int keySizeInBytes) {
+        long k1 = key;
+        long h1 = MURMUR3_SEED;
+        long h2 = MURMUR3_SEED;
+        k1 *= MURMUR3_X64_128_C1;
+        k1 = Long.rotateLeft(k1, 31);
+        k1 *= MURMUR3_X64_128_C2;
+        h1 ^= k1;
+
+        // finalization
+        h1 ^= keySizeInBytes;
+        h2 ^= keySizeInBytes;
+        h1 += h2;
+        h2 += h1;
+        h1 = fmix64(h1);
+        h2 = fmix64(h2);
+        h1 += h2;
+        return h1;
     }
 }

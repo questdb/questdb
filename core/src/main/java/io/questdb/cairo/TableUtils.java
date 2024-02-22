@@ -45,10 +45,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.*;
 import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -105,6 +102,7 @@ public final class TableUtils {
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     public static final int NULL_LEN = -1;
     public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
+    public static final String SNAPSHOT_META_FILE_NAME_TXT = "_snapshot.txt";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
@@ -1281,6 +1279,30 @@ public final class TableUtils {
             path.trimTo(rootLen);
             ff.close(fd);
         }
+    }
+
+    public static String readText(FilesFacade ff, Path path1) {
+        int fd = ff.openRO(path1);
+        long bytes = 0;
+        long length = 0;
+        if (fd > -1) {
+            try {
+                length = ff.length(fd);
+                if (length > 0) {
+                    bytes = Unsafe.malloc(length, MemoryTag.NATIVE_DEFAULT);
+                    if (ff.read(fd, bytes, length, 0) == length) {
+                        return Utf8s.stringFromUtf8Bytes(bytes, bytes + length);
+                    }
+
+                }
+            } finally {
+                if (bytes != 0) {
+                    Unsafe.free(bytes, length, MemoryTag.NATIVE_DEFAULT);
+                }
+                ff.close(fd);
+            }
+        }
+        return null;
     }
 
     public static void removeColumnFromMetadata(

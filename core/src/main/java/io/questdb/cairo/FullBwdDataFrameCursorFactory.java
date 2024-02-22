@@ -64,6 +64,11 @@ public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
     }
 
     @Override
+    public boolean hasInterval() {
+        return false;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         if (sink.getOrder() == ORDER_ASC) {
             sink.type("Frame forward scan");

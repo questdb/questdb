@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -425,7 +426,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutInParallelKeyedGroupByWithManyWorkersAndMinimalQueue() throws Exception {
-        pageFrameMaxRows = 1000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         executeWithPool(
                 3,
                 1,
@@ -435,7 +436,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutInParallelKeyedGroupByWithManyWorkersAndRegularQueue() throws Exception {
-        pageFrameMaxRows = 1000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         executeWithPool(
                 3,
                 16,
@@ -445,7 +446,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutInParallelKeyedGroupByWithOneWorkerAndMinimalQueue() throws Exception {
-        pageFrameMaxRows = 1000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         executeWithPool(
                 1,
                 1,
@@ -455,7 +456,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutInParallelKeyedGroupByWithOneWorkerAndRegularQueue() throws Exception {
-        pageFrameMaxRows = 1000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         executeWithPool(
                 1,
                 16,
@@ -524,7 +525,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutInVectorizedKeyedGroupByWithManyWorkersAndMinimalQueue() throws Exception {
-        pageFrameMaxRows = 1000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         executeWithPool(
                 3,
                 1,
@@ -534,7 +535,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutInVectorizedKeyedGroupByWithManyWorkersAndRegularQueue() throws Exception {
-        pageFrameMaxRows = 1000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         executeWithPool(
                 3,
                 16,
@@ -544,7 +545,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutInVectorizedKeyedGroupByWithOneWorkerAndMinimalQueue() throws Exception {
-        pageFrameMaxRows = 1000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         executeWithPool(
                 1,
                 1,
@@ -554,7 +555,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutInVectorizedKeyedGroupByWithOneWorkerAndRegularQueue() throws Exception {
-        pageFrameMaxRows = 1000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         executeWithPool(
                 1,
                 16,

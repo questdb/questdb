@@ -55,14 +55,13 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordSink slaveChainSink,
             int columnSplit,
             JoinContext joinContext
-
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         RecordChain slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
         this.masterSink = masterSink;
         this.slaveKeySink = slaveKeySink;
 
-        Map joinKeyMap = MapFactory.createOrderedMap(configuration, joinColumnTypes, valueTypes);
+        Map joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
         cursor = new HashOuterJoinRecordCursor(
                 columnSplit,
                 joinKeyMap,

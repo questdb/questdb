@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
@@ -110,7 +111,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 createX(tbl);
             }
             engine.releaseAllWriters();
-            spinLockTimeout = 1;
+            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
 
             ff = new TestFilesFacadeImpl() {
                 int attempt = 0;
@@ -193,7 +194,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     @Test
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen() throws Exception {
         assertMemoryLeak(() -> {
-            spinLockTimeout = 1;
+            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
                 CreateTableTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)
@@ -235,7 +236,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     @Test
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen2() throws Exception {
         assertMemoryLeak(() -> {
-            spinLockTimeout = 1;
+            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
                 CreateTableTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)

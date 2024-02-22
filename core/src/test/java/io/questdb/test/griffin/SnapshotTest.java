@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
@@ -36,11 +37,15 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
+
+import static io.questdb.PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED;
 
 public class SnapshotTest extends AbstractCairoTest {
 
@@ -103,17 +108,17 @@ public class SnapshotTest extends AbstractCairoTest {
 
     @Test
     public void testRecoverSnapshotForDefaultInstanceIds() throws Exception {
-        testRecoverSnapshot(null, null, false);
+        testRecoverSnapshot("", "", false);
     }
 
     @Test
     public void testRecoverSnapshotForDefaultRestartedId() throws Exception {
-        testRecoverSnapshot("id1", null, false);
+        testRecoverSnapshot("id1", "", false);
     }
 
     @Test
     public void testRecoverSnapshotForDefaultSnapshotId() throws Exception {
-        testRecoverSnapshot(null, "id1", false);
+        testRecoverSnapshot("", "id1", false);
     }
 
     @Test
@@ -123,7 +128,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
     @Test
     public void testRecoverSnapshotForDifferentInstanceIdsWhenRecoveryIsDisabled() throws Exception {
-        snapshotRecoveryEnabled = false;
+        node1.setProperty(CAIRO_SNAPSHOT_RECOVERY_ENABLED, "false");
         testRecoverSnapshot("id1", "id2", false);
     }
 
@@ -138,8 +143,7 @@ public class SnapshotTest extends AbstractCairoTest {
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
-
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
             final String tableName = "t";
             ddl(
                     "create table " + tableName + " as " +
@@ -155,7 +159,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-            snapshotInstanceId = restartedId;
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.recoverSnapshot();
 
             // Data inserted after PREPARE SNAPSHOT should be discarded.
@@ -172,7 +176,7 @@ public class SnapshotTest extends AbstractCairoTest {
         final String snapshotId = "00000000-0000-0000-0000-000000000000";
         final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
         assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             final String tableName = "t";
             ddl(
@@ -199,7 +203,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-            snapshotInstanceId = restartedId;
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.recoverSnapshot();
 
             // Dropped column should be there.
@@ -208,8 +212,60 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRecoverSnapshotSupportsSnapshotTxtFile() throws Exception {
+        final int partitionCount = 10;
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
+            );
+
+            ddl("snapshot prepare");
+
+            insert(
+                    "insert into " + tableName +
+                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
+            );
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+
+            // create snapshot.txt file
+            FilesFacade ff = configuration.getFilesFacade();
+            path.trimTo(rootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT);
+            int fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+            Assert.assertTrue(fd > 0);
+
+            try {
+                try (DirectUtf8Sink utf8 = new DirectUtf8Sink(3)) {
+                    utf8.put(snapshotId);
+                    ff.write(fd, utf8.ptr(), utf8.size(), 0);
+                    ff.truncate(fd, utf8.size());
+                }
+            } finally {
+                ff.close(fd);
+            }
+            Assert.assertEquals(ff.length(path), restartedId.length());
+
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.recoverSnapshot();
+
+            // Data inserted after PREPARE SNAPSHOT should be discarded.
+            assertSql(
+                    "count\n" +
+                            partitionCount + "\n",
+                    "select count() from " + tableName
+            );
+        });
+    }
+
+    @Test
     public void testRunWalPurgeJobLockTimeout() throws Exception {
-        circuitBreaker.setTimeout(-100); // trigger timeout on first check
+        configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             SimpleWaitingLock lock = new SimpleWaitingLock();
@@ -231,7 +287,7 @@ public class SnapshotTest extends AbstractCairoTest {
             try {
                 t.start();
                 latch2.await();
-                circuitBreaker.setTimeout(-100);
+                configureCircuitBreakerTimeoutOnFirstCheck();
                 assertException("snapshot prepare");
             } catch (CairoException ex) {
                 latch1.countDown();
@@ -461,7 +517,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
     @Test
     public void testSnapshotPrepareFailsOnLockedTableReader() throws Exception {
-        circuitBreaker.setTimeout(-100); // trigger timeout on first check
+        configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
 
@@ -642,7 +698,7 @@ public class SnapshotTest extends AbstractCairoTest {
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
@@ -658,7 +714,7 @@ public class SnapshotTest extends AbstractCairoTest {
             // Release readers, writers and table name registry files, but keep the snapshot dir around.
             engine.clear();
             engine.closeNameRegistry();
-            snapshotInstanceId = restartedId;
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.recoverSnapshot();
             engine.reloadTableNames();
 
@@ -679,7 +735,7 @@ public class SnapshotTest extends AbstractCairoTest {
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
@@ -696,7 +752,7 @@ public class SnapshotTest extends AbstractCairoTest {
             // Release readers, writers and table name registry files, but keep the snapshot dir around.
             engine.clear();
             engine.closeNameRegistry();
-            snapshotInstanceId = restartedId;
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.recoverSnapshot();
             engine.reloadTableNames();
 
@@ -713,7 +769,7 @@ public class SnapshotTest extends AbstractCairoTest {
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             insert("insert into test values (now(), 'foobar', 42);");
@@ -728,7 +784,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-            snapshotInstanceId = restartedId;
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.recoverSnapshot();
 
             drainWalQueue();
@@ -822,7 +878,7 @@ public class SnapshotTest extends AbstractCairoTest {
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
             String tableName = testName.getMethodName() + "_abc";
             ddl(
                     "create table " + tableName + " as (" +
@@ -870,7 +926,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-            snapshotInstanceId = restartedId;
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.recoverSnapshot();
 
             // apply updates from WAL
@@ -963,9 +1019,20 @@ public class SnapshotTest extends AbstractCairoTest {
         });
     }
 
+    private static void configureCircuitBreakerTimeoutOnFirstCheck() {
+        circuitBreaker.setTimeout(-100);
+        circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public long getQueryTimeout() {
+                return 1;
+            }
+        };
+    }
+
     private void testRecoverSnapshot(String snapshotId, String restartedId, boolean expectRecovery) throws Exception {
         assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
+            node1.setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
+            Assert.assertEquals(engine.getConfiguration().getSnapshotInstanceId(), snapshotId);
 
             final String nonPartitionedTable = "npt";
             ddl(
@@ -981,6 +1048,9 @@ public class SnapshotTest extends AbstractCairoTest {
 
             ddl("snapshot prepare");
 
+            path.trimTo(rootLen).slash$();
+            Assert.assertTrue(Utf8s.toString(path), configuration.getFilesFacade().exists(path));
+
             insert(
                     "insert into " + nonPartitionedTable +
                             " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)"
@@ -992,7 +1062,9 @@ public class SnapshotTest extends AbstractCairoTest {
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-            snapshotInstanceId = restartedId;
+            node1.setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            Assert.assertEquals(engine.getConfiguration().getSnapshotInstanceId(), restartedId);
+
             engine.recoverSnapshot();
 
             // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
@@ -1011,13 +1083,19 @@ public class SnapshotTest extends AbstractCairoTest {
 
             // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
             path.trimTo(rootLen).slash$();
-            Assert.assertEquals(!expectRecovery, configuration.getFilesFacade().exists(path));
+            if (expectRecovery == configuration.getFilesFacade().exists(path)) {
+                if (expectRecovery) {
+                    Assert.fail("Recovery should happen but the snapshot path still exists:" + Utf8s.toString(path));
+                } else {
+                    Assert.fail("Recovery shouldn't happen but the snapshot path does not exist:" + Utf8s.toString(path));
+                }
+            }
         });
     }
 
     private void testSnapshotPrepareCheckMetadataFile(String snapshotId) throws Exception {
         assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             try (Path path = new Path()) {
                 ddl("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))");

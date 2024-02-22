@@ -219,7 +219,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegularUserCantCancelQueries() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("cancel query 123456789", 0, "Write permission denied", regularUserContext1);
+            assertException("cancel query 123456789", 13, "Write permission denied", regularUserContext1);
         });
     }
 

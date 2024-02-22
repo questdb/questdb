@@ -31,47 +31,41 @@ import io.questdb.cutlass.json.JsonException;
 
 public class HttpClientMain {
     public static void main(String[] args) throws JsonException {
-
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration("C:\\qdb2\\db");
-
         try (
                 CairoEngine engine = new CairoEngine(configuration);
                 JsonToTableSerializer jsonToTableSerializer = new JsonToTableSerializer(engine);
-                HttpClient client = HttpClientFactory.newInstance()
+                HttpClient client = HttpClientFactory.newPlainTextInstance()
         ) {
-
-
             for (int i = 0; i < 1; i++) {
-                HttpClient.Request req = client.newRequest();
-
-                HttpClient.ResponseHeaders rsp = req
-                        .GET()
-                        .url("/exec")
-//                        .query("query", "cpu%20limit%20400000")
-                        .query("query", "cpu limit 2")
-//                        .query("query", "cpu")
-                        .header("Accept", "gzip, deflate, br")
-                        .header("SomethingElse", "vlad")
-                        .authBasic("vlad", "hello")
-                        .send("localhost", 9000);
-
-                rsp.await();
-
-                if (rsp.isChunked()) {
+                HttpClient.Request req = client.newRequest("localhost", 9000);
+                try (
+                        HttpClient.ResponseHeaders responseHeaders = req
+                                .GET()
+                                .url("/exec")
+                                //.query("query", "cpu%20limit%20400000")
+                                .query("query", "cpu limit 2")
+                                //.query("query", "cpu")
+                                .header("Accept", "gzip, deflate, br")
+                                .header("SomethingElse", "vlad")
+                                .authBasic("vlad", "hello")
+                                .send()
+                ) {
+                    responseHeaders.await();
 
                     jsonToTableSerializer.clear();
 
-                    ChunkedResponse chunkedRsp = rsp.getChunkedResponse();
-                    Chunk chunk;
+                    Response response = responseHeaders.getResponse();
+                    Fragment fragment;
 
                     long t = System.currentTimeMillis();
                     int chunkCount = 0;
-                    while ((chunk = chunkedRsp.recv()) != null) {
-                        jsonToTableSerializer.parse(chunk.lo(), chunk.hi());
+                    while ((fragment = response.recv()) != null) {
+                        jsonToTableSerializer.parse(fragment.lo(), fragment.hi());
                         chunkCount++;
                     }
                     System.out.println(System.currentTimeMillis() - t);
-                    System.out.println("done: " + i +", chunks: "+chunkCount);
+                    System.out.println("done: " + i + ", chunks: " + chunkCount);
                 }
             }
         }
