@@ -105,7 +105,6 @@
                 <version>3.0.1</version>
                 <executions>
                     <execution>
-                        <phase>package</phase>
                         <goals>
                             <goal>test-jar</goal>
                         </goals>
