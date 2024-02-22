@@ -49,15 +49,21 @@ public class HttpServer implements Closeable {
     private final int workerCount;
 
     public HttpServer(
-            HttpMinServerConfiguration configuration, Metrics metrics, WorkerPool pool,
+            HttpMinServerConfiguration configuration,
+            Metrics metrics,
+            WorkerPool pool,
             SocketFactory socketFactory
     ) {
         this(configuration, metrics, pool, socketFactory, DefaultHttpCookieHandler.INSTANCE, DefaultHttpHeaderParserFactory.INSTANCE);
     }
 
     public HttpServer(
-            HttpMinServerConfiguration configuration, Metrics metrics, WorkerPool pool,
-            SocketFactory socketFactory, HttpCookieHandler cookieHandler, HttpHeaderParserFactory headerParserFactory
+            HttpMinServerConfiguration configuration,
+            Metrics metrics,
+            WorkerPool pool,
+            SocketFactory socketFactory,
+            HttpCookieHandler cookieHandler,
+            HttpHeaderParserFactory headerParserFactory
     ) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
@@ -92,21 +98,6 @@ public class HttpServer implements Closeable {
             // therefore we need each thread to clean their thread locals individually
             pool.assignThreadLocalCleaner(i, httpContextFactory::freeThreadLocal);
         }
-    }
-
-    private boolean handleClientOperation(HttpConnectionContext context, int operation, HttpRequestProcessorSelector selector, WaitProcessor rescheduleContext, IODispatcher<HttpConnectionContext> dispatcher) {
-        try {
-            return context.handleClientOperation(operation, selector, rescheduleContext);
-        } catch (HeartBeatException e) {
-            dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
-        } catch (PeerIsSlowToReadException e) {
-            dispatcher.registerChannel(context, IOOperation.WRITE);
-        } catch (ServerDisconnectException e) {
-            dispatcher.disconnect(context, context.getDisconnectReason());
-        } catch (PeerIsSlowToWriteException e) {
-            dispatcher.registerChannel(context, IOOperation.READ);
-        }
-        return false;
     }
 
     public static void addDefaultEndpoints(
@@ -270,8 +261,27 @@ public class HttpServer implements Closeable {
         Misc.free(httpContextFactory);
     }
 
+    public int getPort() {
+        return dispatcher.getPort();
+    }
+
     public void registerClosable(Closeable closeable) {
         closeables.add(closeable);
+    }
+
+    private boolean handleClientOperation(HttpConnectionContext context, int operation, HttpRequestProcessorSelector selector, WaitProcessor rescheduleContext, IODispatcher<HttpConnectionContext> dispatcher) {
+        try {
+            return context.handleClientOperation(operation, selector, rescheduleContext);
+        } catch (HeartBeatException e) {
+            dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+        } catch (PeerIsSlowToReadException e) {
+            dispatcher.registerChannel(context, IOOperation.WRITE);
+        } catch (ServerDisconnectException e) {
+            dispatcher.disconnect(context, context.getDisconnectReason());
+        } catch (PeerIsSlowToWriteException e) {
+            dispatcher.registerChannel(context, IOOperation.READ);
+        }
+        return false;
     }
 
     @FunctionalInterface

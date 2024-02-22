@@ -1211,14 +1211,6 @@ public final class TestUtils {
         };
     }
 
-    public static String[] getServerMainArgs(CharSequence root) {
-        return new String[]{
-                "-d",
-                Chars.toString(root),
-                Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
-        };
-    }
-
     public static int getSystemTablesCount(CairoEngine engine) {
         final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
         engine.getTableTokens(tableBucket, false);

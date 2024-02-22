@@ -22,18 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.test;
+package io.questdb.compat;
 
 import io.questdb.Bootstrap;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.str.Path;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
-import org.junit.runner.OrderWith;
 
-@OrderWith(RandomOrder.class)
 public class AbstractTest {
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
@@ -41,6 +42,21 @@ public class AbstractTest {
     protected static String root;
     @Rule
     public final TestName testName = new TestName();
+
+    public static void createTestPath() {
+        final Path path = Path.getThreadLocal(root);
+        if (Files.exists(path)) {
+            return;
+        }
+        Files.mkdirs(path.of(root).slash$(), 509);
+    }
+
+    public static void removeTestPath() {
+        final Path path = Path.getThreadLocal(root);
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        path.slash$();
+        Assert.assertTrue("Test dir cleanup error", !ff.exists(path) || ff.rmdir(path.slash$()));
+    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -54,19 +70,19 @@ public class AbstractTest {
 
     @AfterClass
     public static void tearDownStatic() {
-        TestUtils.removeTestPath(root);
+        removeTestPath();
     }
 
     @Before
     public void setUp() {
         LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        TestUtils.createTestPath(root);
+        createTestPath();
     }
 
     @After
     public void tearDown() throws Exception {
         LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        TestUtils.removeTestPath(root);
+        removeTestPath();
     }
 
     protected static String[] getServerMainArgs() {

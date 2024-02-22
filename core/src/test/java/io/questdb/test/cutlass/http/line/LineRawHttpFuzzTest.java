@@ -34,8 +34,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.test.cutlass.http.line.LineHttpUtils.getHttpPort;
-
 public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
 
     @Before
@@ -60,7 +58,7 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
 
                     for (int r = 0; r < 3; r++) {
                         int count = 1 + rnd.nextInt(100);
-                        HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
+                        HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
                         request.POST()
                                 .url("/write ")
                                 .withChunkedContent();
@@ -85,7 +83,7 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                     }
                 }
 
-                serverMain.waitWalTxnApplied("line");
+                serverMain.awaitTable("line");
                 serverMain.assertSql("select count() from line", "count\n" +
                         totalCount + "\n");
             }
@@ -108,7 +106,7 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                     for (int r = 0; r < 30; r++) {
                         if (r % 3 == 0) {
                             int count = 1 + rnd.nextInt(1000);
-                            HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
+                            HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
                             request.POST()
                                     .url("/not_found_chunked ")
                                     .withChunkedContent();
@@ -126,7 +124,7 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                         } else if (r % 3 == 1) {
                             // Good request
                             int count = 1 + rnd.nextInt(100);
-                            HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
+                            HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
                             request.POST()
                                     .url("/write ")
                                     .withChunkedContent();
@@ -147,7 +145,7 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                         } else {
                             // Good request
                             int count = 1 + rnd.nextInt(100);
-                            HttpClient.Request request = httpClient.newRequest("localhost", getHttpPort(serverMain));
+                            HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
                             request.POST()
                                     .url("/not_found ")
                                     .withContent();
@@ -164,7 +162,7 @@ public class LineRawHttpFuzzTest extends AbstractBootstrapTest {
                     }
                 }
 
-                serverMain.waitWalTxnApplied("line");
+                serverMain.awaitTable("line");
                 serverMain.assertSql("select count() from line", "count\n" +
                         totalCount + "\n");
             }

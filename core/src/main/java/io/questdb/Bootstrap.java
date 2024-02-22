@@ -210,6 +210,14 @@ public class Bootstrap {
         }
     }
 
+    public static String[] getServerMainArgs(CharSequence root) {
+        return new String[]{
+                "-d",
+                Chars.toString(root),
+                SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
+        };
+    }
+
     public static CharSequenceObjHashMap<String> processArgs(String... args) {
         final int n = args.length;
         if (n == 0) {

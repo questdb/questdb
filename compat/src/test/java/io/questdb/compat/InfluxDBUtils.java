@@ -25,8 +25,6 @@
 package io.questdb.compat;
 
 import io.questdb.ServerMain;
-import io.questdb.test.cutlass.http.line.LineHttpUtils;
-import io.questdb.test.tools.TestUtils;
 import org.influxdb.InfluxDB;
 import org.influxdb.InfluxDBException;
 import org.influxdb.InfluxDBFactory;
@@ -58,7 +56,7 @@ public class InfluxDBUtils {
 
     @NotNull
     public static InfluxDB getConnection(ServerMain serverMain) {
-        int httpPort = LineHttpUtils.getHttpPort(serverMain);
+        int httpPort = serverMain.getHttpServerPort();
         final String serverURL = "http://127.0.0.1:" + httpPort, username = "root", password = "root";
         return InfluxDBFactory.connect(serverURL, username, password);
     }
