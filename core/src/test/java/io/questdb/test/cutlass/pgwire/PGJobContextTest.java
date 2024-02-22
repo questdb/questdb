@@ -3120,17 +3120,12 @@ if __name__ == "__main__":
                                         throw new RuntimeException("Query to cancel failed!", queryError.get());
                                     }
                                 }
-                            } finally {
-                                registryListener.queryFound.countDown();
                             }
 
                             try (PreparedStatement stmt = connection.prepareStatement("cancel query " + queryId)) {
                                 stmt.executeUpdate();
-                            } catch (SQLException e) {
-                                // ignore errors showing that statement is completed
-                                if (!Chars.contains(e.getMessage(), "query to cancel not found in registry")) {
-                                    throw e;
-                                }
+                            } finally {
+                                registryListener.queryFound.countDown();
                             }
                             start = System.currentTimeMillis();
 

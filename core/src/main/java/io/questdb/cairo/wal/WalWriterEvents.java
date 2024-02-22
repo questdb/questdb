@@ -37,7 +37,6 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 class WalWriterEvents implements Closeable {
@@ -51,9 +50,11 @@ class WalWriterEvents implements Closeable {
     private BoolList symbolMapNullFlags;
     private int txn = 0;
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
+    private final CairoConfiguration configuration;
 
-    WalWriterEvents(FilesFacade ff) {
-        this.ff = ff;
+    WalWriterEvents(CairoConfiguration configuration) {
+        this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
     }
 
     @Override
@@ -232,6 +233,7 @@ class WalWriterEvents implements Closeable {
         eventMem.putInt(-1);
 
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
         return txn++;
     }
@@ -262,11 +264,19 @@ class WalWriterEvents implements Closeable {
         this.symbolMapNullFlags = symbolMapNullFlags;
     }
 
-    void openEventFile(Path path, int pathLen, boolean truncate) {
+    void openEventFile(Path path, int pathLen, boolean truncate, boolean systemTable) {
         if (eventMem.getFd() > -1) {
             close(truncate, Vm.TRUNCATE_TO_POINTER);
         }
-        openSmallFile(ff, path, pathLen, eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
+        eventMem.of(
+                ff,
+                path.trimTo(pathLen).concat(EVENT_FILE_NAME).$(),
+                systemTable ? configuration.getSystemWalEventAppendPageSize() : configuration.getWalEventAppendPageSize(),
+                -1,
+                MemoryTag.MMAP_TABLE_WAL_WRITER,
+                CairoConfiguration.O_NONE,
+                Files.POSIX_MADV_RANDOM
+        );
         indexFd = ff.openRW(path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), CairoConfiguration.O_NONE);
         longBuffer = Unsafe.malloc(Long.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
         init();
