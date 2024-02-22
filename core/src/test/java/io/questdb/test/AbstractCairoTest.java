@@ -916,6 +916,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
             try {
                 code.run();
                 forEachNode(node -> releaseInactive(node.getEngine()));
+            } catch(Throwable th) {
+                LOG.error().$("Error in test: ").$(th).$();
+                throw th;
             } finally {
                 forEachNode(node -> node.getEngine().clear());
                 AbstractCairoTest.ff = ffBefore;

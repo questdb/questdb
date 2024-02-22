@@ -59,6 +59,7 @@ public class TableTransactionLog implements Closeable {
     private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
     private TableTransactionLogFile txnLogFile;
+    private volatile long lastTxn = -1;
 
     TableTransactionLog(FilesFacade ff, int mkDirMode, int defaultSeqPartTxnCount) {
         this.ff = ff;
@@ -169,7 +170,7 @@ public class TableTransactionLog implements Closeable {
     }
 
     long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
-        return txnLogFile.addEntry(structureVersion, walId, segmentId, segmentTxn, timestamp);
+        return lastTxn = txnLogFile.addEntry(structureVersion, walId, segmentId, segmentTxn, timestamp);
     }
 
     void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
@@ -205,7 +206,7 @@ public class TableTransactionLog implements Closeable {
 
         Unsafe.getUnsafe().storeFence();
 
-        long txn = txnLogFile.endMetadataChangeEntry();
+        long txn = lastTxn = txnLogFile.endMetadataChangeEntry();
         maxMetadataVersion.incrementAndGet();
         return txn;
     }
@@ -226,7 +227,7 @@ public class TableTransactionLog implements Closeable {
     }
 
     long lastTxn() {
-        return txnLogFile.lastTxn();
+        return lastTxn;
     }
 
     public void open(Path path) {
@@ -246,6 +247,7 @@ public class TableTransactionLog implements Closeable {
         } else {
             assert Utf8s.equals(path, this.rootPath);
         }
+        lastTxn = txnLogFile.lastTxn();
     }
 
     void openFiles(Path path) {
