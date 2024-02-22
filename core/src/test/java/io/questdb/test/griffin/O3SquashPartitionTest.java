@@ -750,6 +750,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " i int," +
                             " j long," +
                             " str string," +
+                            " varc1 varchar," +
+                            " varc2 varchar," +
                             " ts timestamp" +
                             ") timestamp (ts) partition by DAY " + wal,
                     sqlExecutionContext
@@ -764,7 +766,10 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     "select" +
                     " cast(x as int) * 1000000 i," +
                     " -x - 1000000L as j," +
-                    " rnd_str(5,16,2) as str,";
+                    " rnd_str(5,16,2) as str," +
+                    " rnd_varchar(1,40, 1) varc1," +
+                    " rnd_varchar(1, 1, 0) varc2,"
+                    ;
             ddl(
                     sqlPrefix +
                             " timestamp_sequence('2020-02-04T20:01', 1000000L) ts" +
