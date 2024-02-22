@@ -10744,8 +10744,8 @@ create table tab as (
 
                     // single key value in filter
 
-                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id = ? and timestamp > ?")) {
-                        for (int i = 0; i < 10; i++) {
+                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id = ? and timestamp > ? order by timestamp, value desc")) {
+                        for (int i = 0; i < 3; i++) {
                             ps.setString(1, "d1");
                             ps.setTimestamp(2, createTimestamp(1));
                             try (ResultSet rs = ps.executeQuery()) {
@@ -10785,53 +10785,142 @@ create table tab as (
                         }
                     }
 
-                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id != ? and timestamp > ?")) {
-                        ps.setString(1, "d1");
-                        ps.setTimestamp(2, createTimestamp(1));
-                        try (ResultSet rs = ps.executeQuery()) {
-                            sink.clear();
-                            assertResultSet(
-                                    "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                            "d2,c1,201.3,1970-01-01 00:00:00.000002\n",
-                                    sink,
-                                    rs
-                            );
+                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id != ? and timestamp > ? order by timestamp, value desc")) {
+                        for (int i = 0; i < 3; i++) {
+                            ps.setString(1, "d1");
+                            ps.setTimestamp(2, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d2,c1,201.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // try querying non-existing symbol
+                            ps.setString(1, "foobar");
+                            ps.setTimestamp(2, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // and then an existing one
+                            ps.setString(1, "d2");
+                            ps.setTimestamp(2, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
                         }
                     }
 
                     // multiple key values in filter
 
                     try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id in (?, ?) and timestamp > ? order by timestamp, value desc")) {
-                        ps.setString(1, "d1");
-                        ps.setString(2, "d2");
-                        ps.setTimestamp(3, createTimestamp(0));
-                        try (ResultSet rs = ps.executeQuery()) {
-                            sink.clear();
-                            assertResultSet(
-                                    "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                            "d2,c1,201.2,1970-01-01 00:00:00.000001\n" +
-                                            "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
-                                            "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
-                                            "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
-                                    sink,
-                                    rs
-                            );
+                        for (int i = 0; i < 3; i++) {
+                            ps.setString(1, "d1");
+                            ps.setString(2, "d2");
+                            ps.setTimestamp(3, createTimestamp(0));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d2,c1,201.2,1970-01-01 00:00:00.000001\n" +
+                                                "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
+                                                "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // try querying non-existing symbols
+                            ps.setString(1, "foobar");
+                            ps.setString(2, "barbaz");
+                            ps.setTimestamp(3, createTimestamp(0));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // and then an existing duplicate one
+                            ps.setString(1, "d2");
+                            ps.setString(2, "d2");
+                            ps.setTimestamp(3, createTimestamp(0));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d2,c1,201.2,1970-01-01 00:00:00.000001\n" +
+                                                "d2,c1,201.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
                         }
                     }
 
-                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id not in (?, ?) and timestamp > ?")) {
-                        ps.setString(1, "d2");
-                        ps.setString(2, "d3");
-                        ps.setTimestamp(3, createTimestamp(0));
-                        try (ResultSet rs = ps.executeQuery()) {
-                            sink.clear();
-                            assertResultSet(
-                                    "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                            "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
-                                            "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
-                                    sink,
-                                    rs
-                            );
+                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id not in (?, ?) and timestamp > ? order by timestamp, value desc")) {
+                        for (int i = 0; i < 3; i++) {
+                            ps.setString(1, "d2");
+                            ps.setString(2, "d3");
+                            ps.setTimestamp(3, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // try querying non-existing symbols
+                            ps.setString(1, "foobar");
+                            ps.setString(2, "barbaz");
+                            ps.setTimestamp(3, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // and then an existing duplicate one
+                            ps.setString(1, "d2");
+                            ps.setString(2, "d2");
+                            ps.setTimestamp(2, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
                         }
                     }
                 }
