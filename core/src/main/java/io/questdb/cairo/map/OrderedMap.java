@@ -1027,8 +1027,29 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void putVarchar(Utf8Sequence value) {
-            // TODO(puzpuzpuz)
-            throw new UnsupportedOperationException();
+            if (value == null) {
+                putVarSizeNull();
+                return;
+            }
+
+            int size = value.size();
+            checkCapacity(size + 4L);
+            long sizeAddress = appendAddress;
+            appendAddress += 4L;
+            boolean ascii = true;
+            for (int i = 0; i < size; i++) {
+                byte b = value.byteAt(i);
+                ascii &= (b >= 0);
+                Unsafe.getUnsafe().putByte(appendAddress + i, b);
+            }
+            appendAddress += size;
+            // Now backfill the header.
+            if (ascii) {
+                // ASCII flag is signaled with the highest bit
+                Unsafe.getUnsafe().putInt(sizeAddress, size | Integer.MIN_VALUE);
+            } else {
+                Unsafe.getUnsafe().putInt(sizeAddress, size);
+            }
         }
 
         @Override

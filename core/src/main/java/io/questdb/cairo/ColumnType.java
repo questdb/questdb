@@ -230,6 +230,10 @@ public final class ColumnType {
         return columnType == STRING || columnType == BINARY || columnType == VARCHAR;
     }
 
+    public static boolean isVarchar(int columnType) {
+        return columnType == VARCHAR;
+    }
+
     public static String nameOf(int columnType) {
         final int index = typeNameMap.keyIndex(columnType);
         if (index > -1) {

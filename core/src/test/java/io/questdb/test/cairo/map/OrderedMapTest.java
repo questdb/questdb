@@ -29,6 +29,8 @@ import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
@@ -302,6 +304,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             keyTypes.add(ColumnType.FLOAT);
             keyTypes.add(ColumnType.DOUBLE);
             keyTypes.add(ColumnType.STRING);
+            keyTypes.add(ColumnType.VARCHAR);
             keyTypes.add(ColumnType.BOOLEAN);
             keyTypes.add(ColumnType.DATE);
             keyTypes.add(ColumnType.TIMESTAMP);
@@ -325,6 +328,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.UUID);
 
             try (OrderedMap map = new OrderedMap(128, keyTypes, valueTypes, 64, 0.8, 24)) {
+                final Utf8StringSink utf8Sink = new Utf8StringSink();
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
@@ -337,8 +341,12 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putDouble(rnd.nextDouble());
                     if ((rnd.nextPositiveInt() % 4) == 0) {
                         key.putStr(null);
+                        key.putVarchar(null);
                     } else {
-                        key.putStr(rnd.nextChars(rnd.nextPositiveInt() % 16));
+                        key.putStr(rnd.nextChars(rnd.nextPositiveInt() % 32));
+                        utf8Sink.clear();
+                        rnd.nextUtf8Str(rnd.nextPositiveInt() % 32, utf8Sink);
+                        key.putVarchar(utf8Sink);
                     }
                     key.putBool(rnd.nextBoolean());
                     key.putDate(rnd.nextLong());
@@ -386,8 +394,12 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putDouble(rnd.nextDouble());
                     if ((rnd.nextPositiveInt() % 4) == 0) {
                         key.putStr(null);
+                        key.putVarchar(null);
                     } else {
-                        key.putStr(rnd.nextChars(rnd.nextPositiveInt() % 16));
+                        key.putStr(rnd.nextChars(rnd.nextPositiveInt() % 32));
+                        utf8Sink.clear();
+                        rnd.nextUtf8Str(rnd.nextPositiveInt() % 32, utf8Sink);
+                        key.putVarchar(utf8Sink);
                     }
                     key.putBool(rnd.nextBoolean());
                     key.putDate(rnd.nextLong());
@@ -424,11 +436,11 @@ public class OrderedMapTest extends AbstractCairoTest {
 
                 try (RecordCursor cursor = map.getCursor()) {
                     rnd.reset();
-                    assertCursorAllTypes(rnd, cursor);
+                    assertCursorAllTypesVarSizeKey(rnd, cursor);
 
                     rnd.reset();
                     cursor.toTop();
-                    assertCursorAllTypes(rnd, cursor);
+                    assertCursorAllTypesVarSizeKey(rnd, cursor);
                 }
             }
         });
@@ -503,6 +515,41 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(N, map.size());
                 Assert.assertEquals(expectedAppendOffset, map.getAppendOffset());
+            }
+        });
+    }
+
+    @Test
+    public void testAsciiVarcharKey() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+            Utf8StringSink utf8Sink = new Utf8StringSink();
+            int N = 100;
+            try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.VARCHAR), new SingleColumnType(ColumnType.LONG), N / 2, 0.5f, 1)) {
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    utf8Sink.clear();
+                    rnd.nextUtf8AsciiStr(rnd.nextPositiveInt() % 32, utf8Sink);
+                    key.putVarchar(utf8Sink);
+
+                    MapValue value = key.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putLong(0, rnd.nextLong());
+                }
+                Assert.assertEquals(N, map.size());
+
+                rnd.reset();
+
+                MapRecordCursor cursor = map.getCursor();
+                Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    utf8Sink.clear();
+                    rnd.nextUtf8AsciiStr(rnd.nextPositiveInt() % 32, utf8Sink);
+                    Utf8Sequence varchar = record.getVarcharA(1);
+                    TestUtils.assertEquals(utf8Sink, varchar);
+                    Assert.assertTrue(varchar.isAscii());
+                    Assert.assertEquals(rnd.nextLong(), record.getLong(0));
+                }
             }
         });
     }
@@ -1890,61 +1937,6 @@ public class OrderedMapTest extends AbstractCairoTest {
         Assert.assertEquals(5000, c);
     }
 
-    private void assertCursorAllTypes(Rnd rnd, RecordCursor cursor) {
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            // key part, comes after value part in records
-            int col = 13;
-            Assert.assertEquals(rnd.nextByte(), record.getByte(col++));
-            Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
-            Assert.assertEquals(rnd.nextChar(), record.getChar(col++));
-            Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
-            Assert.assertEquals(rnd.nextLong(), record.getLong(col++));
-            Assert.assertEquals(rnd.nextFloat(), record.getFloat(col++), 0.000000001f);
-            Assert.assertEquals(rnd.nextDouble(), record.getDouble(col++), 0.000000001d);
-
-            if ((rnd.nextPositiveInt() % 4) == 0) {
-                Assert.assertNull(record.getStr(col));
-                Assert.assertEquals(-1, record.getStrLen(col++));
-            } else {
-                CharSequence expected = rnd.nextChars(rnd.nextPositiveInt() % 16);
-                TestUtils.assertEquals(expected, record.getStr(col++));
-            }
-
-            Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
-            Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
-            Assert.assertEquals(rnd.nextLong(), record.getTimestamp(col++));
-            Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
-            Long256Impl long256 = new Long256Impl();
-            long256.setAll(
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong()
-            );
-            Assert.assertEquals(long256, record.getLong256A(col++));
-            Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
-            Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
-
-            // value part, it comes first in record
-            col = 0;
-            Assert.assertEquals(rnd.nextByte(), record.getByte(col++));
-            Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
-            Assert.assertEquals(rnd.nextChar(), record.getChar(col++));
-            Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
-            Assert.assertEquals(rnd.nextLong(), record.getLong(col++));
-            Assert.assertEquals(rnd.nextFloat(), record.getFloat(col++), 0.000000001f);
-            Assert.assertEquals(rnd.nextDouble(), record.getDouble(col++), 0.000000001d);
-            Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
-            Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
-            Assert.assertEquals(rnd.nextLong(), record.getTimestamp(col++));
-            Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
-            Assert.assertEquals(long256, record.getLong256A(col++));
-            Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
-            Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
-        }
-    }
-
     private void assertCursorAllTypesReverseOrder(RecordCursor cursor) {
         final Record record = cursor.getRecord();
         Assert.assertTrue(cursor.hasNext());
@@ -1990,6 +1982,68 @@ public class OrderedMapTest extends AbstractCairoTest {
         Assert.assertEquals(1, record.getByte(col));
 
         Assert.assertFalse(cursor.hasNext());
+    }
+
+    private void assertCursorAllTypesVarSizeKey(Rnd rnd, RecordCursor cursor) {
+        final Utf8StringSink utf8Sink = new Utf8StringSink();
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            // key part, comes after value part in records
+            int col = 13;
+            Assert.assertEquals(rnd.nextByte(), record.getByte(col++));
+            Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
+            Assert.assertEquals(rnd.nextChar(), record.getChar(col++));
+            Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getLong(col++));
+            Assert.assertEquals(rnd.nextFloat(), record.getFloat(col++), 0.000000001f);
+            Assert.assertEquals(rnd.nextDouble(), record.getDouble(col++), 0.000000001d);
+
+            if ((rnd.nextPositiveInt() % 4) == 0) {
+                Assert.assertNull(record.getStr(col));
+                Assert.assertEquals(-1, record.getStrLen(col++));
+                Assert.assertNull(record.getVarcharA(col++));
+            } else {
+                CharSequence expected = rnd.nextChars(rnd.nextPositiveInt() % 32);
+                TestUtils.assertEquals(expected, record.getStr(col++));
+                utf8Sink.clear();
+                rnd.nextUtf8Str(rnd.nextPositiveInt() % 32, utf8Sink);
+                Utf8Sequence varchar = record.getVarcharA(col++);
+                Assert.assertEquals(utf8Sink.isAscii(), varchar.isAscii());
+                TestUtils.assertEquals(utf8Sink, varchar);
+            }
+
+            Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getTimestamp(col++));
+            Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
+            Long256Impl long256 = new Long256Impl();
+            long256.setAll(
+                    rnd.nextLong(),
+                    rnd.nextLong(),
+                    rnd.nextLong(),
+                    rnd.nextLong()
+            );
+            Assert.assertEquals(long256, record.getLong256A(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
+
+            // value part, it comes first in record
+            col = 0;
+            Assert.assertEquals(rnd.nextByte(), record.getByte(col++));
+            Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
+            Assert.assertEquals(rnd.nextChar(), record.getChar(col++));
+            Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getLong(col++));
+            Assert.assertEquals(rnd.nextFloat(), record.getFloat(col++), 0.000000001f);
+            Assert.assertEquals(rnd.nextDouble(), record.getDouble(col++), 0.000000001d);
+            Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getTimestamp(col++));
+            Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
+            Assert.assertEquals(long256, record.getLong256A(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
+        }
     }
 
     private void assertCursorLong256(Rnd rnd, RecordCursor cursor, Long256Impl long256) {
