@@ -340,6 +340,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.hash.join.light.value.page.size\tQDB_CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.hash.join.value.max.pages\tQDB_CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.hash.join.value.page.size\tQDB_CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.asof.join.lookahead\tQDB_CAIRO_SQL_ASOF_JOIN_LOOKAHEAD\t100\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.insert.model.pool.capacity\tQDB_CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.jit.bind.vars.memory.max.pages\tQDB_CAIRO_SQL_JIT_BIND_VARS_MEMORY_MAX_PAGES\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.jit.bind.vars.memory.page.size\tQDB_CAIRO_SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE\t4096\tdefault\tfalse\tfalse\n" +
@@ -625,7 +626,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "wal.apply.worker.sleep.threshold\tQDB_WAL_APPLY_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.sleep.timeout\tQDB_WAL_APPLY_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.yield.threshold\tQDB_WAL_APPLY_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.max.recompile.attempts\tQDB_CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\tfalse")
+                                    "cairo.sql.max.recompile.attempts\tQDB_CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\tfalse\n" +
+                                    "cairo.system.wal.writer.event.append.page.size\tQDB_CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t16384\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.writer.event.append.page.size\tQDB_CAIRO_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t131072\tdefault\tfalse\tfalse\n"
+                            )
                                     .split("\n");
 
                     final Set<String> missingProps = new HashSet<>();

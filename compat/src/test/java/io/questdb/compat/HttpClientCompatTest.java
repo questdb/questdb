@@ -24,10 +24,11 @@
 
 package io.questdb.compat;
 
+import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
@@ -62,9 +63,14 @@ public class HttpClientCompatTest {
 
                 Assert.assertFalse(respHeaders.isChunked());
                 Response resp = respHeaders.getResponse();
-                resp.recv();
-                StringSink sink = new StringSink();
-                Utf8s.utf8ToUtf16(resp.lo(), resp.hi(), sink);
+
+                Utf8StringSink sink = new Utf8StringSink();
+
+                Fragment fragment;
+                while ((fragment = resp.recv()) != null) {
+                    Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
+                }
+
                 Assert.assertEquals(expectedResponse, sink.toString());
             }
         } finally {

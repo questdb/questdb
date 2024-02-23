@@ -51,6 +51,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     private final boolean supportsRandomAccess;
     protected BwdTableReaderPageFrameCursor bwdPageFrameCursor;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
+    protected TableReaderTimeFrameCursor timeFrameCursor;
 
     public DataFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -96,8 +97,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
         if (framingSupported) {
+            DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
             if (order == ORDER_ASC || order == ORDER_ANY) {
                 return initFwdPageFrameCursor(executionContext, dataFrameCursor);
             }
@@ -119,13 +120,36 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
+    public TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+        if (framingSupported) {
+            DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ASC);
+            if (timeFrameCursor == null) {
+                timeFrameCursor = new TableReaderTimeFrameCursor(columnIndexes);
+            }
+            return timeFrameCursor.of(dataFrameCursor);
+        }
+        return null;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return supportsRandomAccess;
     }
 
     @Override
-    public boolean supportPageFrameCursor() {
+    public boolean supportsPageFrameCursor() {
         return framingSupported;
+    }
+
+    @Override
+    public boolean supportsTimeFrameCursor() {
+        // Time frames are supported only for full table scan cursors, i.e. "x" queries.
+        return framingSupported && supportsRandomAccess
+                && rowCursorFactory.isEntity() && !rowCursorFactory.isUsingIndex()
+                && getMetadata().getTimestampIndex() != -1
+                && dataFrameCursorFactory.getOrder() == ORDER_ASC
+                && !dataFrameCursorFactory.hasInterval()
+                && filter == null;
     }
 
     @Override

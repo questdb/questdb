@@ -40,9 +40,9 @@ import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
@@ -66,7 +66,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
         // factory belongs to the function, do not close
         final RecordCursorFactory recordCursorFactory = function.getRecordCursorFactory();
-        if (recordCursorFactory == null || !recordCursorFactory.supportPageFrameCursor()) {
+        if (recordCursorFactory == null || !recordCursorFactory.supportsPageFrameCursor()) {
             throw SqlException.$(pos, "query does not support framing execution and cannot be pre-touched");
         }
 

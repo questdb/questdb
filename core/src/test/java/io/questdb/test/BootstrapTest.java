@@ -55,13 +55,13 @@ public class BootstrapTest extends AbstractBootstrapTest {
     public void testExtractSite() throws Exception {
         createDummyConfiguration();
         auxPath.of(root).$();
-        int plen = auxPath.size();
+        int pathLen = auxPath.size();
         Bootstrap bootstrap = new Bootstrap(getServerMainArgs());
         Assert.assertNotNull(bootstrap.getLog());
         Assert.assertNotNull(bootstrap.getConfiguration());
         Assert.assertNotNull(bootstrap.getMetrics());
         bootstrap.extractSite();
-        Assert.assertTrue(Files.exists(auxPath.trimTo(plen).concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
+        Assert.assertTrue(Files.exists(auxPath.trimTo(pathLen).concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
     }
 
     @Test

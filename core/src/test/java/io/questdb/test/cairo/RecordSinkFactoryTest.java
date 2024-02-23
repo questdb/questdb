@@ -76,7 +76,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testColumnKeysSymAsString() {
-        testColumnKeysAllSupportedTypes(false);
+        testColumnKeysAllSupportedTypes(true);
     }
 
     @Test
@@ -186,7 +186,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
                     break;
                 case ColumnType.SYMBOL:
                     expectedGetIndexes.add(i + indexSkew);
-                    expectedGetTypes.add(ColumnType.INT);
+                    expectedGetTypes.add(symAsString ? ColumnType.SYMBOL : ColumnType.INT);
                     break;
                 case ColumnType.IPv4:
                     expectedGetIndexes.add(i + indexSkew);

@@ -49,10 +49,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     public CairoConfigurationWrapper(@NotNull CairoConfiguration delegate) {
         this.delegate = delegate;
     }
-    
-    protected CairoConfiguration getDelegate() {
-        return delegate;
-    }
 
     @Override
     public boolean attachPartitionCopy() {
@@ -550,6 +546,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAsOfJoinLookAhead() {
+        return getDelegate().getSqlAsOfJoinLookAhead();
+    }
+
+    @Override
     public int getSqlCharacterStoreCapacity() {
         return getDelegate().getSqlCharacterStoreCapacity();
     }
@@ -835,6 +836,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSystemWalEventAppendPageSize() {
+        return getDelegate().getSystemWalEventAppendPageSize();
+    }
+
+    @Override
     public long getTableRegistryAutoReloadFrequency() {
         return getDelegate().getTableRegistryAutoReloadFrequency();
     }
@@ -892,6 +898,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return getDelegate().getWalEnabledDefault();
+    }
+
+    @Override
+    public long getWalEventAppendPageSize() {
+        return getDelegate().getWalEventAppendPageSize();
     }
 
     @Override
@@ -1076,5 +1087,9 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
         getDelegate().populateSettings(settings);
+    }
+
+    protected CairoConfiguration getDelegate() {
+        return delegate;
     }
 }

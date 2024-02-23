@@ -121,6 +121,7 @@ public class IODispatcherTest extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -967,8 +968,13 @@ public class IODispatcherTest extends AbstractTest {
                 HttpServer ignored = createHttpServer(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
-                            public MillisecondClock getClock() {
+                            public MillisecondClock getMillisecondClock() {
                                 return StationaryMillisClock.INSTANCE;
+                            }
+
+                            @Override
+                            public NanosecondClock getNanosecondClock() {
+                                return StationaryNanosClock.INSTANCE;
                             }
                         }),
                         cairoEngine,
@@ -1036,8 +1042,13 @@ public class IODispatcherTest extends AbstractTest {
                 HttpServer ignored = createHttpServer(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
-                            public MillisecondClock getClock() {
+                            public MillisecondClock getMillisecondClock() {
                                 return StationaryMillisClock.INSTANCE;
+                            }
+
+                            @Override
+                            public NanosecondClock getNanosecondClock() {
+                                return StationaryNanosClock.INSTANCE;
                             }
                         }),
                         cairoEngine,
@@ -6156,7 +6167,6 @@ public class IODispatcherTest extends AbstractTest {
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
                     try {
                         Rnd rnd = new Rnd();
-                        final int diskBufferLen = 1024 * 1024;
 
                         writeRandomFile(path, rnd, 122222212222L);
 
@@ -6457,8 +6467,13 @@ public class IODispatcherTest extends AbstractTest {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(
                     new DefaultHttpContextConfiguration() {
                         @Override
-                        public MillisecondClock getClock() {
-                            return () -> 0;
+                        public MillisecondClock getMillisecondClock() {
+                            return StationaryMillisClock.INSTANCE;
+                        }
+
+                        @Override
+                        public NanosecondClock getNanosecondClock() {
+                            return StationaryNanosClock.INSTANCE;
                         }
                     }
             );
@@ -7457,6 +7472,36 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testTimingsContainsAuthentication() throws Exception {
+        nanosecondClock = StationaryNanosClock.INSTANCE;
+        testJsonQuery(
+                10,
+                "GET /query?query=x%20where%20i%20%3D%20%27A%27&timings=true HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "01ff\r\n" +
+                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0," +
+                        "\"timings\":{\"authentication\":0,\"compiler\":0,\"execute\":0,\"count\":0}}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
     public void testTriggerInternalCairoError() throws Exception {
         testJsonQuery0(1, engine -> {
             sendAndReceive(
@@ -7829,7 +7874,8 @@ public class IODispatcherTest extends AbstractTest {
                                 executionContext,
                                 "select count(*) from tab where b=false",
                                 sink,
-                                "count\n1000\n");
+                                "count\n1000\n"
+                        );
 
                     } finally {
                         engine.getQueryRegistry().setListener(null);
@@ -8193,8 +8239,8 @@ public class IODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run(engine -> {
-                    StringSink expected = new StringSink();
-                    StringSink actual = new StringSink();
+                    Utf8StringSink expected = new Utf8StringSink();
+                    Utf8StringSink actual = new Utf8StringSink();
                     final TestCases testCases = new TestCases();
 
                     // create tables
@@ -8746,45 +8792,45 @@ public class IODispatcherTest extends AbstractTest {
                                     long start = System.currentTimeMillis();
 
                                     //wait until query appears in registry and get query id
-                                    try {
-                                        while (true) {
-                                            Os.sleep(1);
-                                            testHttpClient.assertGetRegexp(
-                                                    "/query",
-                                                    ".*dataset.*",
-                                                    "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
-                                                    null, null, null,
-                                                    new CharSequenceObjHashMap<String>() {{
-                                                        put("nm", "true");
-                                                    }},
-                                                    "200"
-                                            );
-                                            String response = testHttpClient.getSink().toString();
-                                            int startIdx = response.indexOf("\"dataset\":[[");
-                                            if (startIdx > -1) {
-                                                startIdx += "\"dataset\":[[".length();
-                                                int endIdx = response.indexOf("]]", startIdx);
-                                                queryId = Numbers.parseLong(response, startIdx, endIdx);
-                                                break;
-                                            }
-                                            if (System.currentTimeMillis() - start > TIMEOUT) {
-                                                throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
-                                            }
-                                            if (queryError.get() != null) {
-                                                throw new RuntimeException("Query to cancel failed!", queryError.get());
-                                            }
+                                    while (true) {
+                                        Os.sleep(1);
+                                        testHttpClient.assertGetRegexp(
+                                                "/query",
+                                                ".*dataset.*",
+                                                "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
+                                                null, null, null,
+                                                new CharSequenceObjHashMap<String>() {{
+                                                    put("nm", "true");
+                                                }},
+                                                "200"
+                                        );
+                                        String response = testHttpClient.getSink().toString();
+                                        int startIdx = response.indexOf("\"dataset\":[[");
+                                        if (startIdx > -1) {
+                                            startIdx += "\"dataset\":[[".length();
+                                            int endIdx = response.indexOf("]]", startIdx);
+                                            queryId = Numbers.parseLong(response, startIdx, endIdx);
+                                            break;
                                         }
+                                        if (System.currentTimeMillis() - start > TIMEOUT) {
+                                            throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                        }
+                                        if (queryError.get() != null) {
+                                            throw new RuntimeException("Query to cancel failed!", queryError.get());
+                                        }
+                                    }
+
+                                    try {
+                                        testHttpClient.assertGetRegexp(
+                                                "/query",
+                                                ".*(query to cancel not found in registry|\"ddl\":\"OK\").*",
+                                                "cancel query " + queryId,
+                                                null, null,
+                                                "200"
+                                        );
                                     } finally {
                                         registryListener.queryFound.countDown();
                                     }
-
-                                    testHttpClient.assertGetRegexp(
-                                            "/query",
-                                            ".*(query to cancel not found in registry|\"ddl\":\"OK\").*",
-                                            "cancel query " + queryId,
-                                            null, null,
-                                            "200"
-                                    );
 
                                     start = System.currentTimeMillis();
 
@@ -8896,6 +8942,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(telemetry)
                 .withTempFolder(root)
                 .withJitMode(SqlJitMode.JIT_MODE_ENABLED)
+                .withNanosClock(nanosecondClock)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
                         .withServerKeepAlive(!http1)
                         .withSendBufferSize(16 * 1024)

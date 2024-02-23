@@ -545,6 +545,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAsOfJoinLookAhead() {
+        return 100;
+    }
+
+    @Override
     public int getSqlCharacterStoreCapacity() {
         // 1024 seems like a good fit, but tests need
         // smaller capacity so that resize is tested correctly
@@ -828,7 +833,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSystemWalDataAppendPageSize() {
-        return 256 * 1024;
+        return 16 * 1024;
+    }
+
+    @Override
+    public long getSystemWalEventAppendPageSize() {
+        return 128 * 1024;
     }
 
     @Override
@@ -889,6 +899,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return false;
+    }
+
+    @Override
+    public long getWalEventAppendPageSize() {
+        return 64 * 1024;
     }
 
     @Override

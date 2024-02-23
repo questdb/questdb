@@ -26,6 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.FactoryProvider;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface HttpContextConfiguration {
@@ -33,8 +34,6 @@ public interface HttpContextConfiguration {
     boolean allowDeflateBeforeSend();
 
     boolean areCookiesEnabled();
-
-    MillisecondClock getClock();
 
     int getConnectionPoolInitialCapacity();
 
@@ -50,9 +49,13 @@ public interface HttpContextConfiguration {
 
     String getHttpVersion();
 
+    MillisecondClock getMillisecondClock();
+
     int getMultipartHeaderBufferSize();
 
     long getMultipartIdleSpinCount();
+
+    NanosecondClock getNanosecondClock();
 
     NetworkFacade getNetworkFacade();
 

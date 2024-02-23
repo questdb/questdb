@@ -22,10 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.client;
+package io.questdb.std;
 
-public interface ChunkedResponse {
-    Chunk recv();
+public class StationaryNanosClock implements NanosecondClock {
+    public static final StationaryNanosClock INSTANCE = new StationaryNanosClock();
 
-    Chunk recv(int timeout);
+    @Override
+    public long getTicks() {
+        return 0L;
+    }
 }

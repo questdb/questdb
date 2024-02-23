@@ -30,7 +30,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
 
-public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse {
+public abstract class AbstractChunkedResponse implements Response, Fragment {
     private final static int CRLF_LEN = 2;
     private static final int STATE_CHUNK_DATA = 1;
     private static final int STATE_CHUNK_DATA_END = 2;
@@ -77,7 +77,7 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
     }
 
     @Override
-    public Chunk recv(int timeout) {
+    public Fragment recv(int timeout) {
         while (true) {
             if (receive || dataLo == dataHi) {
                 compactBuffer();
@@ -189,7 +189,7 @@ public abstract class AbstractChunkedResponse implements Chunk, ChunkedResponse 
     }
 
     @Override
-    public Chunk recv() {
+    public Fragment recv() {
         return recv(defaultTimeout);
     }
 
