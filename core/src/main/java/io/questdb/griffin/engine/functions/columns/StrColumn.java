@@ -70,7 +70,7 @@ public class StrColumn extends StrFunction implements ScalarFunction {
 
     @Override
     public boolean isReadThreadSafe() {
-        return true;
+        return false;
     }
 
     @Override
