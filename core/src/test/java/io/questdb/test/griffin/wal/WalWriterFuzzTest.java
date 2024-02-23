@@ -196,7 +196,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteFullRandomMultipleTables() throws Exception {
-        Rnd rnd = generateRandom(LOG, 155101271638750L, 1706813693843L);
+        Rnd rnd = generateRandom(LOG);
         int tableCount = Math.max(2, rnd.nextInt(4));
         setFuzzProperties(rnd);
         fullRandomFuzz(rnd, tableCount);
