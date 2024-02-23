@@ -630,6 +630,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.IPv4:
                 putIPv4Value(response, rec, col);
                 break;
+            case ColumnType.VARCHAR:
+                rec.getVarchar(col, response);
+                break;
             default:
                 assert false;
         }
