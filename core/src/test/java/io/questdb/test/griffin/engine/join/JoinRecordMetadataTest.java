@@ -75,6 +75,7 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         }
 
         metadata.add(null, "c.x", ColumnType.STRING, false, 0, false, null);
+        metadata.add(null, "c.vch", ColumnType.VARCHAR, false, 0, false, null);
 
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("x"));
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("a.x"));
@@ -96,6 +97,7 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
 
         Assert.assertEquals(ColumnType.BINARY, metadata.getColumnType("b.y"));
         Assert.assertEquals(ColumnType.INT, metadata.getColumnType("a.x"));
+        Assert.assertEquals(ColumnType.VARCHAR, metadata.getColumnType("c.vch"));
 
         String expected = "a.x:INT\n" +
                 "a.y:DOUBLE\n" +
@@ -104,6 +106,7 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
                 "b.y:BINARY\n" +
                 "b.z:FLOAT\n" +
                 "c.x:STRING\n" +
+                "c.vch:VARCHAR\n" +
                 "z.m:STRING\n";
 
         StringSink sink = new StringSink();
