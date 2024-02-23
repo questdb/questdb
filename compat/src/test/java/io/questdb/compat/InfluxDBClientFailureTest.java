@@ -38,7 +38,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import org.influxdb.InfluxDB;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -48,8 +47,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
-import static io.questdb.compat.InfluxDBUtils.assertRequestErrorContains;
-import static io.questdb.compat.InfluxDBUtils.assertRequestOk;
 
 public class InfluxDBClientFailureTest extends AbstractTest {
     @Test
@@ -78,16 +75,16 @@ public class InfluxDBClientFailureTest extends AbstractTest {
 
             final List<String> points = new ArrayList<>();
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
-                assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
 
-                assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
+                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
                         "errors encountered on line(s):write error: m1, errno: ",
                         ",\"errorId\":",
                         ", error: could not open read-write"
                 );
 
                 // Retry is ok
-                assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
             }
         }
     }
@@ -118,16 +115,16 @@ public class InfluxDBClientFailureTest extends AbstractTest {
 
             final List<String> points = new ArrayList<>();
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
-                assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
 
-                assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
+                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
                         "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol:errors encountered on line(s):write error: m1, error: java.lang.OutOfMemoryError\"," +
                                 "\"line\":1,\"errorId\"",
                         ",\"errorId\":"
                 );
 
                 // Retry is ok
-                assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
             }
         }
     }
@@ -172,18 +169,18 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 points.add("first_table,ok=true allgood=true\n");
                 points.add("second_table,ok=true allgood=true\n");
-                assertRequestErrorContains(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i",
+                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i",
                         "{\"code\":\"internal error\",\"message\":\"commit error for table: failed_table, errno: 24, error: test error\",\"errorId\":"
                 );
 
                 // Retry is ok
-                assertRequestOk(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i,x=12i");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "failed_table,tag1=value1 f1=1i,y=12i,x=12i");
             }
         }
     }
 
     @Test
-    public void testDropTableWhileAppend() throws Exception {
+    public void testDropTableWhileAppend() {
         AtomicReference<ServerMain> server = new AtomicReference<>();
         final FilesFacade filesFacade = new FilesFacadeImpl() {
             private final AtomicInteger attempt = new AtomicInteger();
@@ -214,8 +211,8 @@ public class InfluxDBClientFailureTest extends AbstractTest {
 
             final List<String> points = new ArrayList<>();
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
-                assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
-                assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i,x=12i");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i,x=12i");
             }
 
             Assert.assertNull(serverMain.getEngine().getTableTokenIfExists("m1"));
@@ -255,18 +252,19 @@ public class InfluxDBClientFailureTest extends AbstractTest {
 
             final List<String> points = new ArrayList<>();
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
-                assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
 
                 points.add("ok_point m1=1i " + timestamp + "000\n");
-                assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i,x=12i");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i,x=12i");
             }
 
             Assert.assertNull(serverMain.getEngine().getTableTokenIfExists("m1"));
             Assert.assertNotNull(serverMain.getEngine().getTableTokenIfExists("ok_point"));
 
             serverMain.getEngine().awaitTxn("ok_point", 1, 2, TimeUnit.SECONDS);
-            serverMain.assertSql("select * from ok_point", "m1\ttimestamp\n" +
-                    "1\t2023-11-27T18:53:24.834000Z\n");
+            serverMain.getEngine().print("select * from ok_point", sink);
+            Assert.assertTrue(Chars.equals(sink, "m1\ttimestamp\n" +
+                    "1\t2023-11-27T18:53:24.834000Z\n"));
         }
     }
 
@@ -279,13 +277,13 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
                 influxDB.enableGzip();
-                assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
+                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
                         "\"message\":\"gzip encoding is not supported\","
                 );
 
                 // Retry is ok
                 influxDB.disableGzip();
-                assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
             }
         }
     }
@@ -320,20 +318,20 @@ public class InfluxDBClientFailureTest extends AbstractTest {
 
                 // This will trigger commit and the commit will fail
                 points.add("drop,tag1=value1 f1=1i,y=12i");
-                assertRequestErrorContains(influxDB, points, "drop,tag1=value1 f1=1i,y=12i,z=45",
+                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "drop,tag1=value1 f1=1i,y=12i,z=45",
                         "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol:errors encountered on line(s):write error: drop, error: java.lang.UnsupportedOperationException\",\"line\":3,\"errorId\":"
                 );
 
                 // Retry is ok
                 points.add("good,tag1=value1 f1=1i");
-                assertRequestOk(influxDB, points, "drop,tag1=value1 f1=1i,y=12i");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "drop,tag1=value1 f1=1i,y=12i");
             }
 
             serverMain.awaitTxn("good", 1);
-            serverMain.assertSql("select count() from good", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from good", "count\n" +
                     "1\n");
             serverMain.awaitTable("drop");
-            serverMain.assertSql("select count() from \"drop\"", "count\n" +
+            assertSql(serverMain.getEngine(), "select count() from \"drop\"", "count\n" +
                     "1\n");
         }
     }
@@ -382,18 +380,18 @@ public class InfluxDBClientFailureTest extends AbstractTest {
                 points.add("drop,tag1=value1 f1=1i,y=12i,z=45");
                 points.add("drop,tag1=value1 f1=1i,y=12i,z=45");
 
-                assertRequestOk(influxDB, points, "drop,tag1=value1 f1=1i,y=12i,z=45");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "drop,tag1=value1 f1=1i,y=12i,z=45");
 
                 Assert.assertNull(serverMain.getEngine().getTableTokenIfExists("drop"));
                 Assert.assertNotNull(serverMain.getEngine().getTableTokenIfExists("good"));
 
                 serverMain.awaitTable("good");
-                serverMain.assertSql("select count from good", "count\n" +
+                assertSql(serverMain.getEngine(), "select count from good", "count\n" +
                         "3\n");
 
                 // This should re-create table "drop"
                 points.add("good,tag1=value1 f1=1i");
-                assertRequestOk(influxDB, points, "drop,tag1=value1 f1=1i,y=12i");
+                InfluxDBUtils.assertRequestOk(influxDB, points, "drop,tag1=value1 f1=1i,y=12i");
             }
         }
     }

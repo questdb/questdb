@@ -25,6 +25,7 @@
 package io.questdb.compat;
 
 import io.questdb.ServerMain;
+import io.questdb.griffin.SqlException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -92,10 +93,14 @@ public class InfluxDBClientStreamingTest extends AbstractTest {
                 // InfluxDB client can send the last batch of points
                 // after the client object is closed from the background thread.
                 server.awaitTable(tableName);
-                server.assertSql(
-                        "select count(*) from " + tableName,
-                        "count\n" + pointCounter.get() + "\n"
-                );
+                try {
+                    assertSql(server.getEngine(),
+                            "select count(*) from " + tableName,
+                            "count\n" + pointCounter.get() + "\n"
+                    );
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                }
             });
         } finally {
             Misc.free(serverMain);

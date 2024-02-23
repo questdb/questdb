@@ -25,6 +25,7 @@
 package io.questdb.compat;
 
 import io.questdb.ServerMain;
+import io.questdb.std.Chars;
 import org.influxdb.InfluxDB;
 import org.influxdb.InfluxDBException;
 import org.influxdb.InfluxDBFactory;
@@ -42,7 +43,7 @@ public class InfluxDBUtils {
             Assert.fail();
         } catch (InfluxDBException e) {
             for (String error : errors) {
-                TestUtils.assertContains(e.getMessage(), error);
+                Assert.assertTrue(Chars.contains(e.getMessage(), error));
             }
         }
         points.clear();

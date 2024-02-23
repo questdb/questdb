@@ -26,7 +26,9 @@ package io.questdb.compat;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -35,7 +37,6 @@ import org.influxdb.dto.BatchPoints;
 import org.influxdb.dto.Point;
 import org.influxdb.dto.Pong;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -116,7 +117,8 @@ public class InfluxDBClientTest extends AbstractTest {
             }
 
             serverMain.awaitTable("wal_low_max_uncomitted");
-            serverMain.assertSql("SELECT count() FROM wal_low_max_uncomitted", "count\n0\n");
+            serverMain.getEngine().print("SELECT count() FROM wal_low_max_uncomitted", sink);
+            Assert.assertTrue(Chars.equals(sink, "count\n0\n"));
         }
     }
 
@@ -216,8 +218,8 @@ public class InfluxDBClientTest extends AbstractTest {
             sendIlp(tableName, count, serverMain);
 
             serverMain.awaitTxn(tableName, 2);
-            serverMain.assertSql("SELECT count() FROM h2o_feet", "count\n" + count + "\n");
-            serverMain.assertSql("SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM h2o_feet", "count\n" + count + "\n");
+            assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
         }
     }
 
@@ -261,8 +263,8 @@ public class InfluxDBClientTest extends AbstractTest {
             for (int i = 0; i < threads; i++) {
                 String tn = "h2o_feet" + i;
                 serverMain.awaitTxn(tn, 2);
-                serverMain.assertSql("SELECT count() FROM " + tn, "count\n" + count + "\n");
-                serverMain.assertSql("SELECT sum(water_level) FROM " + tn, "sum\n" + (count * (count - 1) / 2) + "\n");
+                assertSql(serverMain.getEngine(), "SELECT count() FROM " + tn, "count\n" + count + "\n");
+                assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM " + tn, "sum\n" + (count * (count - 1) / 2) + "\n");
             }
         }
     }
@@ -304,8 +306,8 @@ public class InfluxDBClientTest extends AbstractTest {
             }
 
             serverMain.awaitTxn(tableName, threads * 2);
-            serverMain.assertSql("SELECT count() FROM " + tableName, "count\n" + count * threads + "\n");
-            serverMain.assertSql("SELECT sum(water_level) FROM " + tableName, "sum\n" + (count * (count - 1) / 2) * threads + "\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM " + tableName, "count\n" + count * threads + "\n");
+            assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM " + tableName, "sum\n" + (count * (count - 1) / 2) * threads + "\n");
         }
     }
 
@@ -323,8 +325,8 @@ public class InfluxDBClientTest extends AbstractTest {
             sendIlp(tableName, count, serverMain);
 
             serverMain.awaitTxn(tableName, 2);
-            serverMain.assertSql("SELECT count() FROM h2o_feet", "count\n" + count + "\n");
-            serverMain.assertSql("SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM h2o_feet", "count\n" + count + "\n");
+            assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
         }
     }
 
@@ -383,7 +385,7 @@ public class InfluxDBClientTest extends AbstractTest {
     }
 
     @Test
-    public void testMalformedLines() {
+    public void testMalformedLines() throws SqlException {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
@@ -448,8 +450,8 @@ public class InfluxDBClientTest extends AbstractTest {
                         "error in line 1: Could not parse entire line, tag value is invalid. Tag: tag1; value: \\\"asdf\\\"\",\"line\":1,\"errorId\":");
             }
 
-            serverMain.assertSql("SELECT count() FROM good_point", "count\n0\n");
-            serverMain.assertSql("select table_name from tables() where table_name='badPoint'", "table_name\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM good_point", "count\n0\n");
+            assertSql(serverMain.getEngine(), "select table_name from tables() where table_name='badPoint'", "table_name\n");
         }
     }
 
@@ -469,7 +471,7 @@ public class InfluxDBClientTest extends AbstractTest {
                 influxDB.write(points);
             }
             serverMain.awaitTable("m1");
-            serverMain.assertSql("SELECT count() FROM m1", "count\n2\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM m1", "count\n2\n");
         }
     }
 
@@ -516,7 +518,7 @@ public class InfluxDBClientTest extends AbstractTest {
             }
 
             serverMain.awaitTable("wal_low_max_uncomitted");
-            serverMain.assertSql("SELECT count() FROM wal_low_max_uncomitted", "count\n0\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM wal_low_max_uncomitted", "count\n0\n");
         }
     }
 
@@ -548,7 +550,7 @@ public class InfluxDBClientTest extends AbstractTest {
             }
 
             serverMain.awaitTable("wal_tbl");
-            serverMain.assertSql("SELECT count() FROM wal_tbl", "count\n" + 2 * count + "\n");
+            assertSql(serverMain.getEngine(), "SELECT count() FROM wal_tbl", "count\n" + 2 * count + "\n");
         }
     }
 
@@ -652,13 +654,16 @@ public class InfluxDBClientTest extends AbstractTest {
             }
 
             serverMain.awaitTable("m1");
-            serverMain.assertSql("SELECT * FROM m1", "tag1\tf1\ty\ttimestamp\n" +
-                    "value1\t1\t12\t2022-02-24T04:00:00.000001Z\n" +
-                    "value1\t1\t12\t2022-02-24T05:00:00.001000Z\n" +
-                    "value1\t1\t12\t2022-02-24T06:00:00.000001Z\n" +
-                    "value1\t1\t12\t2022-02-24T07:00:01.000000Z\n" +
-                    "value1\t1\t12\t2022-02-24T08:01:00.000000Z\n" +
-                    "value1\t1\t12\t2022-02-24T09:00:00.000000Z\n");
+            assertSql(
+                    serverMain.getEngine(),
+                    "SELECT * FROM m1", "tag1\tf1\ty\ttimestamp\n" +
+                            "value1\t1\t12\t2022-02-24T04:00:00.000001Z\n" +
+                            "value1\t1\t12\t2022-02-24T05:00:00.001000Z\n" +
+                            "value1\t1\t12\t2022-02-24T06:00:00.000001Z\n" +
+                            "value1\t1\t12\t2022-02-24T07:00:01.000000Z\n" +
+                            "value1\t1\t12\t2022-02-24T08:01:00.000000Z\n" +
+                            "value1\t1\t12\t2022-02-24T09:00:00.000000Z\n"
+            );
         }
     }
 

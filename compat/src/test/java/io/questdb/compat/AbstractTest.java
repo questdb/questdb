@@ -24,16 +24,18 @@
 
 package io.questdb.compat;
 
-import io.questdb.Bootstrap;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
+
+import java.util.concurrent.TimeUnit;
 
 public class AbstractTest {
     @ClassRule
@@ -42,6 +44,30 @@ public class AbstractTest {
     protected static String root;
     @Rule
     public final TestName testName = new TestName();
+    protected final StringSink sink = new StringSink();
+
+    public static void assertEventually(Runnable assertion) {
+        assertEventually(assertion, 30);
+    }
+
+    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (; ; ) {
+            try {
+                assertion.run();
+                return;
+            } catch (AssertionError error) {
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
+    }
 
     public static void createTestPath() {
         final Path path = Path.getThreadLocal(root);
@@ -49,6 +75,18 @@ public class AbstractTest {
             return;
         }
         Files.mkdirs(path.of(root).slash$(), 509);
+    }
+
+    public static Rnd generateRandom() {
+        return generateRandom(null, System.nanoTime(), System.currentTimeMillis());
+    }
+
+    public static Rnd generateRandom(Log log, long s0, long s1) {
+        if (log != null) {
+            log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+        }
+        System.out.printf("random seeds: %dL, %dL%n", s0, s1);
+        return new Rnd(s0, s1);
     }
 
     public static void removeTestPath() {
@@ -73,6 +111,11 @@ public class AbstractTest {
         removeTestPath();
     }
 
+    public void assertSql(CairoEngine engine, CharSequence sql, CharSequence expectedResult) throws SqlException {
+        engine.print(sql, sink);
+        Assert.assertTrue(Chars.equals(sink, expectedResult));
+    }
+
     @Before
     public void setUp() {
         LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
@@ -80,12 +123,8 @@ public class AbstractTest {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         removeTestPath();
-    }
-
-    protected static String[] getServerMainArgs() {
-        return Bootstrap.getServerMainArgs(root);
     }
 }

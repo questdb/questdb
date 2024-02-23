@@ -927,6 +927,10 @@ public class CairoEngine implements Closeable, WriterSource {
         snapshotAgent.prepareSnapshot(executionContext);
     }
 
+    public void print(CharSequence sql, MutableUtf16Sink utf16Sink) throws SqlException {
+        print(sql, utf16Sink, rootExecutionContext);
+    }
+
     public void print(CharSequence sql, MutableUtf16Sink utf16Sink, SqlExecutionContext executionContext) throws SqlException {
         utf16Sink.clear();
         try (
