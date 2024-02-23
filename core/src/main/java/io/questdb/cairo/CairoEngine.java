@@ -43,6 +43,7 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
@@ -924,6 +925,16 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
         snapshotAgent.prepareSnapshot(executionContext);
+    }
+
+    public void print(CharSequence sql, MutableUtf16Sink utf16Sink, SqlExecutionContext executionContext) throws SqlException {
+        utf16Sink.clear();
+        try (
+                RecordCursorFactory factory = select(sql, executionContext);
+                RecordCursor cursor = factory.getCursor(executionContext)
+        ) {
+            CursorPrinter.println(cursor, factory.getMetadata(), utf16Sink);
+        }
     }
 
     public void reconcileTableNameRegistryState() {

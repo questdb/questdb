@@ -459,7 +459,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                    println(factory, cursor);
                 }
                 TestUtils.assertEquals("ts\tsym\n" +
                         "1970-01-05T15:23:20.000000Z\tB\n", sink);
@@ -470,7 +470,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                         SqlExecutionContext context2 = TestUtils.createSqlExecutionCtx(engine, bindService2);
                         RecordCursor cursor = factory.getCursor(context2)
                 ) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                    println(factory, cursor);
                 }
                 TestUtils.assertEquals("ts\tsym\n" +
                         "1970-01-05T15:31:40.000000Z\tC\n" +
@@ -523,7 +523,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
             }
 
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                println(factory, cursor);
             }
             TestUtils.assertEquals("a\tl\n" +
                     "1000\t1\n", sink);
@@ -535,7 +535,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     SqlExecutionContext context2 = TestUtils.createSqlExecutionCtx(engine, bindService2);
                     RecordCursor cursor = factory.getCursor(context2)
             ) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                println(factory, cursor);
             }
             TestUtils.assertEquals("a\tl\n" +
                     "1002\t2\n", sink);
@@ -556,7 +556,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
             }
 
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                println(factory, cursor);
             }
             TestUtils.assertEquals("a\tl\n" +
                     "1000\t1\n", sink);
@@ -569,7 +569,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     SqlExecutionContext context2 = TestUtils.createSqlExecutionCtx(engine, bindService2);
                     RecordCursor cursor = factory.getCursor(context2)
             ) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                println(factory, cursor);
             }
             TestUtils.assertEquals("a\tl\n" +
                     "1002\t2\n", sink);

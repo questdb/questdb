@@ -43,7 +43,7 @@ public class RegexpReplaceStrBindVariableTest extends AbstractCairoTest {
                 bindVariableService.setStr(0, "foo");
                 bindVariableService.setStr(1, "bar");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                    println(factory, cursor);
                 }
 
                 TestUtils.assertEquals("regexp_replace\n" +
@@ -54,7 +54,7 @@ public class RegexpReplaceStrBindVariableTest extends AbstractCairoTest {
                 bindVariableService.setStr(0, "def");
                 bindVariableService.setStr(1, "abc");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                    println(factory, cursor);
                 }
 
                 TestUtils.assertEquals("regexp_replace\n" +

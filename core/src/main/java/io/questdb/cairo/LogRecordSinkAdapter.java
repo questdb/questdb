@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo;
+package io.questdb.cairo;
 
 import io.questdb.log.LogRecord;
 import io.questdb.std.str.Utf16Sink;

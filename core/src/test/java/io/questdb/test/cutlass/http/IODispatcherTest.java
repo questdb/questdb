@@ -54,6 +54,7 @@ import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cutlass.NetUtils;
@@ -8606,9 +8607,9 @@ public class IODispatcherTest extends AbstractTest {
             if (event < 0) {
                 continue; // skip non-event entries
             }
-            TestUtils.printColumn(record, metadata, 1, sink, false);
+            CursorPrinter.printColumn(record, metadata, 1, sink, false);
             sink.put('\t');
-            TestUtils.printColumn(record, metadata, 2, sink, false);
+            CursorPrinter.printColumn(record, metadata, 2, sink, false);
             sink.put('\n');
         }
     }

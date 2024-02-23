@@ -121,9 +121,8 @@ public class PartitionDeleteTest extends AbstractCairoTest {
 
                 Assert.assertTrue(r.reload());
 
-                sink.clear();
                 cursor.toTop();
-                printer.print(cursor, r.getMetadata(), true, sink);
+                println(r.getMetadata(), cursor);
 
                 String expected = "sequence\tevent\ttimestamp\n" +
                         "400\t\t2020-07-04T00:00:00.000000Z\n" +
