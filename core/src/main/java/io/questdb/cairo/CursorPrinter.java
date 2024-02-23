@@ -34,101 +34,101 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.MutableUtf16Sink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.MutableCharSink;
 
 import static io.questdb.std.Numbers.IPv4_NULL;
 
 public class CursorPrinter {
     private static final char COLUMN_DELIMITER = '\t';
 
-    public static void printColumn(Record r, RecordMetadata m, int columnIndex, Utf16Sink sink, boolean printTypes) {
+    public static void printColumn(Record r, RecordMetadata m, int columnIndex, CharSink<?> sink, boolean printTypes) {
         printColumn(r, m, columnIndex, sink, false, printTypes);
     }
 
-    public static void printColumn(Record r, RecordMetadata m, int columnIndex, Utf16Sink sink, boolean symbolAsString, boolean printTypes) {
-        printColumn(r, m, columnIndex, sink, symbolAsString, printTypes, null);
+    public static void printColumn(Record record, RecordMetadata metadata, int columnIndex, CharSink<?> sink, boolean symbolAsString, boolean printTypes) {
+        printColumn(record, metadata, columnIndex, sink, symbolAsString, printTypes, null);
     }
 
-    public static void printColumn(Record r, RecordMetadata m, int columnIndex, Utf16Sink sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
-        final int columnType = m.getColumnType(columnIndex);
+    public static void printColumn(Record record, RecordMetadata metadata, int columnIndex, CharSink<?> sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
+        final int columnType = metadata.getColumnType(columnIndex);
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DATE:
-                DateFormatUtils.appendDateTime(sink, r.getDate(columnIndex));
+                DateFormatUtils.appendDateTime(sink, record.getDate(columnIndex));
                 break;
             case ColumnType.TIMESTAMP:
-                TimestampFormatUtils.appendDateTimeUSec(sink, r.getTimestamp(columnIndex));
+                TimestampFormatUtils.appendDateTimeUSec(sink, record.getTimestamp(columnIndex));
                 break;
             case ColumnType.DOUBLE:
-                sink.put(r.getDouble(columnIndex), Numbers.MAX_SCALE);
+                sink.put(record.getDouble(columnIndex), Numbers.MAX_SCALE);
                 break;
             case ColumnType.FLOAT:
-                sink.put(r.getFloat(columnIndex), 4);
+                sink.put(record.getFloat(columnIndex), 4);
                 break;
             case ColumnType.INT:
-                sink.put(r.getInt(columnIndex));
+                sink.put(record.getInt(columnIndex));
                 break;
             case ColumnType.NULL:
                 sink.put("null");
                 break;
             case ColumnType.STRING:
-                if (!symbolAsString | m.getColumnType(columnIndex) != ColumnType.SYMBOL) {
-                    sink.put(r.getStr(columnIndex));
+                if (!symbolAsString | metadata.getColumnType(columnIndex) != ColumnType.SYMBOL) {
+                    sink.put(record.getStr(columnIndex));
                     break;
                 } // Fall down to SYMBOL
             case ColumnType.SYMBOL:
-                CharSequence sym = r.getSym(columnIndex);
+                CharSequence sym = record.getSym(columnIndex);
                 sink.put(sym != null ? sym : nullStringValue);
                 break;
             case ColumnType.SHORT:
-                sink.put(r.getShort(columnIndex));
+                sink.put(record.getShort(columnIndex));
                 break;
             case ColumnType.CHAR:
-                char c = r.getChar(columnIndex);
+                char c = record.getChar(columnIndex);
                 if (c > 0) {
                     sink.put(c);
                 }
                 break;
             case ColumnType.LONG:
-                sink.put(r.getLong(columnIndex));
+                sink.put(record.getLong(columnIndex));
                 break;
             case ColumnType.GEOBYTE:
-                putGeoHash(r.getGeoByte(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
+                putGeoHash(record.getGeoByte(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.GEOSHORT:
-                putGeoHash(r.getGeoShort(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
+                putGeoHash(record.getGeoShort(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.GEOINT:
-                putGeoHash(r.getGeoInt(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
+                putGeoHash(record.getGeoInt(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.GEOLONG:
-                putGeoHash(r.getGeoLong(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
+                putGeoHash(record.getGeoLong(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.BYTE:
                 // as int
-                sink.put(r.getByte(columnIndex));
+                sink.put(record.getByte(columnIndex));
                 break;
             case ColumnType.BOOLEAN:
-                sink.put(r.getBool(columnIndex));
+                sink.put(record.getBool(columnIndex));
                 break;
             case ColumnType.BINARY:
-                Chars.toSink(r.getBin(columnIndex), sink);
+                Chars.toSink(record.getBin(columnIndex), sink);
                 break;
             case ColumnType.LONG256:
-                r.getLong256(columnIndex, sink);
+                record.getLong256(columnIndex, sink);
                 break;
             case ColumnType.LONG128:
                 // fall through
             case ColumnType.UUID:
-                long hi = r.getLong128Hi(columnIndex);
-                long lo = r.getLong128Lo(columnIndex);
+                long hi = record.getLong128Hi(columnIndex);
+                long lo = record.getLong128Lo(columnIndex);
                 if (!Uuid.isNull(lo, hi)) {
                     Uuid uuid = new Uuid(lo, hi);
                     uuid.toSink(sink);
                 }
                 break;
             case ColumnType.IPv4: {
-                final int val = r.getIPv4(columnIndex);
+                final int val = record.getIPv4(columnIndex);
                 if (val != IPv4_NULL) {
                     Numbers.intToIPv4Sink(sink, val);
                 }
@@ -143,11 +143,11 @@ public class CursorPrinter {
         }
     }
 
-    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink) {
-        printColumn(r, m, i, sink, false, false);
+    public static void printColumn(Record record, RecordMetadata metadata, int columnIndex, CharSink<?> sink) {
+        printColumn(record, metadata, columnIndex, sink, false, false);
     }
 
-    public static void printHeader(RecordMetadata metadata, Utf16Sink sink) {
+    public static void printHeader(RecordMetadata metadata, CharSink<?> sink) {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (i > 0) {
                 sink.put(COLUMN_DELIMITER);
@@ -172,25 +172,25 @@ public class CursorPrinter {
         }
     }
 
-    public static void println(Record r, RecordMetadata m, Utf16Sink sink) {
-        println(r, m, sink, false);
+    public static void println(Record record, RecordMetadata metadata, CharSink<?> sink) {
+        println(record, metadata, sink, false);
     }
 
-    public static void println(Record r, RecordMetadata m, Utf16Sink sink, boolean printTypes) {
+    public static void println(Record r, RecordMetadata m, CharSink<?> sink, boolean printTypes) {
         print(r, m, sink, printTypes);
-        sink.putAscii("\n");
+        sink.putAscii('\n');
     }
 
-    public static void println(RecordMetadata metadata, Utf16Sink sink) {
+    public static void println(RecordMetadata metadata, CharSink<?> sink) {
         printHeader(metadata, sink);
         sink.putAscii('\n');
     }
 
-    public static void println(RecordCursor cursor, RecordMetadata metadata, MutableUtf16Sink sink) {
+    public static void println(RecordCursor cursor, RecordMetadata metadata, MutableCharSink<?> sink) {
         println(cursor, metadata, sink, true, false);
     }
 
-    public static void println(RecordCursor cursor, RecordMetadata metadata, MutableUtf16Sink sink, boolean printHeader, boolean printTypes) {
+    public static void println(RecordCursor cursor, RecordMetadata metadata, MutableCharSink<?> sink, boolean printHeader, boolean printTypes) {
         sink.clear();
         if (printHeader) {
             println(metadata, sink);
@@ -202,16 +202,16 @@ public class CursorPrinter {
         }
     }
 
-    private static void print(Record r, RecordMetadata m, Utf16Sink sink, boolean printTypes) {
-        for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
+    private static void print(Record record, RecordMetadata metadata, CharSink<?> sink, boolean printTypes) {
+        for (int i = 0, sz = metadata.getColumnCount(); i < sz; i++) {
             if (i > 0) {
                 sink.put(COLUMN_DELIMITER);
             }
-            printColumn(r, m, i, sink, printTypes);
+            printColumn(record, metadata, i, sink, printTypes);
         }
     }
 
-    private static void putGeoHash(long hash, int bits, Utf16Sink sink) {
+    private static void putGeoHash(long hash, int bits, CharSink<?> sink) {
         if (hash == GeoHashes.NULL) {
             return;
         }
