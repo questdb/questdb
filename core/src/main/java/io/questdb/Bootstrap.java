@@ -281,13 +281,14 @@ public class Bootstrap {
     }
 
     public void extractSite() throws IOException {
+        final byte[] buffer = new byte[1024 * 1024];
         final URL resource = getResourceClass().getResource(getPublicZipPath());
         if (resource == null) {
             log.infoW().$("Web Console build [").$(getPublicZipPath()).$("] not found").$();
+            extractConfDir(buffer);
         } else {
             long thisVersion = resource.openConnection().getLastModified();
             final String publicDir = rootDirectory + Files.SEPARATOR + "public";
-            final byte[] buffer = new byte[1024 * 1024];
 
             boolean extracted = false;
             final String oldSwVersion = getPublicVersion(publicDir);
@@ -472,6 +473,10 @@ public class Bootstrap {
             }
         }
         setPublicVersion(publicDir, thisVersion);
+        extractConfDir(buffer);
+    }
+
+    private void extractConfDir(byte[] buffer) throws IOException {
         copyConfResource(rootDirectory, false, buffer, "conf/date.formats", log);
         try {
             copyConfResource(rootDirectory, true, buffer, "conf/mime.types", log);

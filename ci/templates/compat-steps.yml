@@ -56,8 +56,7 @@ steps:
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
-         $(MAVEN_RUN_OPTS)
-         -P build-web-console"
+         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
