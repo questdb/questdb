@@ -3698,6 +3698,36 @@ public class SampleByTest extends AbstractCairoTest {
                 true,
                 false
         );
+
+        assertQuery(
+                "open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
+                        "65.51335839796312\t94.55893004802432\t18.336217509438512\t77.0079809007092\t519.2795145577336\t1970-01-03T00:00:00.000000Z\n",
+                "select * from (" +
+                        "  select" +
+                        "    first(price) AS open," +
+                        "    max(price) AS high," +
+                        "    min(price) AS low," +
+                        "    last(price) AS close," +
+                        "    sum(amount) AS volume," +
+                        "    created_at as timestamp" +
+                        "  from trades_varchar" +
+                        "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
+                        "  sample by 60m" +
+                        "  fill(null, null, null, null, 0) align to calendar" +
+                        ") order by timestamp desc limit 0, 1",
+                "create table trades_varchar as " +
+                        "(" +
+                        "select" +
+                        " rnd_varchar('btcusdt', 'ethusdt') market_id," +
+                        " rnd_double(0) * 100 price," +
+                        " rnd_double(0) * 100 amount," +
+                        " timestamp_sequence(172800000000, 3600000) created_at" +
+                        " from long_sequence(20)" +
+                        ") timestamp(created_at) partition by day",
+                "timestamp###DESC",
+                true,
+                false
+        );
     }
 
     @Test
@@ -6129,6 +6159,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " rnd_str(5,16,2) n," +
                         " rnd_double(2) o," +
                         " rnd_char() z," +
+                        " rnd_varchar(5, 16, 2) vch," +
                         " timestamp_sequence(cast('2020-03-28T03:20:00.000000Z' as timestamp), 3600000000) p," +
                         " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
                         " from" +
@@ -6666,20 +6697,22 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleFillPrevAllTypes() throws Exception {
         assertQuery(
-                "a\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tp\tsum\tk\n" +
-                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\t0.15786635599554755\t1970-01-03T00:00:00.000000Z\n" +
-                        "-2132716300\ttrue\tU\t0.38179758047769774\tNaN\t813\t2015-07-01T22:08:50.655Z\tHYRX\t-6186964045554120476\t34\t00000000 07 42 fc 31 79 5f 8b 81 2b 93\t1970-01-01T01:00:00.000000Z\t0.04142812470232493\t1970-01-03T00:00:00.000000Z\n" +
-                        "-360860352\ttrue\tM\t0.456344569609078\tNaN\t1013\t2015-01-15T20:11:07.487Z\tHYRX\t5271904137583983788\t30\t00000000 82 89 2b 4d 5f f6 46 90 c3 b3 59 8e e5 61 2f 64\n" +
-                        "00000010 0e 2c\t1970-01-01T02:00:00.000000Z\t0.6752509547112409\t1970-01-03T00:00:00.000000Z\n" +
-                        "2060263242\tfalse\tL\tNaN\t0.3495\t869\t2015-05-15T18:43:06.827Z\tCPSW\t-5439556746612026472\t11\t\t1970-01-01T03:00:00.000000Z\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "502711083\tfalse\tH\t0.0171850098561398\t0.0977\t605\t2015-07-12T07:33:54.007Z\tVTJW\t-6187389706549636253\t32\t00000000 29 8e 29 5e 69 c6 eb ea c3 c9 73\t1970-01-01T04:00:00.000000Z\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\t0.15786635599554755\t1970-01-03T03:00:00.000000Z\n" +
-                        "-2132716300\ttrue\tU\t0.38179758047769774\tNaN\t813\t2015-07-01T22:08:50.655Z\tHYRX\t-6186964045554120476\t34\t00000000 07 42 fc 31 79 5f 8b 81 2b 93\t1970-01-01T01:00:00.000000Z\t0.04142812470232493\t1970-01-03T03:00:00.000000Z\n" +
-                        "-360860352\ttrue\tM\t0.456344569609078\tNaN\t1013\t2015-01-15T20:11:07.487Z\tHYRX\t5271904137583983788\t30\t00000000 82 89 2b 4d 5f f6 46 90 c3 b3 59 8e e5 61 2f 64\n" +
-                        "00000010 0e 2c\t1970-01-01T02:00:00.000000Z\t0.6752509547112409\t1970-01-03T03:00:00.000000Z\n" +
-                        "2060263242\tfalse\tL\tNaN\t0.3495\t869\t2015-05-15T18:43:06.827Z\tCPSW\t-5439556746612026472\t11\t\t1970-01-01T03:00:00.000000Z\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "502711083\tfalse\tH\t0.0171850098561398\t0.0977\t605\t2015-07-12T07:33:54.007Z\tVTJW\t-6187389706549636253\t32\t00000000 29 8e 29 5e 69 c6 eb ea c3 c9 73\t1970-01-01T04:00:00.000000Z\t0.22631523434159562\t1970-01-03T03:00:00.000000Z\n",
-                "select a,b,c,d,e,f,g,i,j,l,m,p,sum(o), k from x sample by 3h fill(prev)",
+                "a\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tp\tvch\tsum\tk\n" +
+                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\t龘и\uDA89\uDFA42G\uDAC6\uDED3ڎ+o\t0.15786635599554755\t1970-01-03T00:00:00.000000Z\n" +
+                        "-1787109293\ttrue\tG\tNaN\t0.8001\t489\t2015-02-21T15:42:26.301Z\tCPSW\t-4692986177227268943\t31\t00000000 f1 1e ca 9c 1d 06 ac 37 c8 cd 82\t1970-01-01T01:00:00.000000Z\t篸N\uD9D7\uDFE5\uDAE9\uDF46-\t0.8685154305419587\t1970-01-03T00:00:00.000000Z\n" +
+                        "-1966408995\tfalse\tQ\tNaN\t0.9442\t95\t2015-01-04T19:58:55.654Z\tPEHN\t-5024542231726589509\t39\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t1970-01-01T02:00:00.000000Z\t\uD9CC\uDE73f\u0093ً\uDAF5\uDE17X{ӽ_\uDBED\uDC98\uDA30\uDEE0f\t0.053594208204197136\t1970-01-03T00:00:00.000000Z\n" +
+                        "-1810676855\tfalse\tG\t0.06846631555382798\t0.0436\t970\t2015-06-17T01:06:20.599Z\t\t6405448934035934123\t22\t00000000 23 3f ae 7c 9f 77 04 e9 0c ea 4e ea 8b f5 0f 2d\n" +
+                        "00000010 b3 14 33\t1970-01-01T03:00:00.000000Z\tP\uDA43\uDFF0G㔍K钷pͱ2\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "-1197986472\tfalse\tL\t0.8551850405049611\t0.1859\t813\t2015-06-15T05:01:52.634Z\tVTJW\t9041413988802359580\t48\t00000000 42 fa f5 6e 8f 80 e3 54 b8 07 b1 32 57 ff 9a ef\n" +
+                        "00000010 88\t1970-01-01T04:00:00.000000Z\t|v볱kіH\uDA76\uDDD4!\uDB87\uDF60wă堝ᢣ΄\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\t龘и\uDA89\uDFA42G\uDAC6\uDED3ڎ+o\t0.15786635599554755\t1970-01-03T03:00:00.000000Z\n" +
+                        "-1787109293\ttrue\tG\tNaN\t0.8001\t489\t2015-02-21T15:42:26.301Z\tCPSW\t-4692986177227268943\t31\t00000000 f1 1e ca 9c 1d 06 ac 37 c8 cd 82\t1970-01-01T01:00:00.000000Z\t篸N\uD9D7\uDFE5\uDAE9\uDF46-\t0.8685154305419587\t1970-01-03T03:00:00.000000Z\n" +
+                        "-1966408995\tfalse\tQ\tNaN\t0.9442\t95\t2015-01-04T19:58:55.654Z\tPEHN\t-5024542231726589509\t39\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t1970-01-01T02:00:00.000000Z\t\uD9CC\uDE73f\u0093ً\uDAF5\uDE17X{ӽ_\uDBED\uDC98\uDA30\uDEE0f\t0.053594208204197136\t1970-01-03T03:00:00.000000Z\n" +
+                        "-1810676855\tfalse\tG\t0.06846631555382798\t0.0436\t970\t2015-06-17T01:06:20.599Z\t\t6405448934035934123\t22\t00000000 23 3f ae 7c 9f 77 04 e9 0c ea 4e ea 8b f5 0f 2d\n" +
+                        "00000010 b3 14 33\t1970-01-01T03:00:00.000000Z\tP\uDA43\uDFF0G㔍K钷pͱ2\t0.04173263630897883\t1970-01-03T03:00:00.000000Z\n" +
+                        "-1197986472\tfalse\tL\t0.8551850405049611\t0.1859\t813\t2015-06-15T05:01:52.634Z\tVTJW\t9041413988802359580\t48\t00000000 42 fa f5 6e 8f 80 e3 54 b8 07 b1 32 57 ff 9a ef\n" +
+                        "00000010 88\t1970-01-01T04:00:00.000000Z\t|v볱kіH\uDA76\uDDD4!\uDB87\uDF60wă堝ᢣ΄\t0.07828020681514525\t1970-01-03T03:00:00.000000Z\n",
+                "select a,b,c,d,e,f,g,i,j,l,m,p,vch,sum(o), k from x sample by 3h fill(prev)",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -6696,6 +6729,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_double(2) o," +
+                        " rnd_varchar(5,16,2) vch," +
                         " timestamp_sequence(0, 3600000000) p," +
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
