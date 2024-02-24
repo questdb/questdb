@@ -71,7 +71,8 @@ public class HttpSecurityTest extends AbstractTest {
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
-            "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"\r\n";
+            "\r\n0e\r\nUnauthorized\r\n" +
+            "\r\n00\r\n";
     private static final String VALID_BASIC_AUTH_CREDENTIALS = "Basic Zm9vOmJhcg=="; // foo:bar
     private static final HttpAuthenticatorFactory SINGLE_USER_BASIC_AUTH_FACTORY = () -> new HttpAuthenticator() {
         @Override
