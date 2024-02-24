@@ -39,7 +39,6 @@ import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
 import static io.questdb.cutlass.http.HttpConstants.HEADER_TRANSFER_ENCODING;
 import static io.questdb.network.IODispatcher.*;
@@ -304,25 +303,20 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return this;
     }
 
+    public HttpRequestProcessor rejectRequest(int code) {
+        return rejectRequest(code, null);
+    }
+
     public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage) {
         return rejectRequest(code, userMessage, null, null);
     }
 
-    public HttpRequestProcessor rejectRequest(int code, byte authenticationType) {
-        return rejectRequest(code, null, null, null, authenticationType);
-    }
-
     public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue) {
-        return rejectRequest(code, userMessage, cookieName, cookieValue, AUTH_TYPE_NONE);
-    }
-
-    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue, byte authenticationType) {
         LOG.error().$(userMessage).$(" [code=").$(code).I$();
         rejectProcessor.rejectCode = code;
         rejectProcessor.rejectMessage = userMessage;
         rejectProcessor.rejectCookieName = cookieName;
         rejectProcessor.rejectCookieValue = cookieValue;
-        rejectProcessor.authenticationType = authenticationType;
         return rejectProcessor;
     }
 
@@ -832,10 +826,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
 
             try {
-                final byte requiredAuthType = processor.getRequiredAuthType();
                 if (newRequest) {
                     if (processor.requiresAuthentication() && !configureSecurityContext()) {
-                        processor = rejectRequest(HTTP_UNAUTHORIZED, requiredAuthType);
+                        processor = rejectRequest(HTTP_UNAUTHORIZED);
                     }
 
                     if (configuration.areCookiesEnabled()) {
@@ -993,7 +986,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private class RejectProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
-        private byte authenticationType = AUTH_TYPE_NONE;
         private int rejectCode;
         private CharSequence rejectCookieName = null;
         private CharSequence rejectCookieValue = null;
@@ -1001,7 +993,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
         public void clear() {
             rejectCode = 0;
-            authenticationType = AUTH_TYPE_NONE;
             rejectCookieName = null;
             rejectCookieValue = null;
             rejectMessage = null;
@@ -1020,9 +1011,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
 
         @Override
-        public void onRequestComplete(
-                HttpConnectionContext context
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (rejectCode == HTTP_UNAUTHORIZED) {
                 simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED);
             } else {
