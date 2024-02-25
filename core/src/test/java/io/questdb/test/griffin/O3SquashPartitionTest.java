@@ -320,8 +320,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
             ) {
                 // Check that the originally open reader does not see these changes
-                sink.clear();
-                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                println(cursorFactory, cursor);
                 String expected = "i\tj\tstr\tvarc1\tvarc2\tts\n" +
                         "34\t-34\tLITXVB\t푻䑫j򓝟x砺ĈBƸ1Xሿ̥0ږₙЊB䳍Uȝʒ򲑐W㸵\t\t2020-02-03T17:00:00.000000Z\n" +
                         "35\t-35\tIVBFXUNSHUG\tGSȞ󄜾Ҽ\tj\t2020-02-03T17:00:00.000000Z\n" +
@@ -343,9 +342,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 );
 
                 // Check that the originally open reader does not see these changes
-                sink.clear();
                 cursor.toTop();
-                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                println(cursorFactory, cursor);
                 TestUtils.assertEquals(expected, sink);
 
                 // add data at 17:15
@@ -362,9 +360,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 );
 
                 // Check that the originally open reader does not see these changes
-                sink.clear();
                 cursor.toTop();
-                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                println(cursorFactory, cursor);
                 TestUtils.assertEquals(expected, sink);
             }
             assertSql("i\tj\tstr\tvarc1\tvarc2\tts\n" +
@@ -408,7 +405,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             ) {
                 // Check that the originally open reader does not see these changes
                 sink.clear();
-                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                println(cursorFactory, cursor);
                 String expected = "i\tj\tstr\tvarc1\tvarc2\tts\n" +
                         "34\t-34\tLITXVB\t푻䑫j򓝟x砺ĈBƸ1Xሿ̥0ږₙЊB䳍Uȝʒ򲑐W㸵\t\t2020-02-03T17:00:00.000000Z\n" +
                         "35\t-35\tIVBFXUNSHUG\tGSȞ󄜾Ҽ\tj\t2020-02-03T17:00:00.000000Z\n" +
@@ -430,9 +427,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 );
 
                 // Check that the originally open reader does not see these changes
-                sink.clear();
                 cursor.toTop();
-                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                println(cursorFactory, cursor);
                 TestUtils.assertEquals(expected, sink);
 
                 // add data at 17:15
@@ -449,9 +445,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 );
 
                 // Check that the originally open reader does not see these changes
-                sink.clear();
                 cursor.toTop();
-                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                println(cursorFactory, cursor);
                 TestUtils.assertEquals(expected, sink);
             }
         });
@@ -761,14 +756,14 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     private int assertRowCount(int delta, int rowCount) {
-        Assert.assertEquals(delta, getPhysicalRowsSinceLastCommit("x"));
+        Assert.assertEquals(delta, getPhysicalRowsSinceLastCommit());
         rowCount += delta;
         Assert.assertEquals(rowCount, metrics.tableWriter().getPhysicallyWrittenRows());
         return rowCount;
     }
 
-    private long getPhysicalRowsSinceLastCommit(String table) {
-        try (TableWriter tw = getWriter(table)) {
+    private long getPhysicalRowsSinceLastCommit() {
+        try (TableWriter tw = getWriter("x")) {
             return tw.getPhysicallyWrittenRowsSinceLastCommit();
         }
     }
@@ -776,7 +771,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     private void testSquashPartitionsOnEmptyTable(String wal) throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE,  4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
             ddl(

@@ -51,7 +51,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                 // so let's run the query few times using the same factory
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                        println(factory, cursor);
                         TestUtils.assertEquals("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
                                 "B\tfalse\t0\t0\t0\n" +
                                 "C\tfalse\t0\t0\t0\n", sink);

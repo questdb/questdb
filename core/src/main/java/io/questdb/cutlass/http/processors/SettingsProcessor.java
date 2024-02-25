@@ -35,6 +35,8 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8StringSink;
 
+import java.net.HttpURLConnection;
+
 public class SettingsProcessor implements HttpRequestProcessor {
     private final Utf8StringSink sink = new Utf8StringSink();
 
@@ -63,7 +65,7 @@ public class SettingsProcessor implements HttpRequestProcessor {
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpChunkedResponse r = context.getChunkedResponse();
-        r.status(200, "application/json");
+        r.status(HttpURLConnection.HTTP_OK, "application/json");
         r.sendHeader();
         r.put(sink);
         r.sendChunk(true);

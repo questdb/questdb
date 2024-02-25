@@ -328,9 +328,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 w.commit();
             }
 
-            sink.clear();
             try (TableReader r = newOffPoolReader(configuration, name)) {
-                printer.print(r.getCursor(), r.getMetadata(), true, sink);
+                println(r.getMetadata(), r.getCursor());
             }
             expectedRows[i] = sink.toString();
             expectedRowsMap.put(name, expectedRows[i]);

@@ -28,10 +28,12 @@ import io.questdb.Bootstrap;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,7 +46,10 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Ignore;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -207,7 +212,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 }
                 Assert.assertTrue(totalRows > (expectedTotalRows.get() * 0.5));
             } finally {
-                Assert.assertEquals(0, Files.rmdir(dbPath.of(newRoot).$(), true));
+                Assert.assertTrue(Files.rmdir(dbPath.of(newRoot).$(), true));
             }
         });
     }
@@ -227,7 +232,8 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                     context
             );
             try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
+                RecordMetadata metadata = factory.getMetadata();
+                CursorPrinter.println(cursor, metadata, sink, false, false);
                 String expected = tableToken.getTableName() + "\ttimestamp2\t" + PartitionBy.toString(partitionBy) + '\t' + isWal + '\t' + tableToken.getDirName();
                 TestUtils.assertContains(sink, expected);
             }
@@ -235,11 +241,13 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             cc = compiler.compile("SELECT * FROM '" + tableToken.getTableName() + "' WHERE bool = true LIMIT -100", context);
             try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
                 // being able to iterate is the test
-                TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
+                RecordMetadata metadata = factory.getMetadata();
+                CursorPrinter.println(cursor, metadata, sink, false, false);
             }
             cc = compiler.compile("SELECT count(*) n FROM '" + tableToken.getTableName() + '\'', context);
             try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), false, sink, printer);
+                RecordMetadata metadata = factory.getMetadata();
+                CursorPrinter.println(cursor, metadata, sink, false, false);
                 sink.clear(sink.length() - 1);
                 return Long.parseLong(sink.toString());
             }
@@ -253,7 +261,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 if (!f.getName().equals("tmp")) {
                     roots.add(f);
                 } else {
-                    Assert.assertEquals(0, Files.rmdir(auxPath.of(f.getAbsolutePath()).$(), true));
+                    Assert.assertTrue(Files.rmdir(auxPath.of(f.getAbsolutePath()).$(), true));
                 }
             }
         }
@@ -262,7 +270,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         roots.sort(Comparator.comparing(File::lastModified));
         String newRoot = roots.get(len - 1).getAbsolutePath();
         for (int i = 0; i < len - 1; i++) {
-            Assert.assertEquals(0, Files.rmdir(auxPath.of(roots.get(i).getAbsolutePath()).$(), true));
+            Assert.assertTrue(Files.rmdir(auxPath.of(roots.get(i).getAbsolutePath()).$(), true));
         }
         return newRoot;
     }

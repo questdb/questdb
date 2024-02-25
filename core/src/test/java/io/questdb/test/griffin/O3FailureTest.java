@@ -51,7 +51,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
-import java.net.URISyntaxException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1070,11 +1069,11 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     private static void assertSqlResultAgainstFile(
-            SqlCompiler compiler,
+            CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
             String resourceName
     ) throws SqlException {
-        printSqlResult(compiler, sqlExecutionContext, "x");
+        engine.print("x", sink, sqlExecutionContext);
         TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
     }
 
@@ -2146,7 +2145,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertO3DataConsistencyStableSort(
                 engine,
-                compiler,
+                engine,
                 sqlExecutionContext,
                 "create table y as (select * from w union all append1 union all append2)",
                 "insert into x select * from append2"
@@ -2272,7 +2271,7 @@ public class O3FailureTest extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -2576,7 +2575,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertO3DataConsistencyStableSort(
                 engine,
-                compiler,
+                engine,
                 sqlExecutionContext,
                 "create table y as (select * from w union all append1 union all append2)",
                 "insert into x select * from append2"
@@ -3162,8 +3161,8 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts, commit");
-        TestUtils.printSql(compiler, sqlExecutionContext, "x", sink2);
+        engine.print("y order by ts, commit", sink, sqlExecutionContext);
+        engine.print("x", sink2, sqlExecutionContext);
         TestUtils.assertEquals(sink, sink2);
 
         assertXCountY(engine, compiler, sqlExecutionContext);

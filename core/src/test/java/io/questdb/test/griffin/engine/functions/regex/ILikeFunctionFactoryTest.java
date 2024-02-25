@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -43,8 +42,7 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
             bindVariableService.setStr(0, "H");
             try (RecordCursorFactory factory = select("select * from x where name ilike '%' || $1 || '%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    println(factory, cursor);
                     Assert.assertNotEquals(sink.toString().indexOf('H'), -1);
                 }
             }
@@ -59,8 +57,7 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
             bindVariableService.setStr("str", "H");
             try (RecordCursorFactory factory = select("select * from x where name ilike '%' || :str || '%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    println(factory, cursor);
                     Assert.assertNotEquals(sink.toString().indexOf('H'), -1);
                 }
             }
@@ -80,14 +77,10 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
             ddl(sql);
-
-            try (RecordCursorFactory factory = select("select * from x where name ilike ''")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), false, sink);
-                    Assert.assertEquals(sink.toString(), "");
-                }
-            }
+            assertSql(
+                    "name\n",
+                    "select * from x where name ilike ''"
+            );
         });
     }
 
@@ -104,14 +97,10 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
             ddl(sql);
-
-            try (RecordCursorFactory factory = select("select * from x where name ilike '[][n'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), false, sink);
-                    Assert.assertEquals(sink.toString(), "");
-                }
-            }
+            assertSql(
+                    "name\n",
+                    "select * from x where name ilike '[][n'"
+            );
         });
     }
 
@@ -121,10 +110,8 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try (RecordCursorFactory factory = select("select * from x where  name ilike 'H'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    println(factory, cursor);
                     Assert.assertEquals(Chars.indexOf(sink, 'H'), -1);
-                    sink.clear();
                 }
             }
         });
@@ -143,15 +130,11 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
             ddl(sql);
-
-            try (RecordCursorFactory factory = select("select * from x where name ilike 'aBcGe'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), false, sink);
-                    Assert.assertEquals(sink.toString().replace("\n", ""), "ABCGE");
-                    sink.clear();
-                }
-            }
+            assertSql(
+                    "name\n" +
+                            "ABCGE\n",
+                    "select * from x where name ilike 'aBcGe'"
+            );
         });
     }
 
@@ -161,8 +144,7 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
                     ddl("create table x as (select rnd_str() name from long_sequence(2000))");
                     try (RecordCursorFactory factory = select("select * from x where name ilike 'XJ'")) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            sink.clear();
-                            printer.print(cursor, factory.getMetadata(), true, sink);
+                            println(factory, cursor);
                             Assert.assertEquals(sink.toString().indexOf("XJ"), -1);
                         }
                     }
@@ -183,16 +165,11 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
             ddl(sql);
-
-            try (RecordCursorFactory factory = select("select * from x where name ilike 'AbC%'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), false, sink);
-                    Assert.assertEquals(sink.toString().replace("\n", ""), "ABCGE");
-                    sink.clear();
-
-                }
-            }
+            assertSql(
+                    "name\n" +
+                            "ABCGE\n",
+                    "select * from x where name ilike 'AbC%'"
+            );
         });
     }
 
@@ -209,14 +186,11 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
             ddl(sql);
-
-            try (RecordCursorFactory factory = select("select * from x where name ilike '%GgG'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), false, sink);
-                    Assert.assertEquals(sink.toString().replace("\n", ""), "BDGDGGG");
-                }
-            }
+            assertSql(
+                    "name\n" +
+                            "BDGDGGG\n",
+                    "select * from x where name ilike '%GgG'"
+            );
         });
     }
 
@@ -233,14 +207,11 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
             ddl(sql);
-
-            try (RecordCursorFactory factory = select("select * from x where name ilike '%BcG%'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), false, sink);
-                    Assert.assertEquals(sink.toString().replace("\n", ""), "ABCGE");
-                }
-            }
+            assertSql(
+                    "name\n" +
+                            "ABCGE\n",
+                    "select * from x where name ilike '%BcG%'"
+            );
         });
     }
 
@@ -257,14 +228,12 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
             ddl(sql);
-
-            try (RecordCursorFactory factory = select("select * from x where name ilike '_B%'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), false, sink);
-                    Assert.assertEquals(sink.toString().split("\n").length, 2);
-                }
-            }
+            assertSql(
+                    "name\n" +
+                            "ABCGE\n" +
+                            "SBDHDJ\n",
+                    "select * from x where name ilike '_B%'"
+            );
         });
     }
 
@@ -281,14 +250,11 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
                     "select cast('AAAAVVV' as string) as name from long_sequence(1)\n" +
                     ")";
             ddl(sql);
-
-            try (RecordCursorFactory factory = select("select * from x where name ilike '_BC__'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), false, sink);
-                    Assert.assertEquals(sink.toString().replace("\n", ""), "ABCGE");
-                }
-            }
+            assertSql(
+                    "name\n" +
+                            "ABCGE\n",
+                    "select * from x where name ilike '_BC__'"
+            );
         });
     }
 
@@ -296,42 +262,47 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
     public void testNonConstantExpression() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
-            try {
-                assertException("select * from x where name ilike rnd_str('foo','bar')");
-            } catch (SqlException e) {
-                Assert.assertEquals(33, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");
-            }
+            assertException("select * from x where name ilike rnd_str('foo','bar')", 33, "use constant or bind variable");
         });
     }
 
     @Test
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
-
-            try (RecordCursorFactory factory = select("select * from x where not name ilike 'H'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
-                    Assert.assertNotEquals(sink.toString().indexOf('H'), -1);
-                }
-            }
+            ddl("create table x as (select rnd_str('a', 'BC', 'h', 'H', 'k') name from long_sequence(20))");
+            assertSql(
+                    "name\n" +
+                            "a\n" +
+                            "BC\n" +
+                            "BC\n" +
+                            "k\n" +
+                            "BC\n" +
+                            "BC\n" +
+                            "BC\n" +
+                            "k\n" +
+                            "BC\n" +
+                            "BC\n" +
+                            "a\n" +
+                            "k\n",
+                    "select * from x where not name ilike 'H'"
+            );
         });
     }
 
     @Test
     public void testNotLikeStringMatch() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
-
-            try (RecordCursorFactory factory = select("select * from x where not name ilike 'XJ'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
-                    Assert.assertNotEquals(sink.toString().indexOf("XJ"), -1);
-                }
-            }
+            ddl("create table x as (select rnd_str('kk', 'xJ', 'Xj', 'GU', 'XJ') name from long_sequence(20))");
+            assertSql(
+                    "name\n" +
+                            "kk\n" +
+                            "GU\n" +
+                            "GU\n" +
+                            "GU\n" +
+                            "GU\n" +
+                            "kk\n",
+                    "select * from x where not name ilike 'XJ'"
+            );
         });
     }
 

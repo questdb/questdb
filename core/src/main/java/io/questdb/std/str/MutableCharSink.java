@@ -22,13 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cutlass.http.line;
+package io.questdb.std.str;
 
-import io.questdb.ServerMain;
+import io.questdb.std.Mutable;
 
-public class LineHttpUtils {
-
-    public static int getHttpPort(ServerMain serverMain) {
-        return serverMain.getConfiguration().getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
-    }
+public interface MutableCharSink<T extends CharSink<?>> extends CharSink<T>, Mutable {
 }

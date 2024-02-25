@@ -26,14 +26,13 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -88,11 +87,8 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
             row.append();
             writer.commit();
 
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    TableReader reader = newOffPoolReader(configuration, tableName)
-            ) {
-                TestUtils.printSql(compiler, sqlExecutionContext, tableName, sink);
+            try (TableReader reader = newOffPoolReader(configuration, tableName)) {
+                engine.print(tableName, sink, sqlExecutionContext);
 
                 for (int i = 0; i < 64; i++) {
                     writer.addColumn("col" + i, ColumnType.INT);

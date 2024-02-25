@@ -3101,7 +3101,7 @@ public class SampleByTest extends AbstractCairoTest {
                     0,
                     getSymbolFilter(),
                     -1
-            );
+            ).close();
             Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "first(), last() is not supported on data type");
@@ -3137,7 +3137,7 @@ public class SampleByTest extends AbstractCairoTest {
                     0,
                     getSymbolFilter(),
                     -1
-            );
+            ).close();
             Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "expected first() or last() functions but got min");
@@ -8885,8 +8885,7 @@ public class SampleByTest extends AbstractCairoTest {
 
                 ddl("truncate table x");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    println(factory, cursor);
                     TestUtils.assertEquals("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n", sink);
                 }
             }
