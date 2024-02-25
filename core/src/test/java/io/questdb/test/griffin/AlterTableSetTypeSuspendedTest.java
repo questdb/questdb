@@ -78,7 +78,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 public FilesFacade getFilesFacade() {
                     return filesFacade;
                 }
-            }, TestUtils.getServerMainArgs(root));
+            }, Bootstrap.getServerMainArgs(root));
 
             try (final ServerMain questdb = new TestServerMain(bootstrap) {
                 @Override

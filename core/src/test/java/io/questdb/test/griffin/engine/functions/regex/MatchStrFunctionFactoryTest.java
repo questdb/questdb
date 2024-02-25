@@ -86,8 +86,7 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
 
             try (RecordCursorFactory factory = select("select * from x where name ~ 'XJ'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    println(factory, cursor);
                     TestUtils.assertEquals(expected, sink);
                 }
             }

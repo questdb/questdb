@@ -7698,9 +7698,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try (RecordCursorFactory lookupFactory = select("select * from alcatel_traffic_tmp where deviceName in $1")) {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
-                sink.clear();
                 try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
+                    println(lookupFactory, cursor);
                     TestUtils.assertEquals(
                             "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
                                     "FKBW\t1970-01-01T00:00:02.300000Z\tFKBW\t\t0.04998168904446332\t0.04998168904446332\n",
@@ -7712,9 +7711,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try (RecordCursorFactory lookupFactory = select("select * from alcatel_traffic_tmp where deviceName != $1 and time < '1970-01-01T00:00:00.300000Z'")) {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
-                sink.clear();
                 try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
+                    println(lookupFactory, cursor);
                     TestUtils.assertEquals(
                             "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
                                     "OQCN\t1970-01-01T00:00:00.000000Z\tOQCN\t\t0.004671510951376301\t0.004671510951376301\n" +
@@ -7749,9 +7747,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 bindVariableService.setStr(1, "SHRI");
-                sink.clear();
                 try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
+                    println(lookupFactory, cursor);
                     TestUtils.assertEquals(
                             "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
                                     "FKBW\t1970-01-01T00:00:02.300000Z\tFKBW\t\t0.04998168904446332\t0.04998168904446332\n" +
@@ -7765,9 +7762,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 bindVariableService.setStr(1, "SHRI");
-                sink.clear();
                 try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
+                    println(lookupFactory, cursor);
                     TestUtils.assertEquals(
                             "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
                                     "OQCN\t1970-01-01T00:00:00.000000Z\tOQCN\t\t0.004671510951376301\t0.004671510951376301\n" +

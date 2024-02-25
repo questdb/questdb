@@ -30,6 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
@@ -42,6 +43,7 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
@@ -54,6 +56,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.util.Map;
 import java.util.ServiceLoader;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 
@@ -77,6 +80,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Predicate<CharSequence> protectedTableResolver;
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
+    private final SqlExecutionContext rootExecutionContext;
     private final SequencerMetadataPool sequencerMetadataPool;
     private final DatabaseSnapshotAgentImpl snapshotAgent;
     private final SqlCompilerPool sqlCompilerPool;
@@ -123,6 +127,8 @@ public class CairoEngine implements Closeable, WriterSource {
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
         this.snapshotAgent = new DatabaseSnapshotAgentImpl(this);
         this.queryRegistry = new QueryRegistry(configuration);
+        this.rootExecutionContext = new SqlExecutionContextImpl(this, 1)
+                .with(AllowAllSecurityContext.INSTANCE, null);
 
         try {
             tableIdGenerator.open();
@@ -243,6 +249,45 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public void awaitTable(String tableName, long timeout, TimeUnit timeoutUnit) {
+        awaitTxn(tableName, -1, timeout, timeoutUnit);
+    }
+
+    public void awaitTxn(String tableName, long txn, long timeout, TimeUnit timeoutUnit) {
+        final long startTime = configuration.getMillisecondClock().getTicks();
+        long maxWait = timeoutUnit.toMillis(timeout);
+        int sleep = 10;
+
+        TableToken tableToken = null;
+        long seqTxn = txn;
+        long writerTxn = -1;
+        while (configuration.getMillisecondClock().getTicks() - startTime < maxWait) {
+            if (tableToken == null) {
+                try {
+                    tableToken = verifyTableName(tableName);
+                } catch (CairoException ex) {
+                    Os.sleep(sleep *= 2);
+                    continue;
+                }
+            }
+
+            if (tableToken != null) {
+                seqTxn = seqTxn > -1 ? seqTxn : getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn();
+                writerTxn = getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn();
+                if (seqTxn <= writerTxn) {
+                    return;
+                }
+
+                boolean isSuspended = getTableSequencerAPI().isSuspended(tableToken);
+                if (isSuspended) {
+                    throw CairoException.nonCritical().put("table is suspended [tableName=").put(tableName).put(']');
+                }
+                Os.sleep(sleep *= 2);
+            }
+        }
+        throw CairoException.nonCritical().put("txn timed out [expectedTxn=").put(seqTxn).put(", writerTxn=").put(writerTxn);
+    }
+
     @TestOnly
     public boolean clear() {
         snapshotAgent.clear();
@@ -282,6 +327,10 @@ public class CairoEngine implements Closeable, WriterSource {
         try (SqlCompiler compiler = getSqlCompiler()) {
             compile(compiler, sql, sqlExecutionContext);
         }
+    }
+
+    public void compile(CharSequence sql) throws SqlException {
+        compile(sql, rootExecutionContext);
     }
 
     public void completeSnapshot() throws SqlException {
@@ -876,6 +925,20 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
         snapshotAgent.prepareSnapshot(executionContext);
+    }
+
+    public void print(CharSequence sql, MutableCharSink<?> sink) throws SqlException {
+        print(sql, sink, rootExecutionContext);
+    }
+
+    public void print(CharSequence sql, MutableCharSink<?> sink, SqlExecutionContext executionContext) throws SqlException {
+        sink.clear();
+        try (
+                RecordCursorFactory factory = select(sql, executionContext);
+                RecordCursor cursor = factory.getCursor(executionContext)
+        ) {
+            CursorPrinter.println(cursor, factory.getMetadata(), sink);
+        }
     }
 
     public void reconcileTableNameRegistryState() {

@@ -1824,8 +1824,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             try (TableReader r = newOffPoolReader(configuration, "x")) {
-                sink.clear();
-                printer.print(r.getCursor(), r.getMetadata(), true, sink);
+                println(r.getMetadata(), r.getCursor());
             }
 
             TestUtils.assertEquals("a\n" +
@@ -2017,8 +2016,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             try (TableReader r = newOffPoolReader(configuration, "all")) {
-                sink.clear();
-                printer.print(r.getCursor(), r.getMetadata(), true, sink);
+                println(r.getMetadata(), r.getCursor());
                 TestUtils.assertEquals(expected, sink);
             }
         });
@@ -2468,8 +2466,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                         Assert.assertTrue(r.reload());
 
-                        sink.clear();
-                        TestUtils.printer.print(r.getCursor(), r.getMetadata(), true, sink);
+                        println(r.getMetadata(), r.getCursor());
                         TestUtils.assertEquals(
                                 "l\ttimestamp\txyz\n" +
                                         "NaN\t2016-03-02T10:00:00.000000Z\t\n",
