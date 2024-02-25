@@ -1255,6 +1255,17 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByWithNestedCaseFunction() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelStringKeyGroupBy(
+                "SELECT sum(CASE WHEN (key = 'k0') THEN 1 ELSE 0 END) FROM tab",
+                "sum\n" +
+                        "1600\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithNestedFilter() throws Exception {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(p, q), sum(ct) " +

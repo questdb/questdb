@@ -198,8 +198,8 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
                 destValue.copy(srcValue);
             } else {
                 functionUpdater.merge(destValue, srcValue);
-                destValue.setNew(false);
             }
+            destValue.setNew(false);
         }
 
         isValueBuilt = true;
