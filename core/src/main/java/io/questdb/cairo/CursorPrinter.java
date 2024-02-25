@@ -134,6 +134,9 @@ public class CursorPrinter {
                 }
                 break;
             }
+            case ColumnType.VARCHAR:
+                sink.put(record.getVarcharA(columnIndex));
+                break;
             default:
                 break;
         }

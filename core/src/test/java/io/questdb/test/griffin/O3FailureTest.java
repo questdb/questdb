@@ -50,7 +50,6 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.File;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1066,15 +1065,6 @@ public class O3FailureTest extends AbstractO3Test {
                 null,
                 null
         );
-    }
-
-    private static void assertSqlResultAgainstFile(
-            CairoEngine engine,
-            SqlExecutionContext sqlExecutionContext,
-            String resourceName
-    ) throws SqlException {
-        engine.print("x", sink, sqlExecutionContext);
-        TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
     }
 
     private static void assertXCountAndMax(
@@ -2145,7 +2135,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertO3DataConsistencyStableSort(
                 engine,
-                engine,
+                compiler,
                 sqlExecutionContext,
                 "create table y as (select * from w union all append1 union all append2)",
                 "insert into x select * from append2"
@@ -2575,7 +2565,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertO3DataConsistencyStableSort(
                 engine,
-                engine,
+                compiler,
                 sqlExecutionContext,
                 "create table y as (select * from w union all append1 union all append2)",
                 "insert into x select * from append2"

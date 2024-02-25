@@ -182,7 +182,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int count = 10;
 
                 String fullString = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-                int port = LineHttpUtils.getHttpPort(serverMain);
+                int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder()
                         .address("localhost:" + port)
                         .http()
@@ -204,7 +204,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     expectedString.append(fullString, 0, i % 10 + 10).append('\n');
                 }
 
-                serverMain.waitWalTxnApplied(tableName, 1);
+                serverMain.awaitTxn(tableName, 1);
                 serverMain.assertSql("SELECT level FROM h2o_feet", expectedString.toString());
             }
         });
