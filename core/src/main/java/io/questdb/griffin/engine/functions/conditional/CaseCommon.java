@@ -304,6 +304,22 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.UUID), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.IPv4), ColumnType.STRING);
 
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.BYTE), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.BOOLEAN), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.CHAR), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.SHORT), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.INT), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.LONG), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.LONG256), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.FLOAT), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.DOUBLE), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.DATE), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.TIMESTAMP), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.STRING), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.SYMBOL), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.UUID), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.IPv4), ColumnType.STRING);
+
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.BYTE), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.BOOLEAN), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.CHAR), ColumnType.STRING);
@@ -386,5 +402,6 @@ public class CaseCommon {
         constructors.extendAndSet(ColumnType.LONG128, (position, picker, args) -> new Long128CaseFunction(picker, args));
         constructors.extendAndSet(ColumnType.UUID, (position, picker, args) -> new UuidCaseFunction(picker, args));
         constructors.extendAndSet(ColumnType.IPv4, IPv4CaseFunction::new);
+        constructors.extendAndSet(ColumnType.VARCHAR, (position, picker, args) -> new VarcharCaseFunction(picker, args));
     }
 }

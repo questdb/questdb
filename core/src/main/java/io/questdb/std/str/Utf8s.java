@@ -251,6 +251,32 @@ public final class Utf8s {
         return b1 << 18 ^ b2 << 12 ^ b3 << 6 ^ b4 ^ 3678080;
     }
 
+    public static int compare(Utf8Sequence l, Utf8Sequence r) {
+        if (l == r) {
+            return 0;
+        }
+
+        if (l == null) {
+            return -1;
+        }
+
+        if (r == null) {
+            return 1;
+        }
+
+        final int ll = l.size();
+        final int rl = r.size();
+        final int min = Math.min(ll, rl);
+
+        for (int i = 0; i < min; i++) {
+            final int k = Byte.toUnsignedInt(l.byteAt(i)) - Byte.toUnsignedInt(r.byteAt(i));
+            if (k != 0) {
+                return k;
+            }
+        }
+        return Integer.compare(ll, rl);
+    }
+
     public static int hashCode(@NotNull Utf8Sequence value) {
         int size = value.size();
         if (size == 0) {

@@ -155,6 +155,7 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public CharSequence getStr(Record rec) {
+        utf16sinkA.clear();
         Utf8s.utf8ToUtf16(getVarcharA(rec), utf16sinkA);
         return utf16sinkA;
     }
@@ -166,6 +167,7 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public CharSequence getStrB(Record rec) {
+        utf16sinkB.clear();
         Utf8s.utf8ToUtf16(getVarcharA(rec), utf16sinkB);
         return utf16sinkB;
     }
