@@ -10560,6 +10560,9 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     private void testSampleByFirstLastIndexedConcurrent(String query) throws Exception {
+        // This test verifies that the native code does not access unmapped memory
+        // when queries are run concurrently with ingestion.
+
         final int threadCount = 4;
         final int workerCount = 2;
 
