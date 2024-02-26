@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.functions.cast;
 
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class CastTest extends AbstractCairoTest {
@@ -623,7 +622,6 @@ public class CastTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore // TODO(puzpuzpuz): ORDER BY varchar doesn't work yet
     @Test
     public void testBooleanToVarcharSort() throws Exception {
         assertQuery(
@@ -1219,7 +1217,6 @@ public class CastTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore // TODO(puzpuzpuz): ORDER BY varchar doesn't work yet
     @Test
     public void testByteToVarcharSort() throws Exception {
         assertQuery(
@@ -1798,7 +1795,6 @@ public class CastTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore // TODO(puzpuzpuz): ORDER BY varchar doesn't work yet
     @Test
     public void testCharToVarcharSort() throws Exception {
         assertQuery(
@@ -2352,7 +2348,6 @@ public class CastTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore // TODO(puzpuzpuz): ORDER BY varchar doesn't work yet
     @Test
     public void testDateToVarcharSort() throws Exception {
         assertQuery(
@@ -2901,7 +2896,6 @@ public class CastTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore // TODO(puzpuzpuz): ORDER BY varchar doesn't work yet
     @Test
     public void testDoubleToVarcharSort() throws Exception {
         assertQuery(
@@ -3454,7 +3448,6 @@ public class CastTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore // TODO(puzpuzpuz): ORDER BY varchar doesn't work yet
     @Test
     public void testFloatToVarcharSort() throws Exception {
         assertQuery(
@@ -4142,7 +4135,6 @@ public class CastTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore // TODO(puzpuzpuz): ORDER BY varchar doesn't work yet
     @Test
     public void testIntToVarcharSort() throws Exception {
         assertQuery(
@@ -4887,7 +4879,6 @@ public class CastTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore // TODO(puzpuzpuz): ORDER BY varchar doesn't work yet
     @Test
     public void testLongToVarcharSort() throws Exception {
         assertQuery(
@@ -5508,7 +5499,6 @@ public class CastTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore // TODO(puzpuzpuz): ORDER BY varchar doesn't work yet
     @Test
     public void testShortToVarcharSort() throws Exception {
         assertQuery(
@@ -6505,7 +6495,6 @@ public class CastTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore // TODO(puzpuzpuz): ORDER BY varchar doesn't work yet
     @Test
     public void testSymbolToVarcharSort() throws Exception {
         assertQuery(
@@ -7051,7 +7040,6 @@ public class CastTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore // TODO(puzpuzpuz): ORDER BY varchar doesn't work yet
     @Test
     public void testTimestampToVarcharSort() throws Exception {
         assertQuery(
