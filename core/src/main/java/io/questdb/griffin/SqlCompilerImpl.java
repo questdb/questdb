@@ -381,7 +381,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private static boolean isIPv4Cast(int from, int to) {
-        return (from == ColumnType.STRING && to == ColumnType.IPv4);
+        return (from == ColumnType.STRING && to == ColumnType.IPv4) || (from == ColumnType.VARCHAR && to == ColumnType.IPv4);
     }
 
     private static boolean isIPv4UpdateCast(int from, int to) {
@@ -3557,6 +3557,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         castGroups.extendAndSet(ColumnType.DATE, 1);
         castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
         castGroups.extendAndSet(ColumnType.STRING, 3);
+        castGroups.extendAndSet(ColumnType.VARCHAR, 3);
         castGroups.extendAndSet(ColumnType.SYMBOL, 3);
         castGroups.extendAndSet(ColumnType.BINARY, 4);
 

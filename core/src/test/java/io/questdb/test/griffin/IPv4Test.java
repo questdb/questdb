@@ -613,6 +613,42 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateAsSelectCastVarcharToIPv4() throws Exception {
+        ddl("create table x as (select x::varchar col from long_sequence(0))");
+        insert("insert into x values('0.0.0.1')");
+        insert("insert into x values('0.0.0.2')");
+        insert("insert into x values('0.0.0.3')");
+        insert("insert into x values('0.0.0.4')");
+        insert("insert into x values('0.0.0.5')");
+        insert("insert into x values('0.0.0.6')");
+        insert("insert into x values('0.0.0.7')");
+        insert("insert into x values('0.0.0.8')");
+        insert("insert into x values('0.0.0.9')");
+        insert("insert into x values('0.0.0.10')");
+
+        engine.releaseInactive();
+
+        assertQuery(
+                "col\n" +
+                        "0.0.0.1" + '\n' +
+                        "0.0.0.2" + '\n' +
+                        "0.0.0.3" + '\n' +
+                        "0.0.0.4" + '\n' +
+                        "0.0.0.5" + '\n' +
+                        "0.0.0.6" + '\n' +
+                        "0.0.0.7" + '\n' +
+                        "0.0.0.8" + '\n' +
+                        "0.0.0.9" + '\n' +
+                        "0.0.0.10" + '\n',
+                "select * from y",
+                "create table y as (x), cast(col as ipv4)",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testExplicitCastIPv4ToStr() throws Exception {
         assertSql("cast\n" +
                 "1.1.1.1\n", "select ipv4 '1.1.1.1'::string");

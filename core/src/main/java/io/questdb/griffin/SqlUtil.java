@@ -43,6 +43,7 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
@@ -533,6 +534,17 @@ public class SqlUtil {
     }
 
     public static int implicitCastStrAsIPv4(CharSequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseIPv4(value);
+            } catch (NumericException exception) {
+                throw ImplicitCastException.instance().put("invalid ipv4 format: ").put(value);
+            }
+        }
+        return Numbers.IPv4_NULL;
+    }
+
+    public static int implicitCastStrAsIPv4(Utf8Sequence value) {
         if (value != null) {
             try {
                 return Numbers.parseIPv4(value);
