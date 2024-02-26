@@ -24,6 +24,7 @@
 
 package io.questdb.test;
 
+import io.questdb.Bootstrap;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.test.tools.TestUtils;
@@ -69,6 +70,6 @@ public class AbstractTest {
     }
 
     protected static String[] getServerMainArgs() {
-        return TestUtils.getServerMainArgs(root);
+        return Bootstrap.getServerMainArgs(root);
     }
 }

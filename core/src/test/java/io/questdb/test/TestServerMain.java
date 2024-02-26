@@ -27,16 +27,12 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 
 public class TestServerMain extends ServerMain {
     private final StringSink sink = new StringSink();
@@ -82,63 +78,12 @@ public class TestServerMain extends ServerMain {
     public void compile(String sql) {
         try {
             if (sqlExecutionContext == null) {
-                sqlExecutionContext = new SqlExecutionContextImpl(getEngine(), 1).with(
-                        getEngine().getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                        null,
-                        null,
-                        -1,
-                        null
-                );
+                getEngine().compile(sql);
+            } else {
+                getEngine().compile(sql, sqlExecutionContext);
             }
-            getEngine().compile(sql, sqlExecutionContext);
         } catch (SqlException e) {
             throw new AssertionError(e);
         }
-    }
-
-    public void waitWalTxnApplied(String tableName) {
-        waitWalTxnApplied(tableName, -1);
-    }
-
-    public void waitWalTxnApplied(String tableName, long expectedTxn) {
-        int waitLim = 15;
-        int sleep = 10;
-        CairoEngine engine = getEngine();
-
-        TableToken tableToken = null;
-        for (int i = 0; i < waitLim; i++) {
-            if (tableToken == null) {
-                try {
-                    tableToken = engine.verifyTableName(tableName);
-                } catch (CairoException ex) {
-                    // wait or error after timeout
-                    if (i < waitLim - 1) {
-                        Os.sleep(sleep *= 2);
-                    } else {
-                        throw ex;
-                    }
-                }
-            }
-
-            if (tableToken != null) {
-                long seqTxn = expectedTxn > -1 ? expectedTxn : engine.getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn();
-                long writerTxn = engine.getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn();
-                if (seqTxn <= writerTxn) {
-                    return;
-                }
-
-                boolean isSuspended = engine.getTableSequencerAPI().isSuspended(tableToken);
-                if (isSuspended) {
-                    Assert.fail("Table " + tableName + " is suspended");
-                }
-
-                if (i < waitLim - 1) {
-                    Os.sleep(sleep *= 2);
-                } else {
-                    Assert.assertEquals("Writer Txn is not up to date with Seq Txn", seqTxn, writerTxn);
-                }
-            }
-        }
-        assert false;
     }
 }

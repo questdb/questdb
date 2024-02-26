@@ -50,8 +50,6 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.File;
-import java.net.URISyntaxException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1067,15 +1065,6 @@ public class O3FailureTest extends AbstractO3Test {
                 null,
                 null
         );
-    }
-
-    private static void assertSqlResultAgainstFile(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String resourceName
-    ) throws SqlException {
-        printSqlResult(compiler, sqlExecutionContext, "x");
-        TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
     }
 
     private static void assertXCountAndMax(
@@ -2272,7 +2261,7 @@ public class O3FailureTest extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -3162,8 +3151,8 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts, commit");
-        TestUtils.printSql(compiler, sqlExecutionContext, "x", sink2);
+        engine.print("y order by ts, commit", sink, sqlExecutionContext);
+        engine.print("x", sink2, sqlExecutionContext);
         TestUtils.assertEquals(sink, sink2);
 
         assertXCountY(engine, compiler, sqlExecutionContext);

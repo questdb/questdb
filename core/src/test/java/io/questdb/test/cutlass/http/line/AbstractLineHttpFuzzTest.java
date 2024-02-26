@@ -160,13 +160,13 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                 }
 
                 try {
-                    ingest(LineHttpUtils.getHttpPort(serverMain));
+                    ingest(serverMain.getHttpServerPort());
 
                     for (int i = 0; i < numOfTables; i++) {
                         final String tableName = getTableName(i);
                         final TableData table = tables.get(tableName);
                         if (table.size() > 0) {
-                            serverMain.waitWalTxnApplied(tableName);
+                            serverMain.awaitTable(tableName);
                             assertTable(serverMain, table, tableName);
                         }
                     }

@@ -45,7 +45,6 @@ import java.time.temporal.ChronoUnit;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
-import static io.questdb.test.cutlass.http.line.LineHttpUtils.getHttpPort;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
 
@@ -66,7 +65,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
-                int port = LineHttpUtils.getHttpPort(serverMain);
+                int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder()
                         .address("localhost:" + port)
                         .http()
@@ -125,14 +124,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation)
             )) {
-                int httpPort = getHttpPort(serverMain);
+                int httpPort = serverMain.getHttpServerPort();
 
                 int totalCount = 100_000;
                 int autoFlushRows = 1000;
                 try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0)) {
                     for (int i = 0; i < totalCount; i++) {
                         if (i != 0 && i % autoFlushRows == 0) {
-                            serverMain.waitWalTxnApplied("table with space");
+                            serverMain.awaitTable("table with space");
                             serverMain.assertSql("select count() from 'table with space'", "count\n" +
                                     i + "\n");
                         }
@@ -141,7 +140,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                                 .timestampColumn("tcol4", 10, ChronoUnit.HOURS)
                                 .atNow();
                     }
-                    serverMain.waitWalTxnApplied("table with space");
+                    serverMain.awaitTable("table with space");
                     serverMain.assertSql("select count() from 'table with space'", "count\n" +
                             totalCount + "\n");
                 }
@@ -162,7 +161,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 sendIlp(tableName, count, serverMain);
 
-                serverMain.waitWalTxnApplied(tableName, 2);
+                serverMain.awaitTxn(tableName, 2);
                 serverMain.assertSql("SELECT count() FROM h2o_feet", "count\n" + count + "\n");
                 serverMain.assertSql("SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
             }
@@ -183,7 +182,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int count = 10;
 
                 String fullString = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-                int port = LineHttpUtils.getHttpPort(serverMain);
+                int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder()
                         .address("localhost:" + port)
                         .http()
@@ -205,7 +204,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     expectedString.append(fullString, 0, i % 10 + 10).append('\n');
                 }
 
-                serverMain.waitWalTxnApplied(tableName, 1);
+                serverMain.awaitTxn(tableName, 1);
                 serverMain.assertSql("SELECT level FROM h2o_feet", expectedString.toString());
             }
         });
@@ -225,7 +224,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 sendIlp(tableName, count, serverMain);
 
-                serverMain.waitWalTxnApplied(tableName, 2);
+                serverMain.awaitTxn(tableName, 2);
                 serverMain.assertSql("SELECT count() FROM h2o_feet", "count\n" + count + "\n");
                 serverMain.assertSql("SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
             }
@@ -238,7 +237,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     LINE_HTTP_ENABLED.getEnvVarName(), "false"
             )) {
-                int httpPort = getHttpPort(serverMain);
+                int httpPort = serverMain.getHttpServerPort();
 
                 int totalCount = 1_000;
                 try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, 100_000, null, null, null, 0)) {
@@ -270,7 +269,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
-                int port = LineHttpUtils.getHttpPort(serverMain);
+                int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder()
                         .address("localhost:" + port)
                         .http()
@@ -312,7 +311,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
-                int port = LineHttpUtils.getHttpPort(serverMain);
+                int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder()
                         .address("localhost:" + port)
                         .http()
@@ -351,7 +350,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation)
             )) {
-                int httpPort = getHttpPort(serverMain);
+                int httpPort = serverMain.getHttpServerPort();
 
                 int totalCount = 1_000_000;
                 try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, 100_000, null, null, null, 0)) {
@@ -375,7 +374,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     }
                     sender.flush();
                 }
-                serverMain.waitWalTxnApplied("table with space");
+                serverMain.awaitTable("table with space");
                 serverMain.assertSql("select count() from 'table with space'", "count\n" +
                         totalCount + "\n");
             }
@@ -397,7 +396,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
         int i = 0;
 
-        int port = LineHttpUtils.getHttpPort(serverMain);
+        int port = serverMain.getHttpServerPort();
         try (Sender sender = Sender.builder()
                 .address("localhost:" + port)
                 .http()

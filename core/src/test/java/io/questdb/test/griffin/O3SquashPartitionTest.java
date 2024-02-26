@@ -320,14 +320,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
             ) {
                 // Check that the originally open reader does not see these changes
-                sink.clear();
-                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                println(cursorFactory, cursor);
                 String expected = "i\tj\tstr\tvarc1\tvarc2\tts\n" +
-                        "34\t-34\t\t򟙤񺰁ê)Qј⣆䅊X󆿉Ճ󂳁\t񦽰\t2020-02-03T17:00:00.000000Z\n" +
-                        "35\t-35\tGTDBCYCEJF\t%Ӆ坙!񽣭񌝍񽷿2˦ӣu򢣂򣠹Bȑ\t񹚼\t2020-02-03T17:00:00.000000Z\n" +
-                        "36\t-36\tDGPLHCFQEIVJ\t&񟢊؟N􇼏{䓟b_3󝦆󴄎'󓶬\"󓜣MZҊ򊐷򫛕򃣷ҲˍP<\t(\t2020-02-03T18:00:00.000000Z\n" +
-                        "37\t-37\tUWRCODBD\t؝񳙲N񑿹P빪W􊑰]䜉ۧ᱋򞲎6)M'擏ˈ#hU8;蚐Q򬅅,3漫􆷛LzÄ\t1\t2020-02-03T18:00:00.000000Z\n";
-
+                        "34\t-34\tLITXVB\t푻䑫j򓝟x砺ĈBƸ1Xሿ̥0ږₙЊB䳍Uȝʒ򲑐W㸵\t\t2020-02-03T17:00:00.000000Z\n" +
+                        "35\t-35\tIVBFXUNSHUG\tGSȞ󄜾Ҽ\tj\t2020-02-03T17:00:00.000000Z\n" +
+                        "36\t-36\t\t篇뉰R3թ㥓܏󁅕R0풊򑵻􄓹񻻶񮈲߉򥲃\t0\t2020-02-03T18:00:00.000000Z\n" +
+                        "37\t-37\tYZQWOZZVSJTXJ\t:\t\t2020-02-03T18:00:00.000000Z\n";
                 TestUtils.assertEquals(expected, sink);
 
                 // Split at 17:30
@@ -344,9 +342,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 );
 
                 // Check that the originally open reader does not see these changes
-                sink.clear();
                 cursor.toTop();
-                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                println(cursorFactory, cursor);
                 TestUtils.assertEquals(expected, sink);
 
                 // add data at 17:15
@@ -363,18 +360,17 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 );
 
                 // Check that the originally open reader does not see these changes
-                sink.clear();
                 cursor.toTop();
-                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                println(cursorFactory, cursor);
                 TestUtils.assertEquals(expected, sink);
             }
             assertSql("i\tj\tstr\tvarc1\tvarc2\tts\n" +
-                            "34\t-34\t\t򟙤񺰁ê)Qј⣆䅊X󆿉Ճ󂳁\t񦽰\t2020-02-03T17:00:00.000000Z\n" +
-                            "35\t-35\tGTDBCYCEJF\t%Ӆ坙!񽣭񌝍񽷿2˦ӣu򢣂򣠹Bȑ\t񹚼\t2020-02-03T17:00:00.000000Z\n" +
-                            "1000000\t-1000001\tXBNGF\tҭH׺Ƣ6(̃ш񛻎򌃤d=zĦՔ򒓲򋯎뎄򂛅􎸇M>񷕠0셫I;򣑡\t騏\t2020-02-03T17:00:00.000000Z\n" +
-                            "1000000\t-1000001\tNLIITRUW\t粬_H糡儓֊򬝍꨷ZƝz䲧nҠ󚶶f䣻쬾\tK\t2020-02-03T17:00:00.000000Z\n" +
-                            "36\t-36\tDGPLHCFQEIVJ\t&񟢊؟N􇼏{䓟b_3󝦆󴄎'󓶬\"󓜣MZҊ򊐷򫛕򃣷ҲˍP<\t(\t2020-02-03T18:00:00.000000Z\n" +
-                            "37\t-37\tUWRCODBD\t؝񳙲N񑿹P빪W􊑰]䜉ۧ᱋򞲎6)M'擏ˈ#hU8;蚐Q򬅅,3漫􆷛LzÄ\t1\t2020-02-03T18:00:00.000000Z\n",
+                            "34\t-34\tLITXVB\t푻䑫j򓝟x砺ĈBƸ1Xሿ̥0ږₙЊB䳍Uȝʒ򲑐W㸵\t\t2020-02-03T17:00:00.000000Z\n" +
+                            "35\t-35\tIVBFXUNSHUG\tGSȞ󄜾Ҽ\tj\t2020-02-03T17:00:00.000000Z\n" +
+                            "1000000\t-1000001\tOSVSIKJFJLN\t땿񆬾%?ꥊ7桩ӊ͉\t丁\t2020-02-03T17:00:00.000000Z\n" +
+                            "1000000\t-1000001\tQNKCYVZJRRZY\tm0\\䅴񓅨򰕺^lꓱ5gn˹F܃o򒅪󈂥v即򄎰[φ;󦧹丘\t򁠏\t2020-02-03T17:00:00.000000Z\n" +
+                            "36\t-36\t\t篇뉰R3թ㥓܏󁅕R0풊򑵻􄓹񻻶񮈲߉򥲃\t0\t2020-02-03T18:00:00.000000Z\n" +
+                            "37\t-37\tYZQWOZZVSJTXJ\t:\t\t2020-02-03T18:00:00.000000Z\n",
                     "select * from x where ts between '2020-02-03T17' and '2020-02-03T18'");
         });
     }
@@ -409,12 +405,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             ) {
                 // Check that the originally open reader does not see these changes
                 sink.clear();
-                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                println(cursorFactory, cursor);
                 String expected = "i\tj\tstr\tvarc1\tvarc2\tts\n" +
-                        "34\t-34\t\t򟙤񺰁ê)Qј⣆䅊X󆿉Ճ󂳁\t񦽰\t2020-02-03T17:00:00.000000Z\n" +
-                        "35\t-35\tGTDBCYCEJF\t%Ӆ坙!񽣭񌝍񽷿2˦ӣu򢣂򣠹Bȑ\t񹚼\t2020-02-03T17:00:00.000000Z\n" +
-                        "36\t-36\tDGPLHCFQEIVJ\t&񟢊؟N􇼏{䓟b_3󝦆󴄎'󓶬\"󓜣MZҊ򊐷򫛕򃣷ҲˍP<\t(\t2020-02-03T18:00:00.000000Z\n" +
-                        "37\t-37\tUWRCODBD\t؝񳙲N񑿹P빪W􊑰]䜉ۧ᱋򞲎6)M'擏ˈ#hU8;蚐Q򬅅,3漫􆷛LzÄ\t1\t2020-02-03T18:00:00.000000Z\n";
+                        "34\t-34\tLITXVB\t푻䑫j򓝟x砺ĈBƸ1Xሿ̥0ږₙЊB䳍Uȝʒ򲑐W㸵\t\t2020-02-03T17:00:00.000000Z\n" +
+                        "35\t-35\tIVBFXUNSHUG\tGSȞ󄜾Ҽ\tj\t2020-02-03T17:00:00.000000Z\n" +
+                        "36\t-36\t\t篇뉰R3թ㥓܏󁅕R0풊򑵻􄓹񻻶񮈲߉򥲃\t0\t2020-02-03T18:00:00.000000Z\n" +
+                        "37\t-37\tYZQWOZZVSJTXJ\t:\t\t2020-02-03T18:00:00.000000Z\n";
                 TestUtils.assertEquals(expected, sink);
 
                 // Split at 17:30
@@ -431,9 +427,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 );
 
                 // Check that the originally open reader does not see these changes
-                sink.clear();
                 cursor.toTop();
-                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                println(cursorFactory, cursor);
                 TestUtils.assertEquals(expected, sink);
 
                 // add data at 17:15
@@ -450,9 +445,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 );
 
                 // Check that the originally open reader does not see these changes
-                sink.clear();
                 cursor.toTop();
-                TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, TestUtils.printer);
+                println(cursorFactory, cursor);
                 TestUtils.assertEquals(expected, sink);
             }
         });
@@ -762,14 +756,14 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     private int assertRowCount(int delta, int rowCount) {
-        Assert.assertEquals(delta, getPhysicalRowsSinceLastCommit("x"));
+        Assert.assertEquals(delta, getPhysicalRowsSinceLastCommit());
         rowCount += delta;
         Assert.assertEquals(rowCount, metrics.tableWriter().getPhysicallyWrittenRows());
         return rowCount;
     }
 
-    private long getPhysicalRowsSinceLastCommit(String table) {
-        try (TableWriter tw = getWriter(table)) {
+    private long getPhysicalRowsSinceLastCommit() {
+        try (TableWriter tw = getWriter("x")) {
             return tw.getPhysicallyWrittenRowsSinceLastCommit();
         }
     }
@@ -777,7 +771,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     private void testSquashPartitionsOnEmptyTable(String wal) throws Exception {
         assertMemoryLeak(() -> {
             // 4kb prefix split threshold
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE,  4 * (1 << 10));
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
             ddl(

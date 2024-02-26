@@ -161,6 +161,11 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
         return this;
     }
 
+    public ImplicitCastException put(@Nullable Utf8Sequence us) {
+        message.put(us);
+        return this;
+    }
+
     public ImplicitCastException put(char c) {
         message.put(c);
         return this;

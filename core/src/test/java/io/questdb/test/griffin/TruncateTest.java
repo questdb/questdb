@@ -67,27 +67,6 @@ public class TruncateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUpdateThenTruncate() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl(
-                    "create table y as (" +
-                            "select timestamp_sequence(0, 1000000000) timestamp," +
-                            " x " +
-                            " from long_sequence(10)" +
-                            ") timestamp (timestamp)"
-            );
-
-            update("update y set x = 10");
-            ddl("truncate table y");
-
-            insert("insert into y values('2022-02-24', 1)");
-
-            assertSql("timestamp\tx\n" +
-                    "2022-02-24T00:00:00.000000Z\t1\n", "select * from y");
-        });
-    }
-
-    @Test
     public void testDropColumnTruncatePartitionByNone() throws Exception {
         assertMemoryLeak(() -> {
             ddl(
@@ -106,21 +85,54 @@ public class TruncateTest extends AbstractCairoTest {
             }
 
             insert("insert into y values(223)");
-
-            try (RecordCursorFactory factory = select("select * from y")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
-                }
-                TestUtils.assertEquals("timestamp\n" +
-                        "1970-01-01T00:00:00.000223Z\n", sink);
-            }
+            assertSql(
+                    "timestamp\n" +
+                            "1970-01-01T00:00:00.000223Z\n",
+                    "select * from y"
+            );
         });
     }
 
     @Test
     public void testDropColumnWithCachedPlanSelectFull() throws Exception {
-        testDropColumnWithCachedPlan();
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table y as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " rnd_symbol('a','b',null) symbol1 " +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+
+            try (RecordCursorFactory factory = select("select * from y")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
+                    TestUtils.assertEquals(
+                            "timestamp\tsymbol1\n" +
+                                    "1970-01-01T00:00:00.000000Z\ta\n" +
+                                    "1970-01-01T00:16:40.000000Z\ta\n" +
+                                    "1970-01-01T00:33:20.000000Z\tb\n" +
+                                    "1970-01-01T00:50:00.000000Z\t\n" +
+                                    "1970-01-01T01:06:40.000000Z\t\n" +
+                                    "1970-01-01T01:23:20.000000Z\t\n" +
+                                    "1970-01-01T01:40:00.000000Z\t\n" +
+                                    "1970-01-01T01:56:40.000000Z\tb\n" +
+                                    "1970-01-01T02:13:20.000000Z\ta\n" +
+                                    "1970-01-01T02:30:00.000000Z\tb\n",
+                            sink
+                    );
+                }
+
+                ddl("alter table y drop column symbol1", sqlExecutionContext);
+
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
+                    Assert.fail();
+                } catch (TableReferenceOutOfDateException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
+                }
+            }
+        });
     }
 
     @Test
@@ -743,6 +755,27 @@ public class TruncateTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUpdateThenTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table y as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " x " +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+
+            update("update y set x = 10");
+            ddl("truncate table y");
+
+            insert("insert into y values('2022-02-24', 1)");
+
+            assertSql("timestamp\tx\n" +
+                    "2022-02-24T00:00:00.000000Z\t1\n", "select * from y");
+        });
+    }
+
     private void createX() throws SqlException {
         createX(10);
     }
@@ -797,34 +830,6 @@ public class TruncateTest extends AbstractCairoTest {
         );
     }
 
-    private void testDropColumnWithCachedPlan() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl(
-                    "create table y as (" +
-                            "select timestamp_sequence(0, 1000000000) timestamp," +
-                            " rnd_symbol('a','b',null) symbol1 " +
-                            " from long_sequence(10)" +
-                            ") timestamp (timestamp)"
-            );
-
-            try (RecordCursorFactory factory = select("select * from y")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
-                }
-
-                ddl("alter table y drop column symbol1", sqlExecutionContext);
-
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
-                    Assert.fail();
-                } catch (TableReferenceOutOfDateException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
-                }
-            }
-        });
-    }
-
     private void testDropTableWithCachedPlan(String query) throws Exception {
         assertMemoryLeak(() -> {
             ddl(
@@ -837,8 +842,7 @@ public class TruncateTest extends AbstractCairoTest {
 
             try (RecordCursorFactory factory = select(query)) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                    println(factory, cursor);
                 }
 
                 drop("drop table y");
@@ -853,7 +857,7 @@ public class TruncateTest extends AbstractCairoTest {
                 );
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                    println(factory, cursor);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");

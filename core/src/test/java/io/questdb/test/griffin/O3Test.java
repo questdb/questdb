@@ -1233,9 +1233,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -4100,7 +4098,7 @@ public class O3Test extends AbstractO3Test {
                 "create table x as (select * from 'привет от штиблет')"
         );
 
-        printSqlResult(compiler, sqlExecutionContext, "select count() from 'привет от штиблет'");
+        engine.print("select count() from 'привет от штиблет'", sink, sqlExecutionContext);
         TestUtils.assertEquals(sink2, sink);
 
         try (
@@ -4295,9 +4293,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -4481,9 +4477,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -4735,9 +4729,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -4890,9 +4882,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -5170,9 +5160,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -5310,7 +5298,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertXCount(compiler, executionContext);
-        assertMaxTimestamp(engine, compiler, executionContext, "select max(ts) from y");
+        assertMaxTimestamp(engine, executionContext);
     }
 
     private static void testPartitionedDataAppendOODataIndexed0(
@@ -5391,9 +5379,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -5474,9 +5460,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -5567,9 +5551,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -5753,9 +5735,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -5835,9 +5815,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6088,7 +6066,7 @@ public class O3Test extends AbstractO3Test {
                 sink2
         );
         assertXCount(compiler, sqlExecutionContext);
-        assertMaxTimestamp(engine, compiler, sqlExecutionContext, "select max(ts) from y");
+        assertMaxTimestamp(engine, sqlExecutionContext);
     }
 
     private static void testPartitionedDataOOIntoLastIndexSearchBug0(
@@ -6210,9 +6188,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6444,9 +6420,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6533,9 +6507,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6647,9 +6619,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6758,9 +6728,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6871,9 +6839,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6921,11 +6887,11 @@ public class O3Test extends AbstractO3Test {
         );
 
         final String sqlTemplate = "select * from ";
-        printSqlResult(compiler, sqlExecutionContext, sqlTemplate + "y");
+        engine.print(sqlTemplate + "y", sink, sqlExecutionContext);
 
         String expected = Chars.toString(sink);
 
-        printSqlResult(compiler, sqlExecutionContext, sqlTemplate + "x");
+        engine.print(sqlTemplate + "x", sink, sqlExecutionContext);
         TestUtils.assertEquals(expected, sink);
 
         assertIndexConsistencySink(compiler, sqlExecutionContext);
@@ -6958,7 +6924,7 @@ public class O3Test extends AbstractO3Test {
             w.commit();
         }
 
-        printSqlResult(compiler, sqlExecutionContext, "x");
+        engine.print("x", sink, sqlExecutionContext);
 
         final String expected = "a\tb\tc\tts\n" +
                 "NaN\tNaN\t10\t2013-02-10T00:05:00.000000Z\n" +
@@ -6999,7 +6965,7 @@ public class O3Test extends AbstractO3Test {
             w.commit();
         }
 
-        printSqlResult(compiler, sqlExecutionContext, "select count() from x");
+        engine.print("select count() from x", sink, sqlExecutionContext);
 
         final String expected = "count\n" + (commits * rows) + "\n";
 
@@ -7086,9 +7052,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -7805,9 +7769,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
 
         dropTableY(engine, sqlExecutionContext);
@@ -7825,9 +7787,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
 
         dropTableY(engine, sqlExecutionContext);
@@ -7845,9 +7805,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -8085,9 +8043,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 

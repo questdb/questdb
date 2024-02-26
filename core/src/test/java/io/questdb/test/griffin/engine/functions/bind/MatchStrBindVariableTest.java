@@ -26,8 +26,8 @@ package io.questdb.test.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -40,7 +40,7 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("select x from long_sequence(1) where '1GQO2' ~ $1")) {
                 bindVariableService.setStr(0, "GQO");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                    println(factory, cursor);
                 }
 
                 TestUtils.assertEquals("x\n" +
@@ -48,7 +48,7 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
 
                 bindVariableService.setStr(0, "QTQ");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                    println(factory, cursor);
                 }
 
                 TestUtils.assertEquals("x\n", sink);
@@ -83,7 +83,7 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("x where s ~ $1")) {
                 bindVariableService.setStr(0, "GQO");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                    println(factory, cursor);
                 }
 
                 TestUtils.assertEquals("s\n" +
@@ -91,7 +91,7 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
 
                 bindVariableService.setStr(0, "QTQ");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                    println(factory, cursor);
                 }
 
                 TestUtils.assertEquals("s\n" +

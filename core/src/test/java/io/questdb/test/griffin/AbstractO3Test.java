@@ -51,7 +51,6 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.rules.Timeout;
 
-import java.io.File;
 import java.util.concurrent.TimeUnit;
 
 public class AbstractO3Test extends AbstractTest {
@@ -138,19 +137,8 @@ public class AbstractO3Test extends AbstractTest {
         );
     }
 
-    static void assertMaxTimestamp(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext executionContext,
-            String expectedSql
-    ) throws SqlException {
-        TestUtils.printSql(
-                compiler,
-                executionContext,
-                expectedSql,
-                sink2
-        );
-
+    static void assertMaxTimestamp(CairoEngine engine, SqlExecutionContext executionContext) throws SqlException {
+        engine.print("select max(ts) from y", sink2, executionContext);
         assertMaxTimestamp(engine, sink2);
     }
 
@@ -218,10 +206,10 @@ public class AbstractO3Test extends AbstractTest {
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         if (referenceTableDDL != null) {
-            compiler.compile(referenceTableDDL, sqlExecutionContext);
+            engine.ddl(referenceTableDDL, sqlExecutionContext);
         }
         if (o3InsertSQL != null) {
-            compiler.compile(o3InsertSQL, sqlExecutionContext);
+            engine.ddl(o3InsertSQL, sqlExecutionContext);
         }
 
         TestUtils.assertEqualsExactOrder(
@@ -241,17 +229,6 @@ public class AbstractO3Test extends AbstractTest {
         );
     }
 
-
-    protected static void assertSqlResultAgainstFile(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String sql,
-            String resourceName
-    ) throws SqlException {
-        AbstractO3Test.printSqlResult(compiler, sqlExecutionContext, sql);
-        TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
-    }
-
     static void assertXCount(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         printSqlResult(compiler, sqlExecutionContext, "select count() from x");
         TestUtils.assertEquals(sink2, sink);
@@ -259,7 +236,7 @@ public class AbstractO3Test extends AbstractTest {
 
     protected static void assertXCountY(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         TestUtils.assertEquals(compiler, sqlExecutionContext, "select count() from x", "select count() from y");
-        assertMaxTimestamp(engine, compiler, sqlExecutionContext, "select max(ts) from y");
+        assertMaxTimestamp(engine, sqlExecutionContext);
     }
 
     protected static void assertXY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {

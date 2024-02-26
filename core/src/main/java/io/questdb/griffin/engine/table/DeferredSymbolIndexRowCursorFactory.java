@@ -90,9 +90,9 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     @Override
     public void prepareCursor(TableReader tableReader) {
         int symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol.getSymbol(null));
-        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            this.symbolKey = TableUtils.toIndexKey(symbolKey);
-        }
+        this.symbolKey = symbolKey != SymbolTable.VALUE_NOT_FOUND
+                ? TableUtils.toIndexKey(symbolKey)
+                : SymbolTable.VALUE_NOT_FOUND;
     }
 
     @Override

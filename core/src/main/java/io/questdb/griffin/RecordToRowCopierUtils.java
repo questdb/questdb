@@ -118,6 +118,7 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsChar = asm.poolMethod(SqlUtil.class, "implicitCastStrAsChar", "(Ljava/lang/CharSequence;)C");
         int implicitCastStrAsInt = asm.poolMethod(SqlUtil.class, "implicitCastStrAsInt", "(Ljava/lang/CharSequence;)I");
         int implicitCastStrAsIPv4 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsIPv4", "(Ljava/lang/CharSequence;)I");
+        int implicitCastUtf8StrAsIPv4 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsIPv4", "(Lio/questdb/std/str/Utf8Sequence;)I");
         int implicitCastStrAsLong = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
@@ -597,10 +598,15 @@ public class RecordToRowCopierUtils {
                     }
                     break;
                 case ColumnType.VARCHAR:
-                    asm.invokeInterface(rGetVarchar);
                     switch (toColumnTypeTag) {
                         case ColumnType.VARCHAR:
+                            asm.invokeInterface(rGetVarchar);
                             asm.invokeInterface(wPutVarchar, 2);
+                            break;
+                        case ColumnType.IPv4:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastUtf8StrAsIPv4);
+                            asm.invokeInterface(wPutInt, 2);
                             break;
                         default:
                             assert false;

@@ -49,7 +49,6 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.*;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
-import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -72,7 +71,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final PlanSink planSink = new TextPlanSink();
-    protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
     protected static final StringSink sink = new StringSink();
     private final static double EPSILON = 0.000001;
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
@@ -131,7 +129,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 cursor,
                 metadata,
                 sink,
-                printer,
                 rows,
                 fragmentedSymbolTables
         );
@@ -146,7 +143,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             RecordCursor cursor,
             RecordMetadata metadata,
             StringSink sink,
-            RecordCursorPrinter printer,
             LongList rows,
             boolean fragmentedSymbolTables
     ) {
@@ -168,11 +164,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
         Record record = cursor.getRecord();
         Assert.assertNotNull(record);
         sink.clear();
-        printer.printHeader(metadata, sink);
+        CursorPrinter.println(metadata, sink);
         long count = 0;
         long cursorSize = cursor.size();
         while (cursor.hasNext()) {
-            printer.print(record, metadata, sink);
+            CursorPrinter.println(record, metadata, sink);
             count++;
         }
 
@@ -198,10 +194,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
 
             final Record rec = cursor.getRecordB();
-            printer.printHeader(metadata, sink);
+            CursorPrinter.println(metadata, sink);
             for (int i = 0, n = rows.size(); i < n; i++) {
                 cursor.recordAt(rec, rows.getQuick(i));
-                printer.print(rec, metadata, sink);
+                CursorPrinter.println(rec, metadata, sink);
             }
 
             TestUtils.assertEquals(expected, sink);
@@ -209,10 +205,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
             sink.clear();
 
             final Record factRec = cursor.getRecordB();
-            printer.printHeader(metadata, sink);
+            CursorPrinter.println(metadata, sink);
             for (int i = 0, n = rows.size(); i < n; i++) {
                 cursor.recordAt(factRec, rows.getQuick(i));
-                printer.print(factRec, metadata, sink);
+                CursorPrinter.println(factRec, metadata, sink);
             }
 
             TestUtils.assertEquals(expected, sink);
@@ -223,9 +219,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
                 cursor.toTop();
                 int target = rows.size() / 2;
-                printer.printHeader(metadata, sink);
+                CursorPrinter.println(metadata, sink);
                 while (target-- > 0 && cursor.hasNext()) {
-                    printer.print(record, metadata, sink);
+                    CursorPrinter.println(record, metadata, sink);
                 }
 
                 // no obliterate record with absolute positioning
@@ -235,7 +231,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
                 // not continue normal fetch
                 while (cursor.hasNext()) {
-                    printer.print(record, metadata, sink);
+                    CursorPrinter.println(record, metadata, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -370,6 +366,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 System.err.println(value);
             }
         }
+    }
+
+    public static void println(RecordCursorFactory factory, RecordCursor cursor) {
+        println(factory.getMetadata(), cursor);
+    }
+
+    public static void println(RecordMetadata metadata, RecordCursor cursor) {
+        CursorPrinter.println(cursor, metadata, sink);
     }
 
     public static void refreshTablesInBaseEngine() {
@@ -1292,9 +1296,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void printSql(CharSequence sql, MutableUtf16Sink sink) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
-        }
+        engine.print(sql, sink, sqlExecutionContext);
     }
 
     protected static void printSql(CharSequence sql, boolean fullFatJoins) throws SqlException {

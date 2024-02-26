@@ -39,7 +39,6 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -182,12 +181,11 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
         ) {
             RecordMetadata meta = factory.getMetadata();
             StringSink sink = Misc.getThreadLocalSink();
-            RecordCursorPrinter printer = new RecordCursorPrinter();
             LongList rows = new LongList();
             for (int j = 0; j < 5; j++) {
-                AbstractCairoTest.assertCursor(finallyExpected, false, true, false, cursor0, meta, sink, printer, rows, false);
+                AbstractCairoTest.assertCursor(finallyExpected, false, true, false, cursor0, meta, sink, rows, false);
                 cursor0.toTop();
-                AbstractCairoTest.assertCursor(finallyExpected, false, true, false, cursor1, meta, sink, printer, rows, false);
+                AbstractCairoTest.assertCursor(finallyExpected, false, true, false, cursor1, meta, sink, rows, false);
                 cursor1.toTop();
             }
         }

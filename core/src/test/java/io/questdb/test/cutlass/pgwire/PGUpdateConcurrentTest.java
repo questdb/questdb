@@ -38,6 +38,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.postgresql.util.PSQLException;
@@ -174,7 +175,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 final StringSink readerSink = PGUpdateConcurrentTest.readerSink.get();
                 readerSink.clear();
-                TestUtils.printColumn(record, metadata, i, readerSink);
+                CursorPrinter.printColumn(record, metadata, i, readerSink);
                 CharSequence[] expectedValueArray = expectedValues.get(i);
                 CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
                 if (!validators.get(i).validate(expectedValue, readerSink)) {

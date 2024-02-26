@@ -24,8 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.regex;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -115,14 +113,10 @@ public class NotMatchStrFunctionFactoryTest extends AbstractCairoTest {
                     "OPY\n" +
                     "YPR\n";
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
-
-            try (RecordCursorFactory factory = select("select * from x where name !~ '[ABCDEFGHIJKLMN]'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
-                    TestUtils.assertEquals(expected, sink);
-                }
-            }
+            assertSql(
+                    expected,
+                    "select * from x where name !~ '[ABCDEFGHIJKLMN]'"
+            );
         });
     }
 }

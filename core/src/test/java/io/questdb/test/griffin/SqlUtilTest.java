@@ -39,6 +39,8 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -89,7 +91,7 @@ public class SqlUtilTest {
 
     @Test
     public void testImplicitCastStrAsIPv4() {
-        Assert.assertEquals(0, SqlUtil.implicitCastStrAsIPv4(null));
+        Assert.assertEquals(0, SqlUtil.implicitCastStrAsIPv4((CharSequence) null));
         Assert.assertEquals(201741578, SqlUtil.implicitCastStrAsIPv4("12.6.85.10"));
         Assert.assertEquals(4738954, SqlUtil.implicitCastStrAsIPv4("0.72.79.138"));
 
@@ -134,6 +136,27 @@ public class SqlUtilTest {
             }).start();
         }
         Assert.assertTrue(completed.await(TimeUnit.SECONDS.toNanos(2L)));
+    }
+
+    @Test
+    public void testImplicitCastUtf8StrAsIPv4() {
+        Assert.assertEquals(0, SqlUtil.implicitCastStrAsIPv4((Utf8Sequence) null));
+        Assert.assertEquals(201741578, SqlUtil.implicitCastStrAsIPv4(new Utf8String("12.6.85.10")));
+        Assert.assertEquals(4738954, SqlUtil.implicitCastStrAsIPv4(new Utf8String("0.72.79.138")));
+
+        try {
+            SqlUtil.implicitCastStrAsIPv4(new Utf8String("77823.23232.23232.33"));
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("invalid ipv4 format: 77823.23232.23232.33", e.getFlyweightMessage());
+        }
+
+        try {
+            SqlUtil.implicitCastStrAsIPv4(new Utf8String("hello"));
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("invalid ipv4 format: hello", e.getFlyweightMessage());
+        }
     }
 
     @Test
