@@ -52,7 +52,7 @@ We provide a [live demo](https://demo.questdb.io/) provisioned with the latest Q
 - Trades: live crypto market data with 30M+ rows per month
 - Pos: geolocations of 250k unique ships over time
 
-> Checkout our [interactive real-time market data dashboards](https://questdb.io/dashboards/crypto/) powered by QuestDB and Grafana.
+> Checkout our [interactive real-time market data dashboards](https://questdb.io/dashboards/crypto/) and [NYC Taxi Data Analytics Dashboards](https://questdb.io/dashboards/taxi/) powered by QuestDB and Grafana.
 
 | Query                                                                         | Execution time                                                                                                                                                                                      |
 |-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
