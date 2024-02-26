@@ -576,6 +576,7 @@ open module io.questdb {
 //                  'in'
             io.questdb.griffin.engine.functions.bool.InSymbolCursorFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InStrFunctionFactory,
+            io.questdb.griffin.engine.functions.bool.InVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InCharFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InLongFunctionFactory,

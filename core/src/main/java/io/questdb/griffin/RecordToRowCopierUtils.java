@@ -143,6 +143,7 @@ public class RecordToRowCopierUtils {
         int implicitCastDoubleAsLong = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsLong", "(D)J");
         int implicitCastDoubleAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsFloat", "(D)F");
         int wPutStrChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(IC)V");
+        int wPutVarcharChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(IC)V");
         int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolInterfaceMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
         int implicitCastGeoHashAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastGeoHashAsGeoHash", "(JII)J");
@@ -569,6 +570,9 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.STRING:
                             asm.invokeInterface(wPutStrChar, 2);
+                            break;
+                        case ColumnType.VARCHAR:
+                            asm.invokeInterface(wPutVarcharChar, 2);
                             break;
                         case ColumnType.SYMBOL:
                             asm.invokeInterface(wPutSymChar, 2);

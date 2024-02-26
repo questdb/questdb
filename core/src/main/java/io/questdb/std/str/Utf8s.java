@@ -527,6 +527,10 @@ public final class Utf8s {
         return s == null ? null : s.toString();
     }
 
+    public static Utf8String toUtf8String(@Nullable Utf8Sequence s) {
+        return s == null ? null : Utf8String.newInstance(s);
+    }
+
     /**
      * A specialised function to decode a single UTF-8 character.
      * Used when it doesn't make sense to allocate a temporary sink

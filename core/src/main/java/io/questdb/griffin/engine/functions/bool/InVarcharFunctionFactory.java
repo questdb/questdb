@@ -36,15 +36,18 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Utf8SequenceHashSet;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 
-public class InStrFunctionFactory implements FunctionFactory {
+public class InVarcharFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "in(Sv)";
+        return "in(Øv)";
     }
 
     @Override
@@ -61,7 +64,7 @@ public class InStrFunctionFactory implements FunctionFactory {
         }
         ObjList<Function> deferredValues = null;
 
-        final CharSequenceHashSet set = new CharSequenceHashSet();
+        final Utf8SequenceHashSet set = new Utf8SequenceHashSet();
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -76,37 +79,37 @@ public class InStrFunctionFactory implements FunctionFactory {
                         deferredValues.add(func);
                         continue;
                     }
-                    CharSequence value = func.getStr(null);
+                    Utf8Sequence value = func.getVarcharA(null);
                     if (value == null) {
                         set.addNull();
                     }
-                    set.add(Chars.toString(value));
+                    set.add(Utf8s.toUtf8String(value));
                     break;
                 case ColumnType.CHAR:
-                    set.add(String.valueOf(func.getChar(null)));
+                    set.add(new Utf8String(String.valueOf(func.getChar(null))));
                     break;
                 default:
-                    throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
+                    throw SqlException.$(argPositions.getQuick(i), "VARCHAR constant expected");
             }
         }
         final Function var = args.getQuick(0);
         if (var.isConstant() && deferredValues == null) {
-            return BooleanConstant.of(set.contains(var.getStr(null)));
+            return BooleanConstant.of(set.contains(var.getVarcharA(null)));
         }
         return new Func(var, set, deferredValues);
     }
 
     private static class Func extends BooleanFunction implements UnaryFunction {
         private final Function arg;
-        private final CharSequenceHashSet deferredSet;
+        private final Utf8SequenceHashSet deferredSet;
         private final ObjList<Function> deferredValues;
-        private final CharSequenceHashSet set;
+        private final Utf8SequenceHashSet set;
 
-        public Func(Function arg, CharSequenceHashSet set, ObjList<Function> deferredValues) {
+        public Func(Function arg, Utf8SequenceHashSet set, ObjList<Function> deferredValues) {
             this.arg = arg;
             this.set = set;
             this.deferredValues = deferredValues;
-            this.deferredSet = deferredValues != null ? new CharSequenceHashSet() : null;
+            this.deferredSet = deferredValues != null ? new Utf8SequenceHashSet() : null;
         }
 
         @Override
@@ -116,7 +119,7 @@ public class InStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence val = arg.getStr(rec);
+            Utf8Sequence val = arg.getVarcharA(rec);
             return set.contains(val)
                     || (deferredSet != null && deferredSet.contains(val));
         }
@@ -129,7 +132,7 @@ public class InStrFunctionFactory implements FunctionFactory {
                 for (int i = 0, n = deferredValues.size(); i < n; i++) {
                     Function func = deferredValues.getQuick(i);
                     func.init(symbolTableSource, executionContext);
-                    deferredSet.add(func.getStr(null));
+                    deferredSet.add(func.getVarcharA(null));
                 }
             }
         }

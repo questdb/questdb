@@ -213,7 +213,8 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         return new Invocation(
                 parseFunction(expression1, metadata, functionParser),
                 parseFunction(expression2, metadata, functionParser),
-                new TestRecord(args));
+                new TestRecord(args)
+        );
     }
 
     private int getArgType(Object arg) {
@@ -223,6 +224,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         if (arg instanceof CharSequence) {
             return ColumnType.STRING;
+        }
+
+        if (arg instanceof Utf8Sequence) {
+            return ColumnType.VARCHAR;
         }
 
         if (arg instanceof Integer) {
@@ -676,6 +681,16 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         @Override
         public CharSequence getSymB(int col) {
             return (CharSequence) args[col];
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            return (Utf8Sequence) args[col];
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(int col) {
+            return (Utf8Sequence) args[col];
         }
     }
 }

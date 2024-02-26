@@ -5311,6 +5311,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case ColumnType.DOUBLE:
                     case ColumnType.LONG256:
                     case ColumnType.STRING:
+                    case ColumnType.VARCHAR:
                     case ColumnType.SYMBOL:
                     case ColumnType.UUID:
                     case ColumnType.GEOBYTE:
@@ -5331,7 +5332,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .put(latestByNode.token)
                                 .put(" (")
                                 .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON");
+                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON");
                 }
             }
         }

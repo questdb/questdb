@@ -1095,6 +1095,10 @@ public class WalWriter implements TableWriterAPI {
         return metadata.getMetadataVersion();
     }
 
+    private long getDataAppendPageSize() {
+        return tableToken.isSystem() ? configuration.getSystemWalDataAppendPageSize() : configuration.getWalDataAppendPageSize();
+    }
+
     private MemoryMA getDataColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getDataColumnOffset(column));
@@ -1161,10 +1165,6 @@ public class WalWriter implements TableWriterAPI {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL directory: ").put(path);
         }
         path.trimTo(walDirLength);
-    }
-
-    private long getDataAppendPageSize() {
-        return tableToken.isSystem() ? configuration.getSystemWalDataAppendPageSize() : configuration.getWalDataAppendPageSize();
     }
 
     private void openColumnFiles(CharSequence columnName, int columnType, int columnIndex, int pathTrimToLen) {
@@ -1848,6 +1848,7 @@ public class WalWriter implements TableWriterAPI {
 
     private class RowImpl implements TableWriter.Row {
         private final StringSink tempSink = new StringSink();
+        private final Utf8StringSink tempUtf8Sink = new Utf8StringSink();
         private long timestamp;
 
         @Override
@@ -2069,6 +2070,18 @@ public class WalWriter implements TableWriterAPI {
         public void putUuidUtf8(int columnIndex, DirectUtf8Sequence uuidStr) {
             SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
             putLong128(columnIndex, uuid.getLo(), uuid.getHi());
+        }
+
+        @Override
+        public void putVarchar(int columnIndex, char value) {
+            tempUtf8Sink.clear();
+            tempUtf8Sink.put(value);
+            Utf8s.varcharAppend(
+                    getPrimaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex),
+                    tempUtf8Sink
+            );
+            setRowValueNotNull(columnIndex);
         }
 
         @Override

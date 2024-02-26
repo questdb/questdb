@@ -122,7 +122,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
     private final FilesFacade ff;
-    private final Utf8StringSink fileNameSink = new Utf8StringSink();
     private final int fileOperationRetryCount;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
@@ -168,8 +167,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final IntList symbolRewriteMap = new IntList();
     private final MemoryMARW todoMem = Vm.getMARWInstance();
     private final TxWriter txWriter;
-    private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final TxnScoreboard txnScoreboard;
+    private final Utf8StringSink utf8Sink = new Utf8StringSink();
+    private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
@@ -3789,9 +3789,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private Utf8Sequence formatPartitionForTimestamp(long partitionTimestamp, long nameTxn) {
-        fileNameSink.clear();
-        TableUtils.setSinkForPartition(fileNameSink, partitionBy, partitionTimestamp, nameTxn);
-        return fileNameSink;
+        utf8Sink.clear();
+        TableUtils.setSinkForPartition(utf8Sink, partitionBy, partitionTimestamp, nameTxn);
+        return utf8Sink;
     }
 
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
@@ -6675,24 +6675,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
         // Do not remove detached partitions, they are probably about to be attached
         // Do not remove wal and sequencer directories either
-        int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, fileNameSink);
+        int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, utf8Sink);
         if (checkedType != Files.DT_UNKNOWN &&
                 !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
                 !CairoKeywords.isWal(pUtf8NameZ) &&
                 !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
                 !CairoKeywords.isSeq(pUtf8NameZ) &&
-                !Utf8s.endsWithAscii(fileNameSink, configuration.getAttachPartitionSuffix())
+                !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
         ) {
             try {
                 long txn;
-                int txnSep = Utf8s.indexOfAscii(fileNameSink, '.');
+                int txnSep = Utf8s.indexOfAscii(utf8Sink, '.');
                 if (txnSep < 0) {
-                    txnSep = fileNameSink.size();
+                    txnSep = utf8Sink.size();
                     txn = -1;
                 } else {
-                    txn = Numbers.parseLong(fileNameSink, txnSep + 1, fileNameSink.size());
+                    txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
                 }
-                long dirTimestamp = partitionDirFmt.parse(fileNameSink.asAsciiCharSequence(), 0, txnSep, DateFormatUtils.EN_LOCALE);
+                long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, DateFormatUtils.EN_LOCALE);
                 if (txn <= txWriter.txn &&
                         (txWriter.attachedPartitionsContains(dirTimestamp) || txWriter.isActivePartition(dirTimestamp))) {
                     return;
@@ -8031,6 +8031,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putUuidUtf8(int columnIndex, DirectUtf8Sequence uuid);
 
+        void putVarchar(int columnIndex, char value);
+
         void putVarchar(int columnIndex, Utf8Sequence value);
     }
 
@@ -8197,6 +8199,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putUuidUtf8(int columnIndex, DirectUtf8Sequence uuid) {
+            // no-op
+        }
+
+        @Override
+        public void putVarchar(int columnIndex, char value) {
             // no-op
         }
 
@@ -8399,6 +8406,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         public void putUuidUtf8(int columnIndex, DirectUtf8Sequence uuidStr) {
             SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
             putLong128(columnIndex, uuid.getLo(), uuid.getHi());
+        }
+
+        @Override
+        public void putVarchar(int columnIndex, char value) {
+            utf8Sink.clear();
+            utf8Sink.put(value);
+            Utf8s.varcharAppend(
+                    getPrimaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex),
+                    utf8Sink
+            );
+            setRowValueNotNull(columnIndex);
         }
 
         @Override

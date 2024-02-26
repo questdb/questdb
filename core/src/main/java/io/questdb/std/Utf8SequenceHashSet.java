@@ -24,33 +24,32 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
-public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements Sinkable {
+public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements Sinkable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private final ObjList<CharSequence> list;
+    private final ObjList<Utf8Sequence> list;
     private boolean hasNull = false;
 
-    public CharSequenceHashSet() {
+    public Utf8SequenceHashSet() {
         this(MIN_INITIAL_CAPACITY);
     }
 
     @SuppressWarnings("CopyConstructorMissesField")
-    public CharSequenceHashSet(CharSequenceHashSet that) {
+    public Utf8SequenceHashSet(Utf8SequenceHashSet that) {
         this(that.capacity, that.loadFactor);
         addAll(that);
     }
 
-    private CharSequenceHashSet(int initialCapacity) {
+    private Utf8SequenceHashSet(int initialCapacity) {
         this(initialCapacity, 0.4);
     }
 
-    private CharSequenceHashSet(int initialCapacity, double loadFactor) {
+    private Utf8SequenceHashSet(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
         list = new ObjList<>(free);
         clear();
@@ -62,7 +61,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
      * @param key immutable sequence of characters.
      * @return false if key is already in the set and true otherwise.
      */
-    public boolean add(CharSequence key) {
+    public boolean add(Utf8Sequence key) {
         if (key == null) {
             return addNull();
         }
@@ -76,15 +75,16 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         return true;
     }
 
-    public final void addAll(CharSequenceHashSet that) {
+    public final void addAll(Utf8SequenceHashSet that) {
         for (int i = 0, k = that.size(); i < k; i++) {
             add(that.get(i));
         }
     }
 
-    public void addAt(int index, CharSequence key) {
-        final String s = Chars.toString(key);
+    public void addAt(int index, Utf8Sequence key) {
+        final Utf8String s = Utf8s.toUtf8String(key);
         keys[index] = s;
+        hashCodes[index] = Utf8s.hashCode(key);
         list.add(s);
         if (--free < 1) {
             rehash();
@@ -110,24 +110,24 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
     }
 
     @Override
-    public boolean contains(CharSequence key) {
+    public boolean contains(Utf8Sequence key) {
         return key == null ? hasNull : keyIndex(key) < 0;
     }
 
     @Override
-    public boolean excludes(CharSequence key) {
+    public boolean excludes(Utf8Sequence key) {
         return key == null ? !hasNull : keyIndex(key) > -1;
     }
 
-    public CharSequence get(int index) {
+    public Utf8Sequence get(int index) {
         return list.getQuick(index);
     }
 
-    public CharSequence getLast() {
+    public Utf8Sequence getLast() {
         return list.getLast();
     }
 
-    public ObjList<CharSequence> getList() {
+    public ObjList<Utf8Sequence> getList() {
         return list;
     }
 
@@ -136,18 +136,18 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         return list.indexOf(keys[index]);
     }
 
-    public int getListIndexOf(CharSequence cs) {
+    public int getListIndexOf(Utf8Sequence cs) {
         return getListIndexAt(keyIndex(cs));
     }
 
     @Override
-    public CharSequence keyAt(int index) {
+    public Utf8Sequence keyAt(int index) {
         int index1 = -index - 1;
         return keys[index1];
     }
 
     @Override
-    public int remove(CharSequence key) {
+    public int remove(Utf8Sequence key) {
         if (key == null) {
             return removeNull();
         }
@@ -163,8 +163,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
     @Override
     public void removeAt(int index) {
         if (index < 0) {
-            int index1 = -index - 1;
-            CharSequence key = keys[index1];
+            Utf8Sequence key = keys[-index - 1];
             super.removeAt(index);
             list.remove(key);
         }
@@ -191,27 +190,39 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
     }
 
     private void rehash() {
+        int size = size();
         int newCapacity = capacity * 2;
         free = capacity = newCapacity;
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
-        this.keys = new CharSequence[len];
+
+        Utf8Sequence[] oldKeys = keys;
+        int[] oldHashCodes = hashCodes;
+        this.keys = new Utf8Sequence[len];
+        this.hashCodes = new int[len];
+        Arrays.fill(keys, null);
         mask = len - 1;
-        int n = list.size();
-        free -= n;
-        for (int i = 0; i < n; i++) {
-            final CharSequence key = list.getQuick(i);
-            keys[keyIndex(key)] = key;
+
+        free -= size;
+        for (int i = oldKeys.length; i-- > 0; ) {
+            Utf8Sequence key = oldKeys[i];
+            if (key != null) {
+                final int index = keyIndex(key);
+                keys[index] = key;
+                hashCodes[index] = oldHashCodes[i];
+            }
         }
     }
 
     @Override
     protected void erase(int index) {
         keys[index] = noEntryKey;
+        hashCodes[index] = 0;
     }
 
     @Override
     protected void move(int from, int to) {
         keys[to] = keys[from];
+        hashCodes[to] = hashCodes[from];
         erase(from);
     }
 }
