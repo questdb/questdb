@@ -1024,6 +1024,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testGroupByVarchar() throws Exception {
         assertQuery(
                 "key\tmax\n" +
+                        "0\t100\n" +
                         "1\t91\n" +
                         "2\t92\n" +
                         "3\t93\n" +
@@ -1032,8 +1033,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "6\t96\n" +
                         "7\t97\n" +
                         "8\t98\n" +
-                        "9\t99\n" +
-                        "0\t100\n",
+                        "9\t99\n",
                 "select key, max(value) from t group by key order by key",
                 "create table t as ( select (x%10)::varchar key, x as value from long_sequence(100)); ",
                 null,

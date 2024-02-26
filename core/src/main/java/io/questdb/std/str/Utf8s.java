@@ -269,7 +269,7 @@ public final class Utf8s {
         final int min = Math.min(ll, rl);
 
         for (int i = 0; i < min; i++) {
-            final int k = l.byteAt(i) - r.byteAt(i);
+            final int k = Byte.toUnsignedInt(l.byteAt(i)) - Byte.toUnsignedInt(r.byteAt(i));
             if (k != 0) {
                 return k;
             }
