@@ -1019,7 +1019,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (strValue == null) {
             responseUtf8Sink.setNullValue();
         } else {
-            responseUtf8Sink.put(strValue.size());
+            responseUtf8Sink.putNetworkInt(strValue.size());
             responseUtf8Sink.put(strValue);
         }
     }
