@@ -251,6 +251,20 @@ public final class Utf8s {
         return b1 << 18 ^ b2 << 12 ^ b3 << 6 ^ b4 ^ 3678080;
     }
 
+    /**
+     * Lexicographically compares two UTF-8 sequences.
+     * <br>
+     * The comparison is based on the codepoints of the characters in the sequences.
+     * This definition differs from lexical comparison as defined in the Java language specification, where
+     * the comparison is based values of char values of Strings. It may produce different results when comparing
+     * sequences that contain characters outside the Basic Multilingual Plane (BMP).
+     * <br>
+     * This method assume that the sequences are valid UTF-8 sequences and does not perform any validation.
+     *
+     * @param l left sequence
+     * @param r right sequence
+     * @return a negative integer, zero, or a positive integer as the left sequence is less than, equal to, or greater than the right sequence
+     */
     public static int compare(Utf8Sequence l, Utf8Sequence r) {
         if (l == r) {
             return 0;
@@ -269,7 +283,7 @@ public final class Utf8s {
         final int min = Math.min(ll, rl);
 
         for (int i = 0; i < min; i++) {
-            final int k = Byte.toUnsignedInt(l.byteAt(i)) - Byte.toUnsignedInt(r.byteAt(i));
+            final int k = Byte.compareUnsigned(l.byteAt(i), r.byteAt(i));
             if (k != 0) {
                 return k;
             }

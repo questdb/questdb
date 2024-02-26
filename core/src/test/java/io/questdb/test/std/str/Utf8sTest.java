@@ -10,8 +10,42 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 public class Utf8sTest {
+
+    @Test
+    public void testCompare() {
+        Rnd rnd = TestUtils.generateRandom(null);
+        final int n = 1_000;
+        final int maxLen = 25;
+        Utf8StringSink[] utf8Sinks = new Utf8StringSink[n];
+        String[] strings = new String[n];
+        for (int i = 0; i < n; i++) {
+            int len = rnd.nextPositiveInt() % maxLen;
+            rnd.nextUtf8Str(len, utf8Sinks[i] = new Utf8StringSink());
+            strings[i] = utf8Sinks[i].toString();
+        }
+
+        // custom comparator to sort strings by codepoint values
+        Arrays.sort(strings, (l, r) -> {
+            int len = Math.min(l.length(), r.length());
+            for (int i = 0; i < len; i++) {
+                int lCodepoint = l.codePointAt(i);
+                int rCodepoint = r.codePointAt(i);
+                int diff = lCodepoint - rCodepoint;
+                if (diff != 0) {
+                    return diff;
+                }
+            }
+            return l.length() - r.length();
+        });
+        Arrays.sort(utf8Sinks, Utf8s::compare);
+
+        for (int i = 0; i < n; i++) {
+            Assert.assertEquals("error at iteration " + i, strings[i], utf8Sinks[i].toString());
+        }
+    }
 
     @Test
     public void testContainsAscii() {
