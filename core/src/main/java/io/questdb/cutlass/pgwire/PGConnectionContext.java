@@ -1014,16 +1014,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         rowCount++;
     }
 
-    private void appendVarcharColumn(Record record, int i) {
-        final Utf8Sequence strValue = record.getVarcharA(i);
-        if (strValue == null) {
-            responseUtf8Sink.setNullValue();
-        } else {
-            responseUtf8Sink.putNetworkInt(strValue.size());
-            responseUtf8Sink.put(strValue);
-        }
-    }
-
     private void appendShortColumn(Record record, int columnIndex) {
         final long a = responseUtf8Sink.skip();
         responseUtf8Sink.put(record.getShort(columnIndex));
@@ -1045,6 +1035,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             responseUtf8Sink.reset();
             freeFactory();
             throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row data");
+        }
+    }
+
+    private void appendVarcharColumn(Record record, int i) {
+        final Utf8Sequence strValue = record.getVarcharA(i);
+        if (strValue == null) {
+            responseUtf8Sink.setNullValue();
+        } else {
+            responseUtf8Sink.putNetworkInt(strValue.size());
+            responseUtf8Sink.put(strValue);
         }
     }
 
