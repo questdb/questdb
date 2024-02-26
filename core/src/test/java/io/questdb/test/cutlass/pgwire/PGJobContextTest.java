@@ -1752,6 +1752,22 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testVarchar() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate(
+                        "create table varchars as (select rnd_varchar(5, 5, 0) varchar1 from long_sequence(1))");
+                statement.execute("varchars");
+                var rs = statement.getResultSet();
+                assertTrue(rs.next());
+                assertEquals("\u1755\uDA1F\uDE98L\uD924\uDE04۲", rs.getString(1));
+                assertFalse(rs.next());
+            }
+        });
+    }
+
+    @Test
     public void testBatchInsertWithTransaction() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
