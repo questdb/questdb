@@ -32,6 +32,8 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.WALE_HEADER_SIZE;
@@ -223,6 +225,27 @@ public class WalEventCursor {
         return value;
     }
 
+    private Utf8Sequence readVarchar() {
+        checkMemSize(Integer.BYTES);
+
+        int header = eventMem.getInt(offset);
+        int flags = header & 0x0f; // 4 bit flags
+        if ((flags & 4) == 4) {
+            // null flag is set
+            offset += Integer.BYTES;
+            return null;
+        }
+
+        int size = header >> 4;
+        boolean ascii = (flags & 2) == 2;
+
+        checkMemSize(size);
+
+        final Utf8Sequence value = eventMem.getVarcharA(offset + Integer.BYTES, size, ascii);
+        offset += size + Integer.BYTES;
+        return value;
+    }
+
     void openOffset(long offset) {
         reset();
         if (offset > 0) {
@@ -369,6 +392,9 @@ public class WalEventCursor {
                     case ColumnType.STRING:
                         bindVariableService.setStr(i, readStr());
                         break;
+                    case ColumnType.VARCHAR:
+                        bindVariableService.setVarchar(i, readVarchar());
+                        break;
                     case ColumnType.BINARY:
                         bindVariableService.setBin(i, readBin());
                         break;
@@ -431,6 +457,9 @@ public class WalEventCursor {
                         break;
                     case ColumnType.STRING:
                         bindVariableService.setStr(name, readStr());
+                        break;
+                    case ColumnType.VARCHAR:
+                        bindVariableService.setVarchar(name, readVarchar());
                         break;
                     case ColumnType.BINARY:
                         bindVariableService.setBin(name, readBin());

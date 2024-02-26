@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
@@ -39,9 +40,20 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     private final StringSink sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private boolean isNull = true;
+    private final boolean isVarchar;
 
     public StrBindVariable(int floatScale) {
+        this(floatScale, false);
+    }
+
+    public StrBindVariable(int floatScale, boolean isVarchar) {
         this.floatScale = floatScale;
+        this.isVarchar = isVarchar;
+    }
+
+    @Override
+    public int getType() {
+        return isVarchar ? ColumnType.VARCHAR : ColumnType.STRING;
     }
 
     @Override
@@ -214,8 +226,24 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
         }
     }
 
+    public void setValue(Utf8Sequence value) {
+        if (value == null) {
+            isNull = true;
+        } else {
+            isNull = false;
+            sink.clear();
+            sink.put(value);
+            utf8Sink.clear();
+            utf8Sink.put(value);
+        }
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("?::string");
+        if (isVarchar) {
+            sink.val("?::varchar");
+        } else {
+            sink.val("?::string");
+        }
     }
 }
