@@ -54,7 +54,6 @@ import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cutlass.NetUtils;
@@ -69,6 +68,7 @@ import org.junit.*;
 import org.junit.rules.Timeout;
 
 import java.io.InputStream;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -2837,12 +2837,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 try {
                     // create table with all column types
-                    CreateTableTestUtils.createTestTable(
-                            engine,
-                            30,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence()
-                    );
+                    createTableX(engine, 30);
 
                     // send multipart request to server
                     final String request = "GET /query?query=x HTTP/1.1\r\n" +
@@ -2924,6 +2919,15 @@ public class IODispatcherTest extends AbstractTest {
         });
     }
 
+    private static void createTableX(CairoEngine engine, int n) {
+        CreateTableTestUtils.createTestTable(
+                engine,
+                n,
+                new Rnd(),
+                new TestRecord.ArrayBinarySequence()
+        );
+    }
+
     @Test
     public void testJsonQueryBadUtf8() throws Exception {
         testJsonQuery(
@@ -2985,30 +2989,16 @@ public class IODispatcherTest extends AbstractTest {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        testJsonQuery(
-                10,
-                "GET /query?query=x%20where%20d%20%3D%200&limit=1&explain=true HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "01da\r\n" +
-                        "{\"query\":\"x where d = 0\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0,\"explain\":{\"jitCompiled\":true}}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        );
+        getSimpleTester().run(engine -> {
+            createTableX(engine, 1000);
+            testHttpClient.assertGet(
+                    "{\"query\":\"x where d = 7960464771512399314\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[-99,-18571,-1619342575,7960464771512399314,\"221271209-10-06T04:42:32.542Z\",\"-242523-07-08T23:46:04.551753Z\",0.025056839,0.8515587750165008,\"LWDUW\",\"WJT\",false,[],\"9290f4e5-c9f9-e1db-e96e-2b9ec3beda7f\",\"<4VW\\\\\"]],\"count\":1,\"explain\":{\"jitCompiled\":true}}",
+                    "x where d = 7960464771512399314",
+                    new CharSequenceObjHashMap<String>() {{
+                        put("explain", "true");
+                    }}
+            );
+        });
     }
 
     @Test
@@ -4311,12 +4301,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testJsonQueryRenameTable() throws Exception {
         testJsonQuery0(2, engine -> {
             // create table with all column types
-            CreateTableTestUtils.createTestTable(
-                    engine,
-                    20,
-                    new Rnd(),
-                    new TestRecord.ArrayBinarySequence()
-            );
+            createTableX(engine, 20);
 
             // rename x -> y (quoted)
             sendAndReceive(
@@ -4762,12 +4747,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 try {
                     // create table with all column types
-                    CreateTableTestUtils.createTestTable(
-                            engine,
-                            20,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence()
-                    );
+                    createTableX(engine, 20);
 
                     for (int i = 0; i < 10; i++) {
                         testHttpClient.assertGet(
@@ -4892,12 +4872,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testJsonQueryTopLimitHttp1() throws Exception {
         testJsonQuery0(2, engine -> {
                     // create table with all column types
-                    CreateTableTestUtils.createTestTable(
-                            engine,
-                            20,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence()
-                    );
+                    createTableX(engine, 20);
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
                             "GET /query?query=x&limit=10 HTTP/1.1\r\n" +
@@ -4934,12 +4909,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testJsonQueryVacuumTable() throws Exception {
         testJsonQuery0(2, engine -> {
-            CreateTableTestUtils.createTestTable(
-                    engine,
-                    20,
-                    new Rnd(),
-                    new TestRecord.ArrayBinarySequence()
-            );
+            createTableX(engine, 20);
 
             final String vacuumQuery = "vacuum table x";
             sendAndReceive(
@@ -5013,12 +4983,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 try {
                     // create table with all column types
-                    CreateTableTestUtils.createTestTable(
-                            engine,
-                            30,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence()
-                    );
+                    createTableX(engine, 30);
 
                     // send multipart request to server
                     final String request = "GET /query?query=x HTTP/1.1\r\n" +
@@ -5092,12 +5057,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 try {
                     // create table with all column types
-                    CreateTableTestUtils.createTestTable(
-                            engine,
-                            1000,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence()
-                    );
+                    createTableX(engine, 1000);
 
                     // send multipart request to server
                     // testJsonQueryWithCompressedResults1 tested requests from REST API, while this test mimics requests sent from web console
@@ -5190,12 +5150,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 try {
                     // create table with all column types
-                    CreateTableTestUtils.createTestTable(
-                            engine,
-                            tableRowCount,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence()
-                    );
+                    createTableX(engine, tableRowCount);
 
                     // send multipart request to server
                     final String request = "GET /query?query=select+a+from+x+where+test_latched_counter() HTTP/1.1\r\n" +
@@ -8891,12 +8846,7 @@ public class IODispatcherTest extends AbstractTest {
     private HttpQueryTestBuilder testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {
         return testJsonQuery0(2, engine -> {
             // create table with all column types
-            CreateTableTestUtils.createTestTable(
-                    engine,
-                    recordCount,
-                    new Rnd(),
-                    new TestRecord.ArrayBinarySequence()
-            );
+            createTableX(engine, recordCount);
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     request,
