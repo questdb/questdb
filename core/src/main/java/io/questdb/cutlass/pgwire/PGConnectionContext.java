@@ -3056,7 +3056,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public Utf8Sink put(@Nullable Utf8Sequence us) {
-            // this method is only called by date format utility to print timezone name
             if (us != null) {
                 final int size = us.size();
                 if (size > 0) {
