@@ -1036,6 +1036,8 @@ public class OrderedMap implements Map, Reopenable {
             checkCapacity(size + 4L);
             long sizeAddress = appendAddress;
             appendAddress += 4L;
+            // Since isAscii() is a best-effort flag, we have to recalculate it here. Otherwise,
+            // different isAscii() values for the same string would lead to different hash codes.
             boolean ascii = true;
             for (int i = 0; i < size; i++) {
                 byte b = value.byteAt(i);

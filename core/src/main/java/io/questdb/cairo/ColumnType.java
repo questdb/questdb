@@ -91,11 +91,11 @@ public final class ColumnType {
     // PG specific types to work with 3rd party software
     // with canned catalogue queries:
     // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-    public static final short REGCLASS = VARCHAR + 1;           // = 26;
-    public static final short REGPROCEDURE = REGCLASS + 1;      // = 27;
-    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 28;
-    public static final short PARAMETER = ARRAY_STRING + 1;     // = 29;
-    public static final short NULL = PARAMETER + 1;             // = 30; ALWAYS the last
+    public static final short REGCLASS = VARCHAR + 1;           // = 27;
+    public static final short REGPROCEDURE = REGCLASS + 1;      // = 28;
+    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 29;
+    public static final short PARAMETER = ARRAY_STRING + 1;     // = 30;
+    public static final short NULL = PARAMETER + 1;             // = 31; ALWAYS the last
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
@@ -351,7 +351,7 @@ public final class ColumnType {
                 /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
                 /* 18 BINARY    */, {BINARY}
                 /* 19 UUID      */, {UUID, STRING, VARCHAR}
-                /* 20 VARCHAR    */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
+                /* 20 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
@@ -372,7 +372,6 @@ public final class ColumnType {
         OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + STRING] = OVERLOAD_FULL;
         // Do the same for symbol -> avoids weird null behaviour
         OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + SYMBOL] = OVERLOAD_FULL;
-
 
         GEO_TYPE_SIZE_POW2 = new int[GEOLONG_MAX_BITS + 1];
         for (int bits = 1; bits <= GEOLONG_MAX_BITS; bits++) {
