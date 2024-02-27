@@ -8134,6 +8134,36 @@ create table tab as (
     }
 
     @Test
+    public void testSimpleVarcharBindVars() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            PreparedStatement tbl = connection.prepareStatement("create table x as (" +
+                    "select " +
+                    "rnd_varchar('A','B','C') v, " +
+                    "from long_sequence(5)" +
+                    ")");
+            tbl.execute();
+
+            PreparedStatement insert = connection.prepareStatement("insert into x(v) values(?)");
+            for (int i = 0; i < 5; i++) {
+                insert.setString(1, "D");
+                insert.execute();
+            }
+
+            PreparedStatement stmnt = connection.prepareStatement("select v from x where v != ?");
+            stmnt.setString(1, "D");
+            ResultSet rs = stmnt.executeQuery();
+
+            final String expected = "v[VARCHAR]\n" +
+                    "A\n" +
+                    "A\n" +
+                    "B\n" +
+                    "C\n" +
+                    "C\n";
+            assertResultSet(expected, sink, rs);
+        });
+    }
+
+    @Test
     public void testSimpleAlterTable() throws Exception {
         // we are going to:
         // 1. create a table
