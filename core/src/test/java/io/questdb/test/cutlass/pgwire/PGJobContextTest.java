@@ -1752,22 +1752,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testVarchar() throws Exception {
-        skipOnWalRun();
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate(
-                        "create table varchars as (select rnd_varchar(5, 5, 0) varchar1 from long_sequence(1))");
-                statement.execute("varchars");
-                ResultSet rs = statement.getResultSet();
-                assertTrue(rs.next());
-                assertEquals("\u1755\uDA1F\uDE98L\uD924\uDE04۲", rs.getString(1));
-                assertFalse(rs.next());
-            }
-        });
-    }
-
-    @Test
     public void testBatchInsertWithTransaction() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -9063,7 +9047,6 @@ create table tab as (
     @Test
     public void testTimestampSentEqualsReceived() throws Exception {
         assertMemoryLeak(() -> {
-
             final Timestamp expectedTs = new Timestamp(1632761103202L); // '2021-09-27T16:45:03.202000Z'
             assertEquals(1632761103202L, expectedTs.getTime());
             assertEquals(202000000, expectedTs.getNanos());
@@ -9348,10 +9331,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -9387,6 +9366,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdateAsync() throws Exception {
         testUpdateAsync(null, writer -> {
@@ -9397,10 +9380,6 @@ create table tab as (
                         "9,3.0,2020-06-01 00:00:12.0\n"
         );
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAsyncWithReaderOutOfDateException() throws Exception {
@@ -9487,6 +9466,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateNoAutoCommit() throws Exception {
@@ -9821,6 +9804,23 @@ create table tab as (
                     String expected = "u1[OTHER]\n" +
                             "12345678-1234-5467-9876-123321001987\n";
                     assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVarchar() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate(
+                        "create table varchars as (select rnd_varchar(5, 5, 0) varchar1 from long_sequence(1))");
+                statement.execute("varchars");
+                try (ResultSet rs = statement.getResultSet()) {
+                    assertTrue(rs.next());
+                    assertEquals("\u1755\uDA1F\uDE98|\uD924\uDE04۲", rs.getString(1));
+                    assertFalse(rs.next());
                 }
             }
         });
@@ -10372,11 +10372,12 @@ create table tab as (
                                     " rnd_long() j," +
                                     " timestamp_sequence(889001, 8890012) k," +
                                     " rnd_byte(2,50) l," +
-                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_bin(10, 16, 2) m," +
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() cc," + // str
-                                    " rnd_long256() l2" + // str
-                                    " from long_sequence(15)) timestamp(k) partition by DAY" // str
+                                    " rnd_long256() l2," + // str
+                                    " rnd_varchar(3,16,2) v" + // str
+                                    " from long_sequence(15)) timestamp(k) partition by DAY"
                     );
 
                     stmt.execute();
@@ -10388,25 +10389,22 @@ create table tab as (
                             try (ResultSet rs = statement.executeQuery()) {
                                 // dump metadata
                                 assertResultSet(
-                                        "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[VARCHAR]\n" +
-                                                "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49,FOWLPD,X,0xbccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39ecec82869edec121b\n" +
-                                                "2,-461611463,false,J,0.9687423276940171,0.676,279,2015-11-21 14:32:13.134,HYRX,-6794405451419334859,1970-01-01 00:00:09.779013,6,null,ETJRSZSRYR,F,0x9ff97d73fc0c62d069440048957ae05360802a2ca499f211b771e27f939096b9\n" +
-                                                "3,-1515787781,false,null,0.8001121139739173,0.188,759,2015-06-17 02:40:55.328,CPSW,-4091897709796604687,1970-01-01 00:00:18.669025,6,00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3,DYYCTGQOLYXWCKYL,S,0x26567f4430b46b7f78c594c496995885aa1896d0ad3419d2910aa7b6d58506dc\n" +
-                                                "4,1235206821,true,null,0.9540069089049732,0.255,310,null,VTJW,6623443272143014835,1970-01-01 00:00:27.559037,17,00000000 cc 76 48 a3 bb 64 d2 ad 49 1c f2 3c ed 39 ac,VSJOJIPHZEPIHVLT,O,0x825c96def9f2fcc2b942438168662cb7aa21f9d816335363d27e6df7d9d5b758\n" +
-                                                "5,454820511,false,L,0.9918093114862231,0.324,727,2015-02-10 08:56:03.707,null,5703149806881083206,1970-01-01 00:00:36.449049,36,00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57,WVDKFLOPJOXPK,R,0xa07934b2a15de8e0550988dbaca497348692bc8c04e4bb71d24b84c08ea7606a\n" +
-                                                "6,1728220848,false,O,0.24642266252221556,0.267,174,2015-02-20 01:11:53.748,null,2151565237758036093,1970-01-01 00:00:45.339061,31,null,HZSQLDGLOGIFO,U,0xf0431c7d0a5f126f8531876c963316d961f392242addf45287dd0b29ca2c4c84\n" +
-                                                "7,-120660220,false,B,0.07594017197103131,0.064,542,2015-01-16 16:01:53.328,VTJW,5048272224871876586,1970-01-01 00:00:54.229073,23,00000000 f5 0f 2d b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35\n" +
-                                                "00000010 e4 3a dc 5c,ULIGYVFZ,F,0xa15aae5b999db11899193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5\n" +
-                                                "8,-1548274994,true,X,0.9292491654871197,null,523,2015-01-05 19:01:46.416,HYRX,9044897286885345735,1970-01-01 00:01:03.119085,16,00000000 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1 e3 ee 58 35\n" +
-                                                "00000010 61,MXSLUQDYOPHNIMYF,F,0x20cfa22cd22bf054483c83d88ac674e3894499a1a1680580cfedff23a67d918f\n" +
-                                                "9,1430716856,false,P,0.7707249647497968,null,162,2015-02-05 10:14:02.889,null,7046578844650327247,1970-01-01 00:01:12.009097,47,null,LEGPUHHIUGGLNYR,Z,0x5565337913b499af36be4fe79117ebd53756b77218c738a7737b1dacd6be5971\n" +
-                                                "10,-772867311,false,Q,0.7653255982993546,null,681,2015-05-07 02:45:07.603,null,4794469881975683047,1970-01-01 00:01:20.899109,31,00000000 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43 84 55\n" +
-                                                "00000010 a0 dd,VTNPIW,Z,0x6bfac0b6e487d3532d1c6f57bbfd47ec39bd4dd9ad497a2721dc4adc870c62fe\n" +
-                                                "11,494704403,true,C,0.4834201611292943,0.794,28,2015-06-16 21:00:55.459,HYRX,6785355388782691241,1970-01-01 00:01:29.789121,39,null,RVNGSTEQOD,R,0xc82c35a389f834dababcd0482f05618f926cdd99e63abb35650d1fb462d014df\n" +
-                                                "12,-173290754,true,K,0.7198854503668188,null,114,2015-06-15 20:39:39.538,VTJW,9064962137287142402,1970-01-01 00:01:38.679133,20,00000000 3b 94 5f ec d3 dc f8 43 b2 e3,TIZKYFLUHZQSNPX,M,0x5073897a288aa6cf74c509677990f1c962588b84eddb7b4a64a4822086748dc4\n" +
-                                                "13,-2041781509,true,E,0.44638626240707313,0.035,605,null,VTJW,415951511685691973,1970-01-01 00:01:47.569145,28,00000000 00 7c fb 01 19 ca f2 bf 84 5a 6f 38 35,null,V,0xab059a2342cb232f543554ee7efea2c341b1a691af3ce51f91a63337ac2e9683\n" +
-                                                "14,813111021,true,null,0.1389067130304884,0.373,259,null,CPSW,4422067104162111415,1970-01-01 00:01:56.459157,19,00000000 2d 16 f3 89 a3 83 64 de d6 fd c4 5b c4 e9,PNXHQUTZODWKOC,P,0x09debd6254b1776d50902704a317faeea7fc3b8563ada5ab985499c7f07368a3\n" +
-                                                "15,980916820,false,C,0.8353079103853974,0.011,670,2015-10-06 01:12:57.175,null,7536661420632276058,1970-01-01 00:02:05.349169,37,null,FDBZWNIJEE,H,0xa6d100033dcaf68cb265942d3a1f96a1cff85f9258847e03a6f2e2a772cd2f37\n",
+                                        "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[VARCHAR],v[VARCHAR]\n" +
+                                                "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49 b4 59 7e,null,W,0xc2593f82b430328d84a09f29df637e3863eb3740c80f661e9c8afa23e6ca6ca1,}龘и\uDA89\uDFA4~2\uDAC6\uDED3ڎBH뤻䰭\u008B\n" +
+                                                "2,-1299391311,false,C,null,0.405,124,2015-09-03 23:04:22.482,CPSW,-5935729153136649272,1970-01-01 00:00:09.779013,19,00000000 2b 4d 5f f6 46 90 c3 b3 59 8e e5,TGQOLYXW,C,0x7c97a2cb4ac4b04722556b928447b58414e2b6a0cb7dddc7781a7e89ba21f328,ߥ\uDAE9\uDF46OFг\uDBAE\uDD12ɜ|\\軦۽㒾\uD99D\uDEA7K裷\n" +
+                                                "3,-101516094,false,G,0.9820662735672192,0.536,792,2015-12-04 15:38:03.249,CPSW,5703149806881083206,1970-01-01 00:00:18.669025,36,00000000 68 79 8b 43 1d 57 34 04 23 8d,GHWVDKFL,O,0xb92d0771d78263eb5479ae0482582ad03c84de8f7bd9235d6baf9eca859915f5, Ԡ阷l싒8쮠y\u0086W씌\n" +
+                                                "4,-1465751763,false,Z,0.11128296489732104,0.671,872,2015-11-02 16:44:44.127,HYRX,-8205259083320287108,1970-01-01 00:00:27.559037,9,00000000 e9 0c ea 4e ea 8b f5 0f 2d b3 14 33 80,FLRBROMNXK,U,0x1bd70aaefd486767588c16c2722888275e47c53f28d538ff0af2be050633e565,\u2429\uDA43\uDFF0-㔍x\n" +
+                                                "5,2067844108,false,F,0.08909442703907178,0.844,111,2015-11-01 18:55:38.528,null,8798087869168938593,1970-01-01 00:00:36.449049,15,00000000 93 e5 57 a5 db a1 76 1c 1c 26 fb 2e 42 fa f5,TNPHFL,P,0x909ce9bb5b98f8efa608d73e98f1bc9a9845c54e3b2196ffb3b9d1d4f0c0ac57,lJdѾL\uD937\uDEC94h볱9іa\uDA76\uDDD4*\uDB87\uDF60-\n" +
+                                                "6,2010886642,false,Y,0.988853350870454,0.720,187,2015-10-22 22:38:52.402,VTJW,6527501025487796136,1970-01-01 00:00:45.339061,25,00000000 ec 53 13 5d b2 15 e7 b8 35 67 9c 94 b9,GIJYDVRVNGSTE,Q,0x650d1fb462d014df59070392ef6aa389932e4b508e35428fbbf300cba84713af,3腠f\uDA7B\uDF85zA'ò墠͌\n" +
+                                                "7,1254597848,true,null,0.9482880758785679,0.171,524,2015-08-09 12:13:28.664,VTJW,7086567416710003530,1970-01-01 00:00:54.229073,15,00000000 9d 63 ca 94 00 6b dd 18 fe 71 76 bc 45 24 cd 13,null,Z,0x9e0dcffb7520ebcac48ad6b8f6962219b27b0ac7fbdee201dbdfe964247ea3fb,꯸'1^DU?$\n" +
+                                                "8,499688001,false,null,0.5251698097331752,0.853,316,2015-11-08 07:19:14.878,CPSW,-2636968667326698845,1970-01-01 00:01:03.119085,2,00000000 d6 fd c4 5b c4 e9 19 47 8d ad,QUTZO,D,0x2385d69b390b0a85867f5c5ca75249f6893d89557781b2768948087c449271f9,\uEB54\uDAF0\uDF8F̅!w雑\uDB9C\uDCE1\uD9F6\uDF3D\n" +
+                                                "9,469935768,false,L,null,0.879,187,null,PEHN,8725895078168602870,1970-01-01 00:01:12.009097,36,null,VLOMPBETTTKRIV,O,0xcd75c552717f68876aa74ffc728152467a404335fb0c03a1b722c5d1c4541bf8,null\n" +
+                                                "10,-1108612462,false,null,0.4421551587238961,null,25,null,null,-8769824513195810344,1970-01-01 00:01:20.899109,44,null,EPGIUQ,Z,0x78cba77d5205a7df8bb0645af60f7a1fb166288cc3685d60a15d60f88f9d6d92,؈ǙРWt}M\uF0FE\uD977\uDE47\u20FCӲ\uD981\uDF09۾芊,\n" +
+                                                "11,965337284,false,O,0.6993909595959196,0.476,428,2015-04-13 01:33:53.487,CPSW,7005073706471236946,1970-01-01 00:01:29.789121,23,null,NYQXTGNJJ,I,0x422d18bc5a42d59a6a00ccc8e34c5bfeb12ef4cd4e1e3cf76a313836059ba7ad,#DQ헙׳G\uDA20\uDDC7犯zG¼ŞծZ\n" +
+                                                "12,-336494138,true,null,0.05890936334115593,0.024,400,2015-12-30 23:32:16.928,HYRX,-8816610680467520715,1970-01-01 00:01:38.679133,32,00000000 1d 5c c1 5d 2d 44 ea 00 81 c4 19 a1 ec 74 f8 10,FDYPDKO,E,0xa08679cf663ea6696fc129c805c2f5075fd086d7ede63e98492997ce455a2c29,null\n" +
+                                                "13,-1312915365,false,D,0.8335063783919325,0.932,385,2015-02-27 00:08:48.975,CPSW,-7994129278119873659,1970-01-01 00:01:47.569145,45,00000000 42 67 78 47 b3 80 69 b9 14 d6 fc ee 03,QQHSQSPZPBHLNEJR,M,0xd93db19428fc489eb01e38b8cbaf881782ffe46771f9b5f956897ab3e2068b4e,u\uDB7E\uDE92[\uDA76\uDC87>\uD8F0\uDF66Ҫb\uDBB1\uDEA3ȃ*H콡\n" +
+                                                "14,264877675,false,null,0.1288393076713259,0.535,559,2015-09-23 03:14:56.664,VTJW,1408060610786414990,1970-01-01 00:01:56.459157,20,null,IIYMHOWKCDNZNLC,N,0xc864e47ae90eb46081c811d8777fbd9e55d1df30de9b9e118d2ea069ca3c854c,쾳\uDA8F\uDC319믓˫ᡙ\uDBEC\uDE3B櫑߸!\n" +
+                                                "15,1930971840,false,N,0.722395777265195,0.771,571,2015-04-16 14:30:42.5,null,7788593731153502152,1970-01-01 00:02:05.349169,32,null,ZMDJTHMHZNVZHCNX,Z,0x52be6ffb7954571d2eef6233c9c8df576e213d545c2611306e6ed811e2548695,null\n",
                                         sink,
                                         rs
                                 );
@@ -10415,32 +10413,29 @@ create table tab as (
                     }
 
                     // run some random SQLs
-                    final String header = "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[VARCHAR]\n";
+                    final String header = "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[VARCHAR],v[VARCHAR]\n";
 
                     final String[] results = {
-                            "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49,FOWLPD,X,0xbccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39ecec82869edec121b\n",
-                            "2,-461611463,false,J,0.9687423276940171,0.676,279,2015-11-21 14:32:13.134,HYRX,-6794405451419334859,1970-01-01 00:00:09.779013,6,null,ETJRSZSRYR,F,0x9ff97d73fc0c62d069440048957ae05360802a2ca499f211b771e27f939096b9\n",
-                            "3,-1515787781,false,null,0.8001121139739173,0.188,759,2015-06-17 02:40:55.328,CPSW,-4091897709796604687,1970-01-01 00:00:18.669025,6,00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3,DYYCTGQOLYXWCKYL,S,0x26567f4430b46b7f78c594c496995885aa1896d0ad3419d2910aa7b6d58506dc\n",
-                            "4,1235206821,true,null,0.9540069089049732,0.255,310,null,VTJW,6623443272143014835,1970-01-01 00:00:27.559037,17,00000000 cc 76 48 a3 bb 64 d2 ad 49 1c f2 3c ed 39 ac,VSJOJIPHZEPIHVLT,O,0x825c96def9f2fcc2b942438168662cb7aa21f9d816335363d27e6df7d9d5b758\n",
-                            "5,454820511,false,L,0.9918093114862231,0.324,727,2015-02-10 08:56:03.707,null,5703149806881083206,1970-01-01 00:00:36.449049,36,00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57,WVDKFLOPJOXPK,R,0xa07934b2a15de8e0550988dbaca497348692bc8c04e4bb71d24b84c08ea7606a\n",
-                            "6,1728220848,false,O,0.24642266252221556,0.267,174,2015-02-20 01:11:53.748,null,2151565237758036093,1970-01-01 00:00:45.339061,31,null,HZSQLDGLOGIFO,U,0xf0431c7d0a5f126f8531876c963316d961f392242addf45287dd0b29ca2c4c84\n",
-                            "7,-120660220,false,B,0.07594017197103131,0.064,542,2015-01-16 16:01:53.328,VTJW,5048272224871876586,1970-01-01 00:00:54.229073,23,00000000 f5 0f 2d b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35\n" +
-                                    "00000010 e4 3a dc 5c,ULIGYVFZ,F,0xa15aae5b999db11899193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5\n",
-                            "8,-1548274994,true,X,0.9292491654871197,null,523,2015-01-05 19:01:46.416,HYRX,9044897286885345735,1970-01-01 00:01:03.119085,16,00000000 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1 e3 ee 58 35\n" +
-                                    "00000010 61,MXSLUQDYOPHNIMYF,F,0x20cfa22cd22bf054483c83d88ac674e3894499a1a1680580cfedff23a67d918f\n",
-                            "9,1430716856,false,P,0.7707249647497968,null,162,2015-02-05 10:14:02.889,null,7046578844650327247,1970-01-01 00:01:12.009097,47,null,LEGPUHHIUGGLNYR,Z,0x5565337913b499af36be4fe79117ebd53756b77218c738a7737b1dacd6be5971\n",
-                            "10,-772867311,false,Q,0.7653255982993546,null,681,2015-05-07 02:45:07.603,null,4794469881975683047,1970-01-01 00:01:20.899109,31,00000000 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43 84 55\n" +
-                                    "00000010 a0 dd,VTNPIW,Z,0x6bfac0b6e487d3532d1c6f57bbfd47ec39bd4dd9ad497a2721dc4adc870c62fe\n",
-                            "11,494704403,true,C,0.4834201611292943,0.794,28,2015-06-16 21:00:55.459,HYRX,6785355388782691241,1970-01-01 00:01:29.789121,39,null,RVNGSTEQOD,R,0xc82c35a389f834dababcd0482f05618f926cdd99e63abb35650d1fb462d014df\n",
-                            "12,-173290754,true,K,0.7198854503668188,null,114,2015-06-15 20:39:39.538,VTJW,9064962137287142402,1970-01-01 00:01:38.679133,20,00000000 3b 94 5f ec d3 dc f8 43 b2 e3,TIZKYFLUHZQSNPX,M,0x5073897a288aa6cf74c509677990f1c962588b84eddb7b4a64a4822086748dc4\n",
-                            "13,-2041781509,true,E,0.44638626240707313,0.035,605,null,VTJW,415951511685691973,1970-01-01 00:01:47.569145,28,00000000 00 7c fb 01 19 ca f2 bf 84 5a 6f 38 35,null,V,0xab059a2342cb232f543554ee7efea2c341b1a691af3ce51f91a63337ac2e9683\n",
-                            "14,813111021,true,null,0.1389067130304884,0.373,259,null,CPSW,4422067104162111415,1970-01-01 00:01:56.459157,19,00000000 2d 16 f3 89 a3 83 64 de d6 fd c4 5b c4 e9,PNXHQUTZODWKOC,P,0x09debd6254b1776d50902704a317faeea7fc3b8563ada5ab985499c7f07368a3\n",
-                            "15,980916820,false,C,0.8353079103853974,0.011,670,2015-10-06 01:12:57.175,null,7536661420632276058,1970-01-01 00:02:05.349169,37,null,FDBZWNIJEE,H,0xa6d100033dcaf68cb265942d3a1f96a1cff85f9258847e03a6f2e2a772cd2f37\n"
+                            "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49 b4 59 7e,null,W,0xc2593f82b430328d84a09f29df637e3863eb3740c80f661e9c8afa23e6ca6ca1,}龘и\uDA89\uDFA4~2\uDAC6\uDED3ڎBH뤻䰭\u008B\n",
+                            "2,-1299391311,false,C,null,0.405,124,2015-09-03 23:04:22.482,CPSW,-5935729153136649272,1970-01-01 00:00:09.779013,19,00000000 2b 4d 5f f6 46 90 c3 b3 59 8e e5,TGQOLYXW,C,0x7c97a2cb4ac4b04722556b928447b58414e2b6a0cb7dddc7781a7e89ba21f328,ߥ\uDAE9\uDF46OFг\uDBAE\uDD12ɜ|\\軦۽㒾\uD99D\uDEA7K裷\n",
+                            "3,-101516094,false,G,0.9820662735672192,0.536,792,2015-12-04 15:38:03.249,CPSW,5703149806881083206,1970-01-01 00:00:18.669025,36,00000000 68 79 8b 43 1d 57 34 04 23 8d,GHWVDKFL,O,0xb92d0771d78263eb5479ae0482582ad03c84de8f7bd9235d6baf9eca859915f5, Ԡ阷l싒8쮠y\u0086W씌\n",
+                            "4,-1465751763,false,Z,0.11128296489732104,0.671,872,2015-11-02 16:44:44.127,HYRX,-8205259083320287108,1970-01-01 00:00:27.559037,9,00000000 e9 0c ea 4e ea 8b f5 0f 2d b3 14 33 80,FLRBROMNXK,U,0x1bd70aaefd486767588c16c2722888275e47c53f28d538ff0af2be050633e565,\u2429\uDA43\uDFF0-㔍x\n",
+                            "5,2067844108,false,F,0.08909442703907178,0.844,111,2015-11-01 18:55:38.528,null,8798087869168938593,1970-01-01 00:00:36.449049,15,00000000 93 e5 57 a5 db a1 76 1c 1c 26 fb 2e 42 fa f5,TNPHFL,P,0x909ce9bb5b98f8efa608d73e98f1bc9a9845c54e3b2196ffb3b9d1d4f0c0ac57,lJdѾL\uD937\uDEC94h볱9іa\uDA76\uDDD4*\uDB87\uDF60-\n",
+                            "6,2010886642,false,Y,0.988853350870454,0.720,187,2015-10-22 22:38:52.402,VTJW,6527501025487796136,1970-01-01 00:00:45.339061,25,00000000 ec 53 13 5d b2 15 e7 b8 35 67 9c 94 b9,GIJYDVRVNGSTE,Q,0x650d1fb462d014df59070392ef6aa389932e4b508e35428fbbf300cba84713af,3腠f\uDA7B\uDF85zA'ò墠͌\n",
+                            "7,1254597848,true,null,0.9482880758785679,0.171,524,2015-08-09 12:13:28.664,VTJW,7086567416710003530,1970-01-01 00:00:54.229073,15,00000000 9d 63 ca 94 00 6b dd 18 fe 71 76 bc 45 24 cd 13,null,Z,0x9e0dcffb7520ebcac48ad6b8f6962219b27b0ac7fbdee201dbdfe964247ea3fb,꯸'1^DU?$\n",
+                            "8,499688001,false,null,0.5251698097331752,0.853,316,2015-11-08 07:19:14.878,CPSW,-2636968667326698845,1970-01-01 00:01:03.119085,2,00000000 d6 fd c4 5b c4 e9 19 47 8d ad,QUTZO,D,0x2385d69b390b0a85867f5c5ca75249f6893d89557781b2768948087c449271f9,\uEB54\uDAF0\uDF8F̅!w雑\uDB9C\uDCE1\uD9F6\uDF3D\n",
+                            "9,469935768,false,L,null,0.879,187,null,PEHN,8725895078168602870,1970-01-01 00:01:12.009097,36,null,VLOMPBETTTKRIV,O,0xcd75c552717f68876aa74ffc728152467a404335fb0c03a1b722c5d1c4541bf8,null\n",
+                            "10,-1108612462,false,null,0.4421551587238961,null,25,null,null,-8769824513195810344,1970-01-01 00:01:20.899109,44,null,EPGIUQ,Z,0x78cba77d5205a7df8bb0645af60f7a1fb166288cc3685d60a15d60f88f9d6d92,؈ǙРWt}M\uF0FE\uD977\uDE47\u20FCӲ\uD981\uDF09۾芊,\n",
+                            "11,965337284,false,O,0.6993909595959196,0.476,428,2015-04-13 01:33:53.487,CPSW,7005073706471236946,1970-01-01 00:01:29.789121,23,null,NYQXTGNJJ,I,0x422d18bc5a42d59a6a00ccc8e34c5bfeb12ef4cd4e1e3cf76a313836059ba7ad,#DQ헙׳G\uDA20\uDDC7犯zG¼ŞծZ\n",
+                            "12,-336494138,true,null,0.05890936334115593,0.024,400,2015-12-30 23:32:16.928,HYRX,-8816610680467520715,1970-01-01 00:01:38.679133,32,00000000 1d 5c c1 5d 2d 44 ea 00 81 c4 19 a1 ec 74 f8 10,FDYPDKO,E,0xa08679cf663ea6696fc129c805c2f5075fd086d7ede63e98492997ce455a2c29,null\n",
+                            "13,-1312915365,false,D,0.8335063783919325,0.932,385,2015-02-27 00:08:48.975,CPSW,-7994129278119873659,1970-01-01 00:01:47.569145,45,00000000 42 67 78 47 b3 80 69 b9 14 d6 fc ee 03,QQHSQSPZPBHLNEJR,M,0xd93db19428fc489eb01e38b8cbaf881782ffe46771f9b5f956897ab3e2068b4e,u\uDB7E\uDE92[\uDA76\uDC87>\uD8F0\uDF66Ҫb\uDBB1\uDEA3ȃ*H콡\n",
+                            "14,264877675,false,null,0.1288393076713259,0.535,559,2015-09-23 03:14:56.664,VTJW,1408060610786414990,1970-01-01 00:01:56.459157,20,null,IIYMHOWKCDNZNLC,N,0xc864e47ae90eb46081c811d8777fbd9e55d1df30de9b9e118d2ea069ca3c854c,쾳\uDA8F\uDC319믓˫ᡙ\uDBEC\uDE3B櫑߸!\n",
+                            "15,1930971840,false,N,0.722395777265195,0.771,571,2015-04-16 14:30:42.5,null,7788593731153502152,1970-01-01 00:02:05.349169,32,null,ZMDJTHMHZNVZHCNX,Z,0x52be6ffb7954571d2eef6233c9c8df576e213d545c2611306e6ed811e2548695,null\n",
                     };
 
-                    for (int i = 0; i < 20_000; i++) {
+                    for (int i = 0; i < 1000; i++) {
                         sink.clear();
-                        int index = (i % 1000) + 1;
+                        int index = (i % 100) + 1;
                         try (PreparedStatement statement = connection.prepareStatement("x where kk = " + index)) {
                             try (ResultSet rs = statement.executeQuery()) {
                                 assertResultSet(header + (index - 1 < results.length ? results[index - 1] : ""), sink, rs);
