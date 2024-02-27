@@ -1168,8 +1168,7 @@ public final class TestUtils {
 
     @NotNull
     public static Rnd generateRandom(Log log) {
-//        return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
-        return generateRandom(log, 191194301547L, 1709039358401L);
+        return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
     }
 
     @NotNull
