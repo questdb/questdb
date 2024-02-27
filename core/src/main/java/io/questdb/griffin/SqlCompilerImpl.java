@@ -2310,7 +2310,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
                     } else {
                         int columnType = ColumnType.tagOf(cursorMetadata.getColumnType(writerTimestampIndex));
-                        if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.NULL) {
+                        if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.VARCHAR && columnType != ColumnType.NULL) {
                             throw SqlException.$(tableNameExpr.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
                         }
                     }

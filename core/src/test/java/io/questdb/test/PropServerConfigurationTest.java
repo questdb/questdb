@@ -332,6 +332,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1023, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+        Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isUseLegacyStringDefault());
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getDisconnectOnError());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());

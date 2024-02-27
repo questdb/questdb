@@ -3093,6 +3093,28 @@ public class TextLoaderTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWriteToExistingVarcharColumn() throws Exception {
+        assertNoLeak(textLoader -> {
+            ddl("create table test(a int, b varchar, ts timestamp)");
+
+            String csv = "a,b,ts\n" +
+                    "5,foo,1\n" +
+                    "10,bah,2\n" +
+                    "15,baz,3";
+
+            String expected = "a\tb\tts\n" +
+                    "5\tfoo\t1970-01-01T00:00:00.000001Z\n" +
+                    "10\tbah\t1970-01-01T00:00:00.000002Z\n" +
+                    "15\tbaz\t1970-01-01T00:00:00.000003Z\n";
+
+            configureLoaderDefaults(textLoader);
+            playText(textLoader, csv, 1024, expected, "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"VARCHAR\"},{\"index\":2,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
+                    3,
+                    3);
+        });
+    }
+
     private static String extractLast(Path path) {
         String nameStr = path.toString();
         String[] pathElements = nameStr.split(PATH_SEP_REGEX);

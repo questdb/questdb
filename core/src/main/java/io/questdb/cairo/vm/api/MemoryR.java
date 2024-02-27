@@ -35,10 +35,18 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-//readable 
+// readable
 public interface MemoryR extends Closeable {
 
     long addressOf(long offset);
+
+    default Utf8SplitString borrowUtf8SplitStringA() {
+        throw new UnsupportedOperationException();
+    }
+
+    default Utf8SplitString borrowUtf8SplitStringB() {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     void close();
@@ -91,6 +99,10 @@ public interface MemoryR extends Closeable {
 
     CharSequence getStr(long offset);
 
+    CharSequence getStr2(long offset);
+
+    int getStrLen(long offset);
+
     default @NotNull Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
         // paged memory and NULL memory do not support reading varchar columns
         // use contiguous memory implementation
@@ -103,21 +115,9 @@ public interface MemoryR extends Closeable {
         throw new UnsupportedOperationException();
     }
 
-    CharSequence getStr2(long offset);
-
-    int getStrLen(long offset);
-
     long offsetInPage(long offset);
 
     int pageIndex(long offset);
 
     long size();
-
-    default Utf8SplitString borrowUtf8SplitStringA() {
-        throw new UnsupportedOperationException();
-    }
-
-    default Utf8SplitString borrowUtf8SplitStringB() {
-        throw new UnsupportedOperationException();
-    }
 }

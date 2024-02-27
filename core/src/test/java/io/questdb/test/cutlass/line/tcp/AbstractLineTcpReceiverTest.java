@@ -115,6 +115,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     };
     protected int partitionByDefault = PartitionBy.DAY;
     protected boolean symbolAsFieldSupported;
+    protected boolean useLegacyStringDefault = true;
+
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public boolean getAutoCreateNewColumns() {
@@ -198,6 +200,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
+        }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
         }
     };
 

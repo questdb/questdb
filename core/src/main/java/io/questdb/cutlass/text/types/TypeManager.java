@@ -43,6 +43,7 @@ public class TypeManager implements Mutable {
     private final int probeCount;
     private final ObjList<TypeAdapter> probes = new ObjList<>();
     private final StringAdapter stringAdapter;
+    private final VarcharAdapter varcharAdapter;
     private final ObjectPool<TimestampAdapter> timestampAdapterPool;
     private final ObjectPool<TimestampUtf8Adapter> timestampUtf8AdapterPool;
 
@@ -55,6 +56,7 @@ public class TypeManager implements Mutable {
         this.timestampAdapterPool = new ObjectPool<>(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());
         this.inputFormatConfiguration = configuration.getInputFormatConfiguration();
         this.stringAdapter = new StringAdapter(utf16Sink);
+        this.varcharAdapter = new VarcharAdapter(utf16Sink);
         this.indexedSymbolAdapter = new SymbolAdapter(utf16Sink, true);
         this.notIndexedSymbolAdapter = new SymbolAdapter(utf16Sink, false);
         addDefaultProbes();
@@ -134,6 +136,8 @@ public class TypeManager implements Mutable {
                 return UuidAdapter.INSTANCE;
             case ColumnType.IPv4:
                 return IPv4Adapter.INSTANCE;
+            case ColumnType.VARCHAR:
+                return varcharAdapter;
             case ColumnType.GEOBYTE:
             case ColumnType.GEOSHORT:
             case ColumnType.GEOINT:

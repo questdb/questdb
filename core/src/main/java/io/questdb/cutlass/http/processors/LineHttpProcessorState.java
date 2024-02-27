@@ -81,7 +81,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 engine.getConfiguration().getMaxFileNameLength(),
                 configuration.getMicrosecondClock()
         );
-        DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration.getDefaultColumnTypeForFloat(), configuration.getDefaultColumnTypeForInteger());
+        DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
         this.ilpTudCache = new LineHttpTudCache(
                 engine,
                 configuration.autoCreateNewColumns(),
