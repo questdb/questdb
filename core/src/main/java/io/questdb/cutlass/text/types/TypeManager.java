@@ -136,6 +136,8 @@ public class TypeManager implements Mutable {
                 return UuidAdapter.INSTANCE;
             case ColumnType.IPv4:
                 return IPv4Adapter.INSTANCE;
+            case ColumnType.VARCHAR:
+                return varcharAdapter;
             case ColumnType.GEOBYTE:
             case ColumnType.GEOSHORT:
             case ColumnType.GEOINT:
@@ -144,8 +146,6 @@ public class TypeManager implements Mutable {
                 if (adapter != null) {
                     return adapter;
                 }
-            case ColumnType.VARCHAR:
-                return varcharAdapter;
             default:
                 throw CairoException.nonCritical().put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
         }
