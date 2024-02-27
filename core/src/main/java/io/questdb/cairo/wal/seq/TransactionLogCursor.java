@@ -26,6 +26,11 @@ package io.questdb.cairo.wal.seq;
 
 import java.io.Closeable;
 
+/**
+ * Reads transaction log files.
+ * To start reading use {@code setPosition} method to set the starting position.
+ * To read a record use {@code hasNext} method.
+ */
 public interface TransactionLogCursor extends Closeable {
     @Override
     void close();
@@ -56,5 +61,5 @@ public interface TransactionLogCursor extends Closeable {
 
     // Sets cursor to minimum available position.
     // In case of chunked sequencer it will search for the min available position prior to the current position.
-    void toMin();
+    void toMinTxn();
 }

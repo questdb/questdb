@@ -96,7 +96,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             while (true) {
                 try {
                     TransactionLogCursor cursor = executionContext.getCairoEngine().getTableSequencerAPI().getCursor(tableToken, txnLo);
-                    cursor.toMin();
+                    cursor.toMinTxn();
                     this.cursor.logCursor = cursor;
                     break;
                 } catch (CairoException e) {

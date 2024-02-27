@@ -32,17 +32,35 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
+import java.lang.ThreadLocal;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.wal.WalUtils.*;
 
+/**
+ * This class is used to read/write transactions to the disk.
+ * This is V2 implementation of the sequencer transaction log storage.
+ * <p>
+ * File table_dir\\txn_seq\\_txnlog stores the header to be compatible with V1
+ * Header: 76 bytes
+ * <p>
+ * Transactions are stored in table_dir\\txn_seq\\_txn_parts\\{partId} files. {PartId} starts from 0.
+ * Each part file contains a fixed number of transactions. The number of transactions per part
+ * is defined by the header Partition Size value.
+ * <p>
+ * To read a transaction one has to open the file partition where it's located.
+ * To calculate the partition one can use the following formula:
+ * {@code (txn - 1) / partTransactionCount}
+ * <p>
+ * Header and record is described in @link TableTransactionLogFile
+ * <p>
+ * Transaction record: 28 bytes
+ * <p>
+ */
 public class TableTransactionLogV2 implements TableTransactionLogFile {
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
     private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
@@ -50,8 +68,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     private final AtomicLong maxTxn = new AtomicLong();
     private final int mkDirMode;
     private final Path rootPath;
-    private final MemoryCMARW txnPartMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
+    private final MemoryCMARW txnPartMem = Vm.getCMARWInstance();
     private long partId = -1;
     private int partTransactionCount;
 
@@ -154,7 +172,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     @Override
-    public TransactionLogCursor getCursor(long txnLo, Path path) {
+    public TransactionLogCursor getCursor(long txnLo, @Transient Path path) {
         TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
         if (cursor == null) {
             cursor = new TransactionLogCursorImpl(ff, txnLo, path.$(), partTransactionCount);
@@ -235,8 +253,15 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnMem.sync(false);
     }
 
-    private void openTxnPart() {
-        openTxnPart(this.maxTxn.get());
+    private void openTxnMem(Path path) {
+        rootPath.of(path);
+        int rootLen = rootPath.size();
+        rootPath.concat(TXNLOG_FILE_NAME).$();
+        try {
+            txnMem.of(ff, rootPath, HEADER_SIZE, HEADER_SIZE, MemoryTag.MMAP_TX_LOG);
+        } finally {
+            rootPath.trimTo(rootLen);
+        }
     }
 
     private void openTxnPart(long txn) {
@@ -256,15 +281,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
     }
 
-    private void openTxnMem(Path path) {
-        rootPath.of(path);
-        int rootLen = rootPath.size();
-        rootPath.concat(TXNLOG_FILE_NAME).$();
-        try {
-            txnMem.of(ff, rootPath, HEADER_SIZE, HEADER_SIZE, MemoryTag.MMAP_TX_LOG);
-        } finally {
-            rootPath.trimTo(rootLen);
-        }
+    private void openTxnPart() {
+        openTxnPart(this.maxTxn.get());
     }
 
     private void setAppendPosition() {
@@ -273,19 +291,19 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
         private long address;
+        private FilesFacade ff;
+        private int headerFd;
         private int partFd = -1;
         private long partId = -1;
         private long partMapSize;
         private int partTransactionCount;
-        private FilesFacade ff;
-        private int headerFd;
         private Path rootPath;
         private long txn = -2;
         private long txnCount = -1;
         private long txnLo;
         private long txnOffset;
 
-        public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path, int partTransactionCount) {
+        public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final @Transient Path path, int partTransactionCount) {
             rootPath = new Path();
             try {
                 of(ff, txnLo, path, partTransactionCount);
@@ -390,7 +408,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         @Override
-        public void toMin() {
+        public void toMinTxn() {
             int rootLen = rootPath.size();
             rootPath.concat(TXNLOG_PARTS_DIR).slash();
             long partId = txnLo / partTransactionCount;
@@ -442,7 +460,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         @NotNull
-        private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path, int partTransactionCount) {
+        private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, @Transient Path path, int partTransactionCount) {
             this.partTransactionCount = partTransactionCount;
             partMapSize = partTransactionCount * RECORD_SIZE;
             this.ff = ff;

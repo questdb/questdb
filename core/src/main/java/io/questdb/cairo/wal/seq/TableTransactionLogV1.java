@@ -32,19 +32,29 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
+import java.lang.ThreadLocal;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
 
+/**
+ * This class is used to read/write transactions to the disk.
+ * This is V1 implementation of the sequencer transaction log storage and it will be used
+ * in parallel with the new V2 for backward compatibility.
+ * <p>
+ * All transactions are stored in the single file table_dir\\txn_seq\\_txnlog, the file structure is
+ * <p>
+ * Header: 76 bytes
+ * Transaction record: 28 bytes
+ * <p>
+ * See the format of the header and transaction record in @link TableTransactionLogFile
+ */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
     private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
@@ -122,7 +132,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     @Override
-    public TransactionLogCursor getCursor(long txnLo, Path path) {
+    public TransactionLogCursor getCursor(long txnLo, @Transient Path path) {
         TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
         if (cursor == null) {
             cursor = new TransactionLogCursorImpl(ff, txnLo, path.$());
@@ -272,7 +282,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
 
         @Override
-        public void toMin() {
+        public void toMinTxn() {
             toTop();
         }
 

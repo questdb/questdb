@@ -25,10 +25,41 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.MemorySerializer;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
+/**
+ * This interface is used to read/write transactions to the files located in table_dir\\txn_seq\\_txnlog
+ * <p>
+ * The file header has fields
+ * <p>
+ * Version - 4 bytes
+ * Max Txn - 8 bytes
+ * Table Create Timestamp - 8 bytes
+ * Partition Size - 4 bytes
+ * <p>
+ * <p>
+ * The transaction has fields
+ * <p>
+ * Structure Version - 8 bytes
+ * WAL ID - 4 bytes
+ * Segment ID - 4 bytes
+ * Segment Txn - 4 bytes
+ * Commit Timestamp - 8 bytes
+ * <p>
+ * Total is 28 bytes
+ * <p>
+ * All the records are either stored in the single file for when the version is 0
+ * or in multiple files with N records per file.
+ * <p>
+ * See different implementations of the interface for the storage details.
+ * <p>
+ * Note: the header Version and Partition Size determines the storage format:
+ * 0 - single file, V1
+ * 1 - multiple files, V2
+ */
 public interface TableTransactionLogFile extends Closeable {
     int HEADER_RESERVED = 6 * Long.BYTES + Integer.BYTES;
     long MAX_TXN_OFFSET_64 = Integer.BYTES;
@@ -43,21 +74,73 @@ public interface TableTransactionLogFile extends Closeable {
     long TX_LOG_COMMIT_TIMESTAMP_OFFSET = TX_LOG_SEGMENT_TXN_OFFSET + Integer.BYTES;
     long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
 
+    /**
+     * Adds a new data transaction to the log
+     *
+     * @param structureVersion version of the table structure
+     * @param walId            id of the WAL
+     * @param segmentId        id of the segment
+     * @param segmentTxn       transaction id within the segment
+     * @param timestamp        commit timestamp
+     * @return committed transaction id
+     */
     long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp);
 
+    /**
+     * Adds a new metadata transaction to the log. It's a 2-step process, this call must be
+     * followed by endMetadataChangeEntry() call, otherwise the transaction is not considered to be committed.
+     *
+     * @param newStructureVersion new version of the table structure
+     * @param serializer          serializer to write metadata
+     * @param instance            instance to serialize
+     * @param timestamp           commit timestamp
+     */
     void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp);
 
+    /**
+     * Creates transaction log files on the disk
+     *
+     * @param path                to create file
+     * @param tableCreateTimestamp timestamp of table creation
+     */
     void create(Path path, long tableCreateTimestamp);
 
+    /**
+     * Finishes commit of a metadata change transaction
+     *
+     * @return new version of the table structure
+     */
     long endMetadataChangeEntry();
 
-    TransactionLogCursor getCursor(long txnLo, Path path);
+    /**
+     * Returns the cursor to read transactions from the log
+     *
+     * @param txnLo transaction id to start reading from
+     * @param path  to the log
+     * @return cursor
+     */
+    TransactionLogCursor getCursor(long txnLo, @Transient Path path);
 
+    /**
+     * @return Returns true if the table is marked as dropped in the sequencer log files
+     */
     boolean isDropped();
 
+    /**
+     * @return Returns the last transaction id
+     */
     long lastTxn();
 
+    /**
+     * Opens transaction log files for reading.
+     *
+     * @param path to the log
+     * @return transaction id of the last committed transaction
+     */
     long open(Path path);
 
+    /**
+     * Syncs/flushes the log files to the disk
+     */
     void sync();
 }
