@@ -30,7 +30,6 @@ import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 
-
 public class VarcharAdapter extends AbstractTypeAdapter {
     private final DirectUtf16Sink utf16Sink;
 
