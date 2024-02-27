@@ -68,14 +68,10 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
                     "\n" +
                     "example2.com\n";
             ddl("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
-
-            try (RecordCursorFactory factory = select("select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
-                    TestUtils.assertEquals(expected, sink);
-                }
-            }
+            assertSql(
+                    expected,
+                    "select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x"
+            );
         });
     }
 
@@ -103,8 +99,7 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
                     final RecordCursorFactory factory = select(sql);
                     final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
-                sink.clear();
-                printer.print(cursor, factory.getMetadata(), true, sink);
+                println(factory, cursor);
                 Assert.fail();
             } catch (Exception e) {
                 TestUtils.assertContains(e.getMessage(), expectedMsg);

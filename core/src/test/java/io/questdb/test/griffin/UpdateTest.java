@@ -2478,7 +2478,7 @@ public class UpdateTest extends AbstractCairoTest {
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 Assert.assertEquals(indexed, cursor.isUsingIndex());
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                println(factory, cursor);
             }
             TestUtils.assertEquals("symCol\tts\tx\n" +
                     "VTJ\t1970-01-01T00:00:00.000000Z\t1\n" +
@@ -2578,7 +2578,7 @@ public class UpdateTest extends AbstractCairoTest {
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 Assert.assertEquals(indexed, cursor.isUsingIndex());
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                println(factory, cursor);
             }
             TestUtils.assertEquals(
                     "symCol\tts\tx\n" +

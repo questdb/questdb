@@ -47,13 +47,11 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.*;
 import io.questdb.test.QuestDBTestNode;
-import io.questdb.test.cairo.LogRecordSinkAdapter;
-import io.questdb.test.cairo.RecordCursorPrinter;
+import io.questdb.cairo.LogRecordSinkAdapter;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -75,13 +73,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.std.Numbers.IPv4_NULL;
 import static org.junit.Assert.assertNotNull;
 
 public final class TestUtils {
 
-    public static final RecordCursorPrinter printer = new RecordCursorPrinter();
-    private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
     private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     private TestUtils() {
@@ -135,7 +130,7 @@ public final class TestUtils {
     }
 
     public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableUtf16Sink sink) {
-        printCursor(cursor, metadata, header, sink, printer);
+        CursorPrinter.println(cursor, metadata, sink, header, false);
         assertEquals(expected, sink);
     }
 
@@ -725,15 +720,15 @@ public final class TestUtils {
 
                             LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
                             LogRecord record = log.xDebugW().$("java.lang.AssertionError: expected:<");
-                            printer.printHeaderNoNl(factory.getMetadata(), recordSinkAdapter.of(record));
+                            CursorPrinter.printHeader(factory.getMetadata(), recordSinkAdapter.of(record));
                             record.$();
-                            printer.print(expectedCursor, factory.getMetadata(), false, log);
+                            CursorPrinter.println(expectedCursor, factory.getMetadata(), false, log);
 
                             record = log.xDebugW().$("> but was:<");
-                            printer.printHeaderNoNl(factory2.getMetadata(), recordSinkAdapter.of(record));
+                            CursorPrinter.printHeader(factory2.getMetadata(), recordSinkAdapter.of(record));
                             record.$();
 
-                            printer.print(actualCursor, factory2.getMetadata(), false, log);
+                            CursorPrinter.println(actualCursor, factory2.getMetadata(), false, log);
                             log.xDebugW().$(">").$();
                         }
                     }
@@ -766,15 +761,15 @@ public final class TestUtils {
 
                                 LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
                                 LogRecord record = log.xDebugW().$("java.lang.AssertionError: expected:<");
-                                printer.printHeaderNoNl(factory.getMetadata(), recordSinkAdapter.of(record));
+                                CursorPrinter.printHeader(factory.getMetadata(), recordSinkAdapter.of(record));
                                 record.$();
-                                printer.print(expectedCursor, factory.getMetadata(), false, log);
+                                CursorPrinter.println(expectedCursor, factory.getMetadata(), false, log);
 
                                 record = log.xDebugW().$("> but was:<");
-                                printer.printHeaderNoNl(factory2.getMetadata(), recordSinkAdapter.of(record));
+                                CursorPrinter.printHeader(factory2.getMetadata(), recordSinkAdapter.of(record));
                                 record.$();
 
-                                printer.print(actualCursor, factory2.getMetadata(), false, log);
+                                CursorPrinter.println(actualCursor, factory2.getMetadata(), false, log);
                                 log.xDebugW().$(">").$();
                             }
                         }
@@ -1211,14 +1206,6 @@ public final class TestUtils {
         };
     }
 
-    public static String[] getServerMainArgs(CharSequence root) {
-        return new String[]{
-                "-d",
-                Chars.toString(root),
-                Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
-        };
-    }
-
     public static int getSystemTablesCount(CairoEngine engine) {
         final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
         engine.getTableTokens(tableBucket, false);
@@ -1410,116 +1397,6 @@ public final class TestUtils {
         );
     }
 
-    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink) {
-        printColumn(r, m, i, sink, false, false);
-    }
-
-    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink, boolean printTypes) {
-        printColumn(r, m, i, sink, false, printTypes);
-    }
-
-    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink, boolean symbolAsString, boolean printTypes) {
-        printColumn(r, m, i, sink, symbolAsString, printTypes, null);
-    }
-
-    public static void printColumn(Record r, RecordMetadata m, int i, Utf16Sink sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
-        final int columnType = m.getColumnType(i);
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.DATE:
-                DateFormatUtils.appendDateTime(sink, r.getDate(i));
-                break;
-            case ColumnType.TIMESTAMP:
-                TimestampFormatUtils.appendDateTimeUSec(sink, r.getTimestamp(i));
-                break;
-            case ColumnType.DOUBLE:
-                sink.put(r.getDouble(i), Numbers.MAX_SCALE);
-                break;
-            case ColumnType.FLOAT:
-                sink.put(r.getFloat(i), 4);
-                break;
-            case ColumnType.INT:
-                sink.put(r.getInt(i));
-                break;
-            case ColumnType.NULL:
-                sink.put("null");
-                break;
-            case ColumnType.STRING:
-                if (!symbolAsString | m.getColumnType(i) != ColumnType.SYMBOL) {
-                    sink.put(r.getStr(i));
-                    break;
-                } // Fall down to SYMBOL
-            case ColumnType.SYMBOL:
-                CharSequence sym = r.getSym(i);
-                sink.put(sym != null ? sym : nullStringValue);
-                break;
-            case ColumnType.SHORT:
-                sink.put(r.getShort(i));
-                break;
-            case ColumnType.CHAR:
-                char c = r.getChar(i);
-                if (c > 0) {
-                    sink.put(c);
-                }
-                break;
-            case ColumnType.LONG:
-                sink.put(r.getLong(i));
-                break;
-            case ColumnType.GEOBYTE:
-                putGeoHash(r.getGeoByte(i), ColumnType.getGeoHashBits(columnType), sink);
-                break;
-            case ColumnType.GEOSHORT:
-                putGeoHash(r.getGeoShort(i), ColumnType.getGeoHashBits(columnType), sink);
-                break;
-            case ColumnType.GEOINT:
-                putGeoHash(r.getGeoInt(i), ColumnType.getGeoHashBits(columnType), sink);
-                break;
-            case ColumnType.GEOLONG:
-                putGeoHash(r.getGeoLong(i), ColumnType.getGeoHashBits(columnType), sink);
-                break;
-            case ColumnType.BYTE:
-                // as int
-                sink.put(r.getByte(i));
-                break;
-            case ColumnType.BOOLEAN:
-                sink.put(r.getBool(i));
-                break;
-            case ColumnType.BINARY:
-                Chars.toSink(r.getBin(i), sink);
-                break;
-            case ColumnType.LONG256:
-                r.getLong256(i, sink);
-                break;
-            case ColumnType.LONG128:
-                // fall through
-            case ColumnType.UUID:
-                long hi = r.getLong128Hi(i);
-                long lo = r.getLong128Lo(i);
-                if (!Uuid.isNull(lo, hi)) {
-                    Uuid uuid = new Uuid(lo, hi);
-                    uuid.toSink(sink);
-                }
-                break;
-            case ColumnType.IPv4: {
-                final int val = r.getIPv4(i);
-                if (val != IPv4_NULL) {
-                    Numbers.intToIPv4Sink(sink, val);
-                }
-                break;
-            }
-            default:
-                break;
-        }
-        if (printTypes) {
-            int printColType = symbolAsString && ColumnType.isSymbol(columnType) ? ColumnType.STRING : columnType;
-            sink.put(':').put(ColumnType.nameOf(printColType));
-        }
-    }
-
-    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableUtf16Sink sink, RecordCursorPrinter printer) {
-        sink.clear();
-        printer.print(cursor, metadata, header, sink);
-    }
-
     public static void printSql(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -1539,7 +1416,8 @@ public final class TestUtils {
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                RecordMetadata metadata = factory.getMetadata();
+                CursorPrinter.println(cursor, metadata, sink);
             }
         }
     }
@@ -1552,7 +1430,8 @@ public final class TestUtils {
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printCursor(cursor, factory.getMetadata(), true, sink, printerWithTypes);
+                RecordMetadata metadata = factory.getMetadata();
+                CursorPrinter.println(cursor, metadata, sink, true, true);
             }
         }
     }
@@ -1793,22 +1672,6 @@ public final class TestUtils {
         }
     }
 
-/*
-    private static RecordMetadata copySymAstStr(RecordMetadata src) {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0, n = src.getColumnCount(); i < n; i++) {
-            metadata.add(
-                    new TableColumnMetadata(
-                            src.getColumnName(i),
-                            src.getColumnType(i) != ColumnType.SYMBOL ? src.getColumnType(i) : ColumnType.STRING
-                    )
-            );
-        }
-        metadata.setTimestampIndex(src.getTimestampIndex());
-        return metadata;
-    }
-*/
-
     private static StringSink getTlSink() {
         StringSink ss = tlSink.get();
         ss.clear();
@@ -1826,21 +1689,10 @@ public final class TestUtils {
         return increment;
     }
 
-    private static void putGeoHash(long hash, int bits, Utf16Sink sink) {
-        if (hash == GeoHashes.NULL) {
-            return;
-        }
-        if (bits % 5 == 0) {
-            GeoHashes.appendCharsUnsafe(hash, bits / 5, sink);
-        } else {
-            GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
-        }
-    }
-
     private static String recordToString(Record record, RecordMetadata metadata, boolean symbolsAsStrings) {
         StringSink sink = getTlSink();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            printColumn(record, metadata, i, sink, symbolsAsStrings, false);
+            CursorPrinter.printColumn(record, metadata, i, sink, symbolsAsStrings, false);
             if (i < n - 1) {
                 sink.put('\t');
             }
@@ -1866,7 +1718,7 @@ public final class TestUtils {
     static void addRecordToMap(StringSink sink, Record record, RecordMetadata metadata, Map<String, Integer> map, boolean symbolsAsStrings) {
         sink.clear();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            printColumn(record, metadata, i, sink, symbolsAsStrings, true);
+            CursorPrinter.printColumn(record, metadata, i, sink, symbolsAsStrings, true);
         }
         String printed = sink.toString();
         map.compute(printed, (s, i) -> {

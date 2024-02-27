@@ -43,6 +43,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -130,7 +131,7 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 final StringSink readerSink = UpdateConcurrentTest.readerSink.get();
                 readerSink.clear();
-                TestUtils.printColumn(record, metadata, i, readerSink);
+                CursorPrinter.printColumn(record, metadata, i, readerSink);
                 CharSequence[] expectedValueArray = expectedValues.get(i);
                 CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
                 if (!validators.get(i).validate(expectedValue, readerSink)) {

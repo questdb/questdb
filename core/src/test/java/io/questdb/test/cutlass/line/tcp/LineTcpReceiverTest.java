@@ -28,10 +28,8 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.AbstractLineSender;
@@ -50,10 +48,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.mp.TestWorkerPool;
@@ -1047,7 +1042,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             try (RecordCursorFactory cursorFactory = select("weather")) {
                 try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
+                    println(cursorFactory, cursor);
                     TestUtils.assertEquals("windspeed\ttimetocycle\tts\n" +
                             "1\t2\t1970-01-01T00:00:00.000001Z\n" +
                             "2\t4\t1970-01-01T00:00:00.000002Z\n", sink);
@@ -1069,7 +1064,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
 
                 try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
+                    println(cursorFactory, cursor);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException ignored) {
                 }

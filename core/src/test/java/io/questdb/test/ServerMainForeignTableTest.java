@@ -30,6 +30,7 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -550,7 +551,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 RecordCursorFactory factory = cc.getRecordCursorFactory();
                 RecordCursor cursor = factory.getCursor(context)
         ) {
-            TestUtils.printCursor(cursor, factory.getMetadata(), true, resultSink, printer);
+            RecordMetadata metadata = factory.getMetadata();
+            CursorPrinter.println(cursor, metadata, resultSink);
             String expected = tableToken.getTableName() + "\tts\tDAY\t500000\t600000000\t" + true + '\t' + tableToken.getDirName();
             if (inVolume) {
                 expected += " (->)";
