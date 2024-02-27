@@ -190,6 +190,12 @@ public class Rnd {
         return new String(chars);
     }
 
+    public void nextUtf8AsciiStr(int len, Utf8Sink sink) {
+        for (int i = 0; i < len; i++) {
+            sink.putAscii((char) (32 + nextPositiveInt() % (127 - 32)));
+        }
+    }
+
     // https://stackoverflow.com/questions/1319022/really-good-bad-utf-8-example-test-data
     public void nextUtf8Str(int len, Utf8Sink sink) {
         for (int i = 0; i < len; i++) {
@@ -197,7 +203,7 @@ public class Rnd {
             int byteCount = Math.max(1, nextInt(5));
             switch (byteCount) {
                 case 1:
-                    sink.putAscii((char) ((32 + nextInt(128 - 32)) & 0x7f));
+                    sink.putAscii((char) (32 + nextPositiveInt() % (127 - 32)));
                     break;
                 case 2:
                     while (true) {
@@ -248,12 +254,6 @@ public class Rnd {
                     assert false;
                     break;
             }
-        }
-    }
-
-    public void nextUtf8AsciiStr(int len, Utf8Sink sink) {
-        for (int i = 0; i < len; i++) {
-            sink.putAscii((char) ((32 + nextInt(128 - 32)) & 0x7f));
         }
     }
 
