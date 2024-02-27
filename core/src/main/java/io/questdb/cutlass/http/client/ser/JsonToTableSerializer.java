@@ -41,6 +41,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8StringSink;
 
 import static io.questdb.cairo.ColumnType.*;
 
@@ -66,6 +67,7 @@ public class JsonToTableSerializer implements JsonParser, Mutable, QuietCloseabl
     private final Path path = new Path();
     private final ExpressionNode tableName = ExpressionNode.FACTORY.newInstance();
     private final ExpressionNode timestampName = ExpressionNode.FACTORY.newInstance();
+    private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private int columnIndex;
     private String columnName;
     private int ignoreDepth = 0;
@@ -288,6 +290,11 @@ public class JsonToTableSerializer implements JsonParser, Mutable, QuietCloseabl
                                 break;
                             case STRING:
                                 row.putStr(columnIndex, tag);
+                                break;
+                            case VARCHAR:
+                                utf8Sink.clear();
+                                utf8Sink.put(tag);
+                                row.putVarchar(columnIndex, utf8Sink);
                                 break;
                             case SYMBOL:
                                 row.putSym(columnIndex, tag);

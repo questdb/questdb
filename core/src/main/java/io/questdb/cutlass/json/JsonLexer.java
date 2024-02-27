@@ -88,7 +88,6 @@ public class JsonLexer implements Mutable, Closeable {
     }
 
     public void parse(long lo, long hi, JsonParser listener) throws JsonException {
-
         if (lo >= hi) {
             return;
         }

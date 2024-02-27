@@ -2500,6 +2500,10 @@ public final class Numbers {
         sink.putAscii(hexDigit);
     }
 
+    public static int compareUnsigned(byte x, byte y) {
+        return Byte.toUnsignedInt(x) - Byte.toUnsignedInt(y);
+    }
+
     private static int estimateDecExpDouble(long fractBits, int binExp) {
         double d2 = Double.longBitsToDouble(EXP_ONE | fractBits & SIGNIF_BIT_MASK);
         double d = (d2 - 1.5D) * 0.289529654D + 0.176091259D + (double) binExp * 0.301029995663981D;

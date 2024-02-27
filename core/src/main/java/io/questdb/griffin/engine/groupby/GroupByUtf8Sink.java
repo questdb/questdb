@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.AsciiCharSequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
@@ -37,23 +38,28 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Buffer layout is the following:
  * <pre>
- * | capacity (in bytes) | size (in bytes) | byte array |
- * +---------------------+-------------------+------------+
- * |       4 bytes       |      4 bytes      |     -      |
- * +---------------------+-------------------+------------+
+ * | capacity (in bytes) |  size (in bytes)  | is ascii | byte array |
+ * +---------------------+-------------------+----------+------------+
+ * |       4 bytes       |      4 bytes      | 1 byte   |  payload   |
+ * +---------------------+-------------------+----------+------------+
  * </pre>
  */
 public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
-    private static final long HEADER_SIZE = 2 * Integer.BYTES;
+    private static final long HEADER_SIZE = 2 * Integer.BYTES + Byte.BYTES;
     private static final long SIZE_OFFSET = Integer.BYTES;
+    private static final long IS_ASCII_OFFSET = 2 * Integer.BYTES;
     private static final int MIN_CAPACITY = 16;
     private GroupByAllocator allocator;
-
     private long ptr;
+    private AsciiCharSequence asciiCharSequence;
 
     @Override
     public @NotNull CharSequence asAsciiCharSequence() {
-        throw new UnsupportedOperationException("not implemented");
+        if (asciiCharSequence == null) {
+            asciiCharSequence = new AsciiCharSequence();
+        }
+        asciiCharSequence.of(this);
+        return asciiCharSequence;
     }
 
     @Override
@@ -73,7 +79,13 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
         long lo = ptr + HEADER_SIZE + thisSize;
         seq.writeTo(lo, 0, thatSize);
         Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, thisSize + thatSize);
+        Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, seq.isAscii() && isAscii());
         return this;
+    }
+
+    @Override
+    public boolean isAscii() {
+        return ptr == 0 || Unsafe.getUnsafe().getBoolean(null, ptr + IS_ASCII_OFFSET);
     }
 
     public int capacity() {
@@ -96,6 +108,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
             ptr = allocator.malloc(newSize);
             Unsafe.getUnsafe().putInt(ptr, newCapacity);
             Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
+            Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
         } else {
             ptr = allocator.realloc(ptr, capacity + HEADER_SIZE, newSize);
             Unsafe.getUnsafe().putInt(ptr, newCapacity);
@@ -104,7 +117,11 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
 
     @Override
     public Utf8Sink put(byte b) {
-        throw new UnsupportedOperationException("not implemented");
+        checkCapacity(1);
+        Unsafe.getUnsafe().putByte(ptr + HEADER_SIZE + size(), b);
+        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, size() + 1);
+        Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, false);
+        return this;
     }
 
     @Override
@@ -123,12 +140,16 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
 
     @Override
     public void writeTo(long addr, int lo, int hi) {
+        if (ptr == 0) {
+            return;
+        }
         Utf8Sequence.super.writeTo(addr, lo, hi);
     }
 
     public void clear() {
         if (ptr != 0) {
             Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
+            Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
         }
     }
 
@@ -138,6 +159,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     }
 
     public long ptr() {
+        assert ptr != 0;
         return ptr;
     }
 

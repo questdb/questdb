@@ -38,9 +38,13 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
@@ -51,6 +55,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class SampleByTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(SampleByTest.class);
@@ -3074,6 +3081,28 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFirstLastIndexFilterByNullConcurrent() throws Exception {
+        testSampleByFirstLastIndexedConcurrent(
+                "SELECT first(kms) as k_first, last(kms) AS k_last, first(d1) as d1_first, last(d1) as d1_last, first(d2) as d2_first, last(d2) as d2_last\n" +
+                        "FROM x\n" +
+                        "WHERE k BETWEEN '1970-01-01T00:15:33.063Z' AND '1970-01-01T01:15:33.063Z'\n" +
+                        "  AND s = null\n" +
+                        "SAMPLE BY 10s;"
+        );
+    }
+
+    @Test
+    public void testSampleByFirstLastIndexFilterConcurrent() throws Exception {
+        testSampleByFirstLastIndexedConcurrent(
+                "SELECT first(kms) as k_first, last(kms) AS k_last, first(d1) as d1_first, last(d1) as d1_last, first(d2) as d2_first, last(d2) as d2_last\n" +
+                        "FROM x\n" +
+                        "WHERE k BETWEEN '1970-01-01T00:15:33.063Z' AND '1970-01-01T01:15:33.063Z'\n" +
+                        "  AND s = 'a'\n" +
+                        "SAMPLE BY 10s;"
+        );
+    }
+
+    @Test
     public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
@@ -3172,6 +3201,28 @@ public class SampleByTest extends AbstractCairoTest {
                         "A\t1970-01-01T00:30:00.000000Z\tzzzzzz\t39.0\t39.0\n" +
                         "A\t1970-01-01T01:00:00.000000Z\tzzzzzz\t101.0\t101.0\n",
                 false, false, false
+        );
+    }
+
+    @Test
+    public void testSampleByLastIndexFilterByNullConcurrent() throws Exception {
+        testSampleByFirstLastIndexedConcurrent(
+                "SELECT last(kms) as k, last(d1) as d1, last(d2) as d2\n" +
+                        "FROM x\n" +
+                        "WHERE k BETWEEN '1970-01-01T00:15:33.063Z' AND '1970-01-01T01:15:33.063Z'\n" +
+                        "  AND s = null\n" +
+                        "SAMPLE BY 10s;"
+        );
+    }
+
+    @Test
+    public void testSampleByLastOnlyIndexFilterConcurrent() throws Exception {
+        testSampleByFirstLastIndexedConcurrent(
+                "SELECT last(kms) as k, last(d1) as d1, last(d2) as d2\n" +
+                        "FROM x\n" +
+                        "WHERE k BETWEEN '1970-01-01T00:15:33.063Z' AND '1970-01-01T01:15:33.063Z'\n" +
+                        "  AND s = 'a'\n" +
+                        "SAMPLE BY 10s;"
         );
     }
 
@@ -6698,20 +6749,20 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleFillPrevAllTypes() throws Exception {
         assertQuery(
                 "a\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tp\tvch\tsum\tk\n" +
-                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\t龘и\uDA89\uDFA42G\uDAC6\uDED3ڎ+o\t0.15786635599554755\t1970-01-03T00:00:00.000000Z\n" +
-                        "-1787109293\ttrue\tG\tNaN\t0.8001\t489\t2015-02-21T15:42:26.301Z\tCPSW\t-4692986177227268943\t31\t00000000 f1 1e ca 9c 1d 06 ac 37 c8 cd 82\t1970-01-01T01:00:00.000000Z\t篸N\uD9D7\uDFE5\uDAE9\uDF46-\t0.8685154305419587\t1970-01-03T00:00:00.000000Z\n" +
-                        "-1966408995\tfalse\tQ\tNaN\t0.9442\t95\t2015-01-04T19:58:55.654Z\tPEHN\t-5024542231726589509\t39\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t1970-01-01T02:00:00.000000Z\t\uD9CC\uDE73f\u0093ً\uDAF5\uDE17X{ӽ_\uDBED\uDC98\uDA30\uDEE0f\t0.053594208204197136\t1970-01-03T00:00:00.000000Z\n" +
+                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\t龘и\uDA89\uDFA4~2\uDAC6\uDED3ڎBH\t0.15786635599554755\t1970-01-03T00:00:00.000000Z\n" +
+                        "-1787109293\ttrue\tG\tNaN\t0.8001\t489\t2015-02-21T15:42:26.301Z\tCPSW\t-4692986177227268943\t31\t00000000 f1 1e ca 9c 1d 06 ac 37 c8 cd 82\t1970-01-01T01:00:00.000000Z\t篸{\uD9D7\uDFE5\uDAE9\uDF46O\t0.8685154305419587\t1970-01-03T00:00:00.000000Z\n" +
+                        "-1966408995\tfalse\tQ\tNaN\t0.9442\t95\t2015-01-04T19:58:55.654Z\tPEHN\t-5024542231726589509\t39\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t1970-01-01T02:00:00.000000Z\t\uD9CC\uDE73+\u0093ً\uDAF5\uDE17qRӽ-\uDBED\uDC98\uDA30\uDEE01\t0.053594208204197136\t1970-01-03T00:00:00.000000Z\n" +
                         "-1810676855\tfalse\tG\t0.06846631555382798\t0.0436\t970\t2015-06-17T01:06:20.599Z\t\t6405448934035934123\t22\t00000000 23 3f ae 7c 9f 77 04 e9 0c ea 4e ea 8b f5 0f 2d\n" +
-                        "00000010 b3 14 33\t1970-01-01T03:00:00.000000Z\tP\uDA43\uDFF0G㔍K钷pͱ2\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "00000010 b3 14 33\t1970-01-01T03:00:00.000000Z\t$\uDA43\uDFF0-㔍x钷Mͱ:\tNaN\t1970-01-03T00:00:00.000000Z\n" +
                         "-1197986472\tfalse\tL\t0.8551850405049611\t0.1859\t813\t2015-06-15T05:01:52.634Z\tVTJW\t9041413988802359580\t48\t00000000 42 fa f5 6e 8f 80 e3 54 b8 07 b1 32 57 ff 9a ef\n" +
-                        "00000010 88\t1970-01-01T04:00:00.000000Z\t|v볱kіH\uDA76\uDDD4!\uDB87\uDF60wă堝ᢣ΄\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\t龘и\uDA89\uDFA42G\uDAC6\uDED3ڎ+o\t0.15786635599554755\t1970-01-03T03:00:00.000000Z\n" +
-                        "-1787109293\ttrue\tG\tNaN\t0.8001\t489\t2015-02-21T15:42:26.301Z\tCPSW\t-4692986177227268943\t31\t00000000 f1 1e ca 9c 1d 06 ac 37 c8 cd 82\t1970-01-01T01:00:00.000000Z\t篸N\uD9D7\uDFE5\uDAE9\uDF46-\t0.8685154305419587\t1970-01-03T03:00:00.000000Z\n" +
-                        "-1966408995\tfalse\tQ\tNaN\t0.9442\t95\t2015-01-04T19:58:55.654Z\tPEHN\t-5024542231726589509\t39\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t1970-01-01T02:00:00.000000Z\t\uD9CC\uDE73f\u0093ً\uDAF5\uDE17X{ӽ_\uDBED\uDC98\uDA30\uDEE0f\t0.053594208204197136\t1970-01-03T03:00:00.000000Z\n" +
+                        "00000010 88\t1970-01-01T04:00:00.000000Z\t4h볱9іa\uDA76\uDDD4*\uDB87\uDF60-ă堝ᢣ΄\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\t龘и\uDA89\uDFA4~2\uDAC6\uDED3ڎBH\t0.15786635599554755\t1970-01-03T03:00:00.000000Z\n" +
+                        "-1787109293\ttrue\tG\tNaN\t0.8001\t489\t2015-02-21T15:42:26.301Z\tCPSW\t-4692986177227268943\t31\t00000000 f1 1e ca 9c 1d 06 ac 37 c8 cd 82\t1970-01-01T01:00:00.000000Z\t篸{\uD9D7\uDFE5\uDAE9\uDF46O\t0.8685154305419587\t1970-01-03T03:00:00.000000Z\n" +
+                        "-1966408995\tfalse\tQ\tNaN\t0.9442\t95\t2015-01-04T19:58:55.654Z\tPEHN\t-5024542231726589509\t39\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t1970-01-01T02:00:00.000000Z\t\uD9CC\uDE73+\u0093ً\uDAF5\uDE17qRӽ-\uDBED\uDC98\uDA30\uDEE01\t0.053594208204197136\t1970-01-03T03:00:00.000000Z\n" +
                         "-1810676855\tfalse\tG\t0.06846631555382798\t0.0436\t970\t2015-06-17T01:06:20.599Z\t\t6405448934035934123\t22\t00000000 23 3f ae 7c 9f 77 04 e9 0c ea 4e ea 8b f5 0f 2d\n" +
-                        "00000010 b3 14 33\t1970-01-01T03:00:00.000000Z\tP\uDA43\uDFF0G㔍K钷pͱ2\t0.04173263630897883\t1970-01-03T03:00:00.000000Z\n" +
+                        "00000010 b3 14 33\t1970-01-01T03:00:00.000000Z\t$\uDA43\uDFF0-㔍x钷Mͱ:\t0.04173263630897883\t1970-01-03T03:00:00.000000Z\n" +
                         "-1197986472\tfalse\tL\t0.8551850405049611\t0.1859\t813\t2015-06-15T05:01:52.634Z\tVTJW\t9041413988802359580\t48\t00000000 42 fa f5 6e 8f 80 e3 54 b8 07 b1 32 57 ff 9a ef\n" +
-                        "00000010 88\t1970-01-01T04:00:00.000000Z\t|v볱kіH\uDA76\uDDD4!\uDB87\uDF60wă堝ᢣ΄\t0.07828020681514525\t1970-01-03T03:00:00.000000Z\n",
+                        "00000010 88\t1970-01-01T04:00:00.000000Z\t4h볱9іa\uDA76\uDDD4*\uDB87\uDF60-ă堝ᢣ΄\t0.07828020681514525\t1970-01-03T03:00:00.000000Z\n",
                 "select a,b,c,d,e,f,g,i,j,l,m,p,vch,sum(o), k from x sample by 3h fill(prev)",
                 "create table x as " +
                         "(" +
@@ -10309,7 +10360,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "), timed as (\n" +
                         "    select * from ordered timestamp(ts)\n" +
                         "), sampled as (\n" +
-                        "    SELECT sum(value) as value\n" + //no ts in select list 
+                        "    SELECT sum(value) as value\n" + //no ts in select list
                         "    FROM timed\n" +
                         "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
                         ")\n" +
@@ -10540,6 +10591,79 @@ public class SampleByTest extends AbstractCairoTest {
 
     private boolean isNone(String fill) {
         return "".equals(fill) || "none".equals(fill);
+    }
+
+    private void testSampleByFirstLastIndexedConcurrent(String query) throws Exception {
+        // This test verifies that the native code does not access unmapped memory
+        // when queries are run concurrently with ingestion.
+
+        final int threadCount = 4;
+        final int workerCount = 2;
+
+        WorkerPool pool = new WorkerPool((() -> workerCount));
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.ddl(
+                            "create table x (d1 double, d2 double, s symbol index, kms long, k timestamp) timestamp(k) partition by day;",
+                            sqlExecutionContext
+                    );
+
+                    final RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
+                    for (int i = 0; i < threadCount; i++) {
+                        factories[i] = engine.select(query, sqlExecutionContext);
+                    }
+
+                    final AtomicInteger errors = new AtomicInteger();
+                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
+                    final AtomicBoolean writerDone = new AtomicBoolean();
+                    for (int i = 0; i < threadCount; i++) {
+                        final int finalI = i;
+                        new Thread(() -> {
+                            TestUtils.await(barrier);
+
+                            final RecordCursorFactory factory = factories[finalI];
+                            while (!writerDone.get()) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    while (cursor.hasNext()) {
+                                        // no-op
+                                    }
+                                } catch (Throwable e) {
+                                    e.printStackTrace();
+                                    errors.incrementAndGet();
+                                }
+                            }
+                            haltLatch.countDown();
+                        }).start();
+                    }
+
+                    final int rows = 10000;
+                    final int batchSize = 10;
+                    long ts = 0;
+                    try (TableWriter writer = TestUtils.getWriter(engine, "x")) {
+                        for (int i = 0; i < rows; i++) {
+                            TableWriter.Row row = writer.newRow(ts);
+                            row.putDouble(0, 42);
+                            row.putDouble(1, 42);
+                            row.putSym(2, (char) ('a' + i % 3));
+                            ts += Timestamps.SECOND_MICROS;
+                            row.putLong(3, ts / Timestamps.MILLI_MICROS);
+                            row.append();
+                            if ((i % batchSize) == 0) {
+                                writer.commit();
+                            }
+                        }
+                        writer.commit();
+                    }
+
+                    writerDone.set(true);
+                    haltLatch.await();
+
+                    Misc.free(factories);
+                    Assert.assertEquals(0, errors.get());
+                },
+                configuration,
+                LOG
+        );
     }
 
     private void testSampleByPeriodFails(String query, int errorPosition, String errorContains) throws Exception {

@@ -207,7 +207,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         if (nullFunc == null) {
             picker = record -> {
                 final CharSequence value = SwitchFunctionFactory.getString(keyFunction, record);
-//                System.out.println(value);
                 if (value != null) {
                     final int index = map.keyIndex(value);
                     if (index < 0) {
