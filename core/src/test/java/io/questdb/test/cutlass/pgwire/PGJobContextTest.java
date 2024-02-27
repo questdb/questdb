@@ -9047,7 +9047,6 @@ create table tab as (
     @Test
     public void testTimestampSentEqualsReceived() throws Exception {
         assertMemoryLeak(() -> {
-
             final Timestamp expectedTs = new Timestamp(1632761103202L); // '2021-09-27T16:45:03.202000Z'
             assertEquals(1632761103202L, expectedTs.getTime());
             assertEquals(202000000, expectedTs.getNanos());
@@ -9818,10 +9817,11 @@ create table tab as (
                 statement.executeUpdate(
                         "create table varchars as (select rnd_varchar(5, 5, 0) varchar1 from long_sequence(1))");
                 statement.execute("varchars");
-                var rs = statement.getResultSet();
-                assertTrue(rs.next());
-                assertEquals("\u1755\uDA1F\uDE98|\uD924\uDE04۲", rs.getString(1));
-                assertFalse(rs.next());
+                try (ResultSet rs = statement.getResultSet()) {
+                    assertTrue(rs.next());
+                    assertEquals("\u1755\uDA1F\uDE98|\uD924\uDE04۲", rs.getString(1));
+                    assertFalse(rs.next());
+                }
             }
         });
     }
