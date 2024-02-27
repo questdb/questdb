@@ -478,7 +478,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                     copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredTxnFiles, TableUtils.TXN_FILE_NAME);
                     copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredCVFiles, TableUtils.COLUMN_VERSION_FILE_NAME);
                     // Reset _todo_ file otherwise TableWriter will start restoring metadata on open.
-                    TableUtils.resetTodoLog(ff, path, rootLen, memFile);
+                    TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
                     rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
 
                     // Go inside SEQ_DIR
