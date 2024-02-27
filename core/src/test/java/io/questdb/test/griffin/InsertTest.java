@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
@@ -42,7 +43,6 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -186,7 +186,9 @@ public class InsertTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAllByDay() throws Exception {
-        testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
+        testBindVariableInsert(
+                PartitionBy.DAY,
+                new TimestampFunction() {
                     private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
                     @Override
@@ -1117,7 +1119,9 @@ public class InsertTest extends AbstractCairoTest {
                 bindVariableService.setDate(10, 1234L);
                 bindVariableService.setLong256(11, 1, 2, 3, 4);
                 bindVariableService.setChar(12, 'A');
-                bindVariableService.setTimestamp(13, timestampFunction.getTimestamp());
+                bindVariableService.setStr(13, "192.0.0.1");
+                bindVariableService.setStr(14, "foo bar");
+                bindVariableService.setTimestamp(15, timestampFunction.getTimestamp());
             }
 
             final String sql;
@@ -1136,6 +1140,8 @@ public class InsertTest extends AbstractCairoTest {
                         "date, " +
                         "long256, " +
                         "chr, " +
+                        "ipv4, " +
+                        "varchar, " +
                         "timestamp" +
                         ") values (" +
                         "$1, " +
@@ -1151,7 +1157,9 @@ public class InsertTest extends AbstractCairoTest {
                         "$11, " +
                         "$12, " +
                         "$13, " +
-                        "$14)";
+                        "$14, " +
+                        "$15, " +
+                        "$16)";
             } else {
                 sql = "insert into all2 values (" +
                         "$1, " +
@@ -1167,7 +1175,9 @@ public class InsertTest extends AbstractCairoTest {
                         "$11, " +
                         "$12, " +
                         "$13, " +
-                        "$14)";
+                        "$14, " +
+                        "$15, " +
+                        "$16)";
             }
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -1191,7 +1201,11 @@ public class InsertTest extends AbstractCairoTest {
                         bindVariableService.setDate(10, rnd.nextLong());
                         bindVariableService.setLong256(11, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
                         bindVariableService.setChar(12, rnd.nextChar());
-                        bindVariableService.setTimestamp(13, timestampFunction.getTimestamp());
+                        sink.clear();
+                        Numbers.intToIPv4Sink(sink, rnd.nextInt());
+                        bindVariableService.setStr(13, sink);
+                        bindVariableService.setStr(14, rnd.nextChars(16));
+                        bindVariableService.setTimestamp(15, timestampFunction.getTimestamp());
                         method.execute();
                     }
                     method.commit();
@@ -1225,6 +1239,8 @@ public class InsertTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextLong(), long256.getLong2());
                     Assert.assertEquals(rnd.nextLong(), long256.getLong3());
                     Assert.assertEquals(rnd.nextChar(), record.getChar(12));
+                    Assert.assertEquals(rnd.nextInt(), record.getInt(13));
+                    TestUtils.assertEquals(rnd.nextChars(16), record.getVarcharA(14));
                 }
             }
         });

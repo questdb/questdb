@@ -35,10 +35,11 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class ConcatFunctionFactory implements FunctionFactory {
     private static final ObjList<TypeAdapter> adapterReferences = new ObjList<>();
@@ -90,6 +91,10 @@ public class ConcatFunctionFactory implements FunctionFactory {
         sink.put(function.getFloat(record), 3);
     }
 
+    private static void sinkIPv4(Utf16Sink utf16Sink, Function function, Record record) {
+        Numbers.intToIPv4Sink(utf16Sink, function.getIPv4(record));
+    }
+
     private static void sinkInt(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getInt(record));
     }
@@ -126,6 +131,10 @@ public class ConcatFunctionFactory implements FunctionFactory {
         long lo = function.getLong128Lo(record);
         long hi = function.getLong128Hi(record);
         SqlUtil.implicitCastUuidAsStr(lo, hi, sink);
+    }
+
+    private static void sinkVarchar(Utf16Sink utf16Sink, Function function, Record record) {
+        function.getVarchar(record, utf16Sink);
     }
 
     @FunctionalInterface
@@ -188,10 +197,12 @@ public class ConcatFunctionFactory implements FunctionFactory {
         adapterReferences.extendAndSet(ColumnType.SHORT, ConcatFunctionFactory::sinkShort);
         adapterReferences.extendAndSet(ColumnType.CHAR, ConcatFunctionFactory::sinkChar);
         adapterReferences.extendAndSet(ColumnType.INT, ConcatFunctionFactory::sinkInt);
+        adapterReferences.extendAndSet(ColumnType.IPv4, ConcatFunctionFactory::sinkIPv4);
         adapterReferences.extendAndSet(ColumnType.LONG, ConcatFunctionFactory::sinkLong);
         adapterReferences.extendAndSet(ColumnType.FLOAT, ConcatFunctionFactory::sinkFloat);
         adapterReferences.extendAndSet(ColumnType.DOUBLE, ConcatFunctionFactory::sinkDouble);
         adapterReferences.extendAndSet(ColumnType.STRING, ConcatFunctionFactory::sinkStr);
+        adapterReferences.extendAndSet(ColumnType.VARCHAR, ConcatFunctionFactory::sinkVarchar);
         adapterReferences.extendAndSet(ColumnType.SYMBOL, ConcatFunctionFactory::sinkSymbol);
         adapterReferences.extendAndSet(ColumnType.BINARY, ConcatFunctionFactory::sinkBin);
         adapterReferences.extendAndSet(ColumnType.DATE, ConcatFunctionFactory::sinkDate);

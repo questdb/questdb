@@ -624,6 +624,23 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelFunctionKeyGroupByThreadUnsafe3() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        // This query shouldn't be executed in parallel,
+        // so this test verifies that nothing breaks.
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key::symbol key, avg(value), sum(colTop) FROM tab ORDER BY key",
+                "key\tavg\tsum\n" +
+                        "k0\t2027.5\t1642000.0\n" +
+                        "k1\t2023.5\t1638800.0\n" +
+                        "k2\t2024.5\t1639600.0\n" +
+                        "k3\t2025.5\t1640400.0\n" +
+                        "k4\t2026.5\t1641200.0\n"
+        );
+    }
+
+    @Test
     public void testParallelGroupByCastToSymbol() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);

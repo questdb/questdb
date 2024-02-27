@@ -1225,7 +1225,7 @@ public class SqlParser {
         return updateQueryModel;
     }
 
-    //doesn't allow copy, rename
+    // doesn't allow copy, rename
     private ExecutionModel parseExplain(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok = tok(lexer, "'create', 'format', 'insert', 'update', 'select' or 'with'");
 

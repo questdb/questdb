@@ -222,7 +222,15 @@ public class CreateTableTestUtils {
                 .col("float", ColumnType.FLOAT)
                 .col("long", ColumnType.LONG)
                 .col("str", ColumnType.STRING)
-                .col("sym", ColumnType.SYMBOL).symbolCapacity(64).col("bool", ColumnType.BOOLEAN).col("bin", ColumnType.BINARY).col("date", ColumnType.DATE).col("long256", ColumnType.LONG256).col("chr", ColumnType.CHAR).timestamp();
+                .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("bin", ColumnType.BINARY)
+                .col("date", ColumnType.DATE)
+                .col("long256", ColumnType.LONG256)
+                .col("chr", ColumnType.CHAR)
+                .col("ipv4", ColumnType.IPv4)
+                .col("varchar", ColumnType.VARCHAR)
+                .timestamp();
 
     }
 
