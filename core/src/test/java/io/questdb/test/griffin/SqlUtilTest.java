@@ -499,7 +499,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastVarcharAsLong(sink);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: `778232323223232389080898083` [STRING -> LONG]", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `778232323223232389080898083` [VARCHAR -> LONG]", e.getFlyweightMessage());
         }
 
         // not a number
@@ -509,7 +509,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastVarcharAsLong(sink);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> LONG]", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> LONG]", e.getFlyweightMessage());
         }
     }
 
