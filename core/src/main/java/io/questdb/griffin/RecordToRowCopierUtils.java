@@ -131,6 +131,12 @@ public class RecordToRowCopierUtils {
         int implicitCastFloatAsByte = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsByte", "(F)B");
         int implicitCastDoubleAsByte = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsByte", "(D)B");
 
+        int implicitCastVarcharAsLong = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsLong", "(Lio/questdb/std/str/Utf8Sequence;)J");
+        int implicitCastVarcharAsShort = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsShort", "(Lio/questdb/std/str/Utf8Sequence;)S");
+        int implicitCastVarcharAsInt = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsInt", "(Lio/questdb/std/str/Utf8Sequence;)I");
+        int implicitCastVarcharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsByte", "(Lio/questdb/std/str/Utf8Sequence;)B");
+        int implicitCastVarcharAsChar = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsChar", "(Lio/questdb/std/str/Utf8Sequence;)C");
+
         int implicitCastIntAsShort = asm.poolMethod(SqlUtil.class, "implicitCastIntAsShort", "(I)S");
         int implicitCastLongAsShort = asm.poolMethod(SqlUtil.class, "implicitCastLongAsShort", "(J)S");
         int implicitCastFloatAsShort = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsShort", "(F)S");
@@ -617,6 +623,31 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(rGetVarchar);
                             asm.invokeStatic(implicitCastUtf8StrAsIPv4);
                             asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsLong);
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsShort);
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.INT:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsInt);
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsByte);
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.CHAR:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsChar);
+                            asm.invokeInterface(wPutChar, 2);
                             break;
                         default:
                             assert false;

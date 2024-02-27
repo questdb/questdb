@@ -24,7 +24,10 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.*;
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
+import io.questdb.Metrics;
+import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -50,8 +53,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.*;
 import io.questdb.test.QuestDBTestNode;
-import io.questdb.cairo.LogRecordSinkAdapter;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -1159,7 +1160,8 @@ public final class TestUtils {
 
     @NotNull
     public static Rnd generateRandom(Log log) {
-        return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
+//        return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
+        return generateRandom(log, 191194301547L, 1709039358401L);
     }
 
     @NotNull

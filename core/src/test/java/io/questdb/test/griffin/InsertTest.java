@@ -1247,30 +1247,28 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertVarcharToStrCol() throws Exception {
+    public void testInsertVarcharToDifferentTypeCol() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table src (ts timestamp, vch varchar) timestamp(ts) partition by day;");
-            insert("insert into src values (0, 'foo');");
-            insert("insert into src values (10000, '');");
+            insert("insert into src values (0, '1');");
             insert("insert into src values (20000, null);");
-            insert("insert into src values (30000, 'bar');");
+            insert("insert into src values (30000, '2');");
 
-            ddl("create table dest (ts timestamp, s string) timestamp(ts) partition by day;");
+            ddl("create table dest (ts timestamp, s string, l long, sh short, i int, b byte, c char) timestamp(ts) partition by day;");
             drainWalQueue();
 
-            ddl("insert into dest select * from src;");
+            ddl("insert into dest select ts, vch, vch, vch, vch, vch, vch from src;");
 
-            String expected = "ts\ts\n" +
-                    "1970-01-01T00:00:00.000000Z\tfoo\n" +
-                    "1970-01-01T00:00:00.010000Z\t\n" +
-                    "1970-01-01T00:00:00.020000Z\t\n" +
-                    "1970-01-01T00:00:00.030000Z\tbar\n";
+            String expected = "ts\ts\tl\tsh\ti\tb\tc\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t1\t1\t1\t1\n" +
+                    "1970-01-01T00:00:00.020000Z\t\tNaN\t0\tNaN\t0\t\n" +
+                    "1970-01-01T00:00:00.030000Z\t2\t2\t2\t2\t2\t2\n";
             assertQueryCheckWal(expected);
 
             // check varchar null was inserted as a null and not as an empty string
             assertQuery(
-                    "ts\ts\n" +
-                            "1970-01-01T00:00:00.020000Z\t\n",
+                    "ts\ts\tl\tsh\ti\tb\tc\n" +
+                            "1970-01-01T00:00:00.020000Z\t\tNaN\t0\tNaN\t0\t\n",
                     "select * from dest where s is null",
                     "ts",
                     true,

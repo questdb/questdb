@@ -43,6 +43,7 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -491,6 +492,20 @@ public class SqlUtil {
         return 0;
     }
 
+    public static byte implicitCastVarcharAsByte(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                int res = Numbers.parseInt(value);
+                if (res >= Byte.MIN_VALUE && res <= Byte.MAX_VALUE) {
+                    return (byte) res;
+                }
+            } catch (NumericException ignore) {
+            }
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.BYTE);
+        }
+        return 0;
+    }
+
     public static char implicitCastStrAsChar(CharSequence value) {
         if (value == null || value.length() == 0) {
             return 0;
@@ -501,6 +516,21 @@ public class SqlUtil {
         }
 
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.CHAR);
+    }
+
+    public static char implicitCastVarcharAsChar(Utf8Sequence value) {
+        if (value == null || value.size() == 0) {
+            return 0;
+        }
+
+        // todo: this is not efficient, we should construct char directly from Utf8Sequence bytes
+        // when implementing this watch out for codepoints which cannot be represented as char - surrogate pairs etc
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put(value);
+        if (sink.length() == 1) {
+            return sink.charAt(0);
+        }
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.CHAR);
     }
 
     public static long implicitCastStrAsDate(CharSequence value) {
@@ -566,12 +596,34 @@ public class SqlUtil {
         return Numbers.INT_NaN;
     }
 
+    public static int implicitCastVarcharAsInt(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseInt(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.INT);
+            }
+        }
+        return Numbers.INT_NaN;
+    }
+
     public static long implicitCastStrAsLong(CharSequence value) {
         if (value != null) {
             try {
                 return Numbers.parseLong(value);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.LONG);
+            }
+        }
+        return Numbers.LONG_NaN;
+    }
+
+    public static long implicitCastVarcharAsLong(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseLong(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.LONG);
             }
         }
         return Numbers.LONG_NaN;
@@ -609,6 +661,14 @@ public class SqlUtil {
             return value != null ? Numbers.parseShort(value) : 0;
         } catch (NumericException ignore) {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.SHORT);
+        }
+    }
+
+    public static short implicitCastVarcharAsShort(@Nullable Utf8Sequence value) {
+        try {
+            return value != null ? Numbers.parseShort(value) : 0;
+        } catch (NumericException ignore) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.SHORT);
         }
     }
 

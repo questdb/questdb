@@ -312,7 +312,22 @@ public final class ColumnType {
     }
 
     private static boolean isNarrowingCast(int fromType, int toType) {
-        return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG))) || (fromType == FLOAT && toType >= BYTE && toType <= LONG) || (fromType == LONG && toType >= BYTE && toType <= INT) || (fromType == INT && toType >= BYTE && toType <= SHORT) || (fromType == SHORT && toType == BYTE) || (fromType == CHAR && toType == BYTE) || (fromType == STRING && toType == BYTE) || (fromType == STRING && toType == SHORT) || (fromType == STRING && toType == INT) || (fromType == STRING && toType == LONG) || (fromType == STRING && toType == DATE) || (fromType == STRING && toType == TIMESTAMP) || (fromType == STRING && toType == FLOAT) || (fromType == STRING && toType == DOUBLE) || (fromType == STRING && toType == CHAR) || (fromType == STRING && toType == UUID);
+        return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
+                || (fromType == FLOAT && toType >= BYTE && toType <= LONG)
+                || (fromType == LONG && toType >= BYTE && toType <= INT)
+                || (fromType == INT && toType >= BYTE && toType <= SHORT)
+                || (fromType == SHORT && toType == BYTE)
+                || (fromType == CHAR && toType == BYTE)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == BYTE)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == SHORT)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == INT)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == LONG)
+                || (fromType == STRING && toType == DATE)
+                || (fromType == STRING && toType == TIMESTAMP)
+                || (fromType == STRING && toType == FLOAT)
+                || (fromType == STRING && toType == DOUBLE)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == CHAR)
+                || (fromType == STRING && toType == UUID);
     }
 
     private static boolean isStringCast(int fromType, int toType) {

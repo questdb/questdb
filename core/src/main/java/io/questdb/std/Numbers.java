@@ -33,11 +33,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -1159,6 +1155,13 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return parseLong0(sequence.asAsciiCharSequence(), 0, sequence.size());
+    }
+
+    public static short parseShort(Utf8Sequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseShort0(sequence.asAsciiCharSequence(), 0, sequence.size());
     }
 
     public static long parseLong(Utf8Sequence sequence, int p, int lim) throws NumericException {
