@@ -194,7 +194,7 @@ inline int32_t findFirstLastInFrame0(
     // outputRowIds(timestamp)       :  0,  2,   3
     // Output in timestampOut contains indexes of the periods found
     // Last value of output buffers reserved for positions to resume the search
-    // outputRowIds[n + 0] :   7 ( index position                  )
+    // outputRowIds[n + 0] :    7 ( index position                  )
     // outputRowIds[n + 1] :  108 ( timestamp column position       )
     // outputRowIds[n + 2] :    4 ( last processed period end index )
     int32_t periodIndex = 0;
@@ -220,9 +220,10 @@ inline int32_t findFirstLastInFrame0(
         if (outIndex > 0
             && outputRowIds[outIndex - 1].timestamp_index == periodIndex + sampleIndexOffset - 1 // prev out row is for period - 1
             && indexLo > 0) {
+
             int64_t prevLastRowId = fnTsRowIdByIndex(indexLo - 1);
             outputRowIds[outIndex - 1].last_row_id = prevLastRowId - frameBaseOffset;
-            firstRowUpdated |= outIndex == 1; // need to know if firt row lat_row_id is updated
+            firstRowUpdated |= outIndex == 1; // need to know if first row last_row_id is updated
         }
 
         if (indexLo == indexHi || sampleStart > maxTs || periodIndex > samplePeriodCount - 2) {

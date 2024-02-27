@@ -177,6 +177,21 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         return base.usesIndex();
     }
 
+    private static long findSafeIndexFrameSize(IndexFrame indexFrame, long dataFrameHi) {
+        long frameAddress = indexFrame.getAddress();
+        if (frameAddress == 0) {
+            return indexFrame.getSize();
+        }
+        long safeFrameSize = indexFrame.getSize();
+        for (long p = frameAddress + (indexFrame.getSize() - 1) * Long.BYTES; p >= frameAddress; p -= Long.BYTES) {
+            if (Unsafe.getUnsafe().getLong(p) < dataFrameHi) {
+                break;
+            }
+            safeFrameSize--;
+        }
+        return safeFrameSize;
+    }
+
     private void buildFirstLastIndex(
             int[] firstLastIndex,
             int[] queryToFrameColumnMapping,
@@ -462,7 +477,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     int outPosition = crossRowState == NONE ? 0 : 1;
                     long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
                     long iFrameAddress = indexFrame.getAddress();
-                    long iFrameSize = indexFrame.getSize();
+                    long iFrameSize = findSafeIndexFrameSize(indexFrame, dataFrameHi);
                     long lastIndexRowId = iFrameAddress > 0
                             ? Unsafe.getUnsafe().getLong(iFrameAddress + (iFrameSize - 1) * Long.BYTES)
                             : Long.MAX_VALUE;
@@ -483,7 +498,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                             samplePeriodCount,
                             samplePeriodIndexOffset,
                             rowIdOutAddress.getAddress(),
-                            pageSize);
+                            pageSize
+                    );
 
                     boolean firstRowLastRowIdUpdated = rowsFound < 0;
                     rowsFound = Math.abs(rowsFound);

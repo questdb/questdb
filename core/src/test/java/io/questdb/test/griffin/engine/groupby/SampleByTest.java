@@ -38,9 +38,13 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
@@ -51,6 +55,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class SampleByTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(SampleByTest.class);
@@ -3074,6 +3081,28 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFirstLastIndexFilterByNullConcurrent() throws Exception {
+        testSampleByFirstLastIndexedConcurrent(
+                "SELECT first(kms) as k_first, last(kms) AS k_last, first(d1) as d1_first, last(d1) as d1_last, first(d2) as d2_first, last(d2) as d2_last\n" +
+                        "FROM x\n" +
+                        "WHERE k BETWEEN '1970-01-01T00:15:33.063Z' AND '1970-01-01T01:15:33.063Z'\n" +
+                        "  AND s = null\n" +
+                        "SAMPLE BY 10s;"
+        );
+    }
+
+    @Test
+    public void testSampleByFirstLastIndexFilterConcurrent() throws Exception {
+        testSampleByFirstLastIndexedConcurrent(
+                "SELECT first(kms) as k_first, last(kms) AS k_last, first(d1) as d1_first, last(d1) as d1_last, first(d2) as d2_first, last(d2) as d2_last\n" +
+                        "FROM x\n" +
+                        "WHERE k BETWEEN '1970-01-01T00:15:33.063Z' AND '1970-01-01T01:15:33.063Z'\n" +
+                        "  AND s = 'a'\n" +
+                        "SAMPLE BY 10s;"
+        );
+    }
+
+    @Test
     public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
@@ -3172,6 +3201,28 @@ public class SampleByTest extends AbstractCairoTest {
                         "A\t1970-01-01T00:30:00.000000Z\tzzzzzz\t39.0\t39.0\n" +
                         "A\t1970-01-01T01:00:00.000000Z\tzzzzzz\t101.0\t101.0\n",
                 false, false, false
+        );
+    }
+
+    @Test
+    public void testSampleByLastIndexFilterByNullConcurrent() throws Exception {
+        testSampleByFirstLastIndexedConcurrent(
+                "SELECT last(kms) as k, last(d1) as d1, last(d2) as d2\n" +
+                        "FROM x\n" +
+                        "WHERE k BETWEEN '1970-01-01T00:15:33.063Z' AND '1970-01-01T01:15:33.063Z'\n" +
+                        "  AND s = null\n" +
+                        "SAMPLE BY 10s;"
+        );
+    }
+
+    @Test
+    public void testSampleByLastOnlyIndexFilterConcurrent() throws Exception {
+        testSampleByFirstLastIndexedConcurrent(
+                "SELECT last(kms) as k, last(d1) as d1, last(d2) as d2\n" +
+                        "FROM x\n" +
+                        "WHERE k BETWEEN '1970-01-01T00:15:33.063Z' AND '1970-01-01T01:15:33.063Z'\n" +
+                        "  AND s = 'a'\n" +
+                        "SAMPLE BY 10s;"
         );
     }
 
@@ -10275,7 +10326,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "), timed as (\n" +
                         "    select * from ordered timestamp(ts)\n" +
                         "), sampled as (\n" +
-                        "    SELECT sum(value) as value\n" + //no ts in select list 
+                        "    SELECT sum(value) as value\n" + //no ts in select list
                         "    FROM timed\n" +
                         "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
                         ")\n" +
@@ -10506,6 +10557,79 @@ public class SampleByTest extends AbstractCairoTest {
 
     private boolean isNone(String fill) {
         return "".equals(fill) || "none".equals(fill);
+    }
+
+    private void testSampleByFirstLastIndexedConcurrent(String query) throws Exception {
+        // This test verifies that the native code does not access unmapped memory
+        // when queries are run concurrently with ingestion.
+
+        final int threadCount = 4;
+        final int workerCount = 2;
+
+        WorkerPool pool = new WorkerPool((() -> workerCount));
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.ddl(
+                            "create table x (d1 double, d2 double, s symbol index, kms long, k timestamp) timestamp(k) partition by day;",
+                            sqlExecutionContext
+                    );
+
+                    final RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
+                    for (int i = 0; i < threadCount; i++) {
+                        factories[i] = engine.select(query, sqlExecutionContext);
+                    }
+
+                    final AtomicInteger errors = new AtomicInteger();
+                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
+                    final AtomicBoolean writerDone = new AtomicBoolean();
+                    for (int i = 0; i < threadCount; i++) {
+                        final int finalI = i;
+                        new Thread(() -> {
+                            TestUtils.await(barrier);
+
+                            final RecordCursorFactory factory = factories[finalI];
+                            while (!writerDone.get()) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    while (cursor.hasNext()) {
+                                        // no-op
+                                    }
+                                } catch (Throwable e) {
+                                    e.printStackTrace();
+                                    errors.incrementAndGet();
+                                }
+                            }
+                            haltLatch.countDown();
+                        }).start();
+                    }
+
+                    final int rows = 10000;
+                    final int batchSize = 10;
+                    long ts = 0;
+                    try (TableWriter writer = TestUtils.getWriter(engine, "x")) {
+                        for (int i = 0; i < rows; i++) {
+                            TableWriter.Row row = writer.newRow(ts);
+                            row.putDouble(0, 42);
+                            row.putDouble(1, 42);
+                            row.putSym(2, (char) ('a' + i % 3));
+                            ts += Timestamps.SECOND_MICROS;
+                            row.putLong(3, ts / Timestamps.MILLI_MICROS);
+                            row.append();
+                            if ((i % batchSize) == 0) {
+                                writer.commit();
+                            }
+                        }
+                        writer.commit();
+                    }
+
+                    writerDone.set(true);
+                    haltLatch.await();
+
+                    Misc.free(factories);
+                    Assert.assertEquals(0, errors.get());
+                },
+                configuration,
+                LOG
+        );
     }
 
     private void testSampleByPeriodFails(String query, int errorPosition, String errorContains) throws Exception {
