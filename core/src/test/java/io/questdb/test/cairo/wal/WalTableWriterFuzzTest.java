@@ -214,7 +214,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     WalWriter walWriter2 = engine.getWalWriter(tt);
                     WalWriter walWriter3 = engine.getWalWriter(tt)
             ) {
-
                 long start = now;
                 WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3};
 
