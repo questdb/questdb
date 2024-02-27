@@ -316,11 +316,20 @@ public final class ColumnType {
     }
 
     private static boolean isStringCast(int fromType, int toType) {
-        return (fromType == STRING && toType == SYMBOL) || (fromType == SYMBOL && toType == STRING) || (fromType == CHAR && toType == SYMBOL) || (fromType == CHAR && toType == STRING) || (fromType == UUID && toType == STRING);
+        return (fromType == STRING && toType == SYMBOL)
+                || (fromType == SYMBOL && toType == STRING)
+                || (fromType == CHAR && toType == SYMBOL)
+                || (fromType == CHAR && toType == STRING)
+                || (fromType == UUID && toType == STRING);
     }
 
     private static boolean isVarcharCast(int fromType, int toType) {
-        return (fromType == STRING && toType == VARCHAR) || (fromType == VARCHAR && toType == SYMBOL) || (fromType == SYMBOL && toType == VARCHAR) || (fromType == CHAR && toType == VARCHAR) || (fromType == UUID && toType == VARCHAR);
+        return (fromType == STRING && toType == VARCHAR)
+                || (fromType == VARCHAR && toType == SYMBOL)
+                || (fromType == VARCHAR && toType == STRING)
+                || (fromType == SYMBOL && toType == VARCHAR)
+                || (fromType == CHAR && toType == VARCHAR)
+                || (fromType == UUID && toType == VARCHAR);
     }
 
     private static int mkGeoHashType(int bits, short baseType) {

@@ -1246,6 +1246,39 @@ public class InsertTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testInsertVarcharToStrCol() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table src (ts timestamp, vch varchar) timestamp(ts) partition by day;");
+            insert("insert into src values (0, 'foo');");
+            insert("insert into src values (10000, '');");
+            insert("insert into src values (20000, null);");
+            insert("insert into src values (30000, 'bar');");
+
+            ddl("create table dest (ts timestamp, s string) timestamp(ts) partition by day;");
+            drainWalQueue();
+
+            ddl("insert into dest select * from src;");
+
+            String expected = "ts\ts\n" +
+                    "1970-01-01T00:00:00.000000Z\tfoo\n" +
+                    "1970-01-01T00:00:00.010000Z\t\n" +
+                    "1970-01-01T00:00:00.020000Z\t\n" +
+                    "1970-01-01T00:00:00.030000Z\tbar\n";
+            assertQueryCheckWal(expected);
+
+            // check varchar null was inserted as a null and not as an empty string
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.020000Z\t\n",
+                    "select * from dest where s is null",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
     private void testInsertAsSelectWithOrderBy(String orderByClause) throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
