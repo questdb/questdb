@@ -1759,7 +1759,7 @@ if __name__ == "__main__":
                 statement.executeUpdate(
                         "create table varchars as (select rnd_varchar(5, 5, 0) varchar1 from long_sequence(1))");
                 statement.execute("varchars");
-                var rs = statement.getResultSet();
+                ResultSet rs = statement.getResultSet();
                 assertTrue(rs.next());
                 assertEquals("\u1755\uDA1F\uDE98L\uD924\uDE04۲", rs.getString(1));
                 assertFalse(rs.next());
