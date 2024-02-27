@@ -308,7 +308,18 @@ public final class ColumnType {
 
     private static boolean isImplicitParsingCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
-        return (fromType == CHAR && toTag == GEOBYTE && getGeoHashBits(toType) < 6) || (fromType == STRING && toTag == GEOBYTE) || (fromType == STRING && toTag == GEOSHORT) || (fromType == STRING && toTag == GEOINT) || (fromType == STRING && toTag == GEOLONG) || (fromType == STRING && toTag == TIMESTAMP) || (fromType == SYMBOL && toTag == TIMESTAMP) || (fromType == STRING && toTag == LONG256);
+        switch (fromType) {
+            case CHAR:
+                return toTag == GEOBYTE && getGeoHashBits(toType) < 6;
+            case STRING:
+            case VARCHAR:
+                return toTag == GEOBYTE || toTag == GEOSHORT || toTag == GEOINT
+                        || toTag == GEOLONG || toTag == TIMESTAMP || toTag == LONG256;
+            case SYMBOL:
+                return toTag == TIMESTAMP;
+            default:
+                return false;
+        }
     }
 
     private static boolean isNarrowingCast(int fromType, int toType) {
