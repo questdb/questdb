@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 
 public class DefaultColumnTypes {
     final int[] DEFAULT_COLUMN_TYPES = new int[LineTcpParser.N_ENTITY_TYPES];
@@ -32,15 +33,31 @@ public class DefaultColumnTypes {
 
     public DefaultColumnTypes(LineTcpReceiverConfiguration configuration) {
         // if not set it defaults to ColumnType.UNDEFINED
-        this(configuration.getDefaultColumnTypeForFloat(), configuration.getDefaultColumnTypeForInteger());
+        this(
+                configuration.getDefaultColumnTypeForFloat(),
+                configuration.getDefaultColumnTypeForInteger(),
+                configuration.isUseLegacyStringDefault()
+        );
     }
 
-    public DefaultColumnTypes(short defaultColumnTypeForFloat, short defaultColumnTypeForInteger) {
+    public DefaultColumnTypes(LineHttpProcessorConfiguration configuration) {
+        // if not set it defaults to ColumnType.UNDEFINED
+        this(
+                configuration.getDefaultColumnTypeForFloat(),
+                configuration.getDefaultColumnTypeForInteger(),
+                configuration.isUseLegacyStringDefault()
+        );
+    }
+
+    private DefaultColumnTypes(
+            short defaultColumnTypeForFloat, short defaultColumnTypeForInteger, boolean useLegacyStringDefault
+    ) {
         // if not set it defaults to ColumnType.UNDEFINED
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TAG] = ColumnType.SYMBOL;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_FLOAT] = defaultColumnTypeForFloat;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_INTEGER] = defaultColumnTypeForInteger;
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_STRING] = ColumnType.STRING;
+        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_STRING] =
+                useLegacyStringDefault ? ColumnType.STRING : ColumnType.VARCHAR;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_SYMBOL] = ColumnType.SYMBOL;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_BOOLEAN] = ColumnType.BOOLEAN;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_LONG256] = ColumnType.LONG256;
@@ -61,7 +78,8 @@ public class DefaultColumnTypes {
         MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_LONG] = ColumnType.LONG;
         MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_DATE] = ColumnType.DATE;
         MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_CHAR] = ColumnType.CHAR;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_STRING] = ColumnType.STRING;
+        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_STRING] =
+                useLegacyStringDefault ? ColumnType.STRING : ColumnType.VARCHAR;
         //MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_SYMBOL] = ColumnType.SYMBOL;
         MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_BOOLEAN] = ColumnType.BOOLEAN;
         MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_LONG256] = ColumnType.LONG256;

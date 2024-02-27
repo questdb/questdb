@@ -27,6 +27,8 @@ package io.questdb.test.cutlass.line.tcp;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.LineChannel;
@@ -633,6 +635,34 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (TableReader reader = getReader(table)) {
                 TestUtils.assertReader("max\tmin\ttimestamp\n" +
                         "9223372036854775807\tNaN\t2023-02-22T00:00:00.000000Z\n", reader, new StringSink());
+            }
+        });
+    }
+
+    @Test
+    public void testUseVarcharAsString() throws Exception {
+        useLegacyStringDefault = false;
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()
+            ) {
+                String table = "string_table";
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2024-02-27");
+                String expectedValue = "čćžšđçğéíáýůř";
+                sender.table(table)
+                        .stringColumn("string1", expectedValue)
+                        .at(tsMicros, ChronoUnit.MICROS);
+                sender.flush();
+                assertTableSizeEventually(engine, table, 1);
+                try (RecordCursorFactory fac = engine.select(table, sqlExecutionContext);
+                     RecordCursor cursor = fac.getCursor(sqlExecutionContext)
+                ) {
+                    TestUtils.assertCursor(
+                            "čćžšđçğéíáýůř:VARCHAR\t2024-02-27T00:00:00.000000Z:TIMESTAMP\n",
+                            cursor, fac.getMetadata(), false, true, sink);
+                }
             }
         });
     }

@@ -135,6 +135,14 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
+    public static void assertCursor(
+            CharSequence expected, RecordCursor cursor, RecordMetadata metadata,
+            boolean header, boolean printTypes, MutableUtf16Sink sink
+    ) {
+        CursorPrinter.println(cursor, metadata, sink, header, printTypes);
+        assertEquals(expected, sink);
+    }
+
     public static void assertEquals(
             RecordCursor cursorExpected,
             RecordMetadata metadataExpected,
