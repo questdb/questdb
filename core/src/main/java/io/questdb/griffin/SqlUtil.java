@@ -42,7 +42,6 @@ import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
@@ -552,12 +551,35 @@ public class SqlUtil {
         return Double.NaN;
     }
 
+    public static double implicitCastVarcharAsDouble(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseDouble(value.asAsciiCharSequence());
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.DOUBLE);
+            }
+        }
+        return Double.NaN;
+    }
+
     public static float implicitCastStrAsFloat(CharSequence value) {
         if (value != null) {
             try {
                 return FastFloatParser.parseFloat(value, 0, value.length(), true);
             } catch (NumericException ignored) {
                 throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.FLOAT);
+            }
+        }
+        return Float.NaN;
+    }
+
+    public static float implicitCastVarcharAsFloat(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                CharSequence ascii = value.asAsciiCharSequence();
+                return FastFloatParser.parseFloat(ascii, 0, ascii.length(), true);
+            } catch (NumericException ignored) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.FLOAT);
             }
         }
         return Float.NaN;
@@ -711,7 +733,7 @@ public class SqlUtil {
         }
     }
 
-    public static void implicitCastStrAsUuid(DirectUtf8Sequence str, Uuid uuid) {
+    public static void implicitCastStrAsUuid(Utf8Sequence str, Uuid uuid) {
         if (str == null || str.size() == 0) {
             uuid.ofNull();
             return;

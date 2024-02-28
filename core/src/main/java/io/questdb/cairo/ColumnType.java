@@ -335,10 +335,10 @@ public final class ColumnType {
                 || ((fromType == STRING || fromType == VARCHAR) && toType == LONG)
                 || (fromType == STRING && toType == DATE)
                 || (fromType == STRING && toType == TIMESTAMP)
-                || (fromType == STRING && toType == FLOAT)
-                || (fromType == STRING && toType == DOUBLE)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == FLOAT)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == DOUBLE)
                 || ((fromType == STRING || fromType == VARCHAR) && toType == CHAR)
-                || (fromType == STRING && toType == UUID);
+                || ((fromType == STRING || fromType == VARCHAR) && toType == UUID);
     }
 
     private static boolean isStringCast(int fromType, int toType) {

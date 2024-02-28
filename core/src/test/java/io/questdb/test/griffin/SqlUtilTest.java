@@ -369,6 +369,70 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testParseVarcharDouble() {
+        Utf8StringSink sink = new Utf8StringSink();
+        //noinspection SimplifiableAssertion
+        Assert.assertFalse(SqlUtil.implicitCastVarcharAsDouble(null) == SqlUtil.implicitCastStrAsDouble(null));
+        sink.put("990.1e60");
+        Assert.assertEquals(9.901E62, SqlUtil.implicitCastVarcharAsDouble(sink), 0.001);
+
+        // overflow
+        try {
+            sink.clear();
+            sink.put("1e450");
+            SqlUtil.implicitCastVarcharAsDouble(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `1e450` [VARCHAR -> DOUBLE]", e.getFlyweightMessage());
+        }
+
+        // not a number
+        try {
+            sink.clear();
+            sink.put("hello");
+            SqlUtil.implicitCastVarcharAsDouble(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> DOUBLE]", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testParseVarcharFloat() {
+        Utf8StringSink sink = new Utf8StringSink();
+        //noinspection SimplifiableAssertion
+        Assert.assertFalse(SqlUtil.implicitCastVarcharAsFloat(null) == SqlUtil.implicitCastStrAsFloat(null));
+
+        sink.put("990.1");
+        Assert.assertEquals(990.1, SqlUtil.implicitCastVarcharAsFloat(sink), 0.001);
+
+        sink.clear();
+        sink.put("-899.23");
+        Assert.assertEquals(-899.23, SqlUtil.implicitCastVarcharAsFloat(sink), 0.001);
+
+        // overflow
+        try {
+            sink.clear();
+            sink.put("1e210");
+            SqlUtil.implicitCastVarcharAsFloat(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `1e210` [VARCHAR -> FLOAT]", e.getFlyweightMessage());
+        }
+
+        // not a number
+        try {
+            sink.clear();
+            sink.put("hello");
+            SqlUtil.implicitCastVarcharAsFloat(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> FLOAT]", e.getFlyweightMessage());
+        }
+    }
+
+
+    @Test
     public void testParseStrFloat() {
         //noinspection SimplifiableAssertion
         Assert.assertFalse(SqlUtil.implicitCastStrAsFloat(null) == SqlUtil.implicitCastStrAsFloat(null));

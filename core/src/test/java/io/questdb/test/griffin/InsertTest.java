@@ -1249,26 +1249,26 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertVarcharToDifferentTypeCol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table src (ts timestamp, vch varchar) timestamp(ts) partition by day;");
-            insert("insert into src values (0, '1');");
-            insert("insert into src values (20000, null);");
-            insert("insert into src values (30000, '2');");
+            ddl("create table src (ts timestamp, vch varchar, vch2 varchar) timestamp(ts) partition by day;");
+            insert("insert into src values (0, '1', '11111111-1111-1111-1111-111111111111');");
+            insert("insert into src values (20000, null, null);");
+            insert("insert into src values (30000, '2', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11');");
 
-            ddl("create table dest (ts timestamp, s string, l long, sh short, i int, b byte, c char) timestamp(ts) partition by day;");
+            ddl("create table dest (ts timestamp, s string, l long, sh short, i int, b byte, c char, f float, d double, u uuid) timestamp(ts) partition by day;");
             drainWalQueue();
 
-            ddl("insert into dest select ts, vch, vch, vch, vch, vch, vch from src;");
+            ddl("insert into dest select ts, vch, vch, vch, vch, vch, vch, vch, vch, vch2 from src;");
 
-            String expected = "ts\ts\tl\tsh\ti\tb\tc\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t1\t1\t1\t1\n" +
-                    "1970-01-01T00:00:00.020000Z\t\tNaN\t0\tNaN\t0\t\n" +
-                    "1970-01-01T00:00:00.030000Z\t2\t2\t2\t2\t2\t2\n";
+            String expected = "ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t1\t1\t1\t1\t1.0000\t1.0\t11111111-1111-1111-1111-111111111111\n" +
+                    "1970-01-01T00:00:00.020000Z\t\tNaN\t0\tNaN\t0\t\tNaN\tNaN\t\n" +
+                    "1970-01-01T00:00:00.030000Z\t2\t2\t2\t2\t2\t2\t2.0000\t2.0\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n";
             assertQueryCheckWal(expected);
 
-            // check varchar null was inserted as a null and not as an empty string
+            // check varchar null was inserted as a null string and not as an empty string
             assertQuery(
-                    "ts\ts\tl\tsh\ti\tb\tc\n" +
-                            "1970-01-01T00:00:00.020000Z\t\tNaN\t0\tNaN\t0\t\n",
+                    "ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\n" +
+                            "1970-01-01T00:00:00.020000Z\t\tNaN\t0\tNaN\t0\t\tNaN\tNaN\t\n",
                     "select * from dest where s is null",
                     "ts",
                     true,

@@ -96,6 +96,7 @@ public class RecordToRowCopierUtils {
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
         int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128", "(IJJ)V");
         int wPutUuidStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuid", "(ILjava/lang/CharSequence;)V");
+        int wPutUuidUtf8 = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuidUtf8", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutDate = asm.poolInterfaceMethod(TableWriter.Row.class, "putDate", "(IJ)V");
         int wPutTimestamp = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
         //
@@ -136,6 +137,8 @@ public class RecordToRowCopierUtils {
         int implicitCastVarcharAsInt = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsInt", "(Lio/questdb/std/str/Utf8Sequence;)I");
         int implicitCastVarcharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsByte", "(Lio/questdb/std/str/Utf8Sequence;)B");
         int implicitCastVarcharAsChar = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsChar", "(Lio/questdb/std/str/Utf8Sequence;)C");
+        int implicitCastVarcharAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsFloat", "(Lio/questdb/std/str/Utf8Sequence;)F");
+        int implicitCastVarcharAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsDouble", "(Lio/questdb/std/str/Utf8Sequence;)D");
 
         int implicitCastIntAsShort = asm.poolMethod(SqlUtil.class, "implicitCastIntAsShort", "(I)S");
         int implicitCastLongAsShort = asm.poolMethod(SqlUtil.class, "implicitCastLongAsShort", "(J)S");
@@ -648,6 +651,20 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(rGetVarchar);
                             asm.invokeStatic(implicitCastVarcharAsChar);
                             asm.invokeInterface(wPutChar, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsFloat);
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsDouble);
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        case ColumnType.UUID:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeInterface(wPutUuidUtf8, 2);
                             break;
                         default:
                             assert false;

@@ -8029,7 +8029,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putUuid(int columnIndex, CharSequence uuid);
 
-        void putUuidUtf8(int columnIndex, DirectUtf8Sequence uuid);
+        void putUuidUtf8(int columnIndex, Utf8Sequence uuid);
 
         void putVarchar(int columnIndex, char value);
 
@@ -8198,7 +8198,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putUuidUtf8(int columnIndex, DirectUtf8Sequence uuid) {
+        public void putUuidUtf8(int columnIndex, Utf8Sequence uuid) {
             // no-op
         }
 
@@ -8403,7 +8403,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putUuidUtf8(int columnIndex, DirectUtf8Sequence uuidStr) {
+        public void putUuidUtf8(int columnIndex, Utf8Sequence uuidStr) {
             SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
             putLong128(columnIndex, uuid.getLo(), uuid.getHi());
         }
