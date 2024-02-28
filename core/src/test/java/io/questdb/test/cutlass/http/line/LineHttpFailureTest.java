@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.http.line;
 import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.ServerMain;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.http.client.HttpClient;
@@ -48,6 +49,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -357,9 +359,10 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
     @Test
     public void testPutAndGetAreNotSupported() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5"
-            )) {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+                put(DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5");
+            }})
+            ) {
                 serverMain.start();
                 String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
@@ -389,7 +392,36 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                                     .send()
                     ) {
                         resp.await();
-                        TestUtils.assertEquals("404", resp.getStatusCode());
+                        TestUtils.assertEquals("400", resp.getStatusCode());
+                    }
+                }
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
+                    try (
+                            HttpClient.ResponseHeaders resp = request.DELETE()
+                                    .url("/write ")
+                                    .withContent()
+                                    .putAscii(line)
+                                    .putAscii(line)
+                                    .send()
+                    ) {
+                        resp.await();
+                        TestUtils.assertEquals("400", resp.getStatusCode());
+                    }
+                }
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
+                    try (
+                            HttpClient.ResponseHeaders resp = request.POST()
+                                    .url("/write ")
+                                    .putAscii(line)
+                                    .putAscii(line)
+                                    .send()
+                    ) {
+                        resp.await();
+                        TestUtils.assertEquals("400", resp.getStatusCode());
                     }
                 }
             }
