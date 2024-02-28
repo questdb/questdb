@@ -223,7 +223,9 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) {
-        transientState.clear();
+        if (transientState != null) {
+            transientState.clear();
+        }
     }
 
     @Override

@@ -477,8 +477,10 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testPing() {
+        LOG.info().$("=== send fragmentation=").$(5).$();
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
             put(PropertyKey.LINE_HTTP_PING_VERSION.getEnvVarName(), "v2.2.2");
+            put(PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5");
         }})) {
             serverMain.start();
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {

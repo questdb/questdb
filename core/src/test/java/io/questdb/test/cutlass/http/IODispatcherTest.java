@@ -54,7 +54,6 @@ import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cutlass.NetUtils;
@@ -1461,14 +1460,14 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportBadRequestGet() throws Exception {
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 404 Not Found\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "27\r\n" +
-                        "Bad request. Multipart POST expected.\r\n" +
+                        "1a\r\n" +
+                        "Method GET not supported\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
@@ -5676,7 +5675,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
                         "27\r\n" +
-                        "method (multipart POST) not supported\r\n" +
+                        "Method (multipart POST) not supported\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
