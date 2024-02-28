@@ -78,4 +78,8 @@ public interface HttpRequestProcessor {
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
     }
+
+    default boolean isErrorProcessor() {
+        return false;
+    }
 }

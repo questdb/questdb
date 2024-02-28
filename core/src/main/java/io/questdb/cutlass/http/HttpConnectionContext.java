@@ -431,6 +431,47 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
     }
 
+    private HttpRequestProcessor checkProcessorValidForRequest(
+            Utf8Sequence method,
+            HttpRequestProcessor processor,
+            boolean chunked,
+            boolean multipartRequest,
+            long contentLength,
+            boolean multipartProcessor
+    ) {
+
+        if (processor.isErrorProcessor()) {
+            return processor;
+        }
+
+        if (Utf8s.equalsNcAscii("POST", method) || Utf8s.equalsNcAscii("PUT", method)) {
+            if (!multipartProcessor) {
+                if (multipartRequest) {
+                    return rejectRequest(HTTP_NOT_FOUND, "Method (multipart POST) not supported");
+                } else {
+                    return rejectRequest(HTTP_NOT_FOUND, "Method not supported");
+                }
+            }
+            if (chunked && contentLength > 0) {
+                return rejectRequest(HTTP_BAD_REQUEST, "Invalid chunked request; content-length specified");
+            }
+            if (!chunked && !multipartRequest && contentLength < 0) {
+                return rejectRequest(HTTP_BAD_REQUEST, "Content-length not specified for POST/PUT request");
+            }
+        } else if (Utf8s.equalsNcAscii("GET", method)) {
+            if (chunked || multipartRequest || contentLength > 0) {
+                return rejectRequest(HTTP_BAD_REQUEST, "GET request method cannot have content");
+            }
+            if (multipartProcessor) {
+                return rejectRequest(HTTP_NOT_FOUND, "Method GET not supported");
+            }
+        } else {
+            return rejectRequest(HTTP_BAD_REQUEST, "Method not supported");
+        }
+
+        return processor;
+    }
+
     private void completeRequest(
             HttpRequestProcessor processor,
             RescheduleContext rescheduleContext
@@ -783,42 +824,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return processor;
     }
 
-    private HttpRequestProcessor checkProcessorValidForRequest(
-            Utf8Sequence method,
-            HttpRequestProcessor processor,
-            boolean chunked,
-            boolean multipartRequest,
-            long contentLength,
-            boolean multipartProcessor
-    ) {
-        if (Utf8s.equalsAscii("POST", method) || Utf8s.equalsAscii("PUT", method)) {
-            if (!multipartProcessor) {
-                if (multipartRequest) {
-                    return rejectRequest(HTTP_NOT_FOUND, "Method (multipart POST) not supported");
-                } else {
-                    return rejectRequest(HTTP_NOT_FOUND, "Method not supported");
-                }
-            }
-            if (chunked && contentLength > 0) {
-                return rejectRequest(HTTP_BAD_REQUEST, "Invalid chunked request; content-length specified");
-            }
-            if (!chunked && !multipartRequest && contentLength < 0) {
-                return rejectRequest(HTTP_BAD_REQUEST, "Content-length not specified for POST/PUT request");
-            }
-        } else if (Utf8s.equalsAscii("GET", method)) {
-            if (chunked || multipartRequest || contentLength > 0) {
-                return rejectRequest(HTTP_BAD_REQUEST, "GET request method cannot have content");
-            }
-            if (multipartProcessor) {
-                return rejectRequest(HTTP_NOT_FOUND, "Method GET not supported");
-            }
-        } else {
-            return rejectRequest(HTTP_BAD_REQUEST, "Method not supported");
-        }
-
-        return processor;
-    }
-
     private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {
         boolean busyRecv = true;
         try {
@@ -1037,6 +1042,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
 
         @Override
+        public boolean isErrorProcessor() {
+            return true;
+        }
+
+        @Override
         public void onChunk(long lo, long hi) {
         }
 
@@ -1066,9 +1076,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
 
         @Override
-        public void resumeSend(
-                HttpConnectionContext context
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+        public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
             onRequestComplete(context);
         }
     }
