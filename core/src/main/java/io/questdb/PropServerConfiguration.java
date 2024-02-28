@@ -73,7 +73,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String TMP_DIRECTORY = "tmp";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
-    protected final byte httpStaticContentAuthType;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
     private final DateFormat backupDirTimestampFormat;
@@ -724,8 +723,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10_000);
             this.httpWorkerSleepTimeout = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
             this.indexFileName = getString(properties, env, PropertyKey.HTTP_STATIC_INDEX_FILE_NAME, "index.html");
-            final boolean httpStaticAuthRequired = getBoolean(properties, env, PropertyKey.HTTP_STATIC_AUTHENTICATION_REQUIRED, true);
-            this.httpStaticContentAuthType = httpStaticAuthRequired ? SecurityContext.AUTH_TYPE_CREDENTIALS : SecurityContext.AUTH_TYPE_NONE;
             this.httpFrozenClock = getBoolean(properties, env, PropertyKey.HTTP_FROZEN_CLOCK, false);
             this.httpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_ALLOW_DEFLATE_BEFORE_SEND, false);
             this.httpServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
@@ -4232,7 +4229,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public byte getRequiredAuthType() {
-            return httpStaticContentAuthType;
+            return SecurityContext.AUTH_TYPE_NONE;
         }
     }
 

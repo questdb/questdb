@@ -229,7 +229,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_WORKER_SLEEP_TIMEOUT("http.worker.sleep.timeout"),
     HTTP_SEND_BUFFER_SIZE("http.send.buffer.size"),
     HTTP_STATIC_INDEX_FILE_NAME("http.static.index.file.name"),
-    HTTP_STATIC_AUTHENTICATION_REQUIRED("http.static.authentication.required"),
     HTTP_FROZEN_CLOCK("http.frozen.clock"),
     HTTP_ALLOW_DEFLATE_BEFORE_SEND("http.allow.deflate.before.send"),
     HTTP_SERVER_KEEP_ALIVE("http.server.keep.alive"),
