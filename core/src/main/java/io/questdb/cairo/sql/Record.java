@@ -30,6 +30,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Access the value of columns of a table record by column index.
@@ -369,10 +370,12 @@ public interface Record {
         utf16sink.put(getVarcharA(col));
     }
 
+    @Nullable
     default Utf8Sequence getVarcharA(int col) {
         throw new UnsupportedOperationException();
     }
 
+    @Nullable
     default Utf8Sequence getVarcharB(int col) {
         throw new UnsupportedOperationException();
     }
