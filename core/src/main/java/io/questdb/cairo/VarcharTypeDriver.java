@@ -104,7 +104,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 ff,
                 fd,
                 fileName,
-                Math.max((rowLo - 1) << VARCHAR_AUX_SHL, 0),
+                rowLo << VARCHAR_AUX_SHL,
                 rowHi << VARCHAR_AUX_SHL,
                 memoryTag,
                 opts
@@ -163,7 +163,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     @Override
     public long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi) {
         if (rowLo > 0) {
-            return getDataVectorSizeAt(auxMemAddr, rowHi) - getDataVectorSizeAt(auxMemAddr, rowLo - 1);
+            return getDataVectorSizeAt(auxMemAddr, rowHi) - getDataVectorOffset(auxMemAddr, rowLo);
         }
         return getDataVectorSizeAt(auxMemAddr, rowHi);
     }
