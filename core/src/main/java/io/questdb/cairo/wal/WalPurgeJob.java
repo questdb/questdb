@@ -153,12 +153,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
             boolean tableDropped = false;
             discoverWalSegments();
-            discoverSequencerParts();
+            int seqPartsCount = discoverSequencerParts();
 
             if (logic.hasOnDiskSegments()) {
 
                 try {
-                    tableDropped = fetchSequencerPairs();
+                    tableDropped = fetchSequencerPairs(seqPartsCount);
                 } catch (Throwable th) {
                     logic.releaseLocks();
                     throw th;
@@ -218,8 +218,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void discoverSequencerParts() {
+    private int discoverSequencerParts() {
         Path path = setSeqPartPath(tableToken);
+        int partsFound = 0;
         if (ff.exists(path)) {
             long p = ff.findFirst(path);
             if (p > 0) {
@@ -232,6 +233,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             try {
                                 final int partNo = Numbers.parseInt(walName);
                                 logic.trackSeqPart(partNo);
+                                partsFound++;
                             } catch (NumericException ne) {
                                 // Non-Part file directory, ignore.
                             }
@@ -242,6 +244,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 }
             }
         }
+        return partsFound;
     }
 
     private void discoverWalSegments() {
@@ -317,7 +320,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private boolean fetchSequencerPairs() {
+    private boolean fetchSequencerPairs(int partsFound) {
         setTxnPath(tableToken);
         if (!engine.isTableDropped(tableToken)) {
             try {
@@ -335,7 +338,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
                 TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
                 try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, lastAppliedTxn)) {
-                    logic.trackCurrentSeqPart(transactionLogCursor.getPartNo());
+                    int txnPartSize = transactionLogCursor.getPartitionSize();
+                    long currentSeqPart = getCurrentSeqPart(tableToken, lastAppliedTxn, txnPartSize, partsFound);
+                    logic.trackCurrentSeqPart(currentSeqPart);
                     while (onDiskWalIDSet.size() > 0 && transactionLogCursor.hasNext()) {
                         int walId = transactionLogCursor.getWalId();
                         if (onDiskWalIDSet.remove(walId) != -1) {
@@ -420,6 +425,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).$();
     }
 
+    protected long getCurrentSeqPart(TableToken tableToken, long lastAppliedTxn, int txnPartSize, int partsFound) {
+        // There can be more advanced override which uses more parameters than this implementation.
+        if (txnPartSize > 0) {
+            // we don't want to purge the part where the last txn is in. Txn is 1-based.
+            return (lastAppliedTxn - 1) / txnPartSize;
+        }
+        return Long.MAX_VALUE;
+    }
+
     @Override
     protected boolean runSerially() {
         final long t = clock.getTicks();
@@ -434,10 +448,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             } else {
                 LOG.info().$("skipping, locked out").$();
             }
-            return false;
-        } else {
-            return false;
         }
+        return false;
     }
 
     public interface Deleter {

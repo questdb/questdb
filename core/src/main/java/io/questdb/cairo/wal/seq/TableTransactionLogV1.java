@@ -232,11 +232,6 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
 
         @Override
-        public long getPartNo() {
-            return -1;
-        }
-
-        @Override
         public int getSegmentId() {
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
         }
@@ -284,6 +279,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         @Override
         public void toMinTxn() {
             toTop();
+        }
+
+        @Override
+        public int getPartitionSize() {
+            return 0;
         }
 
         @Override

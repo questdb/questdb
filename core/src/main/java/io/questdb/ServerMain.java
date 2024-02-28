@@ -311,7 +311,7 @@ public class ServerMain implements Closeable {
 
                         if (walSupported) {
                             sharedPool.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));
-                            final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
+                            final WalPurgeJob walPurgeJob = config.getFactoryProvider().getWalJobFactory().createWalPurgeJob(engine);
                             engine.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
                             walPurgeJob.delayByHalfInterval();
                             sharedPool.assign(walPurgeJob);
