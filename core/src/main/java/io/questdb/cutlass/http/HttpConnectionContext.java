@@ -783,6 +783,42 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return processor;
     }
 
+    private HttpRequestProcessor checkProcessorValidForRequest(
+            Utf8Sequence method,
+            HttpRequestProcessor processor,
+            boolean chunked,
+            boolean multipartRequest,
+            long contentLength,
+            boolean multipartProcessor
+    ) {
+        if (Utf8s.equalsAscii("POST", method) || Utf8s.equalsAscii("PUT", method)) {
+            if (!multipartProcessor) {
+                if (multipartRequest) {
+                    return rejectRequest(HTTP_NOT_FOUND, "Method (multipart POST) not supported");
+                } else {
+                    return rejectRequest(HTTP_NOT_FOUND, "Method not supported");
+                }
+            }
+            if (chunked && contentLength > 0) {
+                return rejectRequest(HTTP_BAD_REQUEST, "Invalid chunked request; content-length specified");
+            }
+            if (!chunked && !multipartRequest && contentLength < 0) {
+                return rejectRequest(HTTP_BAD_REQUEST, "Content-length not specified for POST/PUT request");
+            }
+        } else if (Utf8s.equalsAscii("GET", method)) {
+            if (chunked || multipartRequest || contentLength > 0) {
+                return rejectRequest(HTTP_BAD_REQUEST, "GET request method cannot have content");
+            }
+            if (multipartProcessor) {
+                return rejectRequest(HTTP_NOT_FOUND, "Method GET not supported");
+            }
+        } else {
+            return rejectRequest(HTTP_BAD_REQUEST, "Method not supported");
+        }
+
+        return processor;
+    }
+
     private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {
         boolean busyRecv = true;
         try {
@@ -851,29 +887,22 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     }
                 }
 
+                processor = checkProcessorValidForRequest(
+                        headerParser.getMethod(),
+                        processor,
+                        chunked,
+                        multipartRequest,
+                        contentLength,
+                        multipartProcessor
+                );
+
                 if (chunked) {
-                    if (!multipartProcessor) {
-                        // bad request - regular request for processor that expects multipart
-                        processor = rejectRequest(HTTP_NOT_FOUND, "method (chunked POST) not supported");
-                    }
                     busyRecv = consumeChunked(processor, headerEnd, read, newRequest);
                 } else if (multipartRequest) {
-                    if (!multipartProcessor) {
-                        // bad request - multipart request for processor that doesn't expect multipart
-                        processor = rejectRequest(HTTP_NOT_FOUND, "method (multipart POST) not supported");
-                    }
                     busyRecv = consumeMultipart(socket, processor, headerEnd, read, newRequest, rescheduleContext);
-                } else if (contentLength > -1) {
-                    if (!multipartProcessor) {
-                        processor = rejectRequest(HTTP_NOT_FOUND, "method (POST) not supported");
-                    }
+                } else if (contentLength > 0) {
                     busyRecv = consumeContent(contentLength, socket, processor, headerEnd, read, newRequest);
                 } else {
-                    if (multipartProcessor) {
-                        // bad request - regular request for processor that expects multipart
-                        processor = rejectRequest(HTTP_BAD_REQUEST, "Bad request. Multipart POST expected.");
-                    }
-
                     // Do not expect any more bytes to be sent to us before
                     // we respond back to client. We will disconnect the client when
                     // they abuse protocol. In addition, we will not call processor
@@ -1034,6 +1063,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 simpleResponse().sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
             }
             reset();
+        }
+
+        @Override
+        public void resumeSend(
+                HttpConnectionContext context
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+            onRequestComplete(context);
         }
     }
 }
