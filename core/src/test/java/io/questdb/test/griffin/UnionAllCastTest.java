@@ -34,17 +34,17 @@ public class UnionAllCastTest extends AbstractCairoTest {
         // we include byte <-> bool cast to make sure
         // sym <-> sym cast it not thrown away as redundant
         testUnionAll(
-                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\tr\n" +
-                        "true\t51\tI\t-24455\t-230430837\t-8323443786521150653\t0.0212\t0.33747075654972813\t1970-01-01T00:00:55.172Z\t1970-01-01T00:00:00.000001Z\t0x994c39efcb88eb88810d53a53367e79138e4be9e19321b57832dd27952d949d8\t00000000 a5 18 93 bd 0b 61 f5 5d d0 eb\t010100\t01001111011100\tzyjh\tjzgum6yb\tPGLUO\n" +
-                        "true\t42\tZ\t-23702\t-210935524\t4502522085684189707\t0.7668\t0.4416432347777828\t1970-01-01T00:32:23.671Z\t1970-01-01T00:00:00.000001Z\t0x30f5a8b9a8a2672d1fae11870231bf0c54f33e997d4c2e14540bc0127276f42c\t00000000 84 52 d9 6f 04 ab 27 47 8f 23\t010001\t01100011100011\t46ng\tkwezzxdv\tNWIFF\n" +
-                        "true\t102\tB\t25721\t-1309308188\t8490886945852172597\t0.0930\t0.706473302224657\t1970-01-01T01:11:40.508Z\t1970-01-01T00:00:00.000001Z\t0x4a27205d291d7f124c83d07de0778e771bd70aaefd486767588c16c272288827\t00000000 52 d0 29 26 c5 aa da 18 ce 5f\t000001\t11011011111101\te7d9\t22y0ef3h\t\n" +
-                        "false\t36\tC\t2578\t-799774729\t812677186520066053\t0.0891\t0.7873229912811514\t1970-01-01T00:50:51.249Z\t1970-01-01T00:00:00.000000Z\t0x7cb055c54725b9527a19164d807cee6134570a2bee44673552c395ffb8982d58\t\t111100\t11010010000101\tsgzj\txp0bvd4d\tDTNPH\n" +
-                        "false\t33\tP\t-21417\t992057087\t-6482694999745905510\t0.9130\t0.8813290192134411\t1970-01-01T01:55:59.541Z\t1970-01-01T00:00:00.000001Z\t0x7d4dc4398a4592a6561fb054b568947d3e2ed2ca0fea47416fff79101ec5c1cf\t\t110100\t00100001101110\trr8p\tf6fdj7pr\t\n" +
-                        "false\t102\tJ\t-13027\t73575701\t8920866532787660373\t0.2992\t0.0843832076262595\t1970-01-01T00:10:02.536Z\t1970-01-01T00:00:00.000000Z\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\t00000000 91 3b 72 db f3 04 1b c7 88 de\t110110\t11001100100010\txn8n\t0n2gm6r7\tHFOWL\n" +
-                        "false\t40\tX\t4635\t-342047842\t6854658259142399220\t0.1911\t0.4022810626779558\t1970-01-01T01:24:18.302Z\t1970-01-01T00:00:00.000001Z\t0x3239ad1b0411a66a10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed330\t00000000 de e4 7c d2 35 07 42 fc 31 79\t110000\t11110001011010\tp1d7\tp2n3hk69\t\n" +
-                        "true\t88\tZ\t-13523\t-360860352\t-7266580375914176030\t0.7998\t0.16381374773748514\t1970-01-01T00:22:51.747Z\t1970-01-01T00:00:00.000001Z\t0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\t00000000 ac 37 c8 cd 82 89 2b 4d 5f f6\t010101\t11100011000001\tu7g3\tqjuztt7j\tCKYLS\n" +
-                        "true\t42\tD\t27519\t1235206821\t-4116381468144676168\t0.4856\t0.5065228336156442\t1970-01-01T02:04:31.430Z\t1970-01-01T00:00:00.000001Z\t0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\t\t101100\t10011001010000\tsfw9\tvbw85v0q\t\n" +
-                        "false\t64\tV\t-31322\t-283321892\t3446015290144635451\t0.1064\t0.49765193229684157\t1970-01-01T02:44:02.834Z\t1970-01-01T00:00:00.000001Z\t0xb20e1900caff819aaec65e34419d1077db217d41156b2ee1a90c04663c808638\t\t000000\t11010111011010\tpp3d\tur9ps7wg\tYPHRI\n",
+                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\tr\ts\n" +
+                        "true\t37\tO\t10549\t171760612\t8503557900983561786\t0.7586\t0.5913874468544745\t1970-01-01T00:05:56.479Z\t1970-01-01T00:00:00.000001Z\t0x434524824ca84f523ed391560ac327544a27205d291d7f124c83d07de0778e77\t00000000 29 26 c5 aa da 18 ce 5f b2 8b\t101000\t11000111111100\t6jq4\tn3ub6zju\tCKFMQ\tᣮաf@ץ\n" +
+                        "false\t113\tY\t21020\t-1915752164\t5922689877598858022\t0.4346\t0.7195457109208119\t1970-01-01T00:40:51.578Z\t1970-01-01T00:00:00.000000Z\t0x20cfa22cd22bf054483c83d88ac674e3894499a1a1680580cfedff23a67d918f\t00000000 07 b1 32 57 ff 9a ef 88 cb 4b\t001011\t01000101000010\txf81\tcbj71euv\tLNYRZ\t9іa\uDA76\uDDD4*\n" +
+                        "true\t62\tP\t13143\t-770962341\t-4036499202601723677\t0.8403\t0.5794665369115236\t1970-01-01T02:26:24.738Z\t1970-01-01T00:00:00.000000Z\t0x7f19777ec13680558a2d082bfad3aa844a20938221fd7f431bd29676f6902e64\t00000000 dd 44 11 e2 a3 24 4e 44 a8 0d\t001110\t10101011111110\tnz3p\tz1rvm419\tGIJYD\t\n" +
+                        "false\t79\tN\t-29677\t-8264817\t-9118587154366063429\t0.6397\t0.798471808479839\t1970-01-01T00:02:12.849Z\t1970-01-01T00:00:00.000001Z\t0xb19ddb7ff5abcafec82c35a389f834dababcd0482f05618f926cdd99e63abb35\t\t001001\t11010000011000\tgj7w\txd3qr0fm\tQEMXD\t\n" +
+                        "false\t123\tJ\t-4254\t-735934368\t8384866408379441071\t0.5235\t0.5778817852306684\t1970-01-01T01:12:18.900Z\t\t0x705380a68d53d93c2692845742d6674742bdf2c301f7f43b9747f18a1ed2ef46\t\t010001\t01000000100001\tz403\trcc9nh2x\tDHHGG\tX\uDA8B\uDFC4︵Ƀ^\n" +
+                        "false\t102\tJ\t-13027\t73575701\t8920866532787660373\t0.2992\t0.0843832076262595\t1970-01-01T00:10:02.536Z\t1970-01-01T00:00:00.000000Z\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\t00000000 91 3b 72 db f3 04 1b c7 88 de\t110110\t11001100100010\txn8n\t0n2gm6r7\tHFOWL\t͛Ԉ龘и\uDA89\uDFA4\n" +
+                        "true\t62\tL\t5639\t-1418341054\t3152466304308949756\t0.7664\t0.4138164748227684\t1970-01-01T02:34:54.347Z\t\t0x6698c6c186b7571a9cba3ef59083484d98c2d832d83de9934a0705e1136e872b\t00000000 78 b5 b9 11 53 d0 fb 64 bb 1a\t011110\t01011100110001\tqytg\t7kfnr23n\tWEKGH\t\uDB8D\uDE4Eᯤ\\篸{\n" +
+                        "false\t33\tL\t-20409\t-712702244\t-6190031864817509934\t0.5811\t0.4971342426836798\t1970-01-01T01:17:56.168Z\t\t0x4b0a72b3339b8c7c1872e79ea10322460cb5f439cbc22e9d1f0481ab7acd1f4a\t\t101010\t10101111000001\tttz9\tnzxtf741\t\t|\\軦۽㒾\n" +
+                        "true\t92\tP\t4215\t-889224806\t8889492928577876455\t0.0694\t0.6697969295620055\t1970-01-01T00:02:10.728Z\t1970-01-01T00:00:00.000001Z\t0x3d9491e7e14eba8e1de93a9cf1483e290ec6c3651b1c029f825c96def9f2fcc2\t\t010111\t10110011101001\tvgyb\tg6mmvcdb\tZRMFM\t\n" +
+                        "true\t107\tG\t-5240\t-1121895896\t-2000273984235276379\t0.1834\t0.2711532808184136\t1970-01-01T00:55:56.811Z\t1970-01-01T00:00:00.000001Z\t0x76ffd1a81bf39767b92d0771d78263eb5479ae0482582ad03c84de8f7bd9235d\t00000000 a7 6a 71 34 e0 b0 e9 98 f7 67\t100011\t00001000010100\tvs9s\tn0vjumxz\tLDGLO\ṱ\uD8F2\uDE8E>\uDAE6\uDEE3g\n",
                 // column "u" is not ultimately selected from neither X nor Y
                 // we expect this column to be ignored by optimiser, and also
                 // we expect optimiser to correctly select column "b" from Y as
@@ -67,7 +67,8 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         " rnd_geohash(14) n," +
                         " rnd_geohash(20) o," +
                         " rnd_geohash(40) p," +
-                        " rnd_str(5,5,1) r " +
+                        " rnd_str(5,5,1) r, " +
+                        " rnd_varchar(5,5,1) s " +
                         "from long_sequence(5))",
                 "create table y as (" +
                         "select" +
@@ -87,7 +88,8 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         " rnd_geohash(14) n," +
                         " rnd_geohash(20) o," +
                         " rnd_geohash(40) p," +
-                        " rnd_str(5,5,1) r " +
+                        " rnd_str(5,5,1) r, " +
+                        " rnd_varchar(5,5,1) s " +
                         "from long_sequence(5))"
         );
     }
@@ -1917,6 +1919,27 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharVarchar() throws Exception {
+        // we include byte <-> bool cast to make sure
+        // bool <-> bool cast it not thrown away as redundant
+        testUnionAll(
+                "a\tc\n" +
+                        "false\tZ끫\uDB53\uDEDA\n" +
+                        "false\t\"\uDB87\uDFA35\n" +
+                        "false\t톬F\uD9E6\uDECD\n" +
+                        "false\tЃَᯤ\n" +
+                        "false\t篸{\uD9D7\uDFE5\n" +
+                        "76\t핕\u05FA씎鈄\n" +
+                        "21\t\uDB8C\uDD1BȞ鼷G\n" +
+                        "35\t\uD8D1\uDD54ZzV\n" +
+                        "117\tB͛Ԉ龘\n" +
+                        "103\tL➤~2\n",
+                "create table x as (select rnd_boolean() a, rnd_varchar(3,3,1) c from long_sequence(5))",
+                "create table y as (select rnd_byte() b, rnd_varchar(4,4,1) c from long_sequence(5))"
+        );
+    }
+
+    @Test
     public void testStringNull() throws Exception {
         testUnionAll(
                 "a\tc\n" +
@@ -1946,6 +1969,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\tSWH\n" +
                         "\tRXP\n" +
                         "\tHNR\n"
+        );
+    }
+
+    @Test
+    public void testVarcharNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "衞͛Ԉ\t\n" +
+                        "\uD93C\uDEC1ӍK\t\n" +
+                        "\uD905\uDCD0\\ꔰ\t\n" +
+                        "\u008B}ѱ\t\n" +
+                        "\uD96C\uDF5FƐ㙎\t\n" +
+                        "\t\u1755\uDA1F\uDE98|\n" +
+                        "\t鈄۲ӄ\n" +
+                        "\tȞ鼷G\n" +
+                        "\t\uF644䶓z\n" +
+                        "\t\n",
+                "create table x as (select rnd_varchar(3,3,1) a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_varchar(3,3,1) c from long_sequence(5))",
+                true
         );
     }
 
@@ -2201,23 +2244,28 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "YUDEYYQEHB\n",
                 "create table x as (select rnd_uuid4() a from long_sequence(5))",
                 "create table y as (select rnd_str() b from long_sequence(5))",
-                false
+                true
         );
+    }
 
-        testUnion(
+    @Test
+    public void testUuidVarchar() throws Exception {
+        testUnionAll(
                 "a\n" +
-                        "7f98b0c7-4238-437e-b6ee-542d654d2259\n" +
-                        "7c1b058a-f93c-4808-abaf-c47f4abcd93b\n" +
-                        "63eb3740-c80f-461e-9c8a-fa23e6ca6ca1\n" +
-                        "c2593f82-b430-428d-84a0-9f29df637e38\n" +
-                        "58dfd08e-eb9c-439e-8ec8-2869edec121b\n" +
-                        "JWCPSWHYR\n" +
-                        "EHNRX\n" +
-                        "SXUXI\n" +
-                        "TGPGW\n" +
-                        "YUDEYYQEHB\n"
+                        "7eb6d806-49d1-4fe3-8e4a-7f661df6c32b\n" +
+                        "9502128c-da08-47fe-bcdb-8640c107a692\n" +
+                        "a90c0466-3c80-4638-a011-214bad888a69\n" +
+                        "aec65e34-419d-4077-9b21-7d41156b2ee1\n" +
+                        "7b5dd2b8-513b-41e7-b20e-1900caff819a\n" +
+                        "핕\u05FA씎鈄۲ӄǈ2L\n" +
+                        "\uD95A\uDFD9唶鴙\uDAE2\uDC5E͛Ԉ\n" +
+                        "蝰L➤~2\uDAC6\uDED3ڎBH뤻\n" +
+                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46\n" +
+                        "Fг\uDBAE\uDD12ɜ|\\軦۽\n",
+                "create table x as (select rnd_uuid4() a from long_sequence(5))",
+                "create table y as (select rnd_varchar() b from long_sequence(5))",
+                true
         );
-
     }
 
     @Test
