@@ -3991,7 +3991,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
 
                         if (ff.exists(path)) {
-
                             path.trimTo(plen);
                             LOG.info().$("indexing [path=").$(path).I$();
 
