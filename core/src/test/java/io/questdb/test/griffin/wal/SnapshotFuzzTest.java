@@ -72,6 +72,39 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testSnapshotFrequentTableDrop() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        fuzzer.setFuzzProbabilities(
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0.1,
+                0,
+                0.5,
+                1
+        );
+
+        fuzzer.setFuzzCounts(
+                rnd.nextBoolean(),
+                rnd.nextInt(2_000_000),
+                rnd.nextInt(1000),
+                rnd.nextInt(3),
+                rnd.nextInt(5),
+                rnd.nextInt(1000),
+                rnd.nextInt(1_000_000),
+                5 + rnd.nextInt(10)
+        );
+
+        setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
+        runFuzzWithSnapshot(rnd);
+    }
+
+
+    @Test
     public void testSnapshotFullFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
         fullFuzz(rnd);
@@ -226,7 +259,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
             });
             asyncWalApply.start();
 
-            Os.sleep(rnd.nextLong(snapshotIndex * 100L));
+            Os.sleep(rnd.nextLong(snapshotIndex * 50L));
             // Make snapshot here
             createSnapshot();
 
