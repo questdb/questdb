@@ -28,19 +28,20 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.*;
 
-public class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
+public class VarcharBindVariable extends VarcharFunction implements ScalarFunction, Mutable {
     private final int floatScale;
+    // used as a cache, just to avoid converting on every getStr call
     private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private boolean isNull = true;
 
-    public StrBindVariable(int floatScale) {
+    public VarcharBindVariable(int floatScale) {
         this.floatScale = floatScale;
     }
 
@@ -236,6 +237,6 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("?::string");
+        sink.val("?::varchar");
     }
 }

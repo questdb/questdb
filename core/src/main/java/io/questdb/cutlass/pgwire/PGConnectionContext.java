@@ -634,6 +634,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         CharacterStoreEntry e = characterStore.newEntry();
+        // TODO: check if defined as VARCHAR
         if (Utf8s.utf8ToUtf16(address, address + valueLen, e)) {
             bindVariableService.setStr(index, characterStore.toImmutable());
         } else {
