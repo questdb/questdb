@@ -338,7 +338,7 @@ public interface Sender extends Closeable {
     final class LineSenderBuilder {
         private static final int AUTO_FLUSH_DISABLED = 0;
         private static final int DEFAULT_AUTO_FLUSH_ROWS = 600;
-        private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100_000; // 100KB/s, keep in sync with the contract of the configuration method
+        private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
