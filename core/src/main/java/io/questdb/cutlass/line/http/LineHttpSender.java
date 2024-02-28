@@ -55,8 +55,10 @@ public final class LineHttpSender implements Sender {
     private static final int RETRY_MAX_JITTER_MS = 10;
     private final String authToken;
     private final int autoFlushRows;
+    private final int baseTimeoutMillis;
     private final String host;
     private final long maxRetriesNanos;
+    private final long minRequestThroughput;
     private final String password;
     private final int port;
     private final CharSequence questdbVersion;
@@ -71,7 +73,7 @@ public final class LineHttpSender implements Sender {
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, ClientTlsConfiguration tlsConfig, int autoFlushRows, String authToken, String username, String password, long maxRetriesNanos) {
+    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, ClientTlsConfiguration tlsConfig, int autoFlushRows, String authToken, String username, String password, long maxRetriesNanos, long minRequestThroughput) {
         assert authToken == null || (username == null && password == null);
         this.maxRetriesNanos = maxRetriesNanos;
         this.host = host;
@@ -80,6 +82,8 @@ public final class LineHttpSender implements Sender {
         this.authToken = authToken;
         this.username = username;
         this.password = password;
+        this.minRequestThroughput = minRequestThroughput;
+        this.baseTimeoutMillis = clientConfiguration.getTimeout();
         if (tlsConfig != null) {
             this.client = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
             this.url = "https://" + host + ":" + port + PATH;
@@ -337,10 +341,27 @@ public final class LineHttpSender implements Sender {
 
         long retryingDeadlineNanos = Long.MIN_VALUE;
         int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
+        int contentLen = request.getContentLen();
+        int actualTimeoutMillis = baseTimeoutMillis;
+        if (minRequestThroughput > 0) {
+            long throughputTimeoutBonusMillis = (contentLen * 1_000L / minRequestThroughput);
+            if (throughputTimeoutBonusMillis + actualTimeoutMillis > Integer.MAX_VALUE) {
+                actualTimeoutMillis = Integer.MAX_VALUE;
+            } else {
+                actualTimeoutMillis += (int) throughputTimeoutBonusMillis;
+            }
+        }
         for (; ; ) {
             try {
-                HttpClient.ResponseHeaders response = request.send();
-                response.await();
+                long beforeRequest = System.nanoTime();
+                HttpClient.ResponseHeaders response = request.send(actualTimeoutMillis);
+                long elapsedNanos = System.nanoTime() - beforeRequest;
+                int remainingMillis = actualTimeoutMillis - (int) (elapsedNanos / 1_000_000L);
+                if (remainingMillis <= 0) {
+                    throw new HttpClientException("Request timed out");
+                }
+
+                response.await(remainingMillis);
                 DirectUtf8Sequence statusCode = response.getStatusCode();
                 if (isSuccessResponse(statusCode)) {
                     consumeChunkedResponse(response); // if any

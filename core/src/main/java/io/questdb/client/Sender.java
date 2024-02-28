@@ -338,6 +338,7 @@ public interface Sender extends Closeable {
     final class LineSenderBuilder {
         private static final int AUTO_FLUSH_DISABLED = 0;
         private static final int DEFAULT_AUTO_FLUSH_ROWS = 600;
+        private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100_000; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
@@ -356,6 +357,7 @@ public interface Sender extends Closeable {
         private int bufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
         private String host;
         private int httpTimeout = PARAMETER_NOT_SET_EXPLICITLY;
+        private long minRequestThroughput = PARAMETER_NOT_SET_EXPLICITLY;
         private String httpToken;
         private String keyId;
         private int maximumBufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
@@ -529,12 +531,13 @@ public interface Sender extends Closeable {
             if (protocol == PROTOCOL_HTTP) {
                 int actualAutoFlushRows = autoFlushRows == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_AUTO_FLUSH_ROWS : autoFlushRows;
                 long actualMaxRetriesNanos = retryTimeoutMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
+                long actualMinRequestThroughput = minRequestThroughput == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MIN_REQUEST_THROUGHPUT : minRequestThroughput;
                 ClientTlsConfiguration tlsConfig = null;
                 if (tlsEnabled) {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                     tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
                 }
-                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos);
+                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos, actualMinRequestThroughput);
             }
             assert protocol == PROTOCOL_TCP;
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
@@ -779,6 +782,14 @@ public interface Sender extends Closeable {
                     } else if (!Chars.equalsIgnoreCase("on", sink)) {
                         throw new LineSenderException("invalid auto_flush [value=").put(sink).put(", allowed-values=[on, off]]");
                     }
+                } else if (Chars.equals("request_timeout", sink)) {
+                    pos = getValue(configurationString, pos, sink, "request_timeout");
+                    int requestTimeout = parseIntValue(sink, "request_timeout");
+                    httpTimeoutMillis(requestTimeout);
+                } else if (Chars.equals("request_min_throughput", sink)) {
+                    pos = getValue(configurationString, pos, sink, "request_min_throughput");
+                    int requestMinThroughput = parseIntValue(sink, "request_min_throughput");
+                    minRequestThroughput(requestMinThroughput);
                 } else {
                     // ignore unknown keys, unless they are malformed
                     if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
@@ -825,6 +836,33 @@ public interface Sender extends Closeable {
                         .put("[protocol=").put(protocol).put("]");
             }
             protocol = PROTOCOL_HTTP;
+            return this;
+        }
+
+        /**
+         * Minimum expected throughput in bytes per second for HTTP requests.
+         * <br>
+         * If the throughput is lower than this value, the connection will time out.
+         * The value is expressed as a number of bytes per second. This is used to calculate additional request timeout,
+         * on top of {@link #httpTimeoutMillis(int)}
+         * <br>
+         * This is useful when you are sending large batches of data, and you want to ensure that the connection
+         * does not time out while sending the batch. Setting this to 0 disables the throughput calculation and the
+         * connection will only time out based on the {@link #httpTimeoutMillis(int)} value.
+         * <p>
+         * The default is 100 KiB/s.
+         * This is only used when communicating over HTTP transport and it's illegal to call this method when
+         * communicating over TCP transport.
+         *
+         * @param minRequestThroughput minimum expected throughput in bytes per second for HTTP requests.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder minRequestThroughput(int minRequestThroughput) {
+            if (minRequestThroughput < 1) {
+                throw new LineSenderException("minimum request throughput must not be negative ")
+                        .put("[minRequestThroughput=").put(minRequestThroughput).put("]");
+            }
+            this.minRequestThroughput = minRequestThroughput;
             return this;
         }
 
@@ -1091,6 +1129,9 @@ public interface Sender extends Closeable {
                 }
                 if (httpTimeout != PARAMETER_NOT_SET_EXPLICITLY) {
                     throw new LineSenderException("HTTP timeout is not supported for TCP protocol");
+                }
+                if (minRequestThroughput != PARAMETER_NOT_SET_EXPLICITLY) {
+                    throw new LineSenderException("minimum request throughput is not supported for TCP protocol");
                 }
                 if (maximumBufferCapacity != bufferCapacity) {
                     throw new LineSenderException("maximum buffer capacity must be the same as initial buffer capacity for TCP protocol")

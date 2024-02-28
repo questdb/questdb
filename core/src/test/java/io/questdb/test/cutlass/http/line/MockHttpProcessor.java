@@ -29,6 +29,7 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
@@ -48,6 +49,19 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
     private ActualRequest actualRequest = new ActualRequest();
     private ExpectedRequest expectedRequest = new ExpectedRequest();
     private Response lastResortResponse;
+
+    public MockHttpProcessor delayedReplyWithStatus(int statusCode, int delayMillis) {
+        Response response = new Response();
+        response.responseStatusCode = statusCode;
+        response.delayMillis = delayMillis;
+        responses.add(response);
+
+        expectedRequests.add(expectedRequest);
+        expectedRequest = new ExpectedRequest();
+
+        return this;
+    }
+
 
     public MockHttpProcessor delayedReplyWithStatus(int statusCode, CountDownLatch delayLatch) {
         Response response = new Response();
@@ -114,6 +128,8 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         }
         if (response.delayLatch != null) {
             TestUtils.await(response.delayLatch);
+        } else if (response.delayMillis > 0) {
+            Os.sleep(response.delayMillis);
         }
         if (response.responseContent != null) {
             HttpChunkedResponse chunkedResponseSocket = context.getChunkedResponse();
@@ -218,6 +234,7 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
     private static class Response {
         private String contentType;
         private CountDownLatch delayLatch;
+        private int delayMillis;
         private String responseContent;
         private int responseStatusCode;
     }

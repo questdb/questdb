@@ -299,6 +299,64 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
+    public void testTimeoutConfString() throws Exception {
+        CountDownLatch delayLatch = new CountDownLatch(1);
+        MockHttpProcessor mock = new MockHttpProcessor()
+                .delayedReplyWithStatus(204, delayLatch);
+
+        testWithMock(mock, sender -> {
+                    sender.table("test")
+                            .symbol("sym", "bol")
+                            .doubleColumn("x", 1.0)
+                            .atNow();
+                    try {
+                        sender.flush();
+                        Assert.fail("Exception expected");
+                    } catch (LineSenderException e) {
+                        TestUtils.assertContains(
+                                e.getMessage(),
+                                "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno="  //errno depends on OS
+                        );
+                    } finally {
+                        delayLatch.countDown();
+                    }
+                }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";request_timeout=100;retry_timeout=0;")
+        );
+    }
+
+    @Test
+    public void testMinRequestThroughputWithConfigString() throws Exception {
+        MockHttpProcessor mock = new MockHttpProcessor()
+                .delayedReplyWithStatus(204, 1000);
+
+        testWithMock(mock, sender -> {
+                    sender.table("test")
+                            .symbol("sym", "bol")
+                            .doubleColumn("x", 1.0)
+                            .atNow();
+
+                    sender.flush();
+                }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;") // 1ms base timeout and 1 byte per second to extend the timeout
+        );
+    }
+
+    @Test
+    public void testMinRequestThroughput() throws Exception {
+        MockHttpProcessor mock = new MockHttpProcessor()
+                .delayedReplyWithStatus(204, 1000);
+
+        testWithMock(mock, sender -> {
+                    sender.table("test")
+                            .symbol("sym", "bol")
+                            .doubleColumn("x", 1.0)
+                            .atNow();
+
+                    sender.flush();
+                }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(1).minRequestThroughput(1).retryTimeoutMillis(0)) // 1ms base timeout and 1 byte per second to extend the timeout
+        );
+    }
+
+    @Test
     public void testTokenAuth() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test,sym=bol x=1.0\n")

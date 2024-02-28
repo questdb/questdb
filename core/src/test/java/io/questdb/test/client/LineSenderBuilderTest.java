@@ -822,6 +822,30 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testMinRequestThroughputCannotBeNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).http().minRequestThroughput(-100).build();
+                fail("minimum request throughput must not be negative");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "minimum request throughput must not be negative [minRequestThroughput=-100]");
+            }
+        });
+    }
+
+    @Test
+    public void testMinRequestThroughputNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).minRequestThroughput(1).build();
+                fail("min request throughput is not be supported for TCP and the builder should fail-fast");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "minimum request throughput is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
     public void testUsernamePasswordAuthNotSupportedForTcp() throws Exception {
         assertMemoryLeak(() -> {
             try {
