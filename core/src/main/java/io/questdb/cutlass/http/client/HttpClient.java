@@ -252,6 +252,12 @@ public abstract class HttpClient implements QuietCloseable {
         private int state;
         private boolean urlEncode = false;
 
+        public Request DELETE() {
+            assert state == STATE_REQUEST;
+            state = STATE_URL;
+            return put("DELETE ");
+        }
+
         public Request GET() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
