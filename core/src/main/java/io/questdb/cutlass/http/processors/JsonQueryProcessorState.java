@@ -450,7 +450,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
             JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
             response.putAscii('{')
-                    .putAsciiQuoted("query").putAscii(':').putAscii("\"").escapeJsonStr(query).put("\"").putAscii(',')
+                    .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
                     .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("empty column in list")
                     .putAscii('}');
             response.sendChunk(true);
@@ -503,8 +503,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
             int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
             response.putAscii('{')
-                    .putAsciiQuoted("name").putAscii(':').putQuote().escapeJsonStr(columnNames.getQuick(columnIndex)).putQuote()
-                    .putAscii(',')
+                    .putAsciiQuoted("name").putAscii(':').putQuote().escapeJsonStr(columnNames.getQuick(columnIndex)).putQuote().putAscii(',')
                     .putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType))
                     .putAscii('}');
         }
@@ -868,7 +867,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             CharSequence query
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         response.putAscii('{')
-                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query).putAscii(',')
+                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query != null ? query : "").putQuote().putAscii(',')
                 .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
                 .putAsciiQuoted("position").putAscii(':').put(position)
                 .putAscii('}');
