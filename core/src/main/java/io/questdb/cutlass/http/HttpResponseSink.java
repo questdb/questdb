@@ -781,12 +781,15 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         public void sendStatusNoContent(int code, @Nullable CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            buffer.clearAndPrepareToWriteToBuffer();
-            headerImpl.status(httpVersion, code, null, -2L);
-            if (header != null) {
-                headerImpl.put(header).put(Misc.EOL);
+            if (!headerSent) {
+                buffer.clearAndPrepareToWriteToBuffer();
+                headerImpl.status(httpVersion, code, null, -2L);
+                if (header != null) {
+                    headerImpl.put(header).put(Misc.EOL);
+                }
+                prepareHeaderSink();
+                headerSent = true;
             }
-            prepareHeaderSink();
             flushSingle();
         }
 
