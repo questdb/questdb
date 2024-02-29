@@ -90,6 +90,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         totalBytesSent = 0;
         headersSent = false;
         chunkedRequestDone = false;
+        simple.clear();
         resetZip();
     }
 
@@ -659,6 +660,14 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     public class SimpleResponseImpl {
+        private boolean contentSent = false;
+        private boolean headerSent = false;
+
+        public void clear() {
+            contentSent = false;
+            headerSent = false;
+        }
+
         public void sendStatusJsonContent(
                 int code
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -683,12 +692,15 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         public void sendStatusNoContent(int code, @Nullable CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            buffer.clearAndPrepareToWriteToBuffer();
-            headerImpl.status(httpVersion, code, null, -2L);
-            if (header != null) {
-                headerImpl.put(header).put(Misc.EOL);
+            if (!headerSent) {
+                buffer.clearAndPrepareToWriteToBuffer();
+                headerImpl.status(httpVersion, code, null, -2L);
+                if (header != null) {
+                    headerImpl.put(header).put(Misc.EOL);
+                }
+                prepareHeaderSink();
+                headerSent = true;
             }
-            prepareHeaderSink();
             flushSingle();
         }
 
@@ -747,28 +759,35 @@ public class HttpResponseSink implements Closeable, Mutable {
                 @Nullable CharSequence cookieValue,
                 long contentLength
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            buffer.clearAndPrepareToWriteToBuffer();
-            final String std = headerImpl.status(httpVersion, code, contentType, contentLength);
-            if (header != null) {
-                headerImpl.put(header).put(Misc.EOL);
+            if (!headerSent) {
+                buffer.clearAndPrepareToWriteToBuffer();
+                headerImpl.status(httpVersion, code, contentType, contentLength);
+                if (header != null) {
+                    headerImpl.put(header).put(Misc.EOL);
+                }
+                if (cookieName != null) {
+                    setCookie(cookieName, cookieValue);
+                }
+                prepareHeaderSink();
+                headerSent = true;
             }
-            if (cookieName != null) {
-                setCookie(cookieName, cookieValue);
+
+            if (!contentSent) {
+                flushSingle();
+                buffer.clearAndPrepareToWriteToBuffer();
+                if (message == null) {
+                    sink.put(httpStatusMap.get(code)).putEOL();
+                } else {
+                    // this is ugly, add a putUtf16() method to the response sink?
+                    final Utf8StringSink utf8Sink = tlSink.get();
+                    utf8Sink.clear();
+                    utf8Sink.put(message);
+                    sink.put(utf8Sink).putEOL();
+                }
+                final boolean chunked = headerImpl.isChunked();
+                buffer.prepareToReadFromBuffer(chunked, chunked);
+                contentSent = true;
             }
-            prepareHeaderSink();
-            flushSingle();
-            buffer.clearAndPrepareToWriteToBuffer();
-            if (message == null) {
-                sink.put(std).putEOL();
-            } else {
-                // this is ugly, add a putUtf16() method to the response sink?
-                final Utf8StringSink utf8Sink = tlSink.get();
-                utf8Sink.clear();
-                utf8Sink.put(message);
-                sink.put(utf8Sink).putEOL();
-            }
-            final boolean chunked = headerImpl.isChunked();
-            buffer.prepareToReadFromBuffer(chunked, chunked);
             resumeSend();
         }
 
