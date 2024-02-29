@@ -61,10 +61,10 @@ public interface Map extends Mutable, Closeable, Reopenable {
     void merge(Map srcMap, MapValueMergeFunction mergeFunc);
 
     /**
-     * Reopens previously closed map with given key capacity and page size.
-     * Page size value is ignored if the map does not use heap to store keys and values.
+     * Reopens previously closed map with given key capacity and initial heap size.
+     * Heap size value is ignored if the map does not use heap to store keys and values.
      */
-    void reopen(int keyCapacity, int pageSize);
+    void reopen(int keyCapacity, int heapSize);
 
     void restoreInitialCapacity();
 
