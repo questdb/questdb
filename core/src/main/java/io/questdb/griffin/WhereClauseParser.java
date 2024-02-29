@@ -201,7 +201,8 @@ public final class WhereClauseParser implements Mutable {
                 || typeTag == ColumnType.DATE
                 || typeTag == ColumnType.STRING
                 || typeTag == ColumnType.SYMBOL
-                || typeTag == ColumnType.LONG;
+                || typeTag == ColumnType.LONG
+                || typeTag == ColumnType.VARCHAR;
     }
 
     private static void checkNodeValid(ExpressionNode node) throws SqlException {
