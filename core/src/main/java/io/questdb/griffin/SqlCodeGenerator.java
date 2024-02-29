@@ -69,6 +69,7 @@ import java.io.Closeable;
 import java.util.ArrayDeque;
 
 import static io.questdb.cairo.ColumnType.isStringyType;
+import static io.questdb.cairo.ColumnType.getGeoHashBits;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
@@ -1219,7 +1220,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoByteToStrCastFunction(
                                                 new GeoByteColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(fromType)
+                                                getGeoHashBits(fromType)
                                         )
                                 );
                                 break;
@@ -1227,7 +1228,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoShortToStrCastFunction(
                                                 new GeoShortColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
                                 break;
@@ -1235,7 +1236,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoIntToStrCastFunction(
                                                 new GeoIntColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
                                 break;
@@ -1243,7 +1244,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoLongToStrCastFunction(
                                                 new GeoLongColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
                                 break;
@@ -1524,7 +1525,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoByteToVarcharCastFunction(
                                                 new GeoByteColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(fromType)
+                                                getGeoHashBits(fromType)
                                         )
                                 );
                                 break;
@@ -1532,7 +1533,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoShortToVarcharCastFunction(
                                                 new GeoShortColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
                                 break;
@@ -1540,7 +1541,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoIntToVarcharCastFunction(
                                                 new GeoIntColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
                                 break;
@@ -1548,7 +1549,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoLongToVarcharCastFunction(
                                                 new GeoLongColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
                                 break;
