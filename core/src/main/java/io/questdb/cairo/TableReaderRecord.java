@@ -298,12 +298,12 @@ public class TableReaderRecord implements Record, Sinkable {
         return getRowId();
     }
 
-    @Override
+    @Override @Nullable
     public Utf8Sequence getVarcharA(int col) {
         return getVarchar(col, 1);
     }
 
-    @Override
+    @Override @Nullable
     public Utf8Sequence getVarcharB(int col) {
         return getVarchar(col, 2);
     }

@@ -68,6 +68,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.ArrayDeque;
 
+import static io.questdb.cairo.ColumnType.isStringyType;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
@@ -5499,6 +5500,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (typeA == typeB && typeA != ColumnType.SYMBOL) {
                 metadata.add(typesA.getColumnMetadata(i));
+            } else if (isStringyType(typeA) && isStringyType(typeB)) {
+                // STRING dominates VARCHAR, cast to it
+                metadata.add(new TableColumnMetadata(
+                        typesA.getColumnName(i),
+                        ColumnType.STRING
+                ));
+            }
+            // Special-case TIMESTAMP because an implicit parse-conversion from
+            // STRING/VARCHAR into TIMESTAMP exists, but we don't want to use it for UNION:
+            else if (isStringyType(typeA) && typeB == ColumnType.TIMESTAMP) {
+                metadata.add(typesA.getColumnMetadata(i));
+            } else if (isStringyType(typeB) && typeA == ColumnType.TIMESTAMP) {
+                metadata.add(new TableColumnMetadata(
+                        typesA.getColumnName(i),
+                        typeB
+                ));
             } else if (ColumnType.isToSameOrWider(typeB, typeA) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) {
                 // CHAR is "specially" assignable from SHORT, but we don't want that
                 metadata.add(typesA.getColumnMetadata(i));
@@ -5509,8 +5526,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         typesA.getColumnName(i),
                         typeB
                 ));
+            } else if (typeA == ColumnType.VARCHAR|| typeB == ColumnType.VARCHAR) {
+                // we can cast anything to varchar, but use it only if one of the types is already varchar
+                metadata.add(new TableColumnMetadata(
+                        typesA.getColumnName(i),
+                        ColumnType.VARCHAR
+                ));
             } else {
-                // we can cast anything to string
+                // string is the dominant fallback type to cast into
                 metadata.add(new TableColumnMetadata(
                         typesA.getColumnName(i),
                         ColumnType.STRING

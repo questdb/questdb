@@ -174,7 +174,7 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
+        return getStr(rec).length();
     }
 
     @Override
