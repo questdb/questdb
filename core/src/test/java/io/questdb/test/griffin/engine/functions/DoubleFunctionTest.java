@@ -45,7 +45,7 @@ public class DoubleFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
+    public void testGetChar() {
         function.getChar(null);
     }
 
@@ -160,37 +160,37 @@ public class DoubleFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256() {
+    public void testGetLong256() {
         function.getLong256(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256A() {
+    public void testGetLong256A() {
         function.getLong256A(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256B() {
+    public void testGetLong256B() {
         function.getLong256B(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testVarchar1() {
+    public void testGetVarchar1() {
         function.getVarchar(null, (Utf16Sink) null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testVarchar2() {
+    public void testGetVarchar2() {
         function.getVarchar(null, (Utf16Sink) null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testVarcharA() {
+    public void testGetVarcharA() {
         function.getVarcharA(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testVarcharB() {
+    public void testGetVarcharB() {
         function.getVarcharB(null);
     }
 }

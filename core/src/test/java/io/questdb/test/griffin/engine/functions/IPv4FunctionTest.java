@@ -44,7 +44,7 @@ public class IPv4FunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
+    public void testGetChar() {
         function.getChar(null);
     }
 

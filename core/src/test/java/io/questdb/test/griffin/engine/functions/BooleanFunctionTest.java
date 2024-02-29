@@ -69,7 +69,7 @@ public class BooleanFunctionTest {
     };
 
     @Test
-    public void testChar() {
+    public void testGetChar() {
         Assert.assertEquals('F', functionA.getChar(null));
         final BooleanFunction function = new BooleanFunction() {
             @Override
@@ -86,22 +86,22 @@ public class BooleanFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
+    public void testGetGeoByte() {
         functionA.getGeoByte(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
+    public void testGetGeoInt() {
         functionA.getGeoInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
+    public void testGetGeoLong() {
         functionA.getGeoLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
+    public void testGetGeoShort() {
         functionA.getGeoShort(null);
     }
 

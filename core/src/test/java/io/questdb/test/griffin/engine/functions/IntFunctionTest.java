@@ -46,7 +46,7 @@ public class IntFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
+    public void testGetChar() {
         function.getChar(null);
     }
 
