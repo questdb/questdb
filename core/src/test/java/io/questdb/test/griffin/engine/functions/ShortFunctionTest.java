@@ -141,17 +141,27 @@ public class ShortFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256() {
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
         function.getLong256(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256A() {
+    public void testGetLong256A() {
         function.getLong256A(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256B() {
+    public void testGetLong256B() {
         function.getLong256B(null);
     }
 }

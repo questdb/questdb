@@ -153,6 +153,16 @@ public class FloatFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetLong256() {
         function.getLong256(null, null);
     }
@@ -165,5 +175,25 @@ public class FloatFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong256B() {
         function.getLong256B(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarchar1() {
+        function.getVarchar(null, (Utf16Sink) null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarchar2() {
+        function.getVarchar(null, (Utf16Sink) null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharA() {
+        function.getVarcharA(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharB() {
+        function.getVarcharB(null);
     }
 }

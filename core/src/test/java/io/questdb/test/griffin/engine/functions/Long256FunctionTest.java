@@ -167,4 +167,14 @@ public class Long256FunctionTest {
     public void testTimestamp() {
         function.getTimestamp(null);
     }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
+    }
 }

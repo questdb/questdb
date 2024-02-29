@@ -217,17 +217,27 @@ public class BooleanFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256() {
+    public void testGetLong128Hi() {
+        functionA.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        functionA.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
         functionA.getLong256(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256A() {
+    public void testGetLong256A() {
         functionA.getLong256A(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256B() {
+    public void testGetLong256B() {
         functionA.getLong256B(null);
     }
 }
