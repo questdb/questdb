@@ -457,7 +457,7 @@ public class StrFunctionTest {
     }
 
     @Test
-    public void testGetSym() {
+    public void testGetSymbol() {
         TestUtils.assertEquals("a", function.getSymbol(null));
     }
 
