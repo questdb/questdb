@@ -1168,10 +1168,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(Utf8s.stringFromUtf8Bytes(value));
                 break;
             case ColumnType.FLOAT:
-                ((FloatBindVariable) function).value = SqlUtil.implicitCastStrAsFloat(Utf8s.stringFromUtf8Bytes(value));
+                ((FloatBindVariable) function).value = SqlUtil.implicitCastVarcharAsFloat(value);
                 break;
             case ColumnType.DOUBLE:
-                ((DoubleBindVariable) function).value = SqlUtil.implicitCastStrAsDouble(Utf8s.stringFromUtf8Bytes(value));
+                ((DoubleBindVariable) function).value = SqlUtil.implicitCastVarcharAsDouble(value);
                 break;
             case ColumnType.STRING:
                 ((StrBindVariable) function).setValue(value);
@@ -1183,7 +1183,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 SqlUtil.implicitCastStrAsLong256(Utf8s.stringFromUtf8Bytes(value), ((Long256BindVariable) function).value);
                 break;
             case ColumnType.UUID:
-                SqlUtil.implicitCastStrAsUuid(Utf8s.stringFromUtf8Bytes(value), ((UuidBindVariable) function).value);
+                SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
                 break;
             default:
                 reportError(function, ColumnType.STRING, index, name);
