@@ -213,7 +213,7 @@ public final class ColumnType {
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
-        return ((toType == fromType || tagOf(fromType) == tagOf(toType)) && (getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0))
+        return (tagOf(fromType) == tagOf(toType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
                 || isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isVarcharCast(fromType, toType)
