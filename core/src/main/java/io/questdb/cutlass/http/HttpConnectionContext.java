@@ -39,6 +39,7 @@ import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
+import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
 import static io.questdb.cutlass.http.HttpConstants.HEADER_TRANSFER_ENCODING;
 import static io.questdb.network.IODispatcher.*;
@@ -303,20 +304,25 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return this;
     }
 
-    public HttpRequestProcessor rejectRequest(int code) {
-        return rejectRequest(code, null);
-    }
-
     public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage) {
         return rejectRequest(code, userMessage, null, null);
     }
 
+    public HttpRequestProcessor rejectRequest(int code, byte authenticationType) {
+        return rejectRequest(code, null, null, null, authenticationType);
+    }
+
     public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue) {
+        return rejectRequest(code, userMessage, cookieName, cookieValue, AUTH_TYPE_NONE);
+    }
+
+    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue, byte authenticationType) {
         LOG.error().$(userMessage).$(" [code=").$(code).I$();
         rejectProcessor.rejectCode = code;
         rejectProcessor.rejectMessage = userMessage;
         rejectProcessor.rejectCookieName = cookieName;
         rejectProcessor.rejectCookieValue = cookieValue;
+        rejectProcessor.authenticationType = authenticationType;
         return rejectProcessor;
     }
 
@@ -423,6 +429,47 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         } else {
             throw registerDispatcherDisconnect(DISCONNECT_REASON_KEEPALIVE_OFF);
         }
+    }
+
+    private HttpRequestProcessor checkProcessorValidForRequest(
+            Utf8Sequence method,
+            HttpRequestProcessor processor,
+            boolean chunked,
+            boolean multipartRequest,
+            long contentLength,
+            boolean multipartProcessor
+    ) {
+
+        if (processor.isErrorProcessor()) {
+            return processor;
+        }
+
+        if (Utf8s.equalsNcAscii("POST", method) || Utf8s.equalsNcAscii("PUT", method)) {
+            if (!multipartProcessor) {
+                if (multipartRequest) {
+                    return rejectRequest(HTTP_NOT_FOUND, "Method (multipart POST) not supported");
+                } else {
+                    return rejectRequest(HTTP_NOT_FOUND, "Method not supported");
+                }
+            }
+            if (chunked && contentLength > 0) {
+                return rejectRequest(HTTP_BAD_REQUEST, "Invalid chunked request; content-length specified");
+            }
+            if (!chunked && !multipartRequest && contentLength < 0) {
+                return rejectRequest(HTTP_BAD_REQUEST, "Content-length not specified for POST/PUT request");
+            }
+        } else if (Utf8s.equalsNcAscii("GET", method)) {
+            if (chunked || multipartRequest || contentLength > 0) {
+                return rejectRequest(HTTP_BAD_REQUEST, "GET request method cannot have content");
+            }
+            if (multipartProcessor) {
+                return rejectRequest(HTTP_NOT_FOUND, "Method GET not supported");
+            }
+        } else {
+            return rejectRequest(HTTP_BAD_REQUEST, "Method not supported");
+        }
+
+        return processor;
     }
 
     private void completeRequest(
@@ -777,42 +824,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return processor;
     }
 
-    private HttpRequestProcessor checkProcessorValidForRequest(
-            Utf8Sequence method,
-            HttpRequestProcessor processor,
-            boolean chunked,
-            boolean multipartRequest,
-            long contentLength,
-            boolean multipartProcessor
-    ) {
-        if (Utf8s.equalsAscii("POST", method) || Utf8s.equalsAscii("PUT", method)) {
-            if (!multipartProcessor) {
-                if (multipartRequest) {
-                    return rejectRequest(HTTP_NOT_FOUND, "Method (multipart POST) not supported");
-                } else {
-                    return rejectRequest(HTTP_NOT_FOUND, "Method not supported");
-                }
-            }
-            if (chunked && contentLength > 0) {
-                return rejectRequest(HTTP_BAD_REQUEST, "Invalid chunked request; content-length specified");
-            }
-            if (!chunked && !multipartRequest && contentLength < 0) {
-                return rejectRequest(HTTP_BAD_REQUEST, "Content-length not specified for POST/PUT request");
-            }
-        } else if (Utf8s.equalsAscii("GET", method)) {
-            if (chunked || multipartRequest || contentLength > 0) {
-                return rejectRequest(HTTP_BAD_REQUEST, "GET request method cannot have content");
-            }
-            if (multipartProcessor) {
-                return rejectRequest(HTTP_NOT_FOUND, "Method GET not supported");
-            }
-        } else {
-            return rejectRequest(HTTP_BAD_REQUEST, "Method not supported");
-        }
-
-        return processor;
-    }
-
     private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {
         boolean busyRecv = true;
         try {
@@ -862,9 +873,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
 
             try {
+                final byte requiredAuthType = processor.getRequiredAuthType();
                 if (newRequest) {
                     if (processor.requiresAuthentication() && !configureSecurityContext()) {
-                        processor = rejectRequest(HTTP_UNAUTHORIZED);
+                        processor = rejectRequest(HTTP_UNAUTHORIZED, requiredAuthType);
                     }
 
                     if (configuration.areCookiesEnabled()) {
@@ -1015,6 +1027,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private class RejectProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
+        private byte authenticationType = AUTH_TYPE_NONE;
         private int rejectCode;
         private CharSequence rejectCookieName = null;
         private CharSequence rejectCookieValue = null;
@@ -1022,9 +1035,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
         public void clear() {
             rejectCode = 0;
+            authenticationType = AUTH_TYPE_NONE;
             rejectCookieName = null;
             rejectCookieValue = null;
             rejectMessage = null;
+        }
+
+        @Override
+        public boolean isErrorProcessor() {
+            return true;
         }
 
         @Override
@@ -1040,9 +1059,16 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
 
         @Override
-        public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        public void onRequestComplete(
+                HttpConnectionContext context
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (rejectCode == HTTP_UNAUTHORIZED) {
-                simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED);
+                if (authenticationType == SecurityContext.AUTH_TYPE_CREDENTIALS) {
+                    // Special case, include WWW-Authenticate header
+                    simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
+                } else {
+                    simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED);
+                }
             } else {
                 simpleResponse().sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
             }
@@ -1050,9 +1076,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
 
         @Override
-        public void resumeSend(
-                HttpConnectionContext context
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+        public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
             onRequestComplete(context);
         }
     }
