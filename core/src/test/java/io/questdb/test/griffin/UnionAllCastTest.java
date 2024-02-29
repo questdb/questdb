@@ -229,6 +229,25 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testByteChar() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "79\n" +
+                        "122\n" +
+                        "83\n" +
+                        "90\n" +
+                        "76\n" +
+                        "V\n" +
+                        "T\n" +
+                        "J\n" +
+                        "W\n" +
+                        "C\n",
+                "create table x as (select rnd_byte() a from long_sequence(5))",
+                "create table y as (select rnd_char() b from long_sequence(5))"
+        );
+    }
+
+    @Test
     public void testByteNull() throws Exception {
         testUnionAll(
                 "a\tc\n" +
@@ -282,18 +301,18 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testCharByte() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "O\n" +
-                        "z\n" +
+                        "P\n" +
                         "S\n" +
-                        "Z\n" +
-                        "L\n" +
-                        "V\n" +
-                        "T\n" +
-                        "J\n" +
                         "W\n" +
-                        "C\n",
-                "create table x as (select rnd_byte() a from long_sequence(5))",
-                "create table y as (select rnd_char() b from long_sequence(5))"
+                        "H\n" +
+                        "Y\n" +
+                        "76\n" +
+                        "102\n" +
+                        "27\n" +
+                        "87\n" +
+                        "79\n",
+                "create table x as (select rnd_char() a from long_sequence(5))",
+                "create table y as (select rnd_byte() b from long_sequence(5))"
         );
     }
 
