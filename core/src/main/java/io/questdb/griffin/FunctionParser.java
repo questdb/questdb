@@ -690,6 +690,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         // Implicit cast from VARCHAR to TIMESTAMP
                         overloadPossible |= argTypeTag == ColumnType.VARCHAR && arg.isConstant() && sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
+                        // Implicit cast from VARCHAR to STRING
+                        overloadPossible |= argTypeTag == ColumnType.VARCHAR && arg.isConstant() && sigArgTypeTag == ColumnType.STRING && !factory.isGroupBy();
+
                         overloadPossible |= arg.isUndefined();
                     }
                     // can we use overload mechanism?

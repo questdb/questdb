@@ -2698,6 +2698,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampNotEqualsConstFunctionVarchar() throws Exception {
+        runWhereIntervalTest0("timestamp != to_date('2020-03-01:15:43:21'::varchar, 'yyyy-MM-dd:HH:mm:ss'::varchar)",
+                "[{lo=, hi=2020-03-01T15:43:20.999999Z},{lo=2020-03-01T15:43:21.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
+
+    @Test
     public void testTimestampNotEqualsFunctionOfNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         runWhereIntervalTest0("timestamp != dateadd('d', 2, now())",
