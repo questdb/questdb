@@ -1741,8 +1741,8 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testLongTimestamp() throws Exception {
         assertFailure(
-                "create table x as (select rnd_long() a from long_sequence(5))",
-                "create table y as (select cast(rnd_long() as timestamp) b from long_sequence(5))",
+                "create table x as (select cast(rnd_long() as timestamp) b from long_sequence(5))",
+                "create table y as (select rnd_long() a from long_sequence(5))",
                 12
         );
     }
