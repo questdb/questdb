@@ -2880,6 +2880,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("[]", intervalToString(m));
     }
 
+   @Test
+    public void testTwoIntervalSourcesVarchar() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in '2014-06-20T13:25:00.000Z;10m;2d;5'::varchar and timestamp IN '2015-06-20T13:25:00.000Z;10m;2d;5'::varchar");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        TestUtils.assertEquals("[]", intervalToString(m));
+    }
+
     @Test
     public void testTwoIntervals() throws Exception {
         IntrinsicModel m = modelOf("bid > 100 and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and timestamp between '2014-01-01T16:30:00.000Z' and '2014-01-05T12:30:00.000Z'");

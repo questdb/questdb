@@ -1465,7 +1465,7 @@ public final class WhereClauseParser implements Mutable {
             function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
             return true;
         }
-        return ColumnType.isString(type);
+        return ColumnType.isString(type) || ColumnType.isVarchar(type);
     }
 
     private void clearAllKeys() {
