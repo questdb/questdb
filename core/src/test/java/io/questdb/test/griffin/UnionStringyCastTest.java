@@ -33,7 +33,7 @@ import java.util.Arrays;
 import java.util.Collection;
 
 @RunWith(Parameterized.class)
-public class UnionAllVarcharTest extends AbstractCairoTest {
+public class UnionStringyCastTest extends AbstractCairoTest {
 
     @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> data() {
@@ -92,7 +92,7 @@ public class UnionAllVarcharTest extends AbstractCairoTest {
     private final String expectedStringyValue;
     private final String expectedCastValue;
 
-    public UnionAllVarcharTest(String stringyType, String castType, String expectedCastValue) {
+    public UnionStringyCastTest(String stringyType, String castType, String expectedCastValue) {
         this.stringyType = stringyType;
         selectFromCastTable = "(select a_" + castType + " as a from cast_table)";
         this.expectedCastValue = expectedCastValue;
