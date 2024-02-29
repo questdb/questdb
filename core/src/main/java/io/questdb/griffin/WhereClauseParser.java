@@ -1649,7 +1649,7 @@ public final class WhereClauseParser implements Mutable {
 
         isConstFunction = true;
         int type = function.getType();
-        if (type == ColumnType.SYMBOL || type == ColumnType.STRING || type == ColumnType.CHAR || type == ColumnType.UNDEFINED || type == ColumnType.NULL) {
+        if (type == ColumnType.SYMBOL || type == ColumnType.STRING || type == ColumnType.CHAR || type == ColumnType.UNDEFINED || type == ColumnType.NULL || type == ColumnType.VARCHAR) {
             return function.getStr(null);
         } else {
             throw SqlException.$(node.position, "Unexpected function type [").put(ColumnType.nameOf(type)).put("]");

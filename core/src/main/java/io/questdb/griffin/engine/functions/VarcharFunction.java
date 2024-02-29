@@ -189,7 +189,9 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
+        utf16sinkA.clear();
+        Utf8s.utf8ToUtf16(getVarcharA(rec), utf16sinkA);
+        return SqlUtil.implicitCastStrAsTimestamp(utf16sinkA.toString());
     }
 
     @Override
