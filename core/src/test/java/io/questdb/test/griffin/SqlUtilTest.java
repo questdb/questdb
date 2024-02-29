@@ -643,10 +643,29 @@ public class SqlUtilTest {
 
         // not a number
         try {
-            SqlUtil.implicitCastStrAsDate("hello");
+            SqlUtil.implicitCastStrAsTimestamp("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> DATE]", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> TIMESTAMP]", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testParseStrVarcharAsTimestamp0() {
+        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastVarcharAsTimestamp(null));
+        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20T10:30:55.123999Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 10:30:55Z")));
+        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 10:30:55.123Z")));
+        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("200")));
+        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("-900")));
+
+        // not a number
+        try {
+            SqlUtil.implicitCastVarcharAsTimestamp("hello");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> TIMESTAMP]", e.getFlyweightMessage());
         }
     }
 

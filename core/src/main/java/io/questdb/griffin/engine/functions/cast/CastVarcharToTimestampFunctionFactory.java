@@ -34,7 +34,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf8Sequence;
 
 public class CastVarcharToTimestampFunctionFactory implements FunctionFactory {
 
@@ -61,9 +60,11 @@ public class CastVarcharToTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
+            // we defensively get CharSequence instead of relying on getVarChar().asAsciiSequence(). Why?
+            // Timestamp literal may contain non-ascii characters, for example hyphens, days of the week etc.
+            final CharSequence value = arg.getStr(rec);
             try {
-                return value == null ? Numbers.LONG_NaN : IntervalUtils.parseFloorPartialTimestamp(value.asAsciiCharSequence());
+                return value == null ? Numbers.LONG_NaN : IntervalUtils.parseFloorPartialTimestamp(value);
             } catch (NumericException e) {
                 return Numbers.LONG_NaN;
             }

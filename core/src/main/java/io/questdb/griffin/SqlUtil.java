@@ -695,6 +695,16 @@ public class SqlUtil {
     }
 
     public static long implicitCastStrAsTimestamp(CharSequence value) {
+        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.STRING);
+    }
+
+    public static long implicitCastVarcharAsTimestamp(CharSequence value) {
+        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.VARCHAR);
+    }
+
+    private static long implicitCastStrVarcharAsTimestamp0(CharSequence value, int columnType) {
+        assert columnType == ColumnType.STRING || columnType == ColumnType.VARCHAR;
+
         if (value != null) {
             try {
                 return Numbers.parseLong(value);
@@ -716,7 +726,7 @@ public class SqlUtil {
                 }
             }
 
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.TIMESTAMP);
+            throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NaN;
     }

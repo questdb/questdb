@@ -338,7 +338,7 @@ public final class ColumnType {
                 || ((fromType == STRING || fromType == VARCHAR) && toType == INT)
                 || ((fromType == STRING || fromType == VARCHAR) && toType == LONG)
                 || (fromType == STRING && toType == DATE)
-                || (fromType == STRING && toType == TIMESTAMP)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == TIMESTAMP)
                 || ((fromType == STRING || fromType == VARCHAR) && toType == FLOAT)
                 || ((fromType == STRING || fromType == VARCHAR) && toType == DOUBLE)
                 || ((fromType == STRING || fromType == VARCHAR) && toType == CHAR)

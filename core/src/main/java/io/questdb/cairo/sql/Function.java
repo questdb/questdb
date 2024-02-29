@@ -32,10 +32,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -155,7 +156,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     int getStrLen(Record rec, int arrayIndex);
 
-    Utf8Sequence getVarcharA(Record rec);
+    @Nullable Utf8Sequence getVarcharA(Record rec);
 
     void getVarchar(Record rec, Utf8Sink utf8Sink);
 

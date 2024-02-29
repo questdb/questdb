@@ -22,52 +22,59 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.Utf8Sequence;
 
-public class CastVarcharToDateFunctionFactory implements FunctionFactory {
+public final class VarcharToTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "cast(Øm)";
+        return "to_timestamp(Ø)";
     }
 
     @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return new Func(args.getQuick(0));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        final Function arg = args.getQuick(0);
+        return new ToTimestampFunction(arg);
     }
 
-    private static class Func extends AbstractCastToDateFunction {
-        public Func(Function arg) {
-            super(arg);
+    public static final class ToTimestampFunction extends TimestampFunction implements UnaryFunction {
+        private final Function arg;
+
+        public ToTimestampFunction(Function arg) {
+            this.arg = arg;
         }
 
         @Override
-        public long getDate(Record rec) {
-            // we defensively get CharSequence instead of relying on getVarChar().asAsciiSequence(). Why?
-            // Date literal may contain non-ascii characters, for example hyphens, days of the week etc.
-            final CharSequence value = arg.getStr(rec);
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public String getName() {
+            return "to_timestamp";
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final Utf8Sequence value = arg.getVarcharA(rec);
             try {
-                return value == null ? Numbers.LONG_NaN : DateFormatUtils.parseDate(value);
-            } catch (NumericException e) {
-                return Numbers.LONG_NaN;
+                return Numbers.parseLong(value);
+            } catch (NumericException ignore) {
             }
+            return Numbers.LONG_NaN;
         }
     }
 }

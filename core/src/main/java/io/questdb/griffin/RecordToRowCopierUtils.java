@@ -139,6 +139,7 @@ public class RecordToRowCopierUtils {
         int implicitCastVarcharAsChar = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsChar", "(Lio/questdb/std/str/Utf8Sequence;)C");
         int implicitCastVarcharAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsFloat", "(Lio/questdb/std/str/Utf8Sequence;)F");
         int implicitCastVarcharAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsDouble", "(Lio/questdb/std/str/Utf8Sequence;)D");
+        int implicitCastVarcharAsTimestamp = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsTimestamp", "(Ljava/lang/CharSequence;)J");
 
         int implicitCastIntAsShort = asm.poolMethod(SqlUtil.class, "implicitCastIntAsShort", "(I)S");
         int implicitCastLongAsShort = asm.poolMethod(SqlUtil.class, "implicitCastLongAsShort", "(J)S");
@@ -665,6 +666,15 @@ public class RecordToRowCopierUtils {
                         case ColumnType.UUID:
                             asm.invokeInterface(rGetVarchar);
                             asm.invokeInterface(wPutUuidUtf8, 2);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.invokeInterface(rGetStr);
+                            asm.invokeStatic(implicitCastVarcharAsTimestamp);
+                            asm.invokeInterface(wPutTimestamp, 3);
+                            break;
+                        case ColumnType.SYMBOL:
+                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(wPutSym, 2);
                             break;
                         default:
                             assert false;

@@ -155,20 +155,37 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public CharSequence getStr(Record rec) {
+        Utf8Sequence utf8seq = getVarcharA(rec);
+        if (utf8seq == null) {
+            return null;
+        }
+        if (utf8seq.isAscii()) {
+            return utf8seq.asAsciiCharSequence();
+        }
         utf16sinkA.clear();
-        Utf8s.utf8ToUtf16(getVarcharA(rec), utf16sinkA);
+        Utf8s.utf8ToUtf16(utf8seq, utf16sinkA);
         return utf16sinkA;
     }
 
     @Override
     public void getStr(Record rec, Utf16Sink utf16Sink) {
-        Utf8s.utf8ToUtf16(getVarcharA(rec), utf16Sink);
+        Utf8Sequence utf8seq = getVarcharA(rec);
+        if (utf8seq != null) {
+            Utf8s.utf8ToUtf16(utf8seq, utf16Sink);
+        }
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
+        Utf8Sequence utf8seq = getVarcharB(rec);
+        if (utf8seq == null) {
+            return null;
+        }
+        if (utf8seq.isAscii()) {
+            return utf8seq.asAsciiCharSequence();
+        }
         utf16sinkB.clear();
-        Utf8s.utf8ToUtf16(getVarcharA(rec), utf16sinkB);
+        Utf8s.utf8ToUtf16(utf8seq, utf16sinkB);
         return utf16sinkB;
     }
 
@@ -188,8 +205,8 @@ public abstract class VarcharFunction implements ScalarFunction {
     }
 
     @Override
-    public long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
+    public final long getTimestamp(Record rec) {
+        return SqlUtil.implicitCastVarcharAsTimestamp(getStr(rec));
     }
 
     @Override
