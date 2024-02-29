@@ -182,7 +182,7 @@ public abstract class StrFunction implements ScalarFunction {
     }
 
     @Override
-    public int getType() {
+    public final int getType() {
         return ColumnType.STRING;
     }
 

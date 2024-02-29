@@ -939,6 +939,47 @@ public final class Utf8s {
         );
     }
 
+    /**
+     * Appends UTF8 varchar type to the memory with a header (size, flags, etc...).
+     *
+     * @param mem   memory to store UTF8 bytes in
+     * @param value the UTF8 string to be stored
+     */
+    public static void varcharAppendWithSize(MemoryA mem, @Nullable Utf8Sequence value) {
+        if (value == null) {
+            mem.putInt(4); // NULL
+            return;
+        }
+
+        int flags = 0;
+        if (value.isAscii()) {
+            flags |= 2; // ascii flag
+        }
+
+        int size = value.size();
+        mem.putInt((size << 4) | flags);
+        mem.putVarchar(value, 0, size);
+    }
+
+    /**
+     * Reads UTF8 varchar type from the memory with a header (size, flags, etc...).
+     *
+     * @param mem memory contains UTF8 bytes
+     * @param offset offset in the memory
+     */
+    public static Utf8Sequence varcharReadWithSize(MemoryR mem, long offset) {
+        int header = mem.getInt(offset);
+        int flags = header & 0x0f; // 4 bit flags
+        if ((flags & 4) == 4) {
+            // null flag is set
+            return null;
+        }
+
+        int size = header >> 4;
+        boolean ascii = (flags & 2) == 2;
+        return mem.getVarcharA(offset + Integer.BYTES, size, ascii);
+    }
+
     private static int encodeUtf16Surrogate(@NotNull Utf8Sink sink, char c, @NotNull CharSequence in, int pos, int hi) {
         int dword;
         if (Character.isHighSurrogate(c)) {

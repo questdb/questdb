@@ -200,10 +200,6 @@ public final class ColumnType {
         return columnType == STRING;
     }
 
-    public static boolean isStringyType(int colType) {
-        return colType == ColumnType.VARCHAR || colType == ColumnType.STRING;
-    }
-
     public static boolean isSymbol(int columnType) {
         return columnType == SYMBOL;
     }
@@ -217,7 +213,7 @@ public final class ColumnType {
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
-        return ((toType == fromType || tagOf(fromType) == tagOf(toType)) && (getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0))
+        return (tagOf(fromType) == tagOf(toType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
                 || isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isVarcharCast(fromType, toType)
@@ -232,6 +228,33 @@ public final class ColumnType {
 
     public static boolean isVarSize(int columnType) {
         return columnType == STRING || columnType == BINARY || columnType == VARCHAR;
+    }
+
+    public static boolean isFixedSize(int columnType) {
+        // specified explicitly
+        switch (columnType) {
+            case INT:
+            case LONG:
+            case BOOLEAN:
+            case BYTE:
+            case TIMESTAMP:
+            case DATE:
+            case DOUBLE:
+            case CHAR:
+            case SHORT:
+            case FLOAT:
+            case LONG128:
+            case LONG256:
+            case GEOBYTE:
+            case GEOSHORT:
+            case GEOINT:
+            case GEOLONG:
+            case UUID:
+            case IPv4:
+                return true;
+            default:
+                return false;
+        }
     }
 
     public static boolean isVarchar(int columnType) {

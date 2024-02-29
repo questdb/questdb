@@ -55,7 +55,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<StrBindVariable> strVarPool;
     private final ObjectPool<TimestampBindVariable> timestampVarPool;
     private final ObjectPool<UuidBindVariable> uuidVarPool;
-    private final ObjectPool<StrBindVariable> varcharVarPool;
+    private final ObjectPool<VarcharBindVariable> varcharVarPool;
 
     public BindVariableServiceImpl(CairoConfiguration configuration) {
         final int poolSize = configuration.getBindVariablePoolSize();
@@ -74,7 +74,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.charVarPool = new ObjectPool<>(CharBindVariable::new, 8);
         this.long256VarPool = new ObjectPool<>(Long256BindVariable::new, 8);
         this.uuidVarPool = new ObjectPool<>(UuidBindVariable::new, 8);
-        this.varcharVarPool = new ObjectPool<>(() -> new StrBindVariable(configuration.getFloatToStrCastScale(), true), poolSize);
+        this.varcharVarPool = new ObjectPool<>(() -> new VarcharBindVariable(configuration.getFloatToStrCastScale()), poolSize);
     }
 
     @Override
@@ -662,7 +662,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             setVarchar0(function, value, index, null);
         } else {
             indexedVariables.setQuick(index, function = varcharVarPool.next());
-            ((StrBindVariable) function).setValue(value);
+            ((VarcharBindVariable) function).setValue(value);
         }
     }
 
@@ -670,7 +670,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     public void setVarchar(CharSequence name, Utf8Sequence value) throws SqlException {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
-            final StrBindVariable function;
+            final VarcharBindVariable function;
             namedVariables.putAt(index, name, function = varcharVarPool.next());
             function.setValue(value);
         } else {
@@ -751,8 +751,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((BooleanBindVariable) function).value = value;
                 break;
             case ColumnType.STRING:
+                ((StrBindVariable) function).setValue(value);
+                break;
             case ColumnType.VARCHAR:
-                ((StrBindVariable) function).setValue(Boolean.toString(value));
+                ((VarcharBindVariable) function).setValue(value);
                 break;
             default:
                 reportError(function, ColumnType.BOOLEAN, index, name);
@@ -788,8 +790,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((DoubleBindVariable) function).value = value;
                 break;
             case ColumnType.STRING:
-            case ColumnType.VARCHAR:
                 ((StrBindVariable) function).setValue(value);
+                break;
+            case ColumnType.VARCHAR:
+                ((VarcharBindVariable) function).setValue(value);
                 break;
             case ColumnType.CHAR:
                 ((CharBindVariable) function).value = SqlUtil.implicitCastAsChar(value, ColumnType.BYTE);
@@ -832,8 +836,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((CharBindVariable) function).value = value;
                 break;
             case ColumnType.STRING:
-            case ColumnType.VARCHAR:
                 ((StrBindVariable) function).setValue(value);
+                break;
+            case ColumnType.VARCHAR:
+                ((VarcharBindVariable) function).setValue(value);
                 break;
             case ColumnType.GEOBYTE:
                 ((GeoHashBindVariable) function).value = SqlUtil.implicitCastCharAsGeoHash(value, function.getType());
@@ -854,13 +860,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((DoubleBindVariable) function).value = value;
                 break;
             case ColumnType.STRING:
-            case ColumnType.VARCHAR:
-                if (value == value) {
-                    ((StrBindVariable) function).setValue(value);
-                } else {
-                    ((StrBindVariable) function).setValue((CharSequence) null);
-                }
+                ((StrBindVariable) function).setValue(value);
                 break;
+            case ColumnType.VARCHAR:
+                ((VarcharBindVariable) function).setValue(value);
             default:
                 reportError(function, ColumnType.DOUBLE, index, name);
                 break;
@@ -877,12 +880,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((DoubleBindVariable) function).value = value;
                 break;
             case ColumnType.STRING:
+                ((StrBindVariable) function).setValue(value);
+                break;
             case ColumnType.VARCHAR:
-                if (value == value) {
-                    ((StrBindVariable) function).setValue(value);
-                } else {
-                    ((StrBindVariable) function).setValue((CharSequence) null);
-                }
+                ((VarcharBindVariable) function).setValue(value);
                 break;
             default:
                 reportError(function, ColumnType.FLOAT, index, name);
@@ -957,8 +958,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((DoubleBindVariable) function).value = value != Numbers.INT_NaN ? value : Double.NaN;
                 break;
             case ColumnType.STRING:
-            case ColumnType.VARCHAR:
                 ((StrBindVariable) function).setValue(value);
+                break;
+            case ColumnType.VARCHAR:
+                ((VarcharBindVariable) function).setValue(value);
                 break;
             case ColumnType.CHAR:
                 ((CharBindVariable) function).value = value != Numbers.INT_NaN ? SqlUtil.implicitCastAsChar(value, ColumnType.INT) : 0;
@@ -997,8 +1000,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((DoubleBindVariable) function).value = value != Numbers.LONG_NaN ? value : Double.NaN;
                 break;
             case ColumnType.STRING:
-            case ColumnType.VARCHAR:
                 ((StrBindVariable) function).setValue(value);
+                break;
+            case ColumnType.VARCHAR:
+                ((VarcharBindVariable) function).setValue(value);
                 break;
             case ColumnType.CHAR:
                 ((CharBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsChar(value, ColumnType.LONG) : 0;
@@ -1024,8 +1029,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((Long256BindVariable) function).setValue(l0, l1, l2, l3);
                 break;
             case ColumnType.STRING:
-            case ColumnType.VARCHAR:
                 ((StrBindVariable) function).setValue(l0, l1, l2, l3);
+                break;
+            case ColumnType.VARCHAR:
+                ((VarcharBindVariable) function).setValue(l0, l1, l2, l3);
                 break;
             default:
                 reportError(function, ColumnType.LONG256, index, name);
@@ -1061,8 +1068,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((DoubleBindVariable) function).value = value;
                 break;
             case ColumnType.STRING:
-            case ColumnType.VARCHAR:
                 ((StrBindVariable) function).setValue(value);
+                break;
+            case ColumnType.VARCHAR:
+                ((VarcharBindVariable) function).setValue(value);
                 break;
             case ColumnType.CHAR:
                 ((CharBindVariable) function).value = SqlUtil.implicitCastAsChar(value, ColumnType.SHORT);
@@ -1110,8 +1119,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((DoubleBindVariable) function).value = SqlUtil.implicitCastStrAsDouble(value);
                 break;
             case ColumnType.STRING:
-            case ColumnType.VARCHAR:
                 ((StrBindVariable) function).setValue(value);
+                break;
+            case ColumnType.VARCHAR:
+                ((VarcharBindVariable) function).setValue(value);
                 break;
             case ColumnType.LONG256:
                 SqlUtil.implicitCastStrAsLong256(value, ((Long256BindVariable) function).value);
@@ -1125,9 +1136,59 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setVarchar0(Function function, Utf8Sequence utf8value, int index, @Nullable CharSequence name) throws SqlException {
-        // TODO: convert to char sequence for now
-        setStr0(function, Utf8s.stringFromUtf8Bytes(utf8value), index, name);
+    private static void setVarchar0(Function function, Utf8Sequence value, int index, @Nullable CharSequence name) throws SqlException {
+        // TODO: get rid of stringFromUtf8Bytes
+        final int functionType = ColumnType.tagOf(function.getType());
+        switch (functionType) {
+            case ColumnType.BOOLEAN:
+                ((BooleanBindVariable) function).value = SqlKeywords.isTrueKeyword(value);
+                break;
+            case ColumnType.BYTE:
+                ((ByteBindVariable) function).value = SqlUtil.implicitCastVarcharAsByte(value);
+                break;
+            case ColumnType.SHORT:
+                ((ShortBindVariable) function).value = SqlUtil.implicitCastVarcharAsShort(value);
+                break;
+            case ColumnType.CHAR:
+                ((CharBindVariable) function).value = SqlUtil.implicitCastVarcharAsChar(value);
+                break;
+            case ColumnType.IPv4:
+                ((IPv4BindVariable) function).value = SqlUtil.implicitCastStrAsIPv4(value);
+                break;
+            case ColumnType.INT:
+                ((IntBindVariable) function).value = SqlUtil.implicitCastVarcharAsInt(value);
+                break;
+            case ColumnType.LONG:
+                ((LongBindVariable) function).value = SqlUtil.implicitCastVarcharAsLong(value);
+                break;
+            case ColumnType.TIMESTAMP:
+                ((TimestampBindVariable) function).value = SqlUtil.implicitCastStrAsTimestamp(Utf8s.stringFromUtf8Bytes(value));
+                break;
+            case ColumnType.DATE:
+                ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(Utf8s.stringFromUtf8Bytes(value));
+                break;
+            case ColumnType.FLOAT:
+                ((FloatBindVariable) function).value = SqlUtil.implicitCastVarcharAsFloat(value);
+                break;
+            case ColumnType.DOUBLE:
+                ((DoubleBindVariable) function).value = SqlUtil.implicitCastVarcharAsDouble(value);
+                break;
+            case ColumnType.STRING:
+                ((StrBindVariable) function).setValue(value);
+                break;
+            case ColumnType.VARCHAR:
+                ((VarcharBindVariable) function).setValue(value);
+                break;
+            case ColumnType.LONG256:
+                SqlUtil.implicitCastStrAsLong256(Utf8s.stringFromUtf8Bytes(value), ((Long256BindVariable) function).value);
+                break;
+            case ColumnType.UUID:
+                SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
+                break;
+            default:
+                reportError(function, ColumnType.STRING, index, name);
+                break;
+        }
     }
 
     private static void setTimestamp0(Function function, long value, int index) throws SqlException {
@@ -1158,8 +1219,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((DoubleBindVariable) function).value = value != Numbers.LONG_NaN ? value : Double.NaN;
                 break;
             case ColumnType.STRING:
-            case ColumnType.VARCHAR:
                 ((StrBindVariable) function).setTimestamp(value);
+                break;
+            case ColumnType.VARCHAR:
+                ((VarcharBindVariable) function).setTimestamp(value);
                 break;
             default:
                 reportError(function, ColumnType.TIMESTAMP, index, null);
@@ -1174,8 +1237,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((UuidBindVariable) function).set(lo, hi);
                 break;
             case ColumnType.STRING:
-            case ColumnType.VARCHAR:
                 ((StrBindVariable) function).setUuidValue(lo, hi);
+                break;
+            case ColumnType.VARCHAR:
+                ((VarcharBindVariable) function).setUuidValue(lo, hi);
                 break;
             default:
                 reportError(function, ColumnType.UUID, index, name);

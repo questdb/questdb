@@ -81,36 +81,32 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
                 boolean isEmpty
         ) {
             boolean isIndexed = indexBlockCapacity > 0;
-            switch (columnType) {
-                case ColumnType.SYMBOL:
-                    if (canWrite && isIndexed) {
-                        ContiguousFileIndexedFrameColumn indexedColumn = getIndexedColumn();
-                        indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex, isEmpty);
-                        return indexedColumn;
-                    }
 
-                default: {
-                    ContiguousFileFixFrameColumn column = getFixColumn();
-                    if (canWrite) {
-                        column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
-                    } else {
-                        column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
-                    }
-                    return column;
+            if (ColumnType.isVarSize(columnType)) {
+                ContiguousFileVarFrameColumn column = getVarColumn();
+                if (canWrite) {
+                    column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+                } else {
+                    column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
                 }
+                return column;
+            }
 
-                case ColumnType.STRING:
-                case ColumnType.VARCHAR:
-                case ColumnType.BINARY: {
-                    ContiguousFileVarFrameColumn column = getVarColumn();
-                    if (canWrite) {
-                        column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
-                    } else {
-                        column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
-                    }
-                    return column;
+            if (columnType == ColumnType.SYMBOL) {
+                if (canWrite && isIndexed) {
+                    ContiguousFileIndexedFrameColumn indexedColumn = getIndexedColumn();
+                    indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex, isEmpty);
+                    return indexedColumn;
                 }
             }
+
+            ContiguousFileFixFrameColumn column = getFixColumn();
+            if (canWrite) {
+                column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+            } else {
+                column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
+            }
+            return column;
         }
 
         private ContiguousFileFixFrameColumn getFixColumn() {

@@ -464,22 +464,17 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private void configureColumns(RecordMetadata metadata, int columnCount) {
         for (int i = dstColumns.size(); i < columnCount; i++) {
             int columnType = metadata.getColumnType(updateColumnIndexes.get(i));
-            switch (columnType) {
-                default:
-                    srcColumns.add(Vm.getCMRInstance());
-                    srcColumns.add(null);
-                    dstColumns.add(Vm.getCMARWInstance());
-                    dstColumns.add(null);
-                    break;
-                case ColumnType.STRING:
-                case ColumnType.VARCHAR:
-                case ColumnType.BINARY:
-                    // Primary and secondary
-                    srcColumns.add(Vm.getCMRInstance());
-                    srcColumns.add(Vm.getCMRInstance());
-                    dstColumns.add(Vm.getCMARWInstance());
-                    dstColumns.add(Vm.getCMARWInstance());
-                    break;
+            if (ColumnType.isVarSize(columnType)) {
+                // Primary and secondary
+                srcColumns.add(Vm.getCMRInstance());
+                srcColumns.add(Vm.getCMRInstance());
+                dstColumns.add(Vm.getCMARWInstance());
+                dstColumns.add(Vm.getCMARWInstance());
+            } else {
+                srcColumns.add(Vm.getCMRInstance());
+                srcColumns.add(null);
+                dstColumns.add(Vm.getCMARWInstance());
+                dstColumns.add(null);
             }
         }
     }

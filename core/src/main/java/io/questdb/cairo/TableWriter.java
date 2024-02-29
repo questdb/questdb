@@ -2890,37 +2890,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         continue;
                     }
                     long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
-                    switch (ColumnType.tagOf(columnType)) {
-                        case ColumnType.INT:
-                        case ColumnType.LONG:
-                        case ColumnType.BOOLEAN:
-                        case ColumnType.BYTE:
-                        case ColumnType.TIMESTAMP:
-                        case ColumnType.DATE:
-                        case ColumnType.DOUBLE:
-                        case ColumnType.CHAR:
-                        case ColumnType.SHORT:
-                        case ColumnType.FLOAT:
-                        case ColumnType.LONG128:
-                        case ColumnType.LONG256:
-                        case ColumnType.GEOBYTE:
-                        case ColumnType.GEOSHORT:
-                        case ColumnType.GEOINT:
-                        case ColumnType.GEOLONG:
-                        case ColumnType.UUID:
-                        case ColumnType.IPv4:
-                            attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
-                            break;
-                        case ColumnType.VARCHAR:
-                        case ColumnType.STRING:
-                        case ColumnType.BINARY:
-                            attachPartitionCheckFilesMatchVarLenColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex, columnType);
-                            break;
-                        case ColumnType.SYMBOL:
-                            attachPartitionCheckSymbolColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
-                            break;
-                        default:
-                            assert false;
+                    final int type = ColumnType.tagOf(columnType);
+                    if (ColumnType.isSymbol(type)) {
+                        attachPartitionCheckSymbolColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
+                    } else if (ColumnType.isVarSize(type)) {
+                        attachPartitionCheckFilesMatchVarLenColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex, columnType);
+                    } else if (ColumnType.isFixedSize(type)) {
+                        attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
+                    } else {
+                        assert false;
                     }
                 }
             } finally {

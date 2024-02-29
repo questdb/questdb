@@ -68,7 +68,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.ArrayDeque;
 
-import static io.questdb.cairo.ColumnType.isStringyType;
+import static io.questdb.cairo.ColumnType.getGeoHashBits;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
@@ -1219,7 +1219,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoByteToStrCastFunction(
                                                 new GeoByteColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(fromType)
+                                                getGeoHashBits(fromType)
                                         )
                                 );
                                 break;
@@ -1227,7 +1227,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoShortToStrCastFunction(
                                                 new GeoShortColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
                                 break;
@@ -1235,7 +1235,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoIntToStrCastFunction(
                                                 new GeoIntColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
                                 break;
@@ -1243,7 +1243,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoLongToStrCastFunction(
                                                 new GeoLongColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
                                 break;
@@ -1524,7 +1524,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoByteToVarcharCastFunction(
                                                 new GeoByteColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(fromType)
+                                                getGeoHashBits(fromType)
                                         )
                                 );
                                 break;
@@ -1532,7 +1532,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoShortToVarcharCastFunction(
                                                 new GeoShortColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
                                 break;
@@ -1540,7 +1540,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoIntToVarcharCastFunction(
                                                 new GeoIntColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
                                 break;
@@ -1548,7 +1548,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoLongToVarcharCastFunction(
                                                 new GeoLongColumn(i, toTag),
-                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                                getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
                                 break;
@@ -5489,7 +5489,102 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return ColumnType.isString(columnType) ? Record.GET_STR : Record.GET_SYM;
     }
 
-    private RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) {
+    // UNION_CAST_MATRIX captures all the combinations of "left" and "right" column types
+    // in a UNION ALL operation, providing the desired output type. Since there are many
+    // special cases in the conversion logic, we decided to use a matrix of literals instead.
+    // The matrix doesn't cover the geohash types since they have a more complex structure.
+    // Initially, we used the code below to print out the values for the matrix:
+    //
+//    public static void main(String[] args) {
+//        for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
+//            System.out.print("{ ");
+//            for (int typeB = 0; typeB <= ColumnType.NULL; typeB++) {
+//                int outType = (isGeoHashType(typeA) || isGeoHashType(typeB)) ? -1 : castToType(typeA, typeB);
+//                System.out.format("%2d, ", outType);
+//            }
+//            System.out.println("},");
+//        }
+//    }
+//    private static int castToType(int typeA, int typeB) {
+//        return (typeA == typeB && typeA != ColumnType.SYMBOL) ? typeA
+//                : (isStringyType(typeA) && isStringyType(typeB)) ? ColumnType.STRING
+//                : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
+//                : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
+//                : (isToSameOrWider(typeB, typeA) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) ? typeA
+//                : (isToSameOrWider(typeA, typeB) && typeB != ColumnType.SYMBOL && typeB != ColumnType.CHAR) ? typeB
+//                : (typeA == ColumnType.VARCHAR || typeB == ColumnType.VARCHAR) ? ColumnType.VARCHAR
+//                : ColumnType.STRING;
+//    }
+//    private static boolean isParseableType(int colType) {
+//        return colType == ColumnType.TIMESTAMP || colType == ColumnType.LONG256;
+//    }
+//    private static boolean isGeoHashType(int colType) {
+//        return colType >= ColumnType.GEOBYTE && colType <= ColumnType.GEOLONG;
+//    }
+
+    private static final int[][] UNION_CAST_MATRIX = new int[][] {
+            {  0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  0, },
+            { 11,  1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  1, },
+            { 11, 11,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  2, },
+            { 11, 11,  3,  3,  3,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  3, },
+            { 11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, },
+            { 11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  5, },
+            { 11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  6, },
+            { 11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  7, },
+            { 11, 11,  8,  8,  8,  8,  8,  8,  8,  9, 10, 11,  8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  8, },
+            { 11, 11,  9,  9,  9,  9,  9,  9,  9,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  9, },
+            { 11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 10, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 11, 11, 11, 11, 11, 11, },
+            { 11, 11, 11, 11, 11, 11, 11, 11,  8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 13, },
+            { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, },
+            { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, },
+            { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, },
+            { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 18, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 19, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 20, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, 11, 11, 11, 11, 21, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, 11, 11, 11, 22, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, 11, 11, 11, 23, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, 11, 11, 11, 24, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 25, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, 11, 11, 11, 25, },
+            { 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, 11, 11, 11, 27, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 28, 11, 11, 28, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 29, 11, 29, },
+            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 30, 30, },
+            {  0,  1,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, },
+    };
+
+    public static int getUnionCastType(int typeA, int typeB) {
+        short tagA = ColumnType.tagOf(typeA);
+        short tagB = ColumnType.tagOf(typeB);
+        int geoBitsA = getGeoHashBits(typeA);
+        int geoBitsB = getGeoHashBits(typeB);
+        boolean isGeoHashA = geoBitsA != 0;
+        boolean isGeoHashB = geoBitsB != 0;
+        if (isGeoHashA != isGeoHashB) {
+            // One type is geohash, the other isn't. Since a stringy type can be parsed
+            // into geohash, output geohash when the other type is stringy. If not,
+            // cast both types to string.
+            return isStringyType(typeA) ? typeB
+                    : isStringyType(typeB) ? typeA
+                    : ColumnType.STRING;
+        }
+        if (isGeoHashA) {
+            // Both types are geohash, resolve to the one with less geohash bits.
+            return geoBitsA < geoBitsB ? typeA : typeB;
+        }
+        // Neither type is geohash, use the type cast matrix to resolve.
+        return UNION_CAST_MATRIX[tagA][tagB];
+    }
+
+    private static boolean isStringyType(int colType) {
+        return colType == ColumnType.VARCHAR || colType == ColumnType.STRING;
+    }
+
+    private static RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) {
         int columnCount = typesA.getColumnCount();
         assert columnCount == typesB.getColumnCount();
 
@@ -5497,50 +5592,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0; i < columnCount; i++) {
             int typeA = typesA.getColumnType(i);
             int typeB = typesB.getColumnType(i);
-
-            if (typeA == typeB && typeA != ColumnType.SYMBOL) {
-                metadata.add(typesA.getColumnMetadata(i));
-            } else if (isStringyType(typeA) && isStringyType(typeB)) {
-                // STRING dominates VARCHAR, cast to it
-                metadata.add(new TableColumnMetadata(
-                        typesA.getColumnName(i),
-                        ColumnType.STRING
-                ));
-            }
-            // Special-case TIMESTAMP because an implicit parse-conversion from
-            // STRING/VARCHAR into TIMESTAMP exists, but we don't want to use it for UNION:
-            else if (isStringyType(typeA) && typeB == ColumnType.TIMESTAMP) {
-                metadata.add(typesA.getColumnMetadata(i));
-            } else if (isStringyType(typeB) && typeA == ColumnType.TIMESTAMP) {
-                metadata.add(new TableColumnMetadata(
-                        typesA.getColumnName(i),
-                        typeB
-                ));
-            } else if (ColumnType.isToSameOrWider(typeB, typeA) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) {
-                // CHAR is "specially" assignable from SHORT, but we don't want that
-                metadata.add(typesA.getColumnMetadata(i));
-            } else if (ColumnType.isToSameOrWider(typeA, typeB) && typeB != ColumnType.SYMBOL) {
-                // even though A is assignable to B (e.g. A union B)
-                // set metadata will use A column names
-                metadata.add(new TableColumnMetadata(
-                        typesA.getColumnName(i),
-                        typeB
-                ));
-            } else if (typeA == ColumnType.VARCHAR|| typeB == ColumnType.VARCHAR) {
-                // we can cast anything to varchar, but use it only if one of the types is already varchar
-                metadata.add(new TableColumnMetadata(
-                        typesA.getColumnName(i),
-                        ColumnType.VARCHAR
-                ));
-            } else {
-                // string is the dominant fallback type to cast into
-                metadata.add(new TableColumnMetadata(
-                        typesA.getColumnName(i),
-                        ColumnType.STRING
-                ));
-            }
+            int targetType = getUnionCastType(typeA, typeB);
+            metadata.add(new TableColumnMetadata(typesA.getColumnName(i), targetType));
         }
-
         return metadata;
     }
 
