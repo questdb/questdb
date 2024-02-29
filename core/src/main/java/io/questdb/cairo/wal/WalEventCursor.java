@@ -226,24 +226,14 @@ public class WalEventCursor {
     }
 
     private Utf8Sequence readVarchar() {
-        checkMemSize(Integer.BYTES);
-
-        int header = eventMem.getInt(offset);
-        int flags = header & 0x0f; // 4 bit flags
-        if ((flags & 4) == 4) {
-            // null flag is set
+        Utf8Sequence seq = Utf8s.varcharReadWithSize(eventMem, offset);
+        if (seq == null) {
             offset += Integer.BYTES;
             return null;
+        } else {
+            offset += seq.size() + Integer.BYTES;
+            return seq;
         }
-
-        int size = header >> 4;
-        boolean ascii = (flags & 2) == 2;
-
-        checkMemSize(size);
-
-        final Utf8Sequence value = eventMem.getVarcharA(offset + Integer.BYTES, size, ascii);
-        offset += size + Integer.BYTES;
-        return value;
     }
 
     void openOffset(long offset) {

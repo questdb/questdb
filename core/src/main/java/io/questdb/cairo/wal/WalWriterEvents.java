@@ -25,7 +25,6 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -35,7 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
@@ -134,8 +132,7 @@ class WalWriterEvents implements Closeable {
                 eventMem.putStr(function.getStr(null));
                 break;
             case ColumnType.VARCHAR:
-//                eventMem.putVarchar(function.getVarcharA(null));
-                putVarchar(function.getVarcharA(null));
+                Utf8s.varcharAppendWithSize(eventMem, function.getVarcharA(null));
                 break;
             case ColumnType.BINARY:
                 eventMem.putBin(function.getBin(null));
@@ -146,22 +143,6 @@ class WalWriterEvents implements Closeable {
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }
-    }
-
-    private void putVarchar(Utf8Sequence value) {
-        if (value == null) {
-            eventMem.putInt(4); // NULL
-            return;
-        }
-
-        int flags = 0;
-        if (value.isAscii()) {
-            flags |= 2; // ascii flag
-        }
-
-        int size = value.size();
-        eventMem.putInt((size << 4) | flags);
-        eventMem.putVarchar(value, 0, size);
     }
 
     private void appendIndex(long value) {
