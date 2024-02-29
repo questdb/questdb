@@ -432,6 +432,7 @@ public final class WhereClauseParser implements Mutable {
                 }
 
                 switch (ColumnType.tagOf(m.getColumnType(index))) {
+                    case ColumnType.VARCHAR:
                     case ColumnType.SYMBOL:
                     case ColumnType.STRING:
                     case ColumnType.LONG:
