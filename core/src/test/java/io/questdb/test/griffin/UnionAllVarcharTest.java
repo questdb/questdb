@@ -35,8 +35,6 @@ import java.util.Collection;
 @RunWith(Parameterized.class)
 public class UnionAllVarcharTest extends AbstractCairoTest {
 
-    // TODO: uncomment long256 below and fix the underlying bug(s)!
-
     @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
@@ -45,7 +43,7 @@ public class UnionAllVarcharTest extends AbstractCairoTest {
                 {"varchar", "short", "1"},
                 {"varchar", "int", "0"},
                 {"varchar", "long", "1"},
-//                {"varchar", "long256", "1"},
+                {"varchar", "long256", "0x568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db4b0f595f143e5d72"},
                 {"varchar", "float", "0.4622"},
                 {"varchar", "double", "0.5243722859289777"},
                 {"varchar", "date", "2024-08-25T20:37:19.653Z"},
@@ -59,7 +57,7 @@ public class UnionAllVarcharTest extends AbstractCairoTest {
                 {"str", "short", "0"},
                 {"str", "int", "0"},
                 {"str", "long", "0"},
-//                {"str", "long256", "1"},
+                {"str", "long256", "0xc72bfc5230158059980eca62a219a0f16846d7a3aa5aecce322a2198864beb14"},
                 {"str", "float", "0.1920"},
                 {"str", "double", "0.22452340856088226"},
                 {"str", "date", "2024-07-16T06:10:13.449Z"},
