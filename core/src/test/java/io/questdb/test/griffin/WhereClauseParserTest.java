@@ -2642,6 +2642,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsToNonConstVarchar() throws SqlException {
+        long day = 24L * 3600 * 1000 * 1000;
+        bindVariableService.clear();
+        bindVariableService.setTimestamp(0, day);
+        runWhereIntervalTest0("timestamp = dateadd('y'::varchar,1,timestamp)", "");
+    }
+
+    @Test
     public void testTimestampFollowedByIntrinsicOperatorWithNull0() throws SqlException {
         assertFilter(modelOf("timestamp = null"), "null timestamp =");
         assertFilter(modelOf("timestamp != null"), "null timestamp !=");
@@ -2682,13 +2690,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampFunctionOfThreeArgsVarchar() throws Exception {
+        IntrinsicModel m = modelOf("func(2, timestamp, 'abc'::varchar)");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "varchar 'abc' timestamp 2 func");
+    }
+
+    @Test
     public void testTimestampGreaterConstFunction() throws SqlException {
         runWhereIntervalTest0("timestamp > to_date('2015-02-22', 'yyyy-MM-dd')", "[{lo=2015-02-22T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
 
     @Test
+    public void testTimestampGreaterConstFunctionVarchar() throws SqlException {
+        runWhereIntervalTest0("timestamp > to_date('2015-02-22'::varchar, 'yyyy-MM-dd'::varchar)", "[{lo=2015-02-22T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
+
+    @Test
     public void testTimestampLessConstFunction() throws SqlException {
         runWhereIntervalTest0("timestamp <= to_date('2015-02-22', 'yyyy-MM-dd')", "[{lo=, hi=2015-02-22T00:00:00.000000Z}]");
+    }
+
+    @Test
+    public void testTimestampLessConstFunctionVarchar() throws SqlException {
+        runWhereIntervalTest0("timestamp <= to_date('2015-02-22'::varchar, 'yyyy-MM-dd'::varchar)", "[{lo=, hi=2015-02-22T00:00:00.000000Z}]");
     }
 
     @Test

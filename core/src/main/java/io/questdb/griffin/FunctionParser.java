@@ -671,6 +671,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         overloadPossible |= argTypeTag == ColumnType.CHAR &&
                                 sigArgTypeTag == ColumnType.STRING;
 
+                        // Implicit cast from CHAR to VARCHAR
+                        overloadPossible |= argTypeTag == ColumnType.CHAR &&
+                                sigArgTypeTag == ColumnType.VARCHAR;
+
+
                         // Implicit cast from STRING to TIMESTAMP
                         overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
                                 sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
@@ -692,6 +697,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                         // Implicit cast from VARCHAR to STRING
                         overloadPossible |= argTypeTag == ColumnType.VARCHAR && arg.isConstant() && sigArgTypeTag == ColumnType.STRING && !factory.isGroupBy();
+
+                        // Implicit cast from VARCHAR to CHAR
+                        overloadPossible |= argTypeTag == ColumnType.VARCHAR &&
+                                sigArgTypeTag == ColumnType.CHAR;
 
                         overloadPossible |= arg.isUndefined();
                     }
