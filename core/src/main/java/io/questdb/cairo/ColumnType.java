@@ -200,10 +200,6 @@ public final class ColumnType {
         return columnType == STRING;
     }
 
-    public static boolean isStringyType(int colType) {
-        return colType == ColumnType.VARCHAR || colType == ColumnType.STRING;
-    }
-
     public static boolean isSymbol(int columnType) {
         return columnType == SYMBOL;
     }

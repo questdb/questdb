@@ -5491,6 +5491,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) {
+    private static boolean isStringyType(int colType) {
+        return colType == ColumnType.VARCHAR || colType == ColumnType.STRING;
+    }
+
         int columnCount = typesA.getColumnCount();
         assert columnCount == typesB.getColumnCount();
 
