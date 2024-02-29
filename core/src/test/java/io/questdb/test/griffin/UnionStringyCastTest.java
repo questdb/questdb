@@ -33,7 +33,7 @@ import java.util.Arrays;
 import java.util.Collection;
 
 @RunWith(Parameterized.class)
-public class UnionAllVarcharTest extends AbstractCairoTest {
+public class UnionStringyCastTest extends AbstractCairoTest {
 
     @Parameterized.Parameters(name = "{0}-{1}")
     public static Collection<Object[]> data() {
@@ -92,7 +92,7 @@ public class UnionAllVarcharTest extends AbstractCairoTest {
     private final String expectedStringyValue;
     private final String expectedCastValue;
 
-    public UnionAllVarcharTest(String stringyType, String castType, String expectedCastValue) {
+    public UnionStringyCastTest(String stringyType, String castType, String expectedCastValue) {
         this.stringyType = stringyType;
         selectFromCastTable = "(select a_" + castType + " as a from cast_table)";
         this.expectedCastValue = expectedCastValue;
@@ -111,24 +111,43 @@ public class UnionAllVarcharTest extends AbstractCairoTest {
 
     @Test
     public void testUnionAllStringyLeft() throws Exception {
+        testUnionStringyLeft0(" all");
+    }
+
+    @Test
+    public void testUnionStringyLeft() throws Exception {
+        testUnionStringyLeft0("");
+    }
+
+    private void testUnionStringyLeft0(String allOrEmpty) throws Exception {
         compile(stringyTableDdl(stringyType));
         engine.releaseAllWriters();
-        String query = "select a, typeOf(a) from (" + stringyType + "_table union all " + selectFromCastTable + ')';
+        String query = String.format("select a, typeOf(a) from (%s_table union%s %s)",
+                stringyType, allOrEmpty, selectFromCastTable);
         String expected = "a\ttypeOf\n" +
                 expectedStringyValue + '\t' + expectedColTypeOf + '\n' +
                 expectedCastValue + '\t' + expectedColTypeOf + '\n';
-        assertQuery(expected, query, castTableDdl, null, false, true);
+        assertQuery(expected, query, castTableDdl, null, false, !allOrEmpty.isEmpty());
     }
 
     @Test
     public void testUnionAllStringyRight() throws Exception {
+        testUnionStringyRight0(" all");
+    }
+
+    @Test
+    public void testUnionStringyRight() throws Exception {
+        testUnionStringyRight0("");
+    }
+
+    private void testUnionStringyRight0(String allOrEmpty) throws Exception {
         compile(stringyTableDdl(stringyType));
         engine.releaseAllWriters();
-        String query = "select a, typeOf(a) from (" + selectFromCastTable + " union all " + stringyType + "_table)";
+        String query = String.format("select a, typeOf(a) from (%s union%s %s_table)", selectFromCastTable, allOrEmpty, stringyType);
         String expected = "a\ttypeOf\n" +
                 expectedCastValue + '\t' + expectedColTypeOf + '\n' +
                 expectedStringyValue + '\t' + expectedColTypeOf + '\n';
-        assertQuery(expected, query, castTableDdl, null, false, true);
+        assertQuery(expected, query, castTableDdl, null, false, !allOrEmpty.isEmpty());
     }
 
     private static String stringyTableDdl(String typeName) {
