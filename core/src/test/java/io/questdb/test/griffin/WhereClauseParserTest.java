@@ -181,6 +181,17 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharTimestampParse() throws SqlException {
+        try {
+            modelOf("timestamp = '2024-02-29'::varchar");
+        } catch (SqlException e) {
+            throw e;
+        }
+    }
+
+
+
+    @Test
     public void testAndBranchWithNonIndexedField() throws Exception {
         IntrinsicModel m = modelOf("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and bid > 100");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
