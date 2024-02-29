@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -8154,5 +8155,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "tab latest on ts partition by symbol"
             );
         });
+    }
+
+    @Test
+    public void testUnionCastTypeSymmetry() {
+        for (int typeA = 0; typeA <= ColumnType.VARCHAR; typeA++) {
+            for (int typeB = 0; typeB <= typeA; typeB++) {
+                Assert.assertEquals(
+                        "typeA: " + typeA + ", typeB: " + typeB,
+                        SqlCodeGenerator.getUnionCastType(typeA, typeB),
+                        SqlCodeGenerator.getUnionCastType(typeB, typeA)
+                );
+            }
+        }
     }
 }
