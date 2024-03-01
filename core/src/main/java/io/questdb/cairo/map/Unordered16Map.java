@@ -47,7 +47,7 @@ import org.jetbrains.annotations.Nullable;
  * to the map constructor. Later put* calls made on {@link MapKey} and {@link MapValue} must match
  * the declared column types to guarantee memory access safety.
  * <p>
- * Keys must be fixed-size and up to 8 bytes total. Only insertions and updates operations are
+ * Keys must be fixed-size and up to 16 bytes total. Only insertions and updates operations are
  * supported meaning that a key can't be removed from the map once it was inserted.
  * <p>
  * The hash table is organized into the following parts:
