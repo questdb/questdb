@@ -75,6 +75,17 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         return this;
     }
 
+    public MockHttpProcessor keepReplyingWithStatus(int statusCode) {
+        Response response = new Response();
+        response.responseStatusCode = statusCode;
+        lastResortResponse = response;
+
+        expectedRequests.add(expectedRequest);
+        expectedRequest = new ExpectedRequest();
+
+        return this;
+    }
+
     public MockHttpProcessor keepReplyingWithContent(int statusCode, String responseContent, String contentType) {
         Response response = new Response();
         response.responseStatusCode = statusCode;

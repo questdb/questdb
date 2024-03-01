@@ -62,6 +62,7 @@ public final class LineHttpSender implements Sender {
     private final String password;
     private final int port;
     private final CharSequence questdbVersion;
+    private final long flushIntervalNanos;
     private final Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
     private final StringSink sink = new StringSink();
     private final String url;
@@ -70,10 +71,22 @@ public final class LineHttpSender implements Sender {
     private boolean closed;
     private JsonErrorParser jsonErrorParser;
     private long pendingRows;
+    private long flushAfterNanos = Long.MAX_VALUE;
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, ClientTlsConfiguration tlsConfig, int autoFlushRows, String authToken, String username, String password, long maxRetriesNanos, long minRequestThroughput) {
+    public LineHttpSender(String host,
+                          int port,
+                          HttpClientConfiguration clientConfiguration,
+                          ClientTlsConfiguration tlsConfig,
+                          int autoFlushRows,
+                          String authToken,
+                          String username,
+                          String password,
+                          long maxRetriesNanos,
+                          long minRequestThroughput,
+                          long flushIntervalNanos
+    ) {
         assert authToken == null || (username == null && password == null);
         this.maxRetriesNanos = maxRetriesNanos;
         this.host = host;
@@ -83,6 +96,7 @@ public final class LineHttpSender implements Sender {
         this.username = username;
         this.password = password;
         this.minRequestThroughput = minRequestThroughput;
+        this.flushIntervalNanos = flushIntervalNanos;
         this.baseTimeoutMillis = clientConfiguration.getTimeout();
         if (tlsConfig != null) {
             this.client = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
@@ -121,9 +135,23 @@ public final class LineHttpSender implements Sender {
                 state = RequestState.EMPTY;
                 break;
         }
-        if (++pendingRows == autoFlushRows) {
+        if (rowAdded()) {
             flush();
         }
+    }
+
+    /**
+     * @return true if flush is required
+     */
+    private boolean rowAdded() {
+        long nowNanos = System.nanoTime();
+        if (flushAfterNanos == Long.MAX_VALUE) {
+            flushAfterNanos = nowNanos + flushIntervalNanos;
+        } else if (flushAfterNanos - nowNanos < 0) {
+            return true;
+        }
+        pendingRows++;
+        return pendingRows == autoFlushRows;
     }
 
     @Override
@@ -174,7 +202,7 @@ public final class LineHttpSender implements Sender {
     public Sender putRawMessage(CharSequence msg) {
         request.put(msg); // message must include trailing \n
         state = RequestState.EMPTY;
-        if (++pendingRows == autoFlushRows) {
+        if (rowAdded()) {
             flush();
         }
         return this;
@@ -391,6 +419,7 @@ public final class LineHttpSender implements Sender {
                 if (nowNanos >= retryingDeadlineNanos) {
                     // we did our best, give up
                     pendingRows = 0;
+                    flushAfterNanos = Long.MAX_VALUE;
                     request = newRequest();
                     throw new LineSenderException("Could not flush buffer: ").put(url).put(" Connection Failed").put(": ").put(e.getMessage());
                 }
@@ -398,6 +427,7 @@ public final class LineHttpSender implements Sender {
             }
         }
         pendingRows = 0;
+        flushAfterNanos = System.nanoTime() + flushIntervalNanos;
         request = newRequest();
     }
 
@@ -444,6 +474,7 @@ public final class LineHttpSender implements Sender {
 
     private void throwOnHttpErrorResponse(DirectUtf8Sequence statusCode, HttpClient.ResponseHeaders response) {
         // be ready for next request
+        flushAfterNanos = Long.MAX_VALUE;
         pendingRows = 0;
         request = newRequest();
 

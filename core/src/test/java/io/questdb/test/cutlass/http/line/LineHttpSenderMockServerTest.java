@@ -32,6 +32,7 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.mp.TestWorkerPool;
@@ -47,7 +48,8 @@ import java.util.function.Function;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class LineHttpSenderMockServerTest extends AbstractTest {
-    public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY = port -> Sender.builder().address("localhost:" + port).http();
+    public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY = port -> Sender.builder().address("localhost:" + port)
+            .http();
 
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
     private static final Metrics metrics = Metrics.enabled();
@@ -82,6 +84,21 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             // the last row is flushed on close()
             sender.table("test").doubleColumn("x", 6.0).atNow();
         }, DEFAULT_FACTORY.andThen(b -> b.autoFlushRows(2)));
+    }
+
+    @Test
+    public void testAutoFlushInterval() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor().keepReplyingWithStatus(204);
+
+        testWithMock(mockHttpProcessor, sender -> {
+            for (int i = 0; i < 20; i++) {
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .doubleColumn("x", 1.0)
+                        .atNow();
+                Os.sleep(1);
+            }
+        }, DEFAULT_FACTORY.andThen(b -> b.autoFlushRows(Integer.MAX_VALUE).autoFlushIntervalMillis(1)), true);
     }
 
     @Test
@@ -447,6 +464,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory) throws Exception {
+        testWithMock(mockHttpProcessor, senderConsumer, senderBuilderFactory, false);
+    }
+
+    private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory, boolean verifyBeforeClose) throws Exception {
         assertMemoryLeak(() -> {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration();
 
@@ -468,8 +489,13 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     int port = httpConfiguration.getDispatcherConfiguration().getBindPort();
                     try (Sender sender = senderBuilderFactory.apply(port).build()) {
                         senderConsumer.accept(sender);
+                        if (verifyBeforeClose) {
+                            mockHttpProcessor.verify();
+                        }
                     }
-                    mockHttpProcessor.verify();
+                    if (!verifyBeforeClose) {
+                        mockHttpProcessor.verify();
+                    }
                 } finally {
                     workerPool.halt();
                 }

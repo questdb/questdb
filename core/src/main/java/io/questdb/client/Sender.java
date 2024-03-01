@@ -337,10 +337,11 @@ public interface Sender extends Closeable {
      */
     final class LineSenderBuilder {
         private static final int AUTO_FLUSH_DISABLED = 0;
-        private static final int DEFAULT_AUTO_FLUSH_ROWS = 600;
+        private static final int DEFAULT_AUTO_FLUSH_ROWS = 75_000;
         private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
+        private static final int DEFAULT_AUTO_FLUSH_INTERVAL_MILLIS = 1_000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
@@ -354,6 +355,7 @@ public interface Sender extends Closeable {
         private static final int PROTOCOL_HTTP = 1;
         private static final int PROTOCOL_TCP = 0;
         private int autoFlushRows = PARAMETER_NOT_SET_EXPLICITLY;
+        private int autoFlushIntervalMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private int bufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
         private String host;
         private int httpTimeout = PARAMETER_NOT_SET_EXPLICITLY;
@@ -473,6 +475,7 @@ public interface Sender extends Closeable {
          * @see #flush()
          * @see #disableAutoFlush()
          * @see #maxBufferCapacity(int)
+         * @see #autoFlushIntervalMillis(int)
          */
         public LineSenderBuilder autoFlushRows(int autoFlushRows) {
             if (this.autoFlushRows > 0) {
@@ -486,6 +489,42 @@ public interface Sender extends Closeable {
                         .put("[autoFlushRows=").put(autoFlushRows).put("]");
             }
             this.autoFlushRows = autoFlushRows;
+            return this;
+        }
+
+
+        /**
+         * Set the interval at which the Sender automatically flushes its buffer.
+         * <br>
+         * It flushed the buffer even when the number of buffered rows is less than the value set by {@link #autoFlushRows(int)}.
+         * This prevents rows from being locally buffered for too long when the rate of incoming data is low.
+         * <p>
+         * <strong>Important:</strong>This option does not cause the Sender to flush the buffer at regular intervals.
+         * Auto-flushing is only triggered when calling {@link #atNow()}, {@link #at(Instant)} or {@link #at(long, ChronoUnit)}.
+         * The Sender will not flush the buffer if no new rows are added even if the auto-flush interval has elapsed.
+         * <p>
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+         * communicating over TCP transport.
+         * <br>
+         * You cannot set this value when auto-flush is disabled. See {@link #disableAutoFlush()}.
+         * <br>
+         * Default value is 1,000 milliseconds.
+         *
+         * @param autoFlushIntervalMillis interval at which the Sender automatically flushes its buffer in milliseconds.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder autoFlushIntervalMillis(int autoFlushIntervalMillis) {
+            if (this.autoFlushIntervalMillis != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("auto flush interval was already configured ")
+                        .put("[autoFlushIntervalMillis=").put(this.autoFlushIntervalMillis).put("]");
+            } else if (this.autoFlushRows == AUTO_FLUSH_DISABLED) {
+                throw new LineSenderException("cannot set auto flush interval when auto-flush is disabled");
+            }
+            if (autoFlushIntervalMillis <= 0) {
+                throw new LineSenderException("auto flush interval cannot be negative ")
+                        .put("[autoFlushIntervalMillis=").put(autoFlushIntervalMillis).put("]");
+            }
+            this.autoFlushIntervalMillis = autoFlushIntervalMillis;
             return this;
         }
 
@@ -532,12 +571,18 @@ public interface Sender extends Closeable {
                 int actualAutoFlushRows = autoFlushRows == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_AUTO_FLUSH_ROWS : autoFlushRows;
                 long actualMaxRetriesNanos = retryTimeoutMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
                 long actualMinRequestThroughput = minRequestThroughput == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MIN_REQUEST_THROUGHPUT : minRequestThroughput;
+                long actualAutoFlushIntervalMillis;
+                if (autoFlushRows == AUTO_FLUSH_DISABLED) {
+                    actualAutoFlushIntervalMillis = Long.MAX_VALUE;
+                } else {
+                    actualAutoFlushIntervalMillis = TimeUnit.MILLISECONDS.toNanos(autoFlushIntervalMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_AUTO_FLUSH_INTERVAL_MILLIS : autoFlushIntervalMillis);
+                }
                 ClientTlsConfiguration tlsConfig = null;
                 if (tlsEnabled) {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                     tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
                 }
-                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos, actualMinRequestThroughput);
+                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis);
             }
             assert protocol == PROTOCOL_TCP;
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
@@ -775,6 +820,13 @@ public interface Sender extends Closeable {
                         throw new LineSenderException("invalid auto_flush_rows [value=").put(autoFlushRows).put("]");
                     }
                     autoFlushRows(autoFlushRows);
+                } else if (Chars.equals("auto_flush_interval", sink)) {
+                    pos = getValue(configurationString, pos, sink, "auto_flush_interval");
+                    int autoFlushInterval = parseIntValue(sink, "auto_flush_interval");
+                    if (autoFlushInterval < 1) {
+                        throw new LineSenderException("invalid auto_flush_interval [value=").put(autoFlushInterval).put("]");
+                    }
+                    autoFlushIntervalMillis(autoFlushInterval);
                 } else if (Chars.equals("auto_flush", sink)) {
                     pos = getValue(configurationString, pos, sink, "auto_flush");
                     if (Chars.equalsIgnoreCase("off", sink)) {
@@ -1138,6 +1190,9 @@ public interface Sender extends Closeable {
                             .put("[maximumBufferCapacity=").put(maximumBufferCapacity)
                             .put(", initialBufferCapacity=").put(bufferCapacity)
                             .put("]");
+                }
+                if (autoFlushIntervalMillis != PARAMETER_NOT_SET_EXPLICITLY) {
+                    throw new LineSenderException("auto flush interval is not supported for TCP protocol");
                 }
             } else {
                 throw new LineSenderException("unsupported protocol ")

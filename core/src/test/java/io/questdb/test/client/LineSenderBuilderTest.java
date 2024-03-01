@@ -138,7 +138,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testAutoFlushMustBePositive() {
+    public void testAutoFlushRowsMustBePositive() {
         try (Sender s = Sender.builder().autoFlushRows(0).build()) {
             fail("auto-flush must be positive");
         } catch (LineSenderException e) {
@@ -153,6 +153,22 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testAutoFlushIntervalMustBePositive() {
+        try (Sender s = Sender.builder().autoFlushIntervalMillis(0).build()) {
+            fail("auto-flush must be positive");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "auto flush interval cannot be negative [autoFlushIntervalMillis=0]");
+        }
+
+        try (Sender s = Sender.builder().autoFlushIntervalMillis(-1).build()) {
+            fail("auto-flush must be positive");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "auto flush interval cannot be negative [autoFlushIntervalMillis=-1]");
+        }
+    }
+
+
+    @Test
     public void testAutoFlushRowsNotSupportedForTcp() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -165,12 +181,46 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testAutoFlushInteralNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).autoFlushIntervalMillis(1).build();
+                fail("auto flush interval should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "auto flush interval is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
     public void testAutoFlushRows_doubleConfiguration() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 Sender.builder().autoFlushRows(1).autoFlushRows(1);
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "auto flush rows was already configured [autoFlushRows=1]");
+            }
+        });
+    }
+
+    @Test
+    public void testAutoFlushInterval_doubleConfiguration() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().autoFlushIntervalMillis(1).autoFlushIntervalMillis(1);
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "auto flush interval was already configured [autoFlushIntervalMillis=1]");
+            }
+        });
+    }
+
+    @Test
+    public void testAutoFlushInterval_afterAutoFlushDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().disableAutoFlush().autoFlushIntervalMillis(1);
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "cannot set auto flush interval when auto-flush is disabled");
             }
         });
     }
