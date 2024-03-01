@@ -88,15 +88,6 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        if (isNull) {
-            utf16Sink.put((CharSequence) null);
-        } else {
-            utf16Sink.put(this.utf16Sink);
-        }
-    }
-
-    @Override
     public Utf8Sequence getVarcharA(Record rec) {
         return isNull ? null : utf8Sink;
     }

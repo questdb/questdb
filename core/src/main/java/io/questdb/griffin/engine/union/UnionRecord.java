@@ -255,15 +255,6 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public void getVarchar(int col, Utf16Sink utf16sink) {
-        if (useA) {
-            recordA.getVarchar(col, utf16sink);
-        } else {
-            recordB.getVarchar(col, utf16sink);
-        }
-    }
-
-    @Override
     public Utf8Sequence getVarcharA(int col) {
         if (useA) {
             return recordA.getVarcharA(col);

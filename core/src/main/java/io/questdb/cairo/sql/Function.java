@@ -158,8 +158,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     void getVarchar(Record rec, Utf8Sink utf8Sink);
 
-    void getVarchar(Record rec, Utf16Sink utf16Sink);
-
     Utf8Sequence getVarcharB(Record rec);
 
     CharSequence getSymbol(Record rec);

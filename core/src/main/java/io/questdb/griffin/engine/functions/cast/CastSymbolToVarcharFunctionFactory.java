@@ -71,11 +71,6 @@ public class CastSymbolToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            arg.getVarchar(rec, utf16Sink);
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             return arg.getVarcharA(rec);
         }

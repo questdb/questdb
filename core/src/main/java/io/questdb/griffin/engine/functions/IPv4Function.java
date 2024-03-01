@@ -191,14 +191,6 @@ public abstract class IPv4Function implements ScalarFunction {
     }
 
     @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        final int value = getIPv4(rec);
-        if (value != Numbers.IPv4_NULL) {
-            Numbers.intToIPv4Sink(utf16Sink, value);
-        }
-    }
-
-    @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         final int value = getIPv4(rec);
         if (value != Numbers.IPv4_NULL) {

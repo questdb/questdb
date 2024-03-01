@@ -366,10 +366,6 @@ public interface Record {
         utf8Sink.put(getVarcharA(col));
     }
 
-    default void getVarchar(int col, Utf16Sink utf16sink) {
-        utf16sink.put(getVarcharA(col));
-    }
-
     @Nullable
     default Utf8Sequence getVarcharA(int col) {
         throw new UnsupportedOperationException();

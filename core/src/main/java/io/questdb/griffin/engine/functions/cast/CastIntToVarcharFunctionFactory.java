@@ -75,15 +75,6 @@ public class CastIntToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
-                return;
-            }
-            utf16Sink.put(value);
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final int value = arg.getInt(rec);
             if (value == Numbers.INT_NaN) {

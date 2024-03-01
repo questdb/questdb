@@ -230,10 +230,6 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        }
-
-        @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
 
         }

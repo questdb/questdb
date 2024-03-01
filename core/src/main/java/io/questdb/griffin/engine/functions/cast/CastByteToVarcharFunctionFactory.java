@@ -73,11 +73,6 @@ public class CastByteToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            utf16Sink.put(arg.getByte(rec));
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             sinkA.clear();
             sinkA.put((int) arg.getByte(rec));

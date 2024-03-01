@@ -185,11 +185,6 @@ public abstract class LongFunction implements ScalarFunction {
     }
 
     @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         throw new UnsupportedOperationException();
     }

@@ -378,14 +378,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            Utf8Sequence sequence = getVarcharA(rec);
-            if (sequence != null) {
-                utf16Sink.put(sequence);
-            }
-        }
-
-        @Override
         public Utf8Sequence getVarcharB(Record rec) {
             Utf8Sequence value = args0.getVarcharB(rec);
             if (value != null) {
@@ -436,14 +428,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             Utf8Sequence sequence = getVarcharA(rec);
             if (sequence != null) {
                 utf8Sink.put(sequence);
-            }
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            Utf8Sequence sequence = getVarcharA(rec);
-            if (sequence != null) {
-                utf16Sink.put(sequence);
             }
         }
 

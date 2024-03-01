@@ -73,11 +73,6 @@ public class CastShortToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            utf16Sink.put(arg.getShort(rec));
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             sinkA.clear();
             sinkA.put(arg.getShort(rec));

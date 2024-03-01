@@ -212,11 +212,6 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        getBase().getVarchar(rec, utf16Sink);
-    }
-
-    @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         getBase().getVarchar(rec, utf8Sink);
     }

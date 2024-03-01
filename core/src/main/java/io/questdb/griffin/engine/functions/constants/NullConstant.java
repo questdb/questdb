@@ -230,11 +230,6 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        // empty
-    }
-
-    @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         // empty
     }

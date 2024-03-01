@@ -277,15 +277,6 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public void getVarchar(int col, Utf16Sink utf16sink) {
-        if (useA) {
-            castFunctionsA.getQuick(col).getVarchar(recordA, utf16sink);
-        } else {
-            castFunctionsB.getQuick(col).getVarchar(recordB, utf16sink);
-        }
-    }
-
-    @Override
     public Utf8Sequence getVarcharA(int col) {
         if (useA) {
             return castFunctionsA.getQuick(col).getVarcharA(recordA);

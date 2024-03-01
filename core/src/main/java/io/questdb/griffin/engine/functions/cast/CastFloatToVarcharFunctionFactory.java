@@ -80,15 +80,6 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            final float value = arg.getFloat(rec);
-            if (Float.isNaN(value)) {
-                return;
-            }
-            utf16Sink.put(value, scale);
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final float value = arg.getFloat(rec);
             if (Float.isNaN(value)) {

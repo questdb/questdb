@@ -96,11 +96,6 @@ public class RndVarcharListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            Utf8s.utf8ToUtf16(rndSymbol(), utf16Sink);
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             return rndSymbol();
         }

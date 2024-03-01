@@ -73,11 +73,6 @@ public class CastStrToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            utf16Sink.put(arg.getVarcharA(rec));
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final Utf8Sequence value = arg.getVarcharA(rec);
             if (value == null) {

@@ -74,14 +74,6 @@ public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            final int value = arg.getIPv4(rec);
-            if (value != Numbers.IPv4_NULL) {
-                Numbers.intToIPv4Sink(utf16Sink, value);
-            }
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final int value = arg.getIPv4(rec);
             if (value == Numbers.IPv4_NULL) {

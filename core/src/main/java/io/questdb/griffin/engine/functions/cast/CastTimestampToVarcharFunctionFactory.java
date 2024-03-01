@@ -76,15 +76,6 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
-                return;
-            }
-            TimestampFormatUtils.appendDateTimeUSec(utf16Sink, value);
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             sinkA.clear();
             final long value = arg.getTimestamp(rec);

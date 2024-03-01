@@ -101,11 +101,6 @@ public class VarcharConstant extends VarcharFunction implements ConstantFunction
     }
 
     @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        utf16Sink.put(value);
-    }
-
-    @Override
     public Utf8Sequence getVarcharA(Record rec) {
         return value;
     }

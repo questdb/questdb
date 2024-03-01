@@ -77,11 +77,6 @@ public final class CastUuidToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), utf16Sink);
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             sinkA.clear();
             return SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkA) ? sinkA : null;

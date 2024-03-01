@@ -295,15 +295,6 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public void getVarchar(int col, Utf16Sink utf16sink) {
-        if (col < split) {
-            master.getVarchar(col, utf16sink);
-        } else {
-            slave.getVarchar(col - split, utf16sink);
-        }
-    }
-
-    @Override
     public Utf8Sequence getVarcharA(int col) {
         if (col < split) {
             return master.getVarcharA(col);

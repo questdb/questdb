@@ -114,15 +114,6 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     }
 
     @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        final long ptr = rec.getLong(valueIndex);
-        if (ptr != 0) {
-            sinkA.of(ptr);
-            utf16Sink.put(sinkA);
-        }
-    }
-
-    @Override
     public Utf8Sequence getVarcharB(Record rec) {
         return getVarcharA(rec);
     }

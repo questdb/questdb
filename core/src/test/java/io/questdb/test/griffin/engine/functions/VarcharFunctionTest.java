@@ -65,10 +65,6 @@ public class VarcharFunctionTest {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             return utf8Seq;
         }

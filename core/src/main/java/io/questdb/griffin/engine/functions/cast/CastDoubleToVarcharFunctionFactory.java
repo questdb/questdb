@@ -80,15 +80,6 @@ public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
-                return;
-            }
-            utf16Sink.put(value, scale);
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final double value = arg.getDouble(rec);
             if (Double.isNaN(value)) {

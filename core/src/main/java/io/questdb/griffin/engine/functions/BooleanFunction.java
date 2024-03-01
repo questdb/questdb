@@ -182,11 +182,6 @@ public abstract class BooleanFunction implements ScalarFunction {
     }
 
     @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        utf16Sink.put(getStr0(rec));
-    }
-
-    @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         utf8Sink.put(getVarchar0(rec));
     }

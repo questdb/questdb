@@ -69,11 +69,6 @@ public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            arg.getLong256(rec, utf16Sink);
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             sinkA.clear();
             return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkA) ? sinkA : null;

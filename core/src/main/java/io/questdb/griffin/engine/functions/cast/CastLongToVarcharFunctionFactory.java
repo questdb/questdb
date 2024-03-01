@@ -75,15 +75,6 @@ public class CastLongToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            final long value = arg.getLong(rec);
-            if (value == Numbers.LONG_NaN) {
-                return;
-            }
-            utf16Sink.put(value);
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final long value = arg.getLong(rec);
             if (value == Numbers.LONG_NaN) {

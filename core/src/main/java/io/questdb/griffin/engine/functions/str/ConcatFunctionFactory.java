@@ -134,7 +134,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     private static void sinkVarchar(Utf16Sink utf16Sink, Function function, Record record) {
-        function.getVarchar(record, utf16Sink);
+        function.getStr(record, utf16Sink);
     }
 
     @FunctionalInterface

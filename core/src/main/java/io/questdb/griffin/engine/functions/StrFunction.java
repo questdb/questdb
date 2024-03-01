@@ -187,11 +187,6 @@ public abstract class StrFunction implements ScalarFunction {
     }
 
     @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        utf16Sink.put(getStr(rec));
-    }
-
-    @Override
     public Utf8Sequence getVarcharA(Record rec) {
         utf8SinkA.clear();
         utf8SinkA.put(getStr(rec));

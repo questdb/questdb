@@ -89,15 +89,6 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     }
 
     @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        if (isNull) {
-            utf16Sink.put((CharSequence) null);
-        } else {
-            utf16Sink.put(this.utf8Sink);
-        }
-    }
-
-    @Override
     public Utf8Sequence getVarcharA(Record rec) {
         return isNull ? null : utf8Sink;
     }

@@ -188,11 +188,6 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public void getVarchar(int col, Utf16Sink utf16sink) {
-        getFunction(col).getVarchar(base, utf16sink);
-    }
-
-    @Override
     public Utf8Sequence getVarcharA(int col) {
         return getFunction(col).getVarcharA(base);
     }

@@ -75,15 +75,6 @@ public class CastDateToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-            final long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NaN) {
-                return;
-            }
-            utf16Sink.putISODateMillis(value);
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final long value = arg.getDate(rec);
             if (value == Numbers.LONG_NaN) {

@@ -52,13 +52,6 @@ public class CharConstant extends CharFunction implements ConstantFunction {
     }
 
     @Override
-    public void getVarchar(Record rec, Utf16Sink utf16Sink) {
-        if (value != 0) {
-            utf16Sink.put(value);
-        }
-    }
-
-    @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         if (value != 0) {
             utf8Sink.put(utf8Value);

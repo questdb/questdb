@@ -296,7 +296,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf16Sink utf16Sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             long value = getValue(rec);
             if (value == GeoHashes.NULL) {
                 utf16Sink.putAscii("null");
