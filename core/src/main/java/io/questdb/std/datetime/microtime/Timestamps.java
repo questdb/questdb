@@ -165,6 +165,10 @@ public final class Timestamps {
 
     }
 
+    public static long ceilCentury(long micros) {
+        return floorCentury(micros) + (YEAR_MICROS * 100);
+    }
+
     public static long ceilDD(long micros) {
         int y, m;
         boolean l;
@@ -173,12 +177,32 @@ public final class Timestamps {
                 + (getDayOfMonth(micros, y, m, l)) * DAY_MICROS;
     }
 
+    public static long ceilDD(long micros, int stride) {
+        return floorDD(micros, stride) + (DAY_MICROS * stride);
+    }
+
+    public static long ceilDOW(long micros) {
+        throw new UnsupportedOperationException();
+    }
+
+    public static long ceilDecade(long micros) {
+        return ceilCentury(micros) + (YEAR_MICROS) * 10;
+    }
+
     public static long ceilHH(long micros) {
         return floorHH(micros) + HOUR_MICROS;
     }
 
+    public static long ceilHH(long micros, int stride) {
+        return floorHH(micros, stride) + (HOUR_MICROS * stride);
+    }
+
     public static long ceilMI(long micros) {
         return floorMI(micros) + MINUTE_MICROS;
+    }
+
+    public static long ceilMI(long micros, int stride) {
+        return floorMI(micros, stride) + (MINUTE_MICROS * stride);
     }
 
     public static long ceilMM(long micros) {
@@ -189,16 +213,40 @@ public final class Timestamps {
                 + (getDaysPerMonth(m, l)) * DAY_MICROS;
     }
 
+    public static long ceilMM(long micros, int stride) {
+        throw new UnsupportedOperationException();
+    }
+
     public static long ceilMS(long micros) {
         return floorMS(micros) + MILLI_MICROS;
+    }
+
+    public static long ceilMS(long micros, int stride) {
+        return floorMS(micros) + (MILLI_MICROS * stride);
+    }
+
+    public static long ceilMillennium(long micros) {
+        return floorMillennium(micros) + (YEAR_MICROS * 1000);
+    }
+
+    public static long ceilQuarter(long micros) {
+        return floorQuarter(micros) + (YEAR_MICROS * 3);
     }
 
     public static long ceilSS(long micros) {
         return floorSS(micros) + SECOND_MICROS;
     }
 
+    public static long ceilSS(long micros, int stride) {
+        return floorSS(micros) + (SECOND_MICROS * stride);
+    }
+
     public static long ceilWW(long micros) {
         return floorWW(micros) + WEEK_MICROS;
+    }
+
+    public static long ceilWW(long micros, int stride) {
+        return floorWW(micros) + (WEEK_MICROS * stride);
     }
 
     public static long ceilYYYY(long micros) {
@@ -207,6 +255,10 @@ public final class Timestamps {
         return yearMicros(y = getYear(micros), l = isLeapYear(y))
                 + monthOfYearMicros(12, l)
                 + (DAYS_PER_MONTH[11]) * DAY_MICROS;
+    }
+
+    public static long ceilYYYY(long micros, int stride) {
+        throw new UnsupportedOperationException();
     }
 
     public static long endOfYear(int year) {
