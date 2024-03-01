@@ -432,6 +432,7 @@ public final class WhereClauseParser implements Mutable {
                 }
 
                 switch (ColumnType.tagOf(m.getColumnType(index))) {
+                    case ColumnType.VARCHAR:
                     case ColumnType.SYMBOL:
                     case ColumnType.STRING:
                     case ColumnType.LONG:
@@ -1465,7 +1466,7 @@ public final class WhereClauseParser implements Mutable {
             function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
             return true;
         }
-        return ColumnType.isString(type);
+        return ColumnType.isString(type) || ColumnType.isVarchar(type);
     }
 
     private void clearAllKeys() {

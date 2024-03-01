@@ -182,34 +182,22 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharTimestampParseBasic() throws SqlException {
-        try {
-            TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp = '2024-02-29'::varchar")));
-        } catch (SqlException e) {
-            throw e;
-        }
+        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp = '2024-02-29'::varchar")));
     }
 
     @Test
     public void testVarcharTimestampParseOperators() throws SqlException {
-        try {
-            TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp = '2024-02-29'::varchar")));
-            TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]", intervalToString(modelOf("timestamp > '2024-02-29'::varchar")));
-            TestUtils.assertEquals("[{lo=, hi=2024-02-28T23:59:59.999999Z}]", intervalToString(modelOf("timestamp < '2024-02-29'::varchar")));
-            TestUtils.assertEquals("[{lo=, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp <= '2024-02-29'::varchar")));
-            TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]", intervalToString(modelOf("timestamp >= '2024-02-29'::varchar")));
-            TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-03-01T00:00:00.000000Z}]", intervalToString(modelOf("timestamp between '2024-02-29'::varchar and '2024-03-01'::varchar")));
-        } catch (SqlException e) {
-            throw e;
-        }
+        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp = '2024-02-29'::varchar")));
+        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]", intervalToString(modelOf("timestamp > '2024-02-29'::varchar")));
+        TestUtils.assertEquals("[{lo=, hi=2024-02-28T23:59:59.999999Z}]", intervalToString(modelOf("timestamp < '2024-02-29'::varchar")));
+        TestUtils.assertEquals("[{lo=, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp <= '2024-02-29'::varchar")));
+        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]", intervalToString(modelOf("timestamp >= '2024-02-29'::varchar")));
+        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-03-01T00:00:00.000000Z}]", intervalToString(modelOf("timestamp between '2024-02-29'::varchar and '2024-03-01'::varchar")));
     }
 
     @Test
     public void testVarcharTimestampParseCompoundExpr() throws SqlException {
-        try {
-            TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp = '2024-02-29'::varchar and timestamp <= '2024-03-01'::varchar")));
-        } catch (SqlException e) {
-            throw e;
-        }
+        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp = '2024-02-29'::varchar and timestamp <= '2024-03-01'::varchar")));
     }
 
     @Test
@@ -2576,6 +2564,16 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testThreeIntrinsics2Varchar() throws Exception {
+        IntrinsicModel m;
+        m = modelOf("ex in ('c'::varchar) and sym in ('a'::varchar, 'b'::varchar) and timestamp between '2014-01-01T12:30:00.000Z'::varchar and '2014-01-02T12:30:00.000Z'::varchar and bid > 100 and ask < 110");
+        assertFilter(m, "110 ask < 100 bid > varchar 'b' cast varchar 'a' cast sym in and and");
+        TestUtils.assertEquals("ex", m.keyColumn);
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
+        TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
+    }
+
+    @Test
     public void testTimestampEpochEqualsLongConst() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         try {
@@ -2596,6 +2594,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testTimestampEqualsFunctionOfNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         runWhereCompareToModelTest("timestamp = dateadd('d', 2, now())",
+                "[{lo=1970-01-04T00:00:00.000000Z, hi=1970-01-04T00:00:00.000000Z}]");
+    }
+
+    @Test
+    public void testTimestampEqualsFunctionOfNowVarchar() throws Exception {
+        currentMicros = 24L * 3600 * 1000 * 1000;
+        runWhereCompareToModelTest("timestamp = dateadd('d'::varchar, 2, now())",
                 "[{lo=1970-01-04T00:00:00.000000Z, hi=1970-01-04T00:00:00.000000Z}]");
     }
 
@@ -2634,11 +2639,28 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsToConstNullFuncVarchar() throws SqlException {
+        long day = 24L * 3600 * 1000 * 1000;
+        bindVariableService.clear();
+        bindVariableService.setTimestamp(0, day);
+        IntrinsicModel m = runWhereIntervalTest0("timestamp = to_date('2015-02-AB'::varchar, 'yyyy-MM-dd'::varchar)", "[]");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+    }
+
+    @Test
     public void testTimestampEqualsToNonConst() throws SqlException {
         long day = 24L * 3600 * 1000 * 1000;
         bindVariableService.clear();
         bindVariableService.setTimestamp(0, day);
         runWhereIntervalTest0("timestamp = dateadd('y',1,timestamp)", "");
+    }
+
+    @Test
+    public void testTimestampEqualsToNonConstVarchar() throws SqlException {
+        long day = 24L * 3600 * 1000 * 1000;
+        bindVariableService.clear();
+        bindVariableService.setTimestamp(0, day);
+        runWhereIntervalTest0("timestamp = dateadd('y'::varchar,1,timestamp)", "");
     }
 
     @Test
@@ -2682,13 +2704,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampFunctionOfThreeArgsVarchar() throws Exception {
+        IntrinsicModel m = modelOf("func(2, timestamp, 'abc'::varchar)");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "varchar 'abc' cast timestamp 2 func");
+    }
+
+    @Test
     public void testTimestampGreaterConstFunction() throws SqlException {
         runWhereIntervalTest0("timestamp > to_date('2015-02-22', 'yyyy-MM-dd')", "[{lo=2015-02-22T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
 
     @Test
+    public void testTimestampGreaterConstFunctionVarchar() throws SqlException {
+        runWhereIntervalTest0("timestamp > to_date('2015-02-22'::varchar, 'yyyy-MM-dd'::varchar)", "[{lo=2015-02-22T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
+
+    @Test
     public void testTimestampLessConstFunction() throws SqlException {
         runWhereIntervalTest0("timestamp <= to_date('2015-02-22', 'yyyy-MM-dd')", "[{lo=, hi=2015-02-22T00:00:00.000000Z}]");
+    }
+
+    @Test
+    public void testTimestampLessConstFunctionVarchar() throws SqlException {
+        runWhereIntervalTest0("timestamp <= to_date('2015-02-22'::varchar, 'yyyy-MM-dd'::varchar)", "[{lo=, hi=2015-02-22T00:00:00.000000Z}]");
     }
 
     @Test
@@ -2876,6 +2915,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTwoIntervalSources() throws Exception {
         IntrinsicModel m = modelOf("timestamp in '2014-06-20T13:25:00.000Z;10m;2d;5' and timestamp IN '2015-06-20T13:25:00.000Z;10m;2d;5'");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        TestUtils.assertEquals("[]", intervalToString(m));
+    }
+
+   @Test
+    public void testTwoIntervalSourcesVarchar() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in '2014-06-20T13:25:00.000Z;10m;2d;5'::varchar and timestamp IN '2015-06-20T13:25:00.000Z;10m;2d;5'::varchar");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         TestUtils.assertEquals("[]", intervalToString(m));
     }

@@ -173,4 +173,24 @@ public class DoubleFunctionTest {
     public void testLong256B() {
         function.getLong256B(null);
     }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testVarchar1() {
+        function.getVarchar(null, (Utf16Sink) null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testVarchar2() {
+        function.getVarchar(null, (Utf16Sink) null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testVarcharA() {
+        function.getVarcharA(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testVarcharB() {
+        function.getVarcharB(null);
+    }
 }

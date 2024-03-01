@@ -251,14 +251,7 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
 
     @Override
     public boolean isReadThreadSafe() {
-        switch (type) {
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-            case ColumnType.LONG256:
-                return false;
-            default:
-                return true;
-        }
+        return true;
     }
 
     @Override

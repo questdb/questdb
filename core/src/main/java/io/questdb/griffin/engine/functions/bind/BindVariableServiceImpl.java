@@ -649,36 +649,6 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setVarchar(int index) throws SqlException {
-        setVarchar(index, null);
-    }
-
-    @Override
-    public void setVarchar(int index, Utf8Sequence value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
-        // variable exists
-        Function function = indexedVariables.getQuick(index);
-        if (function != null) {
-            setVarchar0(function, value, index, null);
-        } else {
-            indexedVariables.setQuick(index, function = varcharVarPool.next());
-            ((VarcharBindVariable) function).setValue(value);
-        }
-    }
-
-    @Override
-    public void setVarchar(CharSequence name, Utf8Sequence value) throws SqlException {
-        int index = namedVariables.keyIndex(name);
-        if (index > -1) {
-            final VarcharBindVariable function;
-            namedVariables.putAt(index, name, function = varcharVarPool.next());
-            function.setValue(value);
-        } else {
-            setVarchar0(namedVariables.valueAtQuick(index), value, -1, name);
-        }
-    }
-
-    @Override
     public void setTimestamp(int index) throws SqlException {
         setTimestamp(index, Numbers.LONG_NaN);
     }
@@ -735,6 +705,36 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     public void setUuid(int index) throws SqlException {
         setUuid(index, Numbers.LONG_NaN, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setVarchar(int index) throws SqlException {
+        setVarchar(index, null);
+    }
+
+    @Override
+    public void setVarchar(int index, Utf8Sequence value) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            setVarchar0(function, value, index, null);
+        } else {
+            indexedVariables.setQuick(index, function = varcharVarPool.next());
+            ((VarcharBindVariable) function).setValue(value);
+        }
+    }
+
+    @Override
+    public void setVarchar(CharSequence name, Utf8Sequence value) throws SqlException {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            final VarcharBindVariable function;
+            namedVariables.putAt(index, name, function = varcharVarPool.next());
+            function.setValue(value);
+        } else {
+            setVarchar0(namedVariables.valueAtQuick(index), value, -1, name);
+        }
     }
 
     private static void reportError(Function function, int srcType, int index, @Nullable CharSequence name) throws SqlException {
@@ -864,6 +864,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 break;
             case ColumnType.VARCHAR:
                 ((VarcharBindVariable) function).setValue(value);
+                break;
             default:
                 reportError(function, ColumnType.DOUBLE, index, name);
                 break;
@@ -1136,61 +1137,6 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setVarchar0(Function function, Utf8Sequence value, int index, @Nullable CharSequence name) throws SqlException {
-        // TODO: get rid of stringFromUtf8Bytes
-        final int functionType = ColumnType.tagOf(function.getType());
-        switch (functionType) {
-            case ColumnType.BOOLEAN:
-                ((BooleanBindVariable) function).value = SqlKeywords.isTrueKeyword(value);
-                break;
-            case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = SqlUtil.implicitCastVarcharAsByte(value);
-                break;
-            case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = SqlUtil.implicitCastVarcharAsShort(value);
-                break;
-            case ColumnType.CHAR:
-                ((CharBindVariable) function).value = SqlUtil.implicitCastVarcharAsChar(value);
-                break;
-            case ColumnType.IPv4:
-                ((IPv4BindVariable) function).value = SqlUtil.implicitCastStrAsIPv4(value);
-                break;
-            case ColumnType.INT:
-                ((IntBindVariable) function).value = SqlUtil.implicitCastVarcharAsInt(value);
-                break;
-            case ColumnType.LONG:
-                ((LongBindVariable) function).value = SqlUtil.implicitCastVarcharAsLong(value);
-                break;
-            case ColumnType.TIMESTAMP:
-                ((TimestampBindVariable) function).value = SqlUtil.implicitCastStrAsTimestamp(Utf8s.stringFromUtf8Bytes(value));
-                break;
-            case ColumnType.DATE:
-                ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(Utf8s.stringFromUtf8Bytes(value));
-                break;
-            case ColumnType.FLOAT:
-                ((FloatBindVariable) function).value = SqlUtil.implicitCastVarcharAsFloat(value);
-                break;
-            case ColumnType.DOUBLE:
-                ((DoubleBindVariable) function).value = SqlUtil.implicitCastVarcharAsDouble(value);
-                break;
-            case ColumnType.STRING:
-                ((StrBindVariable) function).setValue(value);
-                break;
-            case ColumnType.VARCHAR:
-                ((VarcharBindVariable) function).setValue(value);
-                break;
-            case ColumnType.LONG256:
-                SqlUtil.implicitCastStrAsLong256(Utf8s.stringFromUtf8Bytes(value), ((Long256BindVariable) function).value);
-                break;
-            case ColumnType.UUID:
-                SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
-                break;
-            default:
-                reportError(function, ColumnType.STRING, index, name);
-                break;
-        }
-    }
-
     private static void setTimestamp0(Function function, long value, int index) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
@@ -1244,6 +1190,64 @@ public class BindVariableServiceImpl implements BindVariableService {
                 break;
             default:
                 reportError(function, ColumnType.UUID, index, name);
+                break;
+        }
+    }
+
+    private static void setVarchar0(Function function, Utf8Sequence value, int index, @Nullable CharSequence name) throws SqlException {
+        final int functionType = ColumnType.tagOf(function.getType());
+        switch (functionType) {
+            case ColumnType.BOOLEAN:
+                ((BooleanBindVariable) function).value = SqlKeywords.isTrueKeyword(value);
+                break;
+            case ColumnType.BYTE:
+                ((ByteBindVariable) function).value = SqlUtil.implicitCastVarcharAsByte(value);
+                break;
+            case ColumnType.SHORT:
+                ((ShortBindVariable) function).value = SqlUtil.implicitCastVarcharAsShort(value);
+                break;
+            case ColumnType.CHAR:
+                ((CharBindVariable) function).value = SqlUtil.implicitCastVarcharAsChar(value);
+                break;
+            case ColumnType.IPv4:
+                ((IPv4BindVariable) function).value = SqlUtil.implicitCastStrAsIPv4(value);
+                break;
+            case ColumnType.INT:
+                ((IntBindVariable) function).value = SqlUtil.implicitCastVarcharAsInt(value);
+                break;
+            case ColumnType.LONG:
+                ((LongBindVariable) function).value = SqlUtil.implicitCastVarcharAsLong(value);
+                break;
+            case ColumnType.TIMESTAMP:
+                ((TimestampBindVariable) function).value = SqlUtil.implicitCastVarcharAsTimestamp(
+                        value.isAscii() ? value.asAsciiCharSequence() : Utf8s.stringFromUtf8Bytes(value));
+                break;
+            case ColumnType.DATE:
+                ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(
+                        value.isAscii() ? value.asAsciiCharSequence() : Utf8s.stringFromUtf8Bytes(value));
+                break;
+            case ColumnType.FLOAT:
+                ((FloatBindVariable) function).value = SqlUtil.implicitCastVarcharAsFloat(value);
+                break;
+            case ColumnType.DOUBLE:
+                ((DoubleBindVariable) function).value = SqlUtil.implicitCastVarcharAsDouble(value);
+                break;
+            case ColumnType.STRING:
+                ((StrBindVariable) function).setValue(value);
+                break;
+            case ColumnType.VARCHAR:
+                ((VarcharBindVariable) function).setValue(value);
+                break;
+            case ColumnType.LONG256:
+                SqlUtil.implicitCastStrAsLong256(value.isAscii() ?
+                        value.asAsciiCharSequence() :
+                        Utf8s.stringFromUtf8Bytes(value), ((Long256BindVariable) function).value);
+                break;
+            case ColumnType.UUID:
+                SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
+                break;
+            default:
+                reportError(function, ColumnType.STRING, index, name);
                 break;
         }
     }

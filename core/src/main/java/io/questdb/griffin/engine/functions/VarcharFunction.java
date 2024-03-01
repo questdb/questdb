@@ -48,18 +48,16 @@ public abstract class VarcharFunction implements ScalarFunction {
     }
 
     @Override
-    public final boolean getBool(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+    public final boolean getBool(Record rec) { throw new UnsupportedOperationException(); }
 
     @Override
     public final byte getByte(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastVarcharAsByte(getVarcharA(rec));
     }
 
     @Override
     public char getChar(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastVarcharAsChar(getVarcharA(rec));
     }
 
     @Override
@@ -69,12 +67,12 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public double getDouble(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastVarcharAsDouble(getVarcharA(rec));
     }
 
     @Override
     public float getFloat(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastVarcharAsFloat(getVarcharA(rec));
     }
 
     @Override
@@ -105,12 +103,12 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public int getInt(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastVarcharAsInt(getVarcharA(rec));
     }
 
     @Override
     public long getLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastVarcharAsLong(getVarcharA(rec));
     }
 
     @Override
@@ -145,7 +143,7 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public final short getShort(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastVarcharAsShort(getVarcharA(rec));
     }
 
     @Override

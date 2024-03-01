@@ -153,21 +153,21 @@ public class ParallelFilterTest extends AbstractCairoTest {
     public void testAsyncSubQueryWithFilterOnIndexedSymbol() throws Exception {
         testAsyncSubQueryWithFilter("SELECT count(*) " +
                 "FROM price " +
-                "WHERE type IN  (SELECT id FROM mapping WHERE ext in ('s1', 's2') and substring(ext,2,1) = '1')");
+                "WHERE type IN (SELECT id FROM mapping WHERE ext in ('s1', 's2') and substring(ext,2,1) = '1')");
     }
 
     @Test
     public void testAsyncSubQueryWithFilterOnLatestBy() throws Exception {
         testAsyncSubQueryWithFilter("SELECT count(*) " +
                 "FROM price " +
-                "WHERE type IN  (SELECT id FROM mapping WHERE ext in ('s1'))");
+                "WHERE type IN (SELECT id FROM mapping WHERE ext in ('s1'))");
     }
 
     @Test
     public void testAsyncSubQueryWithFilterOnSymbol() throws Exception {
         testAsyncSubQueryWithFilter("SELECT count(*) " +
                 "FROM price " +
-                "WHERE type IN  (SELECT id FROM mapping WHERE ext in ('s1'))");
+                "WHERE type IN (SELECT id FROM mapping WHERE ext in ('s1'))");
     }
 
     @Test
@@ -324,6 +324,51 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 1,
                 SqlJitMode.JIT_MODE_DISABLED
         );
+    }
+
+    @Test
+    public void testStrBindVariable() throws Exception {
+        WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    ddl(compiler, "CREATE TABLE price (\n" +
+                            "  ts TIMESTAMP," +
+                            "  type STRING," +
+                            "  value DOUBLE) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
+                    insert(compiler, "insert into price select x::timestamp, 't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
+
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setStr(0, "t3");
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select * from price where type = $1 limit 10",
+                            sink,
+                            "ts\ttype\tvalue\n" +
+                                    "1970-01-01T00:00:00.000003Z\tt3\t0.08486964232560668\n" +
+                                    "1970-01-01T00:00:00.000008Z\tt3\t0.9856290845874263\n" +
+                                    "1970-01-01T00:00:00.000013Z\tt3\t0.5243722859289777\n" +
+                                    "1970-01-01T00:00:00.000018Z\tt3\t0.6778564558839208\n" +
+                                    "1970-01-01T00:00:00.000023Z\tt3\t0.3288176907679504\n" +
+                                    "1970-01-01T00:00:00.000028Z\tt3\t0.6381607531178513\n" +
+                                    "1970-01-01T00:00:00.000033Z\tt3\t0.6761934857077543\n" +
+                                    "1970-01-01T00:00:00.000038Z\tt3\t0.7664256753596138\n" +
+                                    "1970-01-01T00:00:00.000043Z\tt3\t0.05048190020054388\n" +
+                                    "1970-01-01T00:00:00.000048Z\tt3\t0.8001121139739173\n"
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
+    public void testSymbolBindVariableJitDisabled() throws Exception {
+        testSymbolBindVariable(SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
+    public void testSymbolBindVariableJitEnabled() throws Exception {
+        testSymbolBindVariable(SqlJitMode.JIT_MODE_ENABLED);
     }
 
     private static boolean assertCursor(
@@ -583,6 +628,42 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
                     Misc.free(factories);
                     Assert.assertEquals(0, errors.get());
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    private void testSymbolBindVariable(int jitMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
+
+        WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    ddl(compiler, "CREATE TABLE price (\n" +
+                            "  ts TIMESTAMP," +
+                            "  type SYMBOL," +
+                            "  value DOUBLE) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
+                    insert(compiler, "insert into price select x::timestamp, 't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
+
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setStr(0, "t3");
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select * from price where type = $1 limit 10",
+                            sink,
+                            "ts\ttype\tvalue\n" +
+                                    "1970-01-01T00:00:00.000003Z\tt3\t0.08486964232560668\n" +
+                                    "1970-01-01T00:00:00.000008Z\tt3\t0.9856290845874263\n" +
+                                    "1970-01-01T00:00:00.000013Z\tt3\t0.5243722859289777\n" +
+                                    "1970-01-01T00:00:00.000018Z\tt3\t0.6778564558839208\n" +
+                                    "1970-01-01T00:00:00.000023Z\tt3\t0.3288176907679504\n" +
+                                    "1970-01-01T00:00:00.000028Z\tt3\t0.6381607531178513\n" +
+                                    "1970-01-01T00:00:00.000033Z\tt3\t0.6761934857077543\n" +
+                                    "1970-01-01T00:00:00.000038Z\tt3\t0.7664256753596138\n" +
+                                    "1970-01-01T00:00:00.000043Z\tt3\t0.05048190020054388\n" +
+                                    "1970-01-01T00:00:00.000048Z\tt3\t0.8001121139739173\n"
+                    );
                 },
                 configuration,
                 LOG
