@@ -146,11 +146,6 @@ public abstract class CharFunction implements ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf8Sink utf8Sink) {
-        utf8Sink.put(getChar(rec));
-    }
-
-    @Override
     public final CharSequence getStr(Record rec) {
         final char value = getChar(rec);
         if (value == 0) {

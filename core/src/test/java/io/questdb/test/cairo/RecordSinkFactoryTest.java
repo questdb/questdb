@@ -460,12 +460,6 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void getStr(Record rec, Utf8Sink utf8Sink) {
-            Assert.assertEquals(ColumnType.STRING, type);
-            callCount++;
-        }
-
-        @Override
         public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
             throw new UnsupportedOperationException();
         }

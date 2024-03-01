@@ -144,8 +144,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     void getStr(Record rec, Utf16Sink utf16Sink);
 
-    void getStr(Record rec, Utf8Sink utf8Sink);
-
     void getStr(Record rec, Utf16Sink sink, int arrayIndex);
 
     CharSequence getStrB(Record rec);

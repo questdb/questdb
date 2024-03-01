@@ -172,11 +172,6 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf8Sink utf8Sink) {
-        getBase().getStr(rec, utf8Sink);
-    }
-
-    @Override
     public CharSequence getStr(Record rec) {
         return getBase().getStr(rec);
     }

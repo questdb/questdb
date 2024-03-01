@@ -180,11 +180,6 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf8Sink utf8Sink) {
-        // empty
-    }
-
-    @Override
     public CharSequence getStr(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }

@@ -153,11 +153,6 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
-    public void getStr(Record rec, Utf8Sink utf8Sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public final CharSequence getSymbol(Record rec) {
         return getStr(rec);
     }

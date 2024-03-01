@@ -181,10 +181,6 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public void getStr(Record rec, Utf8Sink utf8Sink) {
-        }
-
-        @Override
         public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
         }
 

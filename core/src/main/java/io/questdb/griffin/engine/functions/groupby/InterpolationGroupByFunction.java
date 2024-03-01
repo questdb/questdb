@@ -219,11 +219,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf8Sink utf8Sink) {
-        wrappedFunction.getStr(rec, utf8Sink);
-    }
-
-    @Override
     public CharSequence getStr(Record rec, int arrayIndex) {
         return wrappedFunction.getStr(rec, arrayIndex);
     }

@@ -159,11 +159,6 @@ public class CursorFunction implements ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf8Sink utf8Sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public final CharSequence getStr(Record rec) {
         throw new UnsupportedOperationException();
     }

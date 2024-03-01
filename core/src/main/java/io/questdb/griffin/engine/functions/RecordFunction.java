@@ -147,11 +147,6 @@ public abstract class RecordFunction implements ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf8Sink utf8Sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public CharSequence getStr(Record rec) {
         throw new UnsupportedOperationException();
     }
