@@ -237,8 +237,8 @@ public abstract class CharFunction implements ScalarFunction {
         if (value == 0) {
             return null;
         }
-        utf16SinkB.clear();
-        utf16SinkB.put(getChar(rec));
+        utf8SinkB.clear();
+        utf8SinkB.put(getChar(rec));
         return utf8SinkB;
     }
 }
