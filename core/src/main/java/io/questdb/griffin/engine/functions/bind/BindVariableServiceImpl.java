@@ -1195,7 +1195,6 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setVarchar0(Function function, Utf8Sequence value, int index, @Nullable CharSequence name) throws SqlException {
-        // TODO: get rid of stringFromUtf8Bytes
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BOOLEAN:
@@ -1220,10 +1219,12 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((LongBindVariable) function).value = SqlUtil.implicitCastVarcharAsLong(value);
                 break;
             case ColumnType.TIMESTAMP:
-                ((TimestampBindVariable) function).value = SqlUtil.implicitCastStrAsTimestamp(Utf8s.stringFromUtf8Bytes(value));
+                ((TimestampBindVariable) function).value = SqlUtil.implicitCastVarcharAsTimestamp(
+                        value.isAscii() ? value.asAsciiCharSequence() : Utf8s.stringFromUtf8Bytes(value));
                 break;
             case ColumnType.DATE:
-                ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(Utf8s.stringFromUtf8Bytes(value));
+                ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(
+                        value.isAscii() ? value.asAsciiCharSequence() : Utf8s.stringFromUtf8Bytes(value));
                 break;
             case ColumnType.FLOAT:
                 ((FloatBindVariable) function).value = SqlUtil.implicitCastVarcharAsFloat(value);
@@ -1238,7 +1239,9 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((VarcharBindVariable) function).setValue(value);
                 break;
             case ColumnType.LONG256:
-                SqlUtil.implicitCastStrAsLong256(Utf8s.stringFromUtf8Bytes(value), ((Long256BindVariable) function).value);
+                SqlUtil.implicitCastStrAsLong256(value.isAscii() ?
+                        value.asAsciiCharSequence() :
+                        Utf8s.stringFromUtf8Bytes(value), ((Long256BindVariable) function).value);
                 break;
             case ColumnType.UUID:
                 SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
