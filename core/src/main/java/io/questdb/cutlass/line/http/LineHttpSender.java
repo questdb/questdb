@@ -341,7 +341,7 @@ public final class LineHttpSender implements Sender {
 
         long retryingDeadlineNanos = Long.MIN_VALUE;
         int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
-        int contentLen = request.getContentLen();
+        int contentLen = request.getContentLength();
         int actualTimeoutMillis = baseTimeoutMillis;
         if (minRequestThroughput > 0) {
             long throughputTimeoutBonusMillis = (contentLen * 1_000L / minRequestThroughput);

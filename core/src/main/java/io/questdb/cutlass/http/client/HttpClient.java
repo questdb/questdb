@@ -444,7 +444,7 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
-        public int getContentLen() {
+        public int getContentLength() {
             if (contentStart > -1) {
                 return (int) (ptr - contentStart);
             } else {
