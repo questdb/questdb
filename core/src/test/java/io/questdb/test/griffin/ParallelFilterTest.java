@@ -72,7 +72,18 @@ public class ParallelFilterTest extends AbstractCairoTest {
             "3542505137180114151\n" +
             "4169687421984608700\n" +
             "3433721896286859656\n";
-    private static final String expectedNoLimit = "v\n" +
+    private static final String expectedPositiveLimit = "v\n" +
+            "3394168647660478011\n" +
+            "4086802474270249591\n" +
+            "3958193676455060057\n" +
+            "3619114107112892010\n" +
+            "3705833798044144433\n" +
+            "4238042693748641409\n" +
+            "3518554007419864093\n" +
+            "4014104627539596639\n" +
+            "3393210801760647293\n" +
+            "4099611147050818391\n";
+    private static final String expectedSymbolNoLimit = "v\n" +
             "3393210801760647293\n" +
             "3394168647660478011\n" +
             "3424747151763089683\n" +
@@ -98,20 +109,30 @@ public class ParallelFilterTest extends AbstractCairoTest {
             "4169687421984608700\n" +
             "4238042693748641409\n" +
             "4290477379978201771\n";
-    private static final String expectedPositiveLimit = "v\n" +
-            "3394168647660478011\n" +
-            "4086802474270249591\n" +
-            "3958193676455060057\n" +
-            "3619114107112892010\n" +
-            "3705833798044144433\n" +
-            "4238042693748641409\n" +
-            "3518554007419864093\n" +
-            "4014104627539596639\n" +
-            "3393210801760647293\n" +
-            "4099611147050818391\n";
-    private static final String queryNegativeLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit -10";
-    private static final String queryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
-    private static final String queryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
+    private static final String expectedVarcharNoLimit = "l\tv\n" +
+            "3350660451986397456\t\uF885֜\uDB84\uDC57\uDA5F\uDC3E톾uȕ룿׆$ҙʪ薰H\n" +
+            "3520350102904985914\tؕ\uE62E8Q\n" +
+            "3523446414305966840\t涙㿽[gnS V@\uDB0F\uDDC2鉉ⓨQ\uDAE1\uDCBB鰅\uD961\uDC9E\n" +
+            "3547449704743013886\t\uDA51\uDF64Xⴿ\uD947\uDFA2̨RfAɥꚹF\n" +
+            "3564031921719748904\t\uDB62\uDCBCŞծZ骞\uDA1A\uDCB5\uD936\uDF44Uę\uDA65\uDE071(rոҊG\n" +
+            "3608246352203239925\t]Ddjvs\n" +
+            "3704058272045366471\t6\u05CF+ǩ\uD9F1\uDEE2\n" +
+            "3737446659030162960\t\uDB6D\uDFA0W٪Oߔ ɇ䊊\uDAF7\uDD75\uD9DD\uDC07ˡ\uD9F9\uDC4F飪E\n" +
+            "3781351123666129476\t鼨<sѳ\uE82E!ߟ✝س\uD8C6\uDCB6\n" +
+            "3795326354273440728\tΎK\u05F9\uD9CA\uDE84\n" +
+            "3843127285248668146\t堝ᢣ΄B\n" +
+            "3907043318808511548\t\u0092\uDB86\uDDA1̔L\n" +
+            "3917852914082112347\t䥍x\uD8C5\uDE7AS\uD9D9\uDE2Ak\n" +
+            "4007166842224933390\tˠֱ\uDB0A\uDEB4>钹\uDBC5\uDF3C(닸鉩j䂢ӽš評,\n" +
+            "4034325504592033197\tV퍳L嫣\uEB54\uDAF0\uDF8F̅!w\n" +
+            "4080972133824221876\t8W|鹚\uDB64\uDFC2Ԋ!\n" +
+            "4155840810671567423\t\uDB06\uDDF0\uDB6B\uDF55L꽭ܙ\uEB908ȫŒɽ[\uD9B4\uDE21\n" +
+            "4313109016078855600\tn䟺ᦺƼ\uD8CB\uDC7EٷiW\uD93D\uDD98\n" +
+            "4323884142722208393\t\uD99C\uDD61n촗ۉI\uD92F\uDD1C:퐲ޘ\uDA64\uDF82\n";
+    private static final String symbolQueryNegativeLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit -10";
+    private static final String symbolQueryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
+    private static final String symbolQueryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
+    private static final String varcharQueryNoLimit = "select l, v from x where l > 3326086085493629941L and l < 4326086085493629941L order by l";
 
     @Before
     public void setUp() {
@@ -176,7 +197,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
         final int workerCount = 4;
 
         WorkerPool pool = new WorkerPool((() -> workerCount));
-
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.ddl(
                             "CREATE TABLE 'test1' " +
@@ -244,73 +264,73 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelStressMultipleThreadsMultipleWorkersJitDisabled() throws Exception {
-        testParallelStress(queryNoLimit, expectedNoLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
+    public void testParallelStressSymbolMultipleThreadsMultipleWorkersJitDisabled() throws Exception {
+        testParallelStressSymbol(symbolQueryNoLimit, expectedSymbolNoLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
 
     @Test
-    public void testParallelStressMultipleThreadsMultipleWorkersJitEnabled() throws Exception {
+    public void testParallelStressSymbolMultipleThreadsMultipleWorkersJitEnabled() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        testParallelStress(queryNoLimit, expectedNoLimit, 4, 4, SqlJitMode.JIT_MODE_ENABLED);
+        testParallelStressSymbol(symbolQueryNoLimit, expectedSymbolNoLimit, 4, 4, SqlJitMode.JIT_MODE_ENABLED);
     }
 
     @Test
-    public void testParallelStressMultipleThreadsMultipleWorkersNegativeLimitJitDisabled() throws Exception {
-        testParallelStress(queryNegativeLimit, expectedNegativeLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
+    public void testParallelStressSymbolMultipleThreadsMultipleWorkersNegativeLimitJitDisabled() throws Exception {
+        testParallelStressSymbol(symbolQueryNegativeLimit, expectedNegativeLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
 
     @Test
-    public void testParallelStressMultipleThreadsMultipleWorkersNegativeLimitJitEnabled() throws Exception {
+    public void testParallelStressSymbolMultipleThreadsMultipleWorkersNegativeLimitJitEnabled() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        testParallelStress(queryNegativeLimit, expectedNegativeLimit, 4, 4, SqlJitMode.JIT_MODE_ENABLED);
+        testParallelStressSymbol(symbolQueryNegativeLimit, expectedNegativeLimit, 4, 4, SqlJitMode.JIT_MODE_ENABLED);
     }
 
     @Test
-    public void testParallelStressMultipleThreadsMultipleWorkersPositiveLimitJitDisabled() throws Exception {
-        testParallelStress(queryPositiveLimit, expectedPositiveLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
+    public void testParallelStressSymbolMultipleThreadsMultipleWorkersPositiveLimitJitDisabled() throws Exception {
+        testParallelStressSymbol(symbolQueryPositiveLimit, expectedPositiveLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
 
     @Test
-    public void testParallelStressMultipleThreadsMultipleWorkersPositiveLimitJitEnabled() throws Exception {
+    public void testParallelStressSymbolMultipleThreadsMultipleWorkersPositiveLimitJitEnabled() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        testParallelStress(queryPositiveLimit, expectedPositiveLimit, 4, 4, SqlJitMode.JIT_MODE_ENABLED);
+        testParallelStressSymbol(symbolQueryPositiveLimit, expectedPositiveLimit, 4, 4, SqlJitMode.JIT_MODE_ENABLED);
     }
 
     @Test
-    public void testParallelStressMultipleThreadsSingleWorkerJitDisabled() throws Exception {
-        testParallelStress(queryNoLimit, expectedNoLimit, 1, 4, SqlJitMode.JIT_MODE_DISABLED);
+    public void testParallelStressSymbolMultipleThreadsSingleWorkerJitDisabled() throws Exception {
+        testParallelStressSymbol(symbolQueryNoLimit, expectedSymbolNoLimit, 1, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
 
     @Test
-    public void testParallelStressMultipleThreadsSingleWorkerJitEnabled() throws Exception {
+    public void testParallelStressSymbolMultipleThreadsSingleWorkerJitEnabled() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        testParallelStress(queryNoLimit, expectedNoLimit, 1, 4, SqlJitMode.JIT_MODE_ENABLED);
+        testParallelStressSymbol(symbolQueryNoLimit, expectedSymbolNoLimit, 1, 4, SqlJitMode.JIT_MODE_ENABLED);
     }
 
     @Test
-    public void testParallelStressSingleThreadMultipleWorkersJitDisabled() throws Exception {
-        testParallelStress(queryNoLimit, expectedNoLimit, 4, 1, SqlJitMode.JIT_MODE_DISABLED);
+    public void testParallelStressSymbolSingleThreadMultipleWorkersJitDisabled() throws Exception {
+        testParallelStressSymbol(symbolQueryNoLimit, expectedSymbolNoLimit, 4, 1, SqlJitMode.JIT_MODE_DISABLED);
     }
 
     @Test
-    public void testParallelStressSingleThreadMultipleWorkersJitEnabled() throws Exception {
+    public void testParallelStressSymbolSingleThreadMultipleWorkersJitEnabled() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        testParallelStress(queryNoLimit, expectedNoLimit, 4, 1, SqlJitMode.JIT_MODE_ENABLED);
+        testParallelStressSymbol(symbolQueryNoLimit, expectedSymbolNoLimit, 4, 1, SqlJitMode.JIT_MODE_ENABLED);
     }
 
     @Test
-    public void testParallelStressSingleThreadMultipleWorkersSymbolValueFilter() throws Exception {
-        testParallelStress(
+    public void testParallelStressSymbolSingleThreadMultipleWorkersSymbolValueFilter() throws Exception {
+        testParallelStressSymbol(
                 "x where v > 3326086085493629941L and v < 4326086085493629941L and s ~ 'A' order by v",
                 "v\ts\n" +
                         "3393210801760647293\tA\n" +
@@ -327,48 +347,64 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStrBindVariable() throws Exception {
-        WorkerPool pool = new WorkerPool((() -> 4));
-        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    ddl(compiler, "CREATE TABLE price (\n" +
-                            "  ts TIMESTAMP," +
-                            "  type STRING," +
-                            "  value DOUBLE) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
-                    insert(compiler, "insert into price select x::timestamp, 't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
+    public void testParallelStressVarcharMultipleThreadsMultipleWorkersJitDisabled() throws Exception {
+        testParallelStressVarchar(varcharQueryNoLimit, expectedVarcharNoLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
+    }
 
-                    sqlExecutionContext.getBindVariableService().clear();
-                    sqlExecutionContext.getBindVariableService().setStr(0, "t3");
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select * from price where type = $1 limit 10",
-                            sink,
-                            "ts\ttype\tvalue\n" +
-                                    "1970-01-01T00:00:00.000003Z\tt3\t0.08486964232560668\n" +
-                                    "1970-01-01T00:00:00.000008Z\tt3\t0.9856290845874263\n" +
-                                    "1970-01-01T00:00:00.000013Z\tt3\t0.5243722859289777\n" +
-                                    "1970-01-01T00:00:00.000018Z\tt3\t0.6778564558839208\n" +
-                                    "1970-01-01T00:00:00.000023Z\tt3\t0.3288176907679504\n" +
-                                    "1970-01-01T00:00:00.000028Z\tt3\t0.6381607531178513\n" +
-                                    "1970-01-01T00:00:00.000033Z\tt3\t0.6761934857077543\n" +
-                                    "1970-01-01T00:00:00.000038Z\tt3\t0.7664256753596138\n" +
-                                    "1970-01-01T00:00:00.000043Z\tt3\t0.05048190020054388\n" +
-                                    "1970-01-01T00:00:00.000048Z\tt3\t0.8001121139739173\n"
-                    );
-                },
-                configuration,
-                LOG
+    @Test
+    public void testParallelStressVarcharMultipleThreadsMultipleWorkersJitEnabled() throws Exception {
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
+        testParallelStressVarchar(varcharQueryNoLimit, expectedVarcharNoLimit, 4, 4, SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testParallelStressVarcharSingleThreadMultipleWorkersJitDisabled() throws Exception {
+        testParallelStressVarchar(varcharQueryNoLimit, expectedVarcharNoLimit, 4, 1, SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
+    public void testParallelStressVarcharSingleThreadMultipleWorkersJitEnabled() throws Exception {
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
+        testParallelStressVarchar(varcharQueryNoLimit, expectedVarcharNoLimit, 4, 1, SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testParallelStressVarcharSingleThreadMultipleWorkersSymbolValueFilter() throws Exception {
+        testParallelStressVarchar(
+                "x where l > 3326086085493629941L and l < 4326086085493629941L and v = 'ؕ\uE62E8Q' order by l",
+                "l\tv\n" +
+                        "3520350102904985914\tؕ\uE62E8Q\n",
+                4,
+                1,
+                SqlJitMode.JIT_MODE_DISABLED
         );
     }
 
     @Test
+    public void testStrBindVariable() throws Exception {
+        testStrBindVariable("STRING", SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
     public void testSymbolBindVariableJitDisabled() throws Exception {
-        testSymbolBindVariable(SqlJitMode.JIT_MODE_DISABLED);
+        testStrBindVariable("SYMBOL", SqlJitMode.JIT_MODE_DISABLED);
     }
 
     @Test
     public void testSymbolBindVariableJitEnabled() throws Exception {
-        testSymbolBindVariable(SqlJitMode.JIT_MODE_ENABLED);
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
+        testStrBindVariable("SYMBOL", SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testVarcharBindVariable() throws Exception {
+        testStrBindVariable("VARCHAR", SqlJitMode.JIT_MODE_ENABLED);
     }
 
     private static boolean assertCursor(
@@ -577,16 +613,15 @@ public class ParallelFilterTest extends AbstractCairoTest {
         );
     }
 
-    private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
+    private void testParallelStressSymbol(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
         WorkerPool pool = new WorkerPool(() -> workerCount);
-
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     engine.ddl(
                             "create table x ( " +
-                                    "v long, " +
-                                    "s symbol capacity 4 cache " +
+                                    " v long, " +
+                                    " s symbol capacity 4 cache " +
                                     ")",
                             sqlExecutionContext
                     );
@@ -634,14 +669,70 @@ public class ParallelFilterTest extends AbstractCairoTest {
         );
     }
 
-    private void testSymbolBindVariable(int jitMode) throws Exception {
+    private void testParallelStressVarchar(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
+
+        WorkerPool pool = new WorkerPool(() -> workerCount);
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.ddl(
+                            "create table x ( " +
+                                    " l long, " +
+                                    " v varchar " +
+                                    ")",
+                            sqlExecutionContext
+                    );
+                    engine.insert(
+                            "insert into x select rnd_long() v, rnd_varchar(4,16,5) s from long_sequence(" + ROW_COUNT + ")",
+                            sqlExecutionContext
+                    );
+
+                    RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
+
+                    for (int i = 0; i < threadCount; i++) {
+                        // Each factory should use a dedicated compiler instance, so that they don't
+                        // share the same reduce task local pool in the SqlCodeGenerator.
+                        factories[i] = engine.select(query, sqlExecutionContext);
+                        Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factories[i].usesCompiledFilter());
+                    }
+
+                    final AtomicInteger errors = new AtomicInteger();
+                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
+
+                    for (int i = 0; i < threadCount; i++) {
+                        int finalI = i;
+                        new Thread(() -> {
+                            TestUtils.await(barrier);
+                            try {
+                                RecordCursorFactory factory = factories[finalI];
+                                assertQuery(expected, factory, sqlExecutionContext);
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                                errors.incrementAndGet();
+                            } finally {
+                                haltLatch.countDown();
+                            }
+                        }).start();
+                    }
+
+                    haltLatch.await();
+
+                    Misc.free(factories);
+                    Assert.assertEquals(0, errors.get());
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    private void testStrBindVariable(String columnType, int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
         WorkerPool pool = new WorkerPool((() -> 4));
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     ddl(compiler, "CREATE TABLE price (\n" +
                             "  ts TIMESTAMP," +
-                            "  type SYMBOL," +
+                            "  type " + columnType + "," +
                             "  value DOUBLE) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
                     insert(compiler, "insert into price select x::timestamp, 't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
 
