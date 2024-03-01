@@ -119,6 +119,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final IntList bindSelectColumnFormats = new IntList();
     private final IntList bindVariableTypes = new IntList();
     private final CharacterStore characterStore;
+    private final DirectUtf8String utf8String = new DirectUtf8String();
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
@@ -634,12 +635,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         CharacterStoreEntry e = characterStore.newEntry();
-        // TODO: check if defined as VARCHAR
-        if (Utf8s.utf8ToUtf16(address, address + valueLen, e)) {
-            bindVariableService.setStr(index, characterStore.toImmutable());
+        Function fn = bindVariableService.getFunction(index);
+        // If the function type is VARCHAR, there's no need to convert to UTF-16
+        if (fn != null && fn.getType() == ColumnType.VARCHAR) {
+            if (Utf8s.validateUtf8(address, address + valueLen)) {
+                bindVariableService.setVarchar(index, utf8String.of(address, address+valueLen));
+            } else {
+                LOG.error().$("invalid varchar bind variable type [index=").$(index).I$();
+                throw BadProtocolException.INSTANCE;
+            }
         } else {
-            LOG.error().$("invalid str UTF8 bytes [index=").$(index).I$();
-            throw BadProtocolException.INSTANCE;
+            if (Utf8s.utf8ToUtf16(address, address + valueLen, e)) {
+                bindVariableService.setStr(index, characterStore.toImmutable());
+            } else {
+                LOG.error().$("invalid str bind variable type [index=").$(index).I$();
+                throw BadProtocolException.INSTANCE;
+            }
         }
     }
 
