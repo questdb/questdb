@@ -360,7 +360,7 @@ public final class ColumnType {
                 || ((fromType == STRING || fromType == VARCHAR) && toType == SHORT)
                 || ((fromType == STRING || fromType == VARCHAR) && toType == INT)
                 || ((fromType == STRING || fromType == VARCHAR) && toType == LONG)
-                || (fromType == STRING && toType == DATE)
+                || ((fromType == STRING || fromType == VARCHAR) && toType == DATE)
                 || ((fromType == STRING || fromType == VARCHAR) && toType == TIMESTAMP)
                 || ((fromType == STRING || fromType == VARCHAR) && toType == FLOAT)
                 || ((fromType == STRING || fromType == VARCHAR) && toType == DOUBLE)

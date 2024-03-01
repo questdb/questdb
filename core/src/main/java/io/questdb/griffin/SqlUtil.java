@@ -533,10 +533,19 @@ public class SqlUtil {
     }
 
     public static long implicitCastStrAsDate(CharSequence value) {
+        return implicitCastStrVarcharAsDate0(value, ColumnType.STRING);
+    }
+
+    public static long implicitCastVarcharAsDate(CharSequence value) {
+        return implicitCastStrVarcharAsDate0(value, ColumnType.VARCHAR);
+    }
+
+    private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {
+        assert columnType == ColumnType.VARCHAR || columnType == ColumnType.STRING;
         try {
             return DateFormatUtils.parseDate(value);
         } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.DATE);
+            throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.DATE);
         }
     }
 
