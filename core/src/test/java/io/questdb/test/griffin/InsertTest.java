@@ -1605,6 +1605,37 @@ public class InsertTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testInsertSymbolIntoVarcharCol() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table src (ts timestamp, sym symbol) timestamp(ts) partition by day;");
+            insert("insert into src values (0, 'foo');");
+            insert("insert into src values (20000, null);");
+            insert("insert into src values (30000, 'bar');");
+
+            ddl("create table dest (ts timestamp, vch varchar) timestamp(ts) partition by day;");
+            drainWalQueue();
+
+            ddl("insert into dest select ts, sym from src;");
+
+            String expected = "ts\tvch\n" +
+                    "1970-01-01T00:00:00.000000Z\tfoo\n" +
+                    "1970-01-01T00:00:00.020000Z\t\n" +
+                    "1970-01-01T00:00:00.030000Z\tbar\n";
+            assertQueryCheckWal(expected);
+
+            // check symbol null was inserted as a null varch and not as an empty varchar
+            assertQuery(
+                    "ts\tvch\n" +
+                            "1970-01-01T00:00:00.020000Z\t\n",
+                    "select * from dest where vch is null",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
     private void testInsertAsSelectWithOrderBy(String orderByClause) throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table src (ts timestamp, v long) timestamp(ts) partition by day;");

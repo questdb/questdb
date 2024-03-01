@@ -34,6 +34,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 
 public class RecordToRowCopierUtils {
 
@@ -162,6 +163,7 @@ public class RecordToRowCopierUtils {
         int transferVarcharToSymbolCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToSymbolCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
         int transferVarcharToTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
         int transferVarcharToDateCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToDateCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
+        int transferStrToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;)V");
 
         // in case of Geo Hashes column type can overflow short and asm.iconst() will not provide
         // the correct value.
@@ -610,6 +612,9 @@ public class RecordToRowCopierUtils {
                         case ColumnType.STRING:
                             asm.invokeInterface(wPutStr, 2);
                             break;
+                        case ColumnType.VARCHAR:
+                            asm.invokeStatic(transferStrToVarcharCol);
+                            break;
                         default:
                             assert false;
                             break;
@@ -1014,5 +1019,14 @@ public class RecordToRowCopierUtils {
         sink.put(seq);
         long date = SqlUtil.implicitCastVarcharAsDate(sink);
         row.putDate(col, date);
+    }
+
+    public static void transferStrToVarcharCol(TableWriter.Row row, int col, CharSequence str) {
+        if (str == null) {
+            return;
+        }
+        Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+        sink.put(str);
+        row.putVarchar(col, sink);
     }
 }
