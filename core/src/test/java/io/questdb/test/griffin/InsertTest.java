@@ -1636,6 +1636,38 @@ public class InsertTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testInsertUUIDIntoVarcharCol() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table src (ts timestamp, u uuid) timestamp(ts) partition by day;");
+            insert("insert into src values (0, '11111111-1111-1111-1111-111111111111');");
+            insert("insert into src values (20000, null);");
+            insert("insert into src values (30000, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11');");
+
+            ddl("create table dest (ts timestamp, vch varchar) timestamp(ts) partition by day;");
+            drainWalQueue();
+
+            ddl("insert into dest select ts, u from src;");
+
+            String expected = "ts\tvch\n" +
+                    "1970-01-01T00:00:00.000000Z\t11111111-1111-1111-1111-111111111111\n" +
+                    "1970-01-01T00:00:00.020000Z\t\n" +
+                    "1970-01-01T00:00:00.030000Z\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n";
+            assertQueryCheckWal(expected);
+
+            // check symbol null was inserted as a null varch and not as an empty varchar
+            assertQuery(
+                    "ts\tvch\n" +
+                            "1970-01-01T00:00:00.020000Z\t\n",
+                    "select * from dest where vch is null",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+
     private void testInsertAsSelectWithOrderBy(String orderByClause) throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
