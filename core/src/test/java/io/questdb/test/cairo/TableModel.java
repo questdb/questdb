@@ -34,6 +34,7 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
+// todo: remove native memory alloc from the model, we're leaking badly
 public class TableModel implements TableStructure, Closeable {
     private static final long COLUMN_FLAG_CACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;

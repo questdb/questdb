@@ -139,6 +139,33 @@ public class SqlOptimiser implements Mutable {
         this.maxRecursion = configuration.getSqlWindowMaxRecursion();
     }
 
+    /**
+     * Checks if an alias appears in the columns and function args of a model.
+     * <p>
+     * Consider a query:<br>
+     * (select x1, sum(x1) from (select x as x1 from y))<br>
+     * If you were to move lift the column from the RHS to the LHS, you might get:<br>
+     * (select x x1, sum(x1) from y)<br>
+     * Now x1 is invalid.
+     */
+    public static boolean aliasAppearsInFuncArgs(QueryModel model, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
+        if (model == null) {
+            return false;
+        }
+        boolean appearsInArgs = false;
+        ObjList<QueryColumn> modelColumns = model.getColumns();
+        for (int i = 0, n = modelColumns.size(); i < n; i++) {
+            QueryColumn col = modelColumns.get(i);
+            switch (col.getAst().type) {
+                case FUNCTION:
+                case OPERATION:
+                    appearsInArgs |= searchExpressionNodeForAlias(col.getAst(), alias, sqlNodeStack);
+                    break;
+            }
+        }
+        return appearsInArgs;
+    }
+
     public void clear() {
         clearForUnionModelInJoin();
         contextPool.clear();
@@ -206,6 +233,34 @@ public class SqlOptimiser implements Mutable {
 
     private static boolean modelIsFlex(QueryModel model) {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
+    }
+
+    /**
+     * Recurse down expression node tree looking for an alias.
+     */
+    private static boolean searchExpressionNodeForAlias(ExpressionNode node, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
+        sqlNodeStack.clear();
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (Chars.equalsIgnoreCase(node.token, alias)) {
+                    return true;
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.add(node.args.getQuick(i));
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
     }
 
     private static void unlinkDependencies(QueryModel model, int parent, int child) {
@@ -861,6 +916,7 @@ public class SqlOptimiser implements Mutable {
                         for (int i = 0; i < n; i++) {
                             _nested.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
                         }
+                        _nested.setOrderByTimestamp(un.isOrderByTimestamp());
                         orderBy.clear();
                         orderByDirection.clear();
 
@@ -932,6 +988,22 @@ public class SqlOptimiser implements Mutable {
         }
 
         return false;
+    }
+
+    private boolean checkIfTranslatingModelIsRedundant(boolean useInnerModel, boolean useGroupByModel, boolean useWindowModel, boolean forceTranslatingModel, boolean checkTranslatingModel, QueryModel translatingModel) {
+        // check if translating model is redundant, e.g.
+        // that it neither chooses between tables nor renames columns
+        boolean translationIsRedundant = (useInnerModel || useGroupByModel || useWindowModel) && !forceTranslatingModel;
+        if (translationIsRedundant && checkTranslatingModel) {
+            for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
+                QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
+                if (!Chars.equalsIgnoreCase(column.getAst().token, column.getAlias())) {
+                    translationIsRedundant = false;
+                    break;
+                }
+            }
+        }
+        return translationIsRedundant;
     }
 
     private void checkIsNotAggregateOrWindowFunction(ExpressionNode node, QueryModel model) throws SqlException {
@@ -3728,9 +3800,11 @@ public class SqlOptimiser implements Mutable {
                 if (orderBy.size() == 0) {
                     if (order != null) {
                         order.addOrderBy(nested.getTimestamp(), QueryModel.ORDER_DIRECTION_ASCENDING);
+                        order.setOrderByTimestamp(true);
                     }
 
                     nested.addOrderBy(nested.getTimestamp(), QueryModel.ORDER_DIRECTION_DESCENDING);
+                    nested.setOrderByTimestamp(true);
                 } else {
                     final IntList orderByDirection = nested.getOrderByDirection();
                     if (order != null) {
@@ -3745,6 +3819,7 @@ public class SqlOptimiser implements Mutable {
                             order.getAliasToColumnMap().put(orderByToken, nextColumn(orderByToken));
                         }
                         order.addOrderBy(orderByNode, orderByDirection.getQuick(0));
+                        order.setOrderByTimestamp(true);
                     }
 
                     int newOrder;
@@ -3969,6 +4044,7 @@ public class SqlOptimiser implements Mutable {
                 //order by can't be pushed through limit clause because it'll produce bad results
                 if (base != baseParent && base != limitModel) {
                     limitModel.addOrderBy(orderBy, base.getOrderByDirection().getQuick(i));
+                    limitModel.setOrderByTimestamp(base.isOrderByTimestamp());
                 }
             }
 
@@ -4006,6 +4082,13 @@ public class SqlOptimiser implements Mutable {
         return result;
     }
 
+    /**
+     * Replaces references to column index in "order by" clause, such as "... order by 1"
+     * with column names. The method traverses "deep" model hierarchy excluding "unions"
+     *
+     * @param model root model
+     * @throws SqlException in case of any SQL syntax issues.
+     */
     private void rewriteOrderByPosition(final QueryModel model) throws SqlException {
         QueryModel base = model;
         QueryModel baseParent = model;
@@ -4106,6 +4189,82 @@ public class SqlOptimiser implements Mutable {
         if (next != null) {
             rewriteOrderByPositionForUnionModels(next);
         }
+    }
+
+    private QueryModel rewriteSampleBy(QueryModel model) {
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            // "sample by" details will be on the nested model of the query
+            ExpressionNode sampleBy = nested.getSampleBy();
+            ExpressionNode sampleByOffset = nested.getSampleByOffset();
+            ObjList<ExpressionNode> sampleByFill = nested.getSampleByFill();
+            ExpressionNode sampleByTimezoneName = nested.getSampleByTimezoneName();
+            ExpressionNode sampleByUnit = nested.getSampleByUnit();
+            ExpressionNode timestamp = nested.getTimestamp();
+
+            if (
+                    sampleBy != null
+                            && timestamp != null
+                            && (sampleByOffset != null && Chars.equals(sampleByOffset.token, "'00:00'"))
+                            && sampleByFill.size() == 0
+                            && sampleByTimezoneName == null
+                            && sampleByUnit == null
+            ) {
+                // this may or may not be our guy, but may not be, depending on fill settings
+
+                // plan of action:
+                // 1. analyze sample by expression and replace expression in the same
+                //    position where timestamp is in the select clause (timestamp may not be selected, we have to
+                //    have a wrapper)
+                // 2. clear the sample by clause
+                // 3. wrap the result into an order by to maintain the timestamp order, but this can be optional
+
+                // the timestamp could be selected but also aliased
+                final CharSequence timestampAlias = model.getColumnNameToAliasMap().get(timestamp.token);
+
+                // the "select" clause does not include timestamp
+                // todo: handle case when timestamp is not included in the select
+                if (timestampAlias == null) {
+                    return model;
+                }
+
+                int timestampPos = model.getColumnAliasIndex(timestampAlias);
+
+                // create function ast
+                final ExpressionNode top = expressionNodePool.next();
+                top.token = "timestamp_floor";
+                top.paramCount = 2;
+                top.type = FUNCTION;
+
+                final ExpressionNode lhs = expressionNodePool.next();
+                lhs.token = Misc.getThreadLocalSink().put('\'').put(sampleBy.token).put('\'').toString();
+                lhs.paramCount = 0;
+                lhs.type = CONSTANT;
+
+                top.lhs = lhs;
+                top.rhs = timestamp;
+
+                QueryColumn timestampQueryColumn = queryColumnPool.next();
+                timestampQueryColumn.of(timestampAlias, top);
+                model.getBottomUpColumns().setQuick(timestampPos, timestampQueryColumn);
+
+                // check if order by is already present
+                if (nested.getOrderBy().size() == 0) {
+                    ExpressionNode orderBy = expressionNodePool.next();
+                    orderBy.token = Misc.getThreadLocalSink().put(timestampPos + 1).toString();
+                    orderBy.type = CONSTANT;
+                    nested.getOrderBy().add(orderBy);
+                    nested.getOrderByDirection().add(0);
+                    nested.setOrderByTimestamp(true);
+                    nested.setTimestamp(nextLiteral(timestampAlias));
+                }
+
+                // clear sample by
+                nested.setSampleBy(null);
+                nested.setSampleByOffset(null);
+            }
+        }
+        return model;
     }
 
     // flatParent = true means that parent model does not have selected columns
@@ -4811,77 +4970,6 @@ public class SqlOptimiser implements Mutable {
         return root;
     }
 
-    private boolean checkIfTranslatingModelIsRedundant(boolean useInnerModel, boolean useGroupByModel, boolean useWindowModel, boolean forceTranslatingModel, boolean checkTranslatingModel, QueryModel translatingModel) {
-        // check if translating model is redundant, e.g.
-        // that it neither chooses between tables nor renames columns
-        boolean translationIsRedundant = (useInnerModel || useGroupByModel || useWindowModel) && !forceTranslatingModel;
-        if (translationIsRedundant && checkTranslatingModel) {
-            for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
-                QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
-                if (!Chars.equalsIgnoreCase(column.getAst().token, column.getAlias())) {
-                    translationIsRedundant = false;
-                    break;
-                }
-            }
-        }
-        return translationIsRedundant;
-    }
-
-    /**
-     * Checks if an alias appears in the columns and function args of a model.
-     * <p>
-     * Consider a query:<br>
-     * (select x1, sum(x1) from (select x as x1 from y))<br>
-     * If you were to move lift the column from the RHS to the LHS, you might get:<br>
-     * (select x x1, sum(x1) from y)<br>
-     * Now x1 is invalid.
-     */
-    public static boolean aliasAppearsInFuncArgs(QueryModel model, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
-        if (model == null) {
-            return false;
-        }
-        boolean appearsInArgs = false;
-        ObjList<QueryColumn> modelColumns = model.getColumns();
-        for (int i = 0, n = modelColumns.size(); i < n; i++) {
-            QueryColumn col = modelColumns.get(i);
-            switch (col.getAst().type) {
-                case FUNCTION:
-                case OPERATION:
-                    appearsInArgs |= searchExpressionNodeForAlias(col.getAst(), alias, sqlNodeStack);
-                    break;
-            }
-        }
-        return appearsInArgs;
-    }
-
-    /**
-     * Recurse down expression node tree looking for an alias.
-     */
-    private static boolean searchExpressionNodeForAlias(ExpressionNode node, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
-        sqlNodeStack.clear();
-
-        // pre-order iterative tree traversal
-        // see: http://en.wikipedia.org/wiki/Tree_traversal
-
-        while (!sqlNodeStack.isEmpty() || node != null) {
-            if (node != null) {
-                if (Chars.equalsIgnoreCase(node.token, alias)) {
-                    return true;
-                }
-                for (int i = 0, n = node.args.size(); i < n; i++) {
-                    sqlNodeStack.add(node.args.getQuick(i));
-                }
-                if (node.rhs != null) {
-                    sqlNodeStack.push(node.rhs);
-                }
-                node = node.lhs;
-            } else {
-                node = sqlNodeStack.poll();
-            }
-        }
-        return false;
-    }
-
     // the intent is to either validate top-level columns in select columns or replace them with function calls
     // if columns do not exist
     private void rewriteTopLevelLiteralsToFunctions(QueryModel model) {
@@ -5158,6 +5246,7 @@ public class SqlOptimiser implements Mutable {
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
+            rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
