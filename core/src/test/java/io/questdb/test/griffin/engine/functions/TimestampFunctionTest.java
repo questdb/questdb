@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -206,5 +207,20 @@ public class TimestampFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong256B() {
         function.getLong256B(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharUtf8Sink() {
+        function.getVarchar(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharA() {
+        function.getVarcharA(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharB() {
+        function.getVarcharB(null);
     }
 }

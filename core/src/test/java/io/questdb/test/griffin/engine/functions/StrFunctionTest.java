@@ -32,6 +32,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -412,22 +415,22 @@ public class StrFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
+    public void testGetGeoByte() {
         function.getGeoByte(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
+    public void testGetGeoInt() {
         function.getGeoInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
+    public void testGetGeoLong() {
         function.getGeoLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
+    public void testGetGeoShort() {
         function.getGeoShort(null);
     }
 
@@ -489,5 +492,22 @@ public class StrFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong256B() {
         function.getLong256B(null);
+    }
+
+    @Test
+    public void testGetVarcharToSink() {
+        Utf8Sink sink = new Utf8StringSink();
+        function.getVarchar(null, sink);
+        TestUtils.assertEquals("a", sink.toString());
+    }
+
+    @Test
+    public void testGetVarcharA() {
+        TestUtils.assertEquals("a", function.getVarcharA(null).toString());
+    }
+
+    @Test
+    public void testGetVarcharB() {
+        TestUtils.assertEquals("a", function.getVarcharB(null).toString());
     }
 }

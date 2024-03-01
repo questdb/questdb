@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -203,13 +204,8 @@ public class DateFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarchar1() {
-        function.getVarchar(null, (Utf16Sink) null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarchar2() {
-        function.getVarchar(null, (Utf16Sink) null);
+    public void testGetVarcharUtf8Sink() {
+        function.getVarchar(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

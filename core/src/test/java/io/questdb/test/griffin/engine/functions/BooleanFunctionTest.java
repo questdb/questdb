@@ -29,6 +29,9 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -175,7 +178,7 @@ public class BooleanFunctionTest {
     }
 
     @Test
-    public void testGetStr2() {
+    public void testGetStrToSink() {
         final StringSink sink = new StringSink();
         functionA.getStr(null, sink);
         TestUtils.assertEquals("false", sink);
@@ -184,12 +187,6 @@ public class BooleanFunctionTest {
 
         functionB.getStr(null, sink);
         TestUtils.assertEquals("true", sink);
-    }
-
-    @Test
-    public void testGetStrB() {
-        Assert.assertEquals("false", functionA.getStr(null));
-        Assert.assertEquals("true", functionB.getStr(null));
     }
 
     @Test
@@ -239,5 +236,29 @@ public class BooleanFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong256B() {
         functionA.getLong256B(null);
+    }
+
+    @Test
+    public void testGetVarcharToSink() {
+        Utf8Sink sink = new Utf8StringSink();
+        functionA.getVarchar(null, sink);
+        TestUtils.assertEquals("false", sink.toString());
+
+        sink = new Utf8StringSink();
+
+        functionB.getVarchar(null, sink);
+        TestUtils.assertEquals("true", sink.toString());
+    }
+
+    @Test
+    public void testGetVarcharA() {
+        Assert.assertEquals("false", functionA.getVarcharA(null).toString());
+        Assert.assertEquals("true", functionB.getVarcharA(null).toString());
+    }
+
+    @Test
+    public void testGetVarcharB() {
+        Assert.assertEquals("false", functionA.getVarcharB(null).toString());
+        Assert.assertEquals("true", functionB.getVarcharB(null).toString());
     }
 }

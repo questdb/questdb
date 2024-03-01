@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
 import org.junit.Test;
 
 public class CursorFunctionTest {
@@ -118,7 +119,7 @@ public class CursorFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr2() {
-        function.getStr(null, (Utf16Sink) null);
+        function.getStr(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -171,4 +172,18 @@ public class CursorFunctionTest {
         function.getLong256B(null);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharToSink() {
+        function.getVarchar(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharA() {
+        function.getVarcharA(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharB() {
+        function.getVarcharB(null);
+    }
 }

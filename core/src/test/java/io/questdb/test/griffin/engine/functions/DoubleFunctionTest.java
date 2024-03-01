@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
 import org.junit.Test;
 
 public class DoubleFunctionTest {
@@ -185,13 +186,8 @@ public class DoubleFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarchar1() {
-        function.getVarchar(null, (Utf16Sink) null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarchar2() {
-        function.getVarchar(null, (Utf16Sink) null);
+    public void testGetVarcharUtf8Sink() {
+        function.getVarchar(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

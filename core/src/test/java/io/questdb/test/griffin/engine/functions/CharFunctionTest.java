@@ -28,6 +28,9 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -35,7 +38,7 @@ import org.junit.Test;
 public class CharFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private final static char value = 0x34;
+    private final static char value = '4';
     private static final CharFunction function = new CharFunction() {
         @Override
         public char getChar(Record rec) {
@@ -217,5 +220,36 @@ public class CharFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong256B() {
         function.getLong256B(null);
+    }
+
+
+    @Test
+    public void testGetVarcharA() {
+        TestUtils.assertEquals("4", function.getVarcharA(null).toString());
+    }
+
+    @Test
+    public void testGetVarcharB() {
+        TestUtils.assertEquals("4", function.getVarcharB(null).toString());
+    }
+
+    @Test
+    public void testGetVarcharToSink() {
+        Utf8Sink sink = new Utf8StringSink();
+        function.getVarchar(null, sink);
+        TestUtils.assertEquals("4", sink.toString());
+    }
+
+    @Test
+    public void testGetZeroVarchar() {
+        Assert.assertNull(zeroFunc.getVarcharA(null));
+        Assert.assertNull(zeroFunc.getVarcharB(null));
+    }
+
+    @Test
+    public void testGetZeroVarcharToSink() {
+        Utf8Sink sink = new Utf8StringSink();
+        zeroFunc.getVarchar(null, sink);
+        TestUtils.assertEquals("", sink.toString());
     }
 }

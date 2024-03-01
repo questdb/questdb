@@ -27,6 +27,9 @@ package io.questdb.test.griffin.engine.functions;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -193,5 +196,22 @@ public class SymbolFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong256B() {
         function.getLong256B(null);
+    }
+
+    @Test
+    public void testGetVarcharToSink() {
+        Utf8Sink sink = new Utf8StringSink();
+        function.getVarchar(null, sink);
+        TestUtils.assertEquals("XYZ", sink.toString());
+    }
+
+    @Test
+    public void testGetVarcharA() {
+        TestUtils.assertEquals("XYZ", function.getVarcharA(null).toString());
+    }
+
+    @Test
+    public void testGetVarcharB() {
+        TestUtils.assertEquals("XYZ", function.getVarcharB(null).toString());
     }
 }
