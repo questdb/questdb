@@ -267,6 +267,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
         short[] columnTypes = new short[]{
                 ColumnType.BINARY,
                 ColumnType.STRING,
+                ColumnType.VARCHAR,
                 ColumnType.LONG128,
                 ColumnType.UUID,
                 ColumnType.LONG256,
@@ -286,4 +287,6 @@ public class Unordered4MapTest extends AbstractCairoTest {
             });
         }
     }
+
+
 }
