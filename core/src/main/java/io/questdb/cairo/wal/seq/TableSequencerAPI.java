@@ -281,11 +281,11 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public long nextTxn(final TableToken tableToken, int walId, long expectedSchemaVersion, int segmentId, int segmentTxn) {
+    public long nextTxn(final TableToken tableToken, int walId, long expectedSchemaVersion, int segmentId, int segmentTxn, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             long txn;
             try {
-                txn = tableSequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn);
+                txn = tableSequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
             } finally {
                 tableSequencer.unlockWrite();
             }

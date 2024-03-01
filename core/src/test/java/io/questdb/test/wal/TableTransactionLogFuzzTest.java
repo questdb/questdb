@@ -53,6 +53,11 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
         @Override
         public void toSink(Object obj, MemoryA sink) {
         }
+
+        @Override
+        public short getCommandType(Object instance) {
+            return 0;
+        }
     };
 
     @Test
@@ -170,7 +175,7 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
 
     private void writeTxn(int txnId, int structureVersion, TableTransactionLogFile txnLogFile, int i) {
         if (txnId == 0) {
-            txnLogFile.addEntry(structureVersion, i, i + 1, i + 2, i + 123);
+            txnLogFile.addEntry(structureVersion, i, i + 1, i + 2, i + 123, 0, 0, 0);
         } else {
             txnLogFile.beginMetadataChangeEntry(structureVersion, voidSerializer, null, i + 125);
             txnLogFile.endMetadataChangeEntry();

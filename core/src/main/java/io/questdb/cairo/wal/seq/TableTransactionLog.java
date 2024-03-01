@@ -169,8 +169,8 @@ public class TableTransactionLog implements Closeable {
         return instance;
     }
 
-    long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
-        return lastTxn = txnLogFile.addEntry(structureVersion, walId, segmentId, segmentTxn, timestamp);
+    long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
+        return lastTxn = txnLogFile.addEntry(structureVersion, walId, segmentId, segmentTxn, timestamp, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
     }
 
     void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {

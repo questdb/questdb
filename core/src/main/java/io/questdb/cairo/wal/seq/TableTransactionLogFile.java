@@ -72,7 +72,6 @@ public interface TableTransactionLogFile extends Closeable {
     long TX_LOG_SEGMENT_OFFSET = TX_LOG_WAL_ID_OFFSET + Integer.BYTES;
     long TX_LOG_SEGMENT_TXN_OFFSET = TX_LOG_SEGMENT_OFFSET + Integer.BYTES;
     long TX_LOG_COMMIT_TIMESTAMP_OFFSET = TX_LOG_SEGMENT_TXN_OFFSET + Integer.BYTES;
-    long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
 
     /**
      * Adds a new data transaction to the log
@@ -82,9 +81,12 @@ public interface TableTransactionLogFile extends Closeable {
      * @param segmentId        id of the segment
      * @param segmentTxn       transaction id within the segment
      * @param timestamp        commit timestamp
+     * @param txnMinTimestamp  minimum timestamp in the transaction
+     * @param txnMaxTimestamp  maximum timestamp in the transaction
+     * @param txnRowCount      number of rows in the transaction
      * @return committed transaction id
      */
-    long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp);
+    long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount);
 
     /**
      * Adds a new metadata transaction to the log. It's a 2-step process, this call must be
@@ -100,7 +102,7 @@ public interface TableTransactionLogFile extends Closeable {
     /**
      * Creates transaction log files on the disk
      *
-     * @param path                to create file
+     * @param path                 to create file
      * @param tableCreateTimestamp timestamp of table creation
      */
     void create(Path path, long tableCreateTimestamp);

@@ -56,6 +56,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  * See the format of the header and transaction record in @link TableTransactionLogFile
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
+    public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
     private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
     private final FilesFacade ff;
@@ -71,11 +72,12 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         if (maxTxn < 0) {
             return -1;
         }
-        long offset = TableTransactionLogFile.HEADER_SIZE + (maxTxn - 1) * TableTransactionLogFile.RECORD_SIZE;
+        long offset = TableTransactionLogFile.HEADER_SIZE + (maxTxn - 1) * RECORD_SIZE;
         return ff.readNonNegativeLong(logFileFd, offset);
     }
 
-    public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
+    @Override
+    public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
         txnMem.putLong(structureVersion);
         txnMem.putInt(walId);
         txnMem.putInt(segmentId);
@@ -90,6 +92,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         return maxTxn;
     }
 
+    @Override
     public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         txnMem.putLong(newStructureVersion);
         txnMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
@@ -109,6 +112,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         txnMem.close(false);
     }
 
+    @Override
     public void create(Path path, long tableCreateTimestamp) {
         final int pathLength = path.size();
         openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
@@ -147,6 +151,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
     }
 
+    @Override
     public boolean isDropped() {
         long lastTxn = maxTxn.get();
         if (lastTxn > 0) {
@@ -155,6 +160,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         return false;
     }
 
+    @Override
     public long lastTxn() {
         return maxTxn.get();
     }
@@ -174,6 +180,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         return maxStructureVersion;
     }
 
+    @Override
     public void sync() {
         txnMem.sync(false);
     }
@@ -249,6 +256,26 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         @Override
         public long getTxn() {
             return txn;
+        }
+
+        @Override
+        public long getTxnMaxTimestamp() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getTxnMinTimestamp() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getTxnRowCount() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getVersion() {
+            return WAL_SEQUENCER_FORMAT_VERSION_V1;
         }
 
         @Override

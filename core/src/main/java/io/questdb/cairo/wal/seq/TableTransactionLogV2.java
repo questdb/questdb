@@ -62,6 +62,11 @@ import static io.questdb.cairo.wal.WalUtils.*;
  * <p>
  */
 public class TableTransactionLogV2 implements TableTransactionLogFile {
+    public static final long MIN_TIMESTAMP_OFFSET = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
+    public static final long MAX_TIMESTAMP_OFFSET = MIN_TIMESTAMP_OFFSET + Long.BYTES;
+    public static final long ROW_COUNT_OFFSET = MAX_TIMESTAMP_OFFSET + Long.BYTES;
+    public static final long RESERVED_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
+    public static final long RECORD_SIZE = RESERVED_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
     private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
     private final FilesFacade ff;
@@ -118,7 +123,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         return 0;
     }
 
-    public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
+    @Override
+    public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
         openTxnPart();
 
         txnPartMem.putLong(structureVersion);
@@ -126,6 +132,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnPartMem.putInt(segmentId);
         txnPartMem.putInt(segmentTxn);
         txnPartMem.putLong(timestamp);
+        txnPartMem.putLong(txnMinTimestamp);
+        txnPartMem.putLong(txnMaxTimestamp);
+        txnPartMem.putLong(txnRowCount);
+        txnPartMem.putLong(0L);
 
         Unsafe.getUnsafe().storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
@@ -135,6 +145,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         return maxTxn;
     }
 
+    @Override
     public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         openTxnPart();
 
@@ -143,6 +154,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnPartMem.putInt(-1);
         txnPartMem.putInt(-1);
         txnPartMem.putLong(timestamp);
+        txnPartMem.putLong(serializer.getCommandType(instance));
+        txnPartMem.putLong(0L);
+        txnPartMem.putLong(0L);
+        txnPartMem.putLong(0L);
     }
 
     @Override
@@ -158,6 +173,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         rootPath.close();
     }
 
+    @Override
     public void create(Path path, long tableCreateTimestamp) {
         createTxnFile(path, tableCreateTimestamp);
         createPartsDir(mkDirMode);
@@ -187,6 +203,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
     }
 
+    @Override
     public boolean isDropped() {
         long lastTxn = maxTxn.get();
         if (lastTxn > 0) {
@@ -195,6 +212,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         return false;
     }
 
+    @Override
     public long lastTxn() {
         return maxTxn.get();
     }
@@ -226,6 +244,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         return maxStructureVersion;
     }
 
+    @Override
     public void sync() {
         txnMem.sync(false);
     }
@@ -375,6 +394,29 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public long getTxn() {
             return txn;
+        }
+
+        @Override
+        public long getTxnMaxTimestamp() {
+            assert address != 0;
+            return Unsafe.getUnsafe().getLong(address + txnOffset + MAX_TIMESTAMP_OFFSET);
+        }
+
+        @Override
+        public long getTxnMinTimestamp() {
+            assert address != 0;
+            return Unsafe.getUnsafe().getLong(address + txnOffset + MIN_TIMESTAMP_OFFSET);
+        }
+
+        @Override
+        public long getTxnRowCount() {
+            assert address != 0;
+            return Unsafe.getUnsafe().getLong(address + txnOffset + ROW_COUNT_OFFSET);
+        }
+
+        @Override
+        public int getVersion() {
+            return WAL_SEQUENCER_FORMAT_VERSION_V2;
         }
 
         @Override

@@ -41,6 +41,8 @@ public interface TransactionLogCursor extends Closeable {
 
     long getMaxTxn();
 
+    int getPartitionSize();
+
     int getSegmentId();
 
     int getSegmentTxn();
@@ -49,17 +51,23 @@ public interface TransactionLogCursor extends Closeable {
 
     long getTxn();
 
+    long getTxnMaxTimestamp();
+
+    long getTxnMinTimestamp();
+
+    long getTxnRowCount();
+
+    int getVersion();
+
     int getWalId();
 
     boolean hasNext();
 
     void setPosition(long txn);
 
-    void toTop();
-
     // Sets cursor to minimum available position.
     // In case of chunked sequencer it will search for the min available position prior to the current position.
     void toMinTxn();
 
-    int getPartitionSize();
+    void toTop();
 }

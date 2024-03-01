@@ -44,9 +44,36 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
+
+    private final SequencerType sequencerType;
+    private Rnd rnd;
+
+    public WalTxnDetailsFuzzTest(SequencerType sequencerType) {
+        this.sequencerType = sequencerType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {SequencerType.V1}, {SequencerType.V2}
+        });
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        rnd = TestUtils.generateRandom(LOG);
+    }
 
     @Test
     public void testCalculateCommitTimestampWhenO3IsUnavoidable() {
@@ -138,7 +165,6 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
     @Test
     public void testCalculateMaxCommitTimestampFuzz() {
         TableToken tableToken = createTable(testName.getMethodName());
-        Rnd rnd = TestUtils.generateRandom(LOG);
 
         double ddlProb = rnd.nextDouble() * .3;
         int txnCount = rnd.nextInt(1000);
@@ -292,7 +318,13 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         commitWalRows(tableToken, rowCount, from, to);
     }
 
-    static TableToken createTable(String tableName) {
+    private TableToken createTable(String tableName) {
+        if (sequencerType == SequencerType.V1) {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
+        } else {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, rnd.nextInt(50));
+        }
+
         try (TableModel model = defaultModel(tableName)) {
             return engine.createTable(
                     AllowAllSecurityContext.INSTANCE,
@@ -303,5 +335,10 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
                     false
             );
         }
+    }
+
+    public enum SequencerType {
+        V1,
+        V2
     }
 }
