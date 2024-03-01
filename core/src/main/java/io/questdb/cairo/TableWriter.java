@@ -2343,7 +2343,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 nullers.add(() -> dataMem.putLong(GeoHashes.NULL));
                 break;
             case ColumnType.VARCHAR:
-                nullers.add(() -> Utf8s.varcharAppend(dataMem, auxMem, null));
+                nullers.add(() -> VarcharTypeDriver.varcharAppend(dataMem, auxMem, null));
                 break;
             default:
                 nullers.add(NOOP);
@@ -8389,7 +8389,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         public void putVarchar(int columnIndex, char value) {
             utf8Sink.clear();
             utf8Sink.put(value);
-            Utf8s.varcharAppend(
+            VarcharTypeDriver.varcharAppend(
                     getPrimaryColumn(columnIndex),
                     getSecondaryColumn(columnIndex),
                     utf8Sink
@@ -8399,7 +8399,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putVarchar(int columnIndex, Utf8Sequence value) {
-            Utf8s.varcharAppend(
+            VarcharTypeDriver.varcharAppend(
                     getPrimaryColumn(columnIndex),
                     getSecondaryColumn(columnIndex),
                     value

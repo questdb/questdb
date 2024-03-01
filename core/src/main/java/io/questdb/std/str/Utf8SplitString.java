@@ -30,7 +30,7 @@ import io.questdb.std.ObjectFactory;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.std.str.Utf8s.UTF8_STORAGE_SPLIT_BYTE;
+import static io.questdb.cairo.VarcharTypeDriver.UTF8_STORAGE_SPLIT_BYTE;
 
 /**
  * An immutable flyweight for a UTF-8 string stored in native memory.

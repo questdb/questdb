@@ -24,10 +24,7 @@
 
 package io.questdb.test.std;
 
-import io.questdb.cairo.BinarySearch;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DedupColumnCommitAddresses;
+import io.questdb.cairo.*;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
@@ -432,19 +429,19 @@ public class VectTest {
                 int len = i % maxLen;
 
                 if (i % nullModA == 0) {
-                    Utf8s.varcharAppend(dataMemA, auxMemA, null);
+                    VarcharTypeDriver.varcharAppend(dataMemA, auxMemA, null);
                 } else {
                     utf8Sink.clear();
                     utf8Sink.repeat('a', len);
-                    Utf8s.varcharAppend(dataMemA, auxMemA, utf8Sink);
+                    VarcharTypeDriver.varcharAppend(dataMemA, auxMemA, utf8Sink);
                 }
 
                 if (i % nullModB == 0) {
-                    Utf8s.varcharAppend(dataMemB, auxMemB, null);
+                    VarcharTypeDriver.varcharAppend(dataMemB, auxMemB, null);
                 } else {
                     utf8Sink.clear();
                     utf8Sink.repeat('b', len);
-                    Utf8s.varcharAppend(dataMemB, auxMemB, utf8Sink);
+                    VarcharTypeDriver.varcharAppend(dataMemB, auxMemB, utf8Sink);
                 }
                 index.add(i * 2); // rowA synthetic timestamp
                 index.add(i); // rowA index
@@ -630,7 +627,7 @@ public class VectTest {
         String[] strings = new String[rowCount];
         StringSink sink = new StringSink();
         for (int i = 0; i < rowCount; i++) {
-            Utf8Sequence utf8Sequence = Utf8s.varcharRead(i, dataMemA, auxMemA, 1);
+            Utf8Sequence utf8Sequence = VarcharTypeDriver.varcharRead(i, dataMemA, auxMemA, 1);
             if (utf8Sequence == null) {
                 strings[i] = null;
             } else {

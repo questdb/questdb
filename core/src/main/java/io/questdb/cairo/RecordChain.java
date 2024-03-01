@@ -277,15 +277,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         if (value != null) {
             mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
             recordOffset += 8;
-            if (value.isAscii()) {
-                // ASCII flag is signaled with negative sign
-                mem.putInt(varAppendOffset, -value.size());
-            } else {
-                mem.putInt(varAppendOffset, value.size());
-            }
-            varAppendOffset += 4;
-            mem.putVarchar(varAppendOffset, value);
-            varAppendOffset += value.size();
+            final long appendAddress = mem.addressOf(varAppendOffset);
+            varAppendOffset += VarcharTypeDriver.varcharAppend(appendAddress, value);
         } else {
             putNull();
         }
@@ -492,10 +485,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             if (offset == -1) {
                 return null;
             }
-            int sizeRaw = mem.getInt(offset);
-            int size = Math.abs(sizeRaw);
-            boolean ascii = sizeRaw < 0;
-            return mem.getVarcharA(offset + 4, size, ascii);
+            return VarcharTypeDriver.varcharRead(mem, offset, 1); // VarcharA
         }
 
         @Override
@@ -504,10 +494,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             if (offset == -1) {
                 return null;
             }
-            int sizeRaw = mem.getInt(offset);
-            int size = Math.abs(sizeRaw);
-            boolean ascii = sizeRaw < 0;
-            return mem.getVarcharB(offset + 4, size, ascii);
+            return VarcharTypeDriver.varcharRead(mem, offset, 2); // VarcharB
         }
 
         private long fixedWithColumnOffset(int index) {

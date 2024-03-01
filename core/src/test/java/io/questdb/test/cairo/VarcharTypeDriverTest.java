@@ -53,8 +53,8 @@ public class VarcharTypeDriverTest extends AbstractTest {
                         MemoryCMARW auxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                         MemoryCARW dataMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
                 ) {
-                    Utf8s.varcharAppend(dataMem, auxMem, null);
-                    Utf8s.varcharAppend(dataMem, auxMem, new Utf8String("foobarbaz - bazbarfoo"));
+                    VarcharTypeDriver.varcharAppend(dataMem, auxMem, null);
+                    VarcharTypeDriver.varcharAppend(dataMem, auxMem, new Utf8String("foobarbaz - bazbarfoo"));
 
                     Assert.assertEquals(15, driver.getDataVectorSize(auxMem.addressOf(0), 0, 1));
 
@@ -86,7 +86,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     driver.setColumnRefs(auxMem.addressOf(auxOffset * 2 * Long.BYTES), dataOffset, n);
 
                     for (int i = 0; i < n; i++) {
-                        Assert.assertNull(Utf8s.varcharRead((i + auxOffset) , dataMem, auxMem, 1));
+                        Assert.assertNull(VarcharTypeDriver.varcharRead((i + auxOffset) , dataMem, auxMem, 1));
                         Assert.assertEquals(dataOffset, VarcharTypeDriver.varcharGetDataVectorSize(auxMem, (i + auxOffset) * 16L));
                     }
                 }
@@ -115,7 +115,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     for (int i = 0; i < n; i++) {
                         utf8Sink.clear();
                         utf8Sink.repeat("a", len);
-                        Utf8s.varcharAppend(dataMemA, auxMemA, utf8Sink);
+                        VarcharTypeDriver.varcharAppend(dataMemA, auxMemA, utf8Sink);
                         if (i >= auxLo) {
                             expectedOffsets.add(dataMemA.getAppendOffset());
                         }
@@ -126,7 +126,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     final String expectedStr = utf8Sink.toString();
 
                     for (int i = auxLo; i < n; i++) {
-                        Utf8Sequence varchar = Utf8s.varcharRead(i, dataMemA, auxMemA, 1);
+                        Utf8Sequence varchar = VarcharTypeDriver.varcharRead(i, dataMemA, auxMemA, 1);
                         Assert.assertEquals(expectedOffsets.getQuick(i - auxLo), VarcharTypeDriver.varcharGetDataVectorSize(auxMemA, i * 16L));
                         Assert.assertNotNull(varchar);
                         TestUtils.assertEquals(expectedStr, varchar.asAsciiCharSequence());
@@ -140,7 +140,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     driver.shiftCopyAuxVector(shift, auxMemA.addressOf(0), auxLo, n, auxMemB.addressOf(0));
 
                     for (int i = 0; i < n - auxLo; i++) {
-                        Utf8Sequence varchar = Utf8s.varcharRead(i, dataMemB, auxMemB, 1);
+                        Utf8Sequence varchar = VarcharTypeDriver.varcharRead(i, dataMemB, auxMemB, 1);
                         Assert.assertEquals("offset mismatch: i=" + i + ", n=" + n, expectedOffsets.getQuick(i) - shift, VarcharTypeDriver.varcharGetDataVectorSize(auxMemB, i * 16L));
                         Assert.assertNotNull(varchar);
                         TestUtils.assertEquals(expectedStr, varchar.asAsciiCharSequence());
@@ -168,14 +168,14 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     final int shift = -42;
                     expectedOffsets.clear();
                     for (int i = 0; i < n; i++) {
-                        Utf8s.varcharAppend(dataMemA, auxMemA, null);
+                        VarcharTypeDriver.varcharAppend(dataMemA, auxMemA, null);
                         if (i >= auxLo) {
                             expectedOffsets.add(dataMemA.getAppendOffset());
                         }
                     }
 
                     for (int i = auxLo; i < n; i++) {
-                        Assert.assertNull(Utf8s.varcharRead(i, dataMemA, auxMemA, 1));
+                        Assert.assertNull(VarcharTypeDriver.varcharRead(i, dataMemA, auxMemA, 1));
                         Assert.assertEquals(expectedOffsets.getQuick(i - auxLo), VarcharTypeDriver.varcharGetDataVectorSize(auxMemA, i * 16L));
                     }
 
@@ -186,7 +186,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     driver.shiftCopyAuxVector(shift, auxMemA.addressOf(0), auxLo, n, auxMemB.addressOf(0));
 
                     for (int i = 0; i < n - auxLo; i++) {
-                        Assert.assertNull(Utf8s.varcharRead(i, dataMemB, auxMemB, 1));
+                        Assert.assertNull(VarcharTypeDriver.varcharRead(i, dataMemB, auxMemB, 1));
                         Assert.assertEquals("offset mismatch: i=" + i + ", n=" + n, expectedOffsets.getQuick(i) - shift, VarcharTypeDriver.varcharGetDataVectorSize(auxMemB, i * 16L));
                     }
                 }
@@ -216,15 +216,15 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     int len = rnd.nextInt(32);
                     switch (rnd.nextInt(3)) {
                         case 0: // null
-                            Utf8s.varcharAppend(dataMemA, auxMemA, null);
+                            VarcharTypeDriver.varcharAppend(dataMemA, auxMemA, null);
                             break;
                         case 1: // ascii
                             utf8Sink.repeat("a", len);
-                            Utf8s.varcharAppend(dataMemA, auxMemA, utf8Sink);
+                            VarcharTypeDriver.varcharAppend(dataMemA, auxMemA, utf8Sink);
                             break;
                         case 2: // non-ascii
                             utf8Sink.repeat("ы", len);
-                            Utf8s.varcharAppend(dataMemA, auxMemA, utf8Sink);
+                            VarcharTypeDriver.varcharAppend(dataMemA, auxMemA, utf8Sink);
                             break;
                         default:
                             assert false;
@@ -234,8 +234,8 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 driver.o3sort(tsIndexMem.addressOf(0), n, dataMemA, auxMemA, dataMemB, auxMemB);
 
                 for (int i = 0; i < n; i++) {
-                    Utf8Sequence varcharA = Utf8s.varcharRead((n - i - 1), dataMemA, auxMemA, 1);
-                    Utf8Sequence varcharB = Utf8s.varcharRead(i, dataMemB, auxMemB, 1);
+                    Utf8Sequence varcharA = VarcharTypeDriver.varcharRead((n - i - 1), dataMemA, auxMemA, 1);
+                    Utf8Sequence varcharB = VarcharTypeDriver.varcharRead(i, dataMemB, auxMemB, 1);
                     Assert.assertTrue((varcharA != null && varcharB != null) || (varcharA == null && varcharB == null));
                     if (varcharA != null) {
                         Assert.assertEquals(varcharA.isAscii(), varcharB.isAscii());
@@ -268,15 +268,15 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     int len = rnd.nextInt(32);
                     switch (rnd.nextInt(3)) {
                         case 0: // null
-                            Utf8s.varcharAppend(dataMemA, auxMemA, null);
+                            VarcharTypeDriver.varcharAppend(dataMemA, auxMemA, null);
                             break;
                         case 1: // ascii
                             utf8Sink.repeat("a", len);
-                            Utf8s.varcharAppend(dataMemA, auxMemA, utf8Sink);
+                            VarcharTypeDriver.varcharAppend(dataMemA, auxMemA, utf8Sink);
                             break;
                         case 2: // non-ascii
                             utf8Sink.repeat("ы", len);
-                            Utf8s.varcharAppend(dataMemA, auxMemA, utf8Sink);
+                            VarcharTypeDriver.varcharAppend(dataMemA, auxMemA, utf8Sink);
                             break;
                         default:
                             assert false;
@@ -286,8 +286,8 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 driver.o3sort(tsIndexMem.addressOf(0), n, dataMemA, auxMemA, dataMemB, auxMemB);
 
                 for (int i = 0; i < n; i++) {
-                    Utf8Sequence varcharA = Utf8s.varcharRead(i, dataMemA, auxMemA, 1);
-                    Utf8Sequence varcharB = Utf8s.varcharRead(i, dataMemB, auxMemB, 1);
+                    Utf8Sequence varcharA = VarcharTypeDriver.varcharRead(i, dataMemA, auxMemA, 1);
+                    Utf8Sequence varcharB = VarcharTypeDriver.varcharRead(i, dataMemB, auxMemB, 1);
                     // offsets should match since the data is in-order
                     Assert.assertEquals(VarcharTypeDriver.varcharGetDataVectorSize(auxMemA, i * 16L), VarcharTypeDriver.varcharGetDataVectorSize(auxMemB, i * 16L));
                     Assert.assertTrue((varcharA != null && varcharB != null) || (varcharA == null && varcharB == null));
@@ -318,16 +318,16 @@ public class VarcharTypeDriverTest extends AbstractTest {
             for (int i = 0; i < n; i++) {
                 expectedUsedSize += 16; // aux vector entry size
                 if (i % 15 == 0) {
-                    Utf8s.varcharAppend(dataMem, auxMem, null);
+                    VarcharTypeDriver.varcharAppend(dataMem, auxMem, null);
                 } else {
                     utf8Sink.clear();
                     final int len = i % 20;
                     char ch = (char) ('a' + i);
                     utf8Sink.repeat(ch, len);
-                    if (utf8Sink.size() > Utf8s.UTF8_STORAGE_INLINE_BYTES) {
-                        expectedUsedSize += (utf8Sink.size() - Utf8s.UTF8_STORAGE_SPLIT_BYTE);
+                    if (utf8Sink.size() > VarcharTypeDriver.UTF8_STORAGE_INLINE_BYTES) {
+                        expectedUsedSize += (utf8Sink.size() - VarcharTypeDriver.UTF8_STORAGE_SPLIT_BYTE);
                     }
-                    Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
+                    VarcharTypeDriver.varcharAppend(dataMem, auxMem, utf8Sink);
                 }
                 long actuallyUsedSize = (dataMem.getAppendOffset() + auxMem.getAppendOffset());
                 Assert.assertEquals(expectedUsedSize, actuallyUsedSize);
@@ -350,16 +350,16 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 for (int i = cut; i < n; i++) {
                     expectedUsedSize += 16;
                     if (i % 15 == 0) {
-                        Utf8s.varcharAppend(dataMem, auxMem, null);
+                        VarcharTypeDriver.varcharAppend(dataMem, auxMem, null);
                     } else {
                         utf8Sink.clear();
                         final int len = i % 40;
                         char ch = (char) ('A' + i);
                         utf8Sink.repeat(ch, len);
-                        if (utf8Sink.size() > Utf8s.UTF8_STORAGE_INLINE_BYTES) {
-                            expectedUsedSize += (utf8Sink.size() - Utf8s.UTF8_STORAGE_SPLIT_BYTE);
+                        if (utf8Sink.size() > VarcharTypeDriver.UTF8_STORAGE_INLINE_BYTES) {
+                            expectedUsedSize += (utf8Sink.size() - VarcharTypeDriver.UTF8_STORAGE_SPLIT_BYTE);
                         }
-                        Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
+                        VarcharTypeDriver.varcharAppend(dataMem, auxMem, utf8Sink);
                     }
                     long actuallyUsedSize = (dataMem.getAppendOffset() + auxMem.getAppendOffset());
                     Assert.assertEquals(expectedUsedSize, actuallyUsedSize);
@@ -369,7 +369,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 minCut = Math.min(minCut, cut);
                 for (int i = 0; i < n; i++) {
                     stringSink.clear();
-                    Utf8Sequence varchar = Utf8s.varcharRead(i, dataMem, auxMem, 1);
+                    Utf8Sequence varchar = VarcharTypeDriver.varcharRead(i, dataMem, auxMem, 1);
                     if (i % 15 == 0) {
                         Assert.assertNull(varchar);
                     } else {

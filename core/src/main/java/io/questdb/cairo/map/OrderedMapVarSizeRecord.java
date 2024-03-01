@@ -24,10 +24,7 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
@@ -536,13 +533,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     private Utf8Sequence getVarchar0(int index, DirectUtf8String us) {
         long address = addressOfColumn(index);
-        int sizeRaw = Unsafe.getUnsafe().getInt(address);
-        if (sizeRaw == TableUtils.NULL_LEN) {
-            return null;
-        }
-        // ASCII flag is signaled with the highest bit
-        boolean ascii = (sizeRaw & Integer.MIN_VALUE) != 0;
-        int size = sizeRaw & Integer.MAX_VALUE;
-        return us.of(address + Integer.BYTES, address + Integer.BYTES + size, ascii);
+        return VarcharTypeDriver.varcharRead(address, us);
     }
 }

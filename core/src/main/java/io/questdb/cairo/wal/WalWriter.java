@@ -652,7 +652,7 @@ public class WalWriter implements TableWriterAPI {
                 nullers.add(() -> dataMem.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
                 break;
             case ColumnType.VARCHAR:
-                nullers.add(() -> Utf8s.varcharAppend(dataMem, auxMem, null));
+                nullers.add(() -> VarcharTypeDriver.varcharAppend(dataMem, auxMem, null));
                 break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
@@ -2076,7 +2076,7 @@ public class WalWriter implements TableWriterAPI {
         public void putVarchar(int columnIndex, char value) {
             tempUtf8Sink.clear();
             tempUtf8Sink.put(value);
-            Utf8s.varcharAppend(
+            VarcharTypeDriver.varcharAppend(
                     getPrimaryColumn(columnIndex),
                     getSecondaryColumn(columnIndex),
                     tempUtf8Sink
@@ -2086,7 +2086,7 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void putVarchar(int columnIndex, Utf8Sequence value) {
-            Utf8s.varcharAppend(
+            VarcharTypeDriver.varcharAppend(
                     getPrimaryColumn(columnIndex),
                     getSecondaryColumn(columnIndex),
                     value

@@ -36,7 +36,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cairo.ColumnType.isVarSize;
 import static io.questdb.cairo.TableUtils.dFile;
@@ -306,7 +305,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         switch (columnTag) {
             case ColumnType.VARCHAR:
                 for (long row = fromRow; row < toRow; row++) {
-                    Utf8s.varcharAppend(dstVarMem, dstFixMem, null);
+                    VarcharTypeDriver.varcharAppend(dstVarMem, dstFixMem, null);
                 }
                 break;
             case ColumnType.STRING:
@@ -442,7 +441,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     dstFixMem.putLong(dstVarMem.putStr(masterRecord.getStr(i)));
                     break;
                 case ColumnType.VARCHAR:
-                    Utf8s.varcharAppend(dstVarMem, dstFixMem, masterRecord.getVarcharA(i));
+                    VarcharTypeDriver.varcharAppend(dstVarMem, dstFixMem, masterRecord.getVarcharA(i));
                     break;
                 case ColumnType.BINARY:
                     dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));

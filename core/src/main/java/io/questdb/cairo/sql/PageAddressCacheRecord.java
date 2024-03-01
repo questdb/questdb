@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -413,7 +414,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
     private Utf8Sequence getVarchar(int columnIndex, DirectUtf8String utf8view, Utf8SplitString utf8SplitView) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         final long auxPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
-        return Utf8s.varcharRead(
+        return VarcharTypeDriver.varcharRead(
                 auxPageAddress,
                 dataPageAddress,
                 rowIndex,

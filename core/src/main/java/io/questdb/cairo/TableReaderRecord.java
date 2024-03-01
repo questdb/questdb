@@ -32,7 +32,6 @@ import io.questdb.std.Rows;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -342,7 +341,7 @@ public class TableReaderRecord implements Record, Sinkable {
                 rowNum,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
-        return Utf8s.varcharRead(
+        return VarcharTypeDriver.varcharRead(
                 rowNum,
                 reader.getColumn(absoluteColumnIndex),
                 reader.getColumn(absoluteColumnIndex + 1),

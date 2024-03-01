@@ -1027,31 +1027,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void putVarchar(Utf8Sequence value) {
-            if (value == null) {
-                putVarSizeNull();
-                return;
-            }
-
-            int size = value.size();
-            checkCapacity(size + 4L);
-            long sizeAddress = appendAddress;
-            appendAddress += 4L;
-            // Since isAscii() is a best-effort flag, we have to recalculate it here. Otherwise,
-            // different isAscii() values for the same string would lead to different hash codes.
-            boolean ascii = true;
-            for (int i = 0; i < size; i++) {
-                byte b = value.byteAt(i);
-                ascii &= (b >= 0);
-                Unsafe.getUnsafe().putByte(appendAddress + i, b);
-            }
-            appendAddress += size;
-            // Now backfill the header.
-            if (ascii) {
-                // ASCII flag is signaled with the highest bit
-                Unsafe.getUnsafe().putInt(sizeAddress, size | Integer.MIN_VALUE);
-            } else {
-                Unsafe.getUnsafe().putInt(sizeAddress, size);
-            }
+            appendAddress += VarcharTypeDriver.varcharAppend(appendAddress, value);
         }
 
         @Override

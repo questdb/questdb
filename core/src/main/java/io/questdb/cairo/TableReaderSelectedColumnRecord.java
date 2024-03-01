@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -353,7 +352,7 @@ public class TableReaderSelectedColumnRecord implements Record {
                 rowNum,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
-        return Utf8s.varcharRead(
+        return VarcharTypeDriver.varcharRead(
                 rowNum,
                 reader.getColumn(absoluteColumnIndex),
                 reader.getColumn(absoluteColumnIndex + 1),

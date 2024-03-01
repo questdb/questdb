@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.Vm;
@@ -34,7 +35,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -132,7 +132,7 @@ class WalWriterEvents implements Closeable {
                 eventMem.putStr(function.getStr(null));
                 break;
             case ColumnType.VARCHAR:
-                Utf8s.varcharAppendWithSize(eventMem, function.getVarcharA(null));
+                VarcharTypeDriver.varcharAppend(eventMem, function.getVarcharA(null));
                 break;
             case ColumnType.BINARY:
                 eventMem.putBin(function.getBin(null));

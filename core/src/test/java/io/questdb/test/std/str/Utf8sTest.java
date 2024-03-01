@@ -268,7 +268,7 @@ public class Utf8sTest {
             for (int i = 0; i < n; i++) {
                 boolean ascii = rnd.nextBoolean();
                 if (rnd.nextInt(10) == 0) {
-                    Utf8s.varcharAppend(dataMem, auxMem, null);
+                    VarcharTypeDriver.varcharAppend(dataMem, auxMem, null);
                     expectedValues.add(null);
                 } else {
                     utf8Sink.clear();
@@ -283,13 +283,13 @@ public class Utf8sTest {
                         asciiBitSet.set(i);
                     }
                     expectedValues.add(utf8Sink.toString());
-                    Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
+                    VarcharTypeDriver.varcharAppend(dataMem, auxMem, utf8Sink);
                 }
                 expectedOffsets.add(dataMem.getAppendOffset());
             }
 
             for (int i = 0; i < n; i++) {
-                Utf8Sequence varchar = Utf8s.varcharRead(i, dataMem, auxMem, rnd.nextBoolean() ? 1 : 2);
+                Utf8Sequence varchar = VarcharTypeDriver.varcharRead(i, dataMem, auxMem, rnd.nextBoolean() ? 1 : 2);
                 Assert.assertEquals(expectedOffsets.getQuick(i), VarcharTypeDriver.varcharGetDataVectorSize(auxMem, i * 16L));
                 String expectedValue = expectedValues.getQuick(i);
                 if (expectedValue == null) {
@@ -311,13 +311,13 @@ public class Utf8sTest {
         ) {
             final Utf8StringSink utf8Sink = new Utf8StringSink();
             int len = 1024;
-            int dataSize = len - Utf8s.UTF8_STORAGE_SPLIT_BYTE;
+            int dataSize = len - VarcharTypeDriver.UTF8_STORAGE_SPLIT_BYTE;
             int n = (Integer.MAX_VALUE / dataSize) + dataSize;
             LongList expectedOffsets = new LongList(n);
             for (int i = 0; i < n; i++) {
                 utf8Sink.clear();
                 utf8Sink.repeat("a", len);
-                Utf8s.varcharAppend(dataMem, auxMem, utf8Sink);
+                VarcharTypeDriver.varcharAppend(dataMem, auxMem, utf8Sink);
                 expectedOffsets.add(dataMem.getAppendOffset());
             }
 
@@ -325,7 +325,7 @@ public class Utf8sTest {
             utf8Sink.repeat("a", len);
             String expectedStr = utf8Sink.toString();
             for (int i = 0; i < n; i++) {
-                Utf8Sequence varchar = Utf8s.varcharRead(i, dataMem, auxMem, 1);
+                Utf8Sequence varchar = VarcharTypeDriver.varcharRead(i, dataMem, auxMem, 1);
                 Assert.assertEquals(expectedOffsets.getQuick(i), VarcharTypeDriver.varcharGetDataVectorSize(auxMem, i * 16L));
                 Assert.assertNotNull(varchar);
                 TestUtils.assertEquals(expectedStr, varchar.asAsciiCharSequence());

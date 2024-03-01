@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -33,7 +34,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.WALE_HEADER_SIZE;
@@ -226,7 +226,7 @@ public class WalEventCursor {
     }
 
     private Utf8Sequence readVarchar() {
-        Utf8Sequence seq = Utf8s.varcharReadWithSize(eventMem, offset);
+        Utf8Sequence seq = VarcharTypeDriver.varcharRead(eventMem, offset);
         if (seq == null) {
             offset += Integer.BYTES;
             return null;
