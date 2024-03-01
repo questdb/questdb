@@ -120,12 +120,12 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .withExpectedHeader("Authorization", "Basic QWxhZGRpbjpPcGVuU2VzYW1l")
                 .replyWithStatus(204);
-        testWithMock(mockHttpProcessor, sender ->
-                        sender.table("test")
-                                .symbol("sym", "bol")
-                                .doubleColumn("x", 1.0)
-                                .atNow()
-                , DEFAULT_FACTORY.andThen(b -> b.httpUsernamePassword("Aladdin", "OpenSesame")));
+        testWithMock(mockHttpProcessor, sender -> {
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow();
+        }, DEFAULT_FACTORY.andThen(b -> b.httpUsernamePassword("Aladdin", "OpenSesame")));
     }
 
     @Test
@@ -134,12 +134,12 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("Authorization", "Basic QWxhZGRpbjo7T3BlbjtTZXNhbWU7Ow==")
                 .replyWithStatus(204);
-        testWithMock(mockHttpProcessor, sender ->
-                        sender.table("test")
-                                .symbol("sym", "bol")
-                                .doubleColumn("x", 1.0)
-                                .atNow()
-                , port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+        testWithMock(mockHttpProcessor, sender -> {
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow();
+        }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
@@ -224,12 +224,12 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("Host", "localhost:9001")
                 .replyWithStatus(204);
 
-        testWithMock(mockHttpProcessor, sender ->
-                sender.table("test")
-                        .symbol("sym", "bol")
-                        .doubleColumn("x", 1.0)
-                        .atNow()
-        );
+        testWithMock(mockHttpProcessor, sender -> {
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow();
+        });
     }
 
     @Test
@@ -381,12 +381,12 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("Authorization", "Bearer 0123456789")
                 .replyWithStatus(204);
 
-        testWithMock(mockHttpProcessor, sender ->
-                        sender.table("test")
-                                .symbol("sym", "bol")
-                                .doubleColumn("x", 1.0)
-                                .atNow()
-                , DEFAULT_FACTORY.andThen(b -> b.httpToken("0123456789")));
+        testWithMock(mockHttpProcessor, sender -> {
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow();
+        }, DEFAULT_FACTORY.andThen(b -> b.httpToken("0123456789")));
     }
 
     @Test
@@ -419,8 +419,8 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testUnauthenticated_403() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .replyWithContent(403, "Forbidden", "text/plain");
-        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error: Forbidden [http-status=403]"));
+                .replyWithContent(403, "Unauthorized", "text/plain");
+        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error: Unauthorized [http-status=403]"));
     }
 
     @Test
