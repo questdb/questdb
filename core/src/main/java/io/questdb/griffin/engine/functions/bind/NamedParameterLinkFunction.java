@@ -245,15 +245,7 @@ public class NamedParameterLinkFunction implements ScalarFunction {
 
     @Override
     public boolean isReadThreadSafe() {
-        switch (type) {
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-            case ColumnType.LONG256:
-            case ColumnType.BINARY:
-                return false;
-            default:
-                return true;
-        }
+        return true;
     }
 
     @Override

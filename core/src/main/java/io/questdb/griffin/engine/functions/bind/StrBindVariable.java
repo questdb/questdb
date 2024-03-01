@@ -107,6 +107,11 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

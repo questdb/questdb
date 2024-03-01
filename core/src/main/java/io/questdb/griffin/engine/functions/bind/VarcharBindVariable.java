@@ -32,7 +32,10 @@ import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.*;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 
 public class VarcharBindVariable extends VarcharFunction implements ScalarFunction, Mutable {
     private final int floatScale;
@@ -102,6 +105,11 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         return isNull ? null : utf8Sink;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
     }
 
     @Override
