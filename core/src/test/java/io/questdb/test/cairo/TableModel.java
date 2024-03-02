@@ -34,7 +34,6 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-// todo: remove native memory alloc from the model, we're leaking badly
 public class TableModel implements TableStructure, Closeable {
     private static final long COLUMN_FLAG_CACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
@@ -78,14 +77,6 @@ public class TableModel implements TableStructure, Closeable {
         columnNames.add(Chars.toString(name));
         // set default symbol capacity
         columnBits.add((128L << 32) | type, COLUMN_FLAG_CACHED);
-        return this;
-    }
-
-    public TableModel dedupKey() {
-        int pos = columnBits.size() - 1;
-        assert pos > 0;
-        long bits = columnBits.getQuick(pos);
-        columnBits.setQuick(pos, bits | COLUMN_FLAG_DEDUP_KEY);
         return this;
     }
 

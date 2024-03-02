@@ -519,24 +519,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             engine.clear();
 
-            final FilesFacade ff = new TestFilesFacadeImpl() {
-                int count = 10;
-
-                @Override
-                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                    if (count-- > 0) {
-                        return super.mmap(fd, len, offset, flags, memoryTag);
-                    }
-                    return -1;
-                }
-            };
-
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
+            final CairoConfiguration configuration = createMmapFailingConfiguration(10);
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -773,16 +756,23 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByAlignToCalendar() throws Exception {
-        assertSampleByIndexQuery(
-                "k\ts\tlat\tlon\n" +
-                        "2021-03-27T23:00:00.000000Z\ta\t142.30215575416736\t165.69007104574442\n" +
-                        "2021-03-28T00:00:00.000000Z\ta\t106.0418967098362\tNaN\n" +
-                        "2021-03-28T01:00:00.000000Z\ta\t79.9245166429184\t168.04971262491318\n" +
-                        "2021-03-28T02:00:00.000000Z\ta\t6.612327943200507\t128.42101395467057\n",
-                "select k, s, first(lat) lat, last(lon) lon " +
-                        "from x " +
-                        "where s in ('a') " +
-                        "sample by 1h align to calendar",
+        String query = "select k, s, first(lat) lat, last(lon) lon " +
+                "from x " +
+                "where s in ('a') " +
+                "sample by 1h align to calendar";
+
+        String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
+                .replace("in ('a')", "in ('a', 'none')");
+
+        String expected = "k\ts\tlat\tlon\n" +
+                "2021-03-27T23:00:00.000000Z\ta\t142.30215575416736\t165.69007104574442\n" +
+                "2021-03-28T00:00:00.000000Z\ta\t106.0418967098362\tNaN\n" +
+                "2021-03-28T01:00:00.000000Z\ta\t79.9245166429184\t168.04971262491318\n" +
+                "2021-03-28T02:00:00.000000Z\ta\t6.612327943200507\t128.42101395467057\n";
+
+        assertQuery(
+                expected,
+                forceNoIndexQuery,
                 "create table x as " +
                         "(" +
                         "select" +
@@ -792,7 +782,19 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2021-03-27T23:30:00.00000Z', 100000000) k" +
                         "   from" +
                         "   long_sequence(100)" +
-                        "),index(s) timestamp(k) partition by DAY"
+                        "),index(s) timestamp(k) partition by DAY",
+                "k",
+                true,
+                true
+        );
+
+        assertQuery(
+                expected,
+                query,
+                null,
+                "k",
+                true,
+                true
         );
     }
 
@@ -2492,7 +2494,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000001, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, false
+                        ") timestamp(k) partition by NONE", "k", true, true
         );
     }
 
@@ -2960,13 +2962,15 @@ public class SampleByTest extends AbstractCairoTest {
                     "select time, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "SampleByFirstLast\n" +
+                    "Sort light\n" +
                             "  keys: [time]\n" +
-                            "  values: [last(lat), last(lon)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id deferred: true\n" +
-                            "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n"
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [time]\n" +
+                            "      values: [last(lat),last(lon)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id deferred: true\n" +
+                            "              filter: id='A'\n" +
+                            "            Frame forward scan on: pos\n"
             );
 
         });
@@ -2988,13 +2992,15 @@ public class SampleByTest extends AbstractCairoTest {
                     "select   id, time, ts, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "SampleBy\n" +
-                            "  keys: [id,time,ts]\n" +
-                            "  values: [last(lat),last(lon)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id deferred: true\n" +
-                            "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n"
+                    "Sort light\n" +
+                            "  keys: [time]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [id,time,ts]\n" +
+                            "      values: [last(lat),last(lon)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id deferred: true\n" +
+                            "              filter: id='A'\n" +
+                            "            Frame forward scan on: pos\n"
             );
 
         });
@@ -3016,26 +3022,30 @@ public class SampleByTest extends AbstractCairoTest {
                     "select time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "SampleBy\n" +
-                            "  keys: [time,type]\n" +
-                            "  values: [last(lat),last(lon)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id deferred: true\n" +
-                            "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n"
+                    "Sort light\n" +
+                            "  keys: [time]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [time,type]\n" +
+                            "      values: [last(lat),last(lon)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id deferred: true\n" +
+                            "              filter: id='A'\n" +
+                            "            Frame forward scan on: pos\n"
             );
 
             assertPlan(
                     "select   id, time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "SampleBy\n" +
-                            "  keys: [id,time,type]\n" +
-                            "  values: [last(lat),last(lon)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id deferred: true\n" +
-                            "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n"
+                    "Sort light\n" +
+                            "  keys: [time]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [id,time,type]\n" +
+                            "      values: [last(lat),last(lon)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id deferred: true\n" +
+                            "              filter: id='A'\n" +
+                            "            Frame forward scan on: pos\n"
             );
 
         });
@@ -3056,26 +3066,30 @@ public class SampleByTest extends AbstractCairoTest {
                     "select   id, time, geo6, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "SampleBy\n" +
-                            "  keys: [id,time,geo6]\n" +
-                            "  values: [last(lat),last(lon)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id deferred: true\n" +
-                            "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n"
+                    "Sort light\n" +
+                            "  keys: [time]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [id,time,geo6]\n" +
+                            "      values: [last(lat),last(lon)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id deferred: true\n" +
+                            "              filter: id='A'\n" +
+                            "            Frame forward scan on: pos\n"
             );
 
             assertPlan(
                     "select   id, time, lat, last(lat) lastlat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "SampleBy\n" +
-                            "  keys: [id,time,lat]\n" +
-                            "  values: [last(lat),last(lon)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id deferred: true\n" +
-                            "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n"
+                    "Sort light\n" +
+                            "  keys: [time]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [id,time,lat]\n" +
+                            "      values: [last(lat),last(lon)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id deferred: true\n" +
+                            "              filter: id='A'\n" +
+                            "            Frame forward scan on: pos\n"
             );
         });
     }
@@ -3193,14 +3207,14 @@ public class SampleByTest extends AbstractCairoTest {
                         "union all " +
                         "select '1970-01-01T01:01:00.000000Z'::timestamp, 'A', 101, 101, #zzzzzz from long_sequence(1)",
                 "id\ttime\tgeo6\tlat\tlon\n" +
-                        "A\t1970-01-01T00:00:00.000000Z\tzzzzzz\t13.0\t13.0\n" +
                         "A\t1970-01-01T00:00:00.000000Z\tyyyyyy\t14.0\t14.0\n" +
-                        "A\t1970-01-01T00:15:00.000000Z\tzzzzzz\t29.0\t29.0\n" +
+                        "A\t1970-01-01T00:00:00.000000Z\tzzzzzz\t13.0\t13.0\n" +
                         "A\t1970-01-01T00:15:00.000000Z\tyyyyyy\t28.0\t28.0\n" +
+                        "A\t1970-01-01T00:15:00.000000Z\tzzzzzz\t29.0\t29.0\n" +
                         "A\t1970-01-01T00:30:00.000000Z\tyyyyyy\t40.0\t40.0\n" +
                         "A\t1970-01-01T00:30:00.000000Z\tzzzzzz\t39.0\t39.0\n" +
                         "A\t1970-01-01T01:00:00.000000Z\tzzzzzz\t101.0\t101.0\n",
-                false, false, false
+                true, true, false
         );
     }
 
@@ -3666,8 +3680,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false,
-                false
+                true,
+                true
         );
     }
 
@@ -4490,24 +4504,7 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE"
             );
 
-            FilesFacade ff = new TestFilesFacadeImpl() {
-                int count = 4;
-
-                @Override
-                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                    if (count-- > 0) {
-                        return super.mmap(fd, len, offset, flags, memoryTag);
-                    }
-                    return -1;
-                }
-            };
-
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
+            CairoConfiguration configuration = createMmapFailingConfiguration(4);
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -4524,6 +4521,28 @@ public class SampleByTest extends AbstractCairoTest {
         });
     }
 
+    @NotNull
+    private static CairoConfiguration createMmapFailingConfiguration(int x) {
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            int count = x;
+
+            @Override
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+                if (count-- > 0) {
+                    return super.mmap(fd, len, offset, flags, memoryTag);
+                }
+                return -1;
+            }
+        };
+
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+    }
+
     @Test
     public void testSampleFillLinearFail() throws Exception {
         assertMemoryLeak(() -> {
@@ -4538,24 +4557,7 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE"
             );
 
-            FilesFacade ff = new TestFilesFacadeImpl() {
-                int count = 10;
-
-                @Override
-                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                    if (count-- > 0) {
-                        return super.mmap(fd, len, offset, flags, memoryTag);
-                    }
-                    return -1;
-                }
-            };
-
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
+            CairoConfiguration configuration = createMmapFailingConfiguration(10);
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {

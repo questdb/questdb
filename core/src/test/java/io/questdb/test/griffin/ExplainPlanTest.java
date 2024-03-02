@@ -1266,13 +1266,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  from tab\n" +
                             "  where id = 'XXX' \n" +
                             "  sample by 15m ALIGN to CALENDAR\n",
-                    "SampleByFirstLast\n" +
-                            "  keys: [ts, id]\n" +
-                            "  values: [last(val)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id\n" +
-                            "          filter: id=1\n" +
-                            "        Frame forward scan on: tab\n"
+                    "Sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [ts,id]\n" +
+                            "      values: [last(val)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id\n" +
+                            "              filter: id=1\n" +
+                            "            Frame forward scan on: tab\n"
             );
 
         });
@@ -2116,7 +2118,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         final StringSink sink = new StringSink();
 
-        IntObjHashMap<ObjList<Function>> constFuncs = new IntObjHashMap<ObjList<Function>>();
+        IntObjHashMap<ObjList<Function>> constFuncs = new IntObjHashMap<>();
         constFuncs.put(ColumnType.BOOLEAN, list(BooleanConstant.TRUE, BooleanConstant.FALSE));
         constFuncs.put(ColumnType.BYTE, list(new ByteConstant((byte) 1)));
         constFuncs.put(ColumnType.SHORT, list(new ShortConstant((short) 2)));
@@ -2337,7 +2339,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         if (factory.isWindow()) {
                             sqlExecutionContext.configureWindowContext(null, null, null, false, DataFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
                         }
-                        Function function = null;
+                        Function function;
                         try {
                             function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
                             function.toPlan(planSink);
@@ -10072,7 +10074,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private <T> ObjList<T> list(T... values) {
-        return new ObjList<T>(values);
+        return new ObjList<>(values);
     }
 
     private void test2686Prepare() throws Exception {

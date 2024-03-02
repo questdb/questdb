@@ -2342,9 +2342,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return recordCursorFactory;
         }
         try {
-            final LowerCaseCharSequenceIntHashMap orderBy = model.getOrderHash();
-            final ObjList<CharSequence> columnNames = orderBy.keys();
-            final int orderByColumnCount = columnNames.size();
+            final LowerCaseCharSequenceIntHashMap orderByColumnNameToIndexMap = model.getOrderHash();
+            final ObjList<CharSequence> orderByColumnNames = orderByColumnNameToIndexMap.keys();
+            final int orderByColumnCount = orderByColumnNames.size();
 
             if (orderByColumnCount > 0) {
                 final RecordMetadata metadata = recordCursorFactory.getMetadata();
@@ -2356,7 +2356,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // column index sign indicates direction
                 // therefore 0 index is not allowed
                 for (int i = 0; i < orderByColumnCount; i++) {
-                    final CharSequence column = columnNames.getQuick(i);
+                    final CharSequence column = orderByColumnNames.getQuick(i);
                     int index = metadata.getColumnIndexQuiet(column);
 
                     // check if column type is supported
@@ -2376,7 +2376,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     // we also maintain unique set of column indexes for better performance
                     if (intHashSet.add(index)) {
-                        if (orderBy.get(column) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                        if (orderByColumnNameToIndexMap.get(column) == QueryModel.ORDER_DIRECTION_DESCENDING) {
                             listColumnFilterA.add(-index - 1);
                         } else {
                             listColumnFilterA.add(index + 1);
@@ -2391,29 +2391,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 //    by timestamp (either ASC or DESC); we have nothing to do
                 // 2. metadata of the new cursor will have the timestamp
                 if (timestampIndex != -1) {
-                    CharSequence column = columnNames.getQuick(0);
+                    CharSequence column = orderByColumnNames.getQuick(0);
                     int index = metadata.getColumnIndexQuiet(column);
                     if (index == timestampIndex) {
                         if (orderByColumnCount == 1) {
-                            if (orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING
+                            if (orderByColumnNameToIndexMap.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING
                                     && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
                                 return recordCursorFactory;
-                            } else if (orderBy.get(column) == ORDER_DIRECTION_DESCENDING
+                            } else if (orderByColumnNameToIndexMap.get(column) == ORDER_DIRECTION_DESCENDING
                                     && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD) {
                                 return recordCursorFactory;
                             }
                         } else { //orderByColumnCount > 1
-                            preSortedByTs = (orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
-                                    (orderBy.get(column) == ORDER_DIRECTION_DESCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD);
+                            preSortedByTs = (orderByColumnNameToIndexMap.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
+                                    (orderByColumnNameToIndexMap.get(column) == ORDER_DIRECTION_DESCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD);
                         }
                     }
                 }
 
-                RecordMetadata orderedMetadata;
-                if (metadata.getColumnIndexQuiet(columnNames.getQuick(0)) == timestampIndex) {
+                GenericRecordMetadata orderedMetadata;
+                int firstOrderByColumnIndex = metadata.getColumnIndexQuiet(orderByColumnNames.getQuick(0));
+                if (firstOrderByColumnIndex == timestampIndex) {
                     orderedMetadata = GenericRecordMetadata.copyOf(metadata);
                 } else {
                     orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
+                    if (model.isOrderByTimestamp()) {
+                        orderedMetadata.setTimestampIndex(firstOrderByColumnIndex);
+                    }
                 }
                 final Function loFunc = getLoFunction(model, executionContext);
                 final Function hiFunc = getHiFunction(model, executionContext);
