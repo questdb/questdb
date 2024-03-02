@@ -341,7 +341,7 @@ public interface Sender extends Closeable {
         private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
-        private static final int DEFAULT_AUTO_FLUSH_INTERVAL_MILLIS = 1_000;
+        private static final int DEFAULT_AUTO_FLUSH_INTERVAL_MILLIS = 10_000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
@@ -494,7 +494,7 @@ public interface Sender extends Closeable {
 
 
         /**
-         * Set the interval at which the Sender automatically flushes its buffer.
+         * Set the interval in milliseconds at which the Sender automatically flushes its buffer.
          * <br>
          * It flushed the buffer even when the number of buffered rows is less than the value set by {@link #autoFlushRows(int)}.
          * This prevents rows from being locally buffered for too long when the rate of incoming data is low.
@@ -508,7 +508,7 @@ public interface Sender extends Closeable {
          * <br>
          * You cannot set this value when auto-flush is disabled. See {@link #disableAutoFlush()}.
          * <br>
-         * Default value is 1,000 milliseconds.
+         * Default value is 10,000 milliseconds.
          *
          * @param autoFlushIntervalMillis interval at which the Sender automatically flushes its buffer in milliseconds.
          * @return this instance for method chaining
