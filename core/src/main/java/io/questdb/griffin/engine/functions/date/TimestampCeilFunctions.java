@@ -33,7 +33,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 /**
- * Functions used by both date_trunc() and timestamp_ceil() as these functions have overlapping behaviour.
+ * Functions used by timestamp_ceil().
  */
 final class TimestampCeilFunctions {
     private TimestampCeilFunctions() {
