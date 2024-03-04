@@ -69,7 +69,8 @@ public class CaseCommon {
         return getCaseFunctionConstructor(position, returnType).getInstance(position, picker, args);
     }
 
-    static Function getCastFunction(
+    // public for testing
+    public static Function getCastFunction(
             Function arg,
             int argPosition,
             int toType,
@@ -95,7 +96,8 @@ public class CaseCommon {
         return arg;
     }
 
-    static int getCommonType(int commonType, int valueType, int valuePos) throws SqlException {
+    // public for testing
+    public static int getCommonType(int commonType, int valueType, int valuePos) throws SqlException {
         if (commonType == -1 || ColumnType.isNull(commonType)) {
             return valueType;
         }
@@ -116,14 +118,21 @@ public class CaseCommon {
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.STRING), new CastByteToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.VARCHAR), new CastByteToVarcharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.SYMBOL), new CastByteToSymbolFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.CHAR), new CastByteToCharFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.DATE), new CastByteToDateFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.TIMESTAMP), new CastByteToTimestampFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.LONG256), new CastCharToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.STRING), new CastCharToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.VARCHAR), new CastCharToVarcharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.SYMBOL), new CastCharToSymbolFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.DATE), new CastCharToDateFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.TIMESTAMP), new CastCharToTimestampFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.LONG256), new CastShortToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.STRING), new CastShortToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.VARCHAR), new CastShortToVarcharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.SYMBOL), new CastShortToSymbolFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.DATE), new CastShortToDateFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.TIMESTAMP), new CastShortToTimestampFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.LONG256), new CastIntToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.STRING), new CastIntToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.VARCHAR), new CastIntToVarcharFunctionFactory());
@@ -142,6 +151,7 @@ public class CaseCommon {
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.STRING), new CastFloatToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.VARCHAR), new CastFloatToVarcharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.SYMBOL), new CastFloatToSymbolFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.DATE), new CastFloatToDateFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.LONG256), new CastDoubleToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.STRING), new CastDoubleToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.VARCHAR), new CastDoubleToVarcharFunctionFactory());

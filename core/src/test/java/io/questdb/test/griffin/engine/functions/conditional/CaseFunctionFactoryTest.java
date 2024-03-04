@@ -1060,6 +1060,51 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIpv4ToVarcharCast() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t&\uDA1F\uDE98|\uD924\uDE04\n" +
+                        "138\t톬F\uD9E6\uDECD1Ѓَᯤ\\篸\n" +
+                        "468\t127.0.0.1\n" +
+                        "-352\t-\uDBED\uDC98\uDA30\uDEE01W씌\n" +
+                        "770\t127.0.0.1\n" +
+                        "927\t127.0.0.1\n" +
+                        "-537\tꋯɟ\uF6BE腠\n" +
+                        "71\t127.0.0.1\n" +
+                        "121\t雑\uDB9C\uDCE1\uD9F6\uDF3D횝\uDB9A\uDF230pጙ锿\n" +
+                        "195\t\uE76C\uDBE3\uDCF2\uD981\uDF09۾芊,\uD931\uDF48ҽ\uDA01\uDE60E\n" +
+                        "432\t127.0.0.1\n" +
+                        "674\t127.0.0.1\n" +
+                        "211\t127.0.0.1\n" +
+                        "478\t127.0.0.1\n" +
+                        "-294\tEǄZ҄+W!\uD9FE\uDC46Jz\n" +
+                        "-544\t\uDBD6\uDC55ﭙ@\n" +
+                        "-426\tm[<\n" +
+                        "935\t127.0.0.1\n" +
+                        "-676\t➘`ؾ\uD9F5\uDF1D楣DB\uDAAD\uDE0A\uE916G\n" +
+                        "766\t127.0.0.1\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else '127.0.0.1'::ipv4" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_varchar() a," +
+                        " rnd_varchar() b," +
+                        " rnd_varchar() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testStringToVarcharCast() throws Exception {
         assertQuery(
                 "x\tcase\n" +
