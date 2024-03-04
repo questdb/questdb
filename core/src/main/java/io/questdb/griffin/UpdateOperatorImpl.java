@@ -297,35 +297,23 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             int columnType,
             long fromRow, // inclusive
             long toRow, // exclusive
-            MemoryCMARW dstFixMem,
-            MemoryCMARW dstVarMem,
+            MemoryCMARW dstAuxMem,
+            MemoryCMARW dstDataMem,
             int shl
     ) {
         final short columnTag = ColumnType.tagOf(columnType);
-        switch (columnTag) {
-            case ColumnType.VARCHAR:
-                for (long row = fromRow; row < toRow; row++) {
-                    VarcharTypeDriver.varcharAppend(dstVarMem, dstFixMem, null);
-                }
-                break;
-            case ColumnType.STRING:
-                for (long row = fromRow; row < toRow; row++) {
-                    dstFixMem.putLong(dstVarMem.putNullStr());
-                }
-                break;
-            case ColumnType.BINARY:
-                for (long row = fromRow; row < toRow; row++) {
-                    dstFixMem.putLong(dstVarMem.putNullBin());
-                }
-                break;
-            default:
-                final long rowCount = toRow - fromRow;
-                TableUtils.setNull(
-                        columnType,
-                        dstFixMem.appendAddressFor(rowCount << shl),
-                        rowCount
-                );
-                break;
+        if (ColumnType.isVarSize(columnTag)) {
+            final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnTag);
+            for (long row = fromRow; row < toRow; row++) {
+                columnTypeDriver.appendNull(dstDataMem, dstAuxMem);
+            }
+        } else {
+            final long rowCount = toRow - fromRow;
+            TableUtils.setNull(
+                    columnType,
+                    dstAuxMem.appendAddressFor(rowCount << shl),
+                    rowCount
+            );
         }
     }
 

@@ -573,6 +573,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         );
     }
 
+    @Override
+    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
+        varcharAppend(dataMem, auxMem, null);
+    }
+
     private static int readInt(FilesFacade ff, int fd, long offset) {
         long res = ff.readIntAsUnsignedLong(fd, offset);
         if (res < 0) {

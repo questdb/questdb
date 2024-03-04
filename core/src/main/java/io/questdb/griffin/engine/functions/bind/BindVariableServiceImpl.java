@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.*;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
@@ -1219,12 +1220,33 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((LongBindVariable) function).value = SqlUtil.implicitCastVarcharAsLong(value);
                 break;
             case ColumnType.TIMESTAMP:
-                ((TimestampBindVariable) function).value = SqlUtil.implicitCastVarcharAsTimestamp(
-                        value.isAscii() ? value.asAsciiCharSequence() : Utf8s.stringFromUtf8Bytes(value));
-                break;
             case ColumnType.DATE:
-                ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(
-                        value.isAscii() ? value.asAsciiCharSequence() : Utf8s.stringFromUtf8Bytes(value));
+            case ColumnType.LONG256:
+                CharSequence charSeq;
+                if (value.isAscii()) {
+                    charSeq = value.asAsciiCharSequence();
+                } else {
+                    StringSink sink = Misc.getThreadLocalSink();
+                    sink.clear();
+                    if(!Utf8s.utf8ToUtf16(value, sink)) {
+                        throw SqlException.position(0).put("Could not update bind variable. Invalid UTF-8 encoding.");
+                    }
+                    charSeq = sink;
+                }
+                switch (functionType) {
+                    case ColumnType.TIMESTAMP:
+                        ((TimestampBindVariable) function).value = SqlUtil.implicitCastVarcharAsTimestamp(charSeq);
+                        break;
+                    case ColumnType.DATE:
+                        ((DateBindVariable) function).value = SqlUtil.implicitCastVarcharAsDate(charSeq);
+                        break;
+                    case ColumnType.LONG256:
+                        SqlUtil.implicitCastStrAsLong256(charSeq, ((Long256BindVariable) function).value);
+                        break;
+                    default:
+                        assert false;
+                        break;
+                }
                 break;
             case ColumnType.FLOAT:
                 ((FloatBindVariable) function).value = SqlUtil.implicitCastVarcharAsFloat(value);
@@ -1238,16 +1260,11 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.VARCHAR:
                 ((VarcharBindVariable) function).setValue(value);
                 break;
-            case ColumnType.LONG256:
-                SqlUtil.implicitCastStrAsLong256(value.isAscii() ?
-                        value.asAsciiCharSequence() :
-                        Utf8s.stringFromUtf8Bytes(value), ((Long256BindVariable) function).value);
-                break;
             case ColumnType.UUID:
                 SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
                 break;
             default:
-                reportError(function, ColumnType.STRING, index, name);
+                reportError(function, ColumnType.VARCHAR, index, name);
                 break;
         }
     }

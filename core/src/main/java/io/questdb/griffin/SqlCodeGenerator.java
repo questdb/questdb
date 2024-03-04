@@ -5490,7 +5490,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     // UNION_CAST_MATRIX captures all the combinations of "left" and "right" column types
-    // in a UNION ALL operation, providing the desired output type. Since there are many
+    // in a set operation (UNION etc.), providing the desired output type. Since there are many
     // special cases in the conversion logic, we decided to use a matrix of literals instead.
     // The matrix doesn't cover the geohash types since they have a more complex structure.
     // Initially, we used the code below to print out the values for the matrix:

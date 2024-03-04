@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Vect;
 
 public class BinaryTypeDriver extends StringTypeDriver {
@@ -66,5 +67,10 @@ public class BinaryTypeDriver extends StringTypeDriver {
     @Override
     public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
         Vect.memset(dataMemAddr, rowCount * Long.BYTES, -1);
+    }
+
+    @Override
+    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
+        auxMem.putLong(dataMem.putNullBin());
     }
 }

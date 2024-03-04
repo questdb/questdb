@@ -305,5 +305,10 @@ public class StringTypeDriver implements ColumnTypeDriver {
     ) {
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi + 1, dstAddr);
     }
+
+    @Override
+    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
+        auxMem.putLong(dataMem.putNullStr());
+    }
 }
 

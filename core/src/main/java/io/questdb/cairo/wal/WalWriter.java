@@ -594,68 +594,65 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryMA dataMem, MemoryMA auxMem) {
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-                nullers.add(() -> dataMem.putByte((byte) 0));
-                break;
-            case ColumnType.DOUBLE:
-                nullers.add(() -> dataMem.putDouble(Double.NaN));
-                break;
-            case ColumnType.FLOAT:
-                nullers.add(() -> dataMem.putFloat(Float.NaN));
-                break;
-            case ColumnType.INT:
-                nullers.add(() -> dataMem.putInt(Numbers.INT_NaN));
-                break;
-            case ColumnType.IPv4:
-                nullers.add(() -> dataMem.putInt(Numbers.IPv4_NULL));
-                break;
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                nullers.add(() -> dataMem.putLong(Numbers.LONG_NaN));
-                break;
-            case ColumnType.LONG256:
-                nullers.add(() -> dataMem.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
-                break;
-            case ColumnType.SHORT:
-                nullers.add(() -> dataMem.putShort((short) 0));
-                break;
-            case ColumnType.CHAR:
-                nullers.add(() -> dataMem.putChar((char) 0));
-                break;
-            case ColumnType.STRING:
-                nullers.add(() -> auxMem.putLong(dataMem.putNullStr()));
-                break;
-            case ColumnType.SYMBOL:
-                nullers.add(() -> dataMem.putInt(SymbolTable.VALUE_IS_NULL));
-                break;
-            case ColumnType.BINARY:
-                nullers.add(() -> auxMem.putLong(dataMem.putNullBin()));
-                break;
-            case ColumnType.GEOBYTE:
-                nullers.add(() -> dataMem.putByte(GeoHashes.BYTE_NULL));
-                break;
-            case ColumnType.GEOSHORT:
-                nullers.add(() -> dataMem.putShort(GeoHashes.SHORT_NULL));
-                break;
-            case ColumnType.GEOINT:
-                nullers.add(() -> dataMem.putInt(GeoHashes.INT_NULL));
-                break;
-            case ColumnType.GEOLONG:
-                nullers.add(() -> dataMem.putLong(GeoHashes.NULL));
-                break;
-            case ColumnType.LONG128:
-                // fall through
-            case ColumnType.UUID:
-                nullers.add(() -> dataMem.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
-                break;
-            case ColumnType.VARCHAR:
-                nullers.add(() -> VarcharTypeDriver.varcharAppend(dataMem, auxMem, null));
-                break;
-            default:
-                throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
+        int columnTag = ColumnType.tagOf(type);
+        if (ColumnType.isVarSize(columnTag)) {
+            final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);
+            nullers.add(() -> typeDriver.appendNull(dataMem, auxMem));
+        } else {
+            switch (columnTag) {
+                case ColumnType.BOOLEAN:
+                case ColumnType.BYTE:
+                    nullers.add(() -> dataMem.putByte((byte) 0));
+                    break;
+                case ColumnType.DOUBLE:
+                    nullers.add(() -> dataMem.putDouble(Double.NaN));
+                    break;
+                case ColumnType.FLOAT:
+                    nullers.add(() -> dataMem.putFloat(Float.NaN));
+                    break;
+                case ColumnType.INT:
+                    nullers.add(() -> dataMem.putInt(Numbers.INT_NaN));
+                    break;
+                case ColumnType.IPv4:
+                    nullers.add(() -> dataMem.putInt(Numbers.IPv4_NULL));
+                    break;
+                case ColumnType.LONG:
+                case ColumnType.DATE:
+                case ColumnType.TIMESTAMP:
+                    nullers.add(() -> dataMem.putLong(Numbers.LONG_NaN));
+                    break;
+                case ColumnType.LONG256:
+                    nullers.add(() -> dataMem.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
+                    break;
+                case ColumnType.SHORT:
+                    nullers.add(() -> dataMem.putShort((short) 0));
+                    break;
+                case ColumnType.CHAR:
+                    nullers.add(() -> dataMem.putChar((char) 0));
+                    break;
+                case ColumnType.SYMBOL:
+                    nullers.add(() -> dataMem.putInt(SymbolTable.VALUE_IS_NULL));
+                    break;
+                case ColumnType.GEOBYTE:
+                    nullers.add(() -> dataMem.putByte(GeoHashes.BYTE_NULL));
+                    break;
+                case ColumnType.GEOSHORT:
+                    nullers.add(() -> dataMem.putShort(GeoHashes.SHORT_NULL));
+                    break;
+                case ColumnType.GEOINT:
+                    nullers.add(() -> dataMem.putInt(GeoHashes.INT_NULL));
+                    break;
+                case ColumnType.GEOLONG:
+                    nullers.add(() -> dataMem.putLong(GeoHashes.NULL));
+                    break;
+                case ColumnType.LONG128:
+                    // fall through
+                case ColumnType.UUID:
+                    nullers.add(() -> dataMem.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                    break;
+                default:
+                    throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
+            }
         }
     }
 
