@@ -418,15 +418,15 @@ public class SqlOptimiser implements Mutable {
             QueryColumn qc,
             QueryModel validatingModel,
             QueryModel translatingModel,
-            QueryModel innerModel,
+            QueryModel innerVirtualModel,
             QueryModel windowModel,
             QueryModel groupByModel,
-            QueryModel outerModel,
+            QueryModel outerVirtualModel,
             QueryModel distinctModel
     ) throws SqlException {
         // there were no aggregation functions emitted therefore
         // this is just a function that goes into virtual model
-        innerModel.addBottomUpColumn(qc);
+        innerVirtualModel.addBottomUpColumn(qc);
 
         // we also create column that references this inner layer from outer layer,
         // for example when we have:
@@ -439,7 +439,7 @@ public class SqlOptimiser implements Mutable {
         emitLiterals(qc.getAst(), translatingModel, null, validatingModel, false);
         groupByModel.addBottomUpColumn(innerColumn);
         windowModel.addBottomUpColumn(innerColumn);
-        outerModel.addBottomUpColumn(innerColumn);
+        outerVirtualModel.addBottomUpColumn(innerColumn);
         distinctModel.addBottomUpColumn(innerColumn);
     }
 
@@ -1074,7 +1074,17 @@ public class SqlOptimiser implements Mutable {
 
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             CharSequence columnName = createColumnAlias(m.getColumnName(i), model, nonLiteral);
-            QueryColumn column = queryColumnPool.next().of(columnName, expressionNodePool.next().of(LITERAL, columnName, 0, 0), true, m.getColumnType(i));
+            QueryColumn column = queryColumnPool.next().of(
+                    columnName,
+                    expressionNodePool.next().of(
+                            LITERAL,
+                            columnName,
+                            0,
+                            0
+                    ),
+                    true,
+                    m.getColumnType(i)
+            );
             model.addField(column);
         }
 
@@ -1755,7 +1765,7 @@ public class SqlOptimiser implements Mutable {
     private void emitLiterals(
             @Transient ExpressionNode node,
             QueryModel translatingModel,
-            QueryModel innerModel,
+            QueryModel innerVirtualModel,
             QueryModel validatingModel,
             boolean windowCall
     ) throws SqlException {
@@ -1768,7 +1778,7 @@ public class SqlOptimiser implements Mutable {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
-                        ExpressionNode n = replaceLiteral(node.rhs, translatingModel, innerModel, validatingModel, windowCall);
+                        ExpressionNode n = replaceLiteral(node.rhs, translatingModel, innerVirtualModel, validatingModel, windowCall);
                         if (node.rhs == n) {
                             sqlNodeStack.push(node.rhs);
                         } else {
@@ -1776,7 +1786,7 @@ public class SqlOptimiser implements Mutable {
                         }
                     }
 
-                    ExpressionNode n = replaceLiteral(node.lhs, translatingModel, innerModel, validatingModel, windowCall);
+                    ExpressionNode n = replaceLiteral(node.lhs, translatingModel, innerVirtualModel, validatingModel, windowCall);
                     if (n == node.lhs) {
                         node = node.lhs;
                     } else {
@@ -1786,7 +1796,7 @@ public class SqlOptimiser implements Mutable {
                 } else {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
                         ExpressionNode e = node.args.getQuick(i);
-                        ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel, windowCall);
+                        ExpressionNode n = replaceLiteral(e, translatingModel, innerVirtualModel, validatingModel, windowCall);
                         if (e == n) {
                             sqlNodeStack.push(e);
                         } else {
@@ -1795,7 +1805,7 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     ExpressionNode e = node.args.getQuick(0);
-                    ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel, windowCall);
+                    ExpressionNode n = replaceLiteral(e, translatingModel, innerVirtualModel, validatingModel, windowCall);
                     if (e == n) {
                         node = e;
                     } else {
@@ -2414,26 +2424,7 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (moved) {
-                // these are early stages of model processing
-                // to create outer query, we will need a pair of models
-                QueryModel _model = queryModelPool.next();
-                QueryModel _nested = queryModelPool.next();
-
-                // nest them
-                _model.setNestedModel(_nested);
-                _nested.setNestedModel(model);
-
-                // then create columns on the outermost model
-                for (int i = 0; i < columnCount; i++) {
-                    QueryColumn qcFrom = model.getBottomUpColumns().getQuick(i);
-                    QueryColumn qcTo = queryColumnPool.next().of(
-                            qcFrom.getAlias(),
-                            nextLiteral(qcFrom.getAlias())
-                    );
-                    _model.getBottomUpColumns().add(qcTo);
-                }
-
-                return _model;
+                return wrapWithSelectModel(model, columnCount);
             }
         }
         return model;
@@ -3469,13 +3460,13 @@ public class SqlOptimiser implements Mutable {
     private ExpressionNode replaceLiteral(
             @Transient ExpressionNode node,
             QueryModel translatingModel,
-            @Nullable QueryModel innerModel,
+            @Nullable QueryModel innerVirtualModel,
             QueryModel validatingModel,
             boolean windowCall
     ) throws SqlException {
         if (node != null && node.type == LITERAL) {
             try {
-                return doReplaceLiteral(node, translatingModel, innerModel, validatingModel, windowCall);
+                return doReplaceLiteral(node, translatingModel, innerVirtualModel, validatingModel, windowCall);
             } catch (SqlException e) {
                 if (functionParser.findNoArgFunction(node)) {
                     node.type = FUNCTION;
@@ -4191,6 +4182,19 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Replaces "sample by" models with group-by. Not all forms of "sample by"
+     * can be implemented via this method. Therefore, the rewrite avoids the following:
+     * - fills
+     * - custom non-wall-clock alignments
+     *
+     * @param model the input model, it is expected to be very early in optimisation process
+     *              the typical sample by model consists of two objects, the outer one with the
+     *              list of columns and the inner one with sample by clauses
+     * @return when "timestamp" column is not explicitly selected, this method has to do
+     * a trick to add artificial timestamp to the original model and then wrap the original
+     * model into a sub-query, to select all the intended columns but the artificial timestamp.
+     */
     private QueryModel rewriteSampleBy(QueryModel model) {
         QueryModel nested = model.getNestedModel();
         if (nested != null) {
@@ -4210,6 +4214,12 @@ public class SqlOptimiser implements Mutable {
                             && sampleByTimezoneName == null
                             && sampleByUnit == null
             ) {
+                // When timestamp is not explicitly selected, we will
+                // need to add it artificially to enable group-by to
+                // have access to bucket key. If this happens, the artificial
+                // timestamp is added as the last column and this flag is set.
+                boolean excludeLastColumn = false;
+
                 // this may or may not be our guy, but may not be, depending on fill settings
 
                 // plan of action:
@@ -4220,12 +4230,19 @@ public class SqlOptimiser implements Mutable {
                 // 3. wrap the result into an order by to maintain the timestamp order, but this can be optional
 
                 // the timestamp could be selected but also aliased
-                final CharSequence timestampAlias = model.getColumnNameToAliasMap().get(timestamp.token);
+                CharSequence timestampAlias = model.getColumnNameToAliasMap().get(timestamp.token);
 
                 // the "select" clause does not include timestamp
-                // todo: handle case when timestamp is not included in the select
                 if (timestampAlias == null) {
-                    return model;
+
+                    excludeLastColumn = true;
+
+                    // Add artificial timestamp column at the end of the
+                    // selected column list. While doing that we also
+                    // need to avoid alias conflicts
+
+                    timestampAlias = createColumnAlias(timestamp.token, model);
+                    model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias));
                 }
 
                 int timestampPos = model.getColumnAliasIndex(timestampAlias);
@@ -4236,32 +4253,48 @@ public class SqlOptimiser implements Mutable {
                 top.paramCount = 2;
                 top.type = FUNCTION;
 
+                CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+                characterStoreEntry.put('\'').put(sampleBy.token).put('\'');
+
                 final ExpressionNode lhs = expressionNodePool.next();
-                lhs.token = Misc.getThreadLocalSink().put('\'').put(sampleBy.token).put('\'').toString();
+                lhs.token = characterStoreEntry.toImmutable();
                 lhs.paramCount = 0;
                 lhs.type = CONSTANT;
 
                 top.lhs = lhs;
                 top.rhs = timestamp;
 
-                QueryColumn timestampQueryColumn = queryColumnPool.next();
-                timestampQueryColumn.of(timestampAlias, top);
-                model.getBottomUpColumns().setQuick(timestampPos, timestampQueryColumn);
+                model.getBottomUpColumns().setQuick(
+                        timestampPos,
+                        queryColumnPool.next().of(timestampAlias, top)
+                );
 
                 // check if order by is already present
                 if (nested.getOrderBy().size() == 0) {
+                    characterStoreEntry = characterStore.newEntry();
+                    characterStoreEntry.put(timestampPos + 1);
                     ExpressionNode orderBy = expressionNodePool.next();
-                    orderBy.token = Misc.getThreadLocalSink().put(timestampPos + 1).toString();
+                    orderBy.token = characterStoreEntry.toImmutable();
                     orderBy.type = CONSTANT;
                     nested.getOrderBy().add(orderBy);
                     nested.getOrderByDirection().add(0);
                     nested.setOrderByTimestamp(true);
-                    nested.setTimestamp(nextLiteral(timestampAlias));
+                    nested.setTimestamp(nextLiteral(timestamp.token));
                 }
 
                 // clear sample by
                 nested.setSampleBy(null);
                 nested.setSampleByOffset(null);
+
+                // we added artificial timestamp, which has to be removed
+                // in the outer query. Single query consists of two
+                // nested QueryModel instances. The outer of the two is
+                // SELECT model and the inner of the two is the model providing
+                // all available columns.
+                if (excludeLastColumn) {
+                    // copy columns from the "sample by" SELECT model
+                    return wrapWithSelectModel(model, model.getBottomUpColumns().size() - 1);
+                }
             }
         }
         return model;
@@ -5227,6 +5260,25 @@ public class SqlOptimiser implements Mutable {
         }
 
         validateWindowFunctions(model.getUnionModel(), sqlExecutionContext, recursionLevel + 1);
+    }
+
+    @NotNull
+    private QueryModel wrapWithSelectModel(QueryModel model, int columnCount) {
+        // these are early stages of model processing
+        // to create outer query, we will need a pair of models
+        QueryModel _model = queryModelPool.next();
+        QueryModel _nested = queryModelPool.next();
+
+        // nest them
+        _model.setNestedModel(_nested);
+        _nested.setNestedModel(model);
+
+        // then create columns on the outermost model
+        for (int i = 0; i < columnCount; i++) {
+            QueryColumn qcFrom = model.getBottomUpColumns().getQuick(i);
+            _model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
+        }
+        return _model;
     }
 
     protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {

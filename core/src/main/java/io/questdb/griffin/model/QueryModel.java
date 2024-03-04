@@ -247,12 +247,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         addBottomUpColumn(position, column, allowDuplicates, null);
     }
 
-    public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates, CharSequence additionalMessage) throws SqlException {
+    public void addBottomUpColumn(
+            int position,
+            QueryColumn column,
+            boolean allowDuplicates,
+            CharSequence additionalMessage
+    ) throws SqlException {
         if (!allowDuplicates && aliasToColumnMap.contains(column.getName())) {
             throw SqlException.duplicateColumn(position, column.getName(), additionalMessage);
         }
-        bottomUpColumns.add(column);
-        addField(column);
+        addBottomUpColumnIfNotExists(column);
+    }
+
+    public void addBottomUpColumnIfNotExists(QueryColumn column) {
+        if (addField(column)) {
+            bottomUpColumns.add(column);
+        }
     }
 
     public void addDependency(int index) {
@@ -264,18 +274,20 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         expressionModels.add(node);
     }
 
-    public void addField(QueryColumn column) {
+    public boolean addField(QueryColumn column) {
         final CharSequence alias = column.getAlias();
         final ExpressionNode ast = column.getAst();
         assert alias != null;
+        aliasToColumnMap.put(alias, column);
         int aliasKeyIndex = aliasToColumnNameMap.keyIndex(alias);
         if (aliasKeyIndex > -1) {
             aliasToColumnNameMap.putAt(aliasKeyIndex, alias, ast.token);
             bottomUpColumnNames.add(alias);
+            columnNameToAliasMap.put(ast.token, alias);
+            columnAliasIndexes.put(alias, bottomUpColumnNames.size() - 1);
+            return true;
         }
-        columnNameToAliasMap.put(ast.token, alias);
-        aliasToColumnMap.put(alias, column);
-        columnAliasIndexes.put(alias, bottomUpColumnNames.size() - 1);
+        return false;
     }
 
     public void addGroupBy(ExpressionNode node) {

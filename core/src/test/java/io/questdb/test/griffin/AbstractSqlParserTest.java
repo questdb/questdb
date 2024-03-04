@@ -195,10 +195,10 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
             for (int i = 0, n = nested.getJoinModels().size(); i < n; i++) {
                 LowerCaseCharSequenceHashSet set = new LowerCaseCharSequenceHashSet();
                 final QueryModel m = nested.getJoinModels().getQuick(i);
+                // validate uniqueness of top-down column names.
                 final ObjList<QueryColumn> cols = m.getTopDownColumns();
                 for (int j = 0, k = cols.size(); j < k; j++) {
-                    QueryColumn qc = cols.getQuick(j);
-                    Assert.assertTrue(set.add(qc.getName()));
+                    Assert.assertTrue(set.add(cols.getQuick(j).getName()));
                 }
                 nameSets.add(set);
             }
