@@ -33,7 +33,6 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import org.junit.Assert;
 import org.junit.Test;
@@ -43,7 +42,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllSupportedTypes() {
         SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
-        try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
+        TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
                 .col("int", ColumnType.INT)
                 .col("short", ColumnType.SHORT)
                 .col("byte", ColumnType.BYTE)
@@ -54,10 +53,8 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 .col("bool", ColumnType.BOOLEAN)
                 .col("date", ColumnType.DATE)
                 .col("ts", ColumnType.TIMESTAMP)
-                .col("ipv4", ColumnType.IPv4)
-        ) {
-            CreateTableTestUtils.create(model);
-        }
+                .col("ipv4", ColumnType.IPv4);
+        AbstractCairoTest.create(model);
 
         final int N = 1024;
         final Rnd rnd = new Rnd();
@@ -128,7 +125,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
     @Test
     public void testSubset() {
         SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
-        try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
+        TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
                 .col("int", ColumnType.INT)
                 .col("short", ColumnType.SHORT)
                 .col("byte", ColumnType.BYTE)
@@ -139,10 +136,8 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                 .col("bool", ColumnType.BOOLEAN)
                 .col("date", ColumnType.DATE)
                 .col("ts", ColumnType.TIMESTAMP)
-                .col("IPv4", ColumnType.IPv4)
-        ) {
-            CreateTableTestUtils.create(model);
-        }
+                .col("IPv4", ColumnType.IPv4);
+        AbstractCairoTest.create(model);
 
         final int N = 1024;
         final Rnd rnd = new Rnd();

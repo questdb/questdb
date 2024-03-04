@@ -202,16 +202,13 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 // create a table with 4 partitions and 1111 rows
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                try (
-                        TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                                .col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).symbolCapacity(32)
-                                .timestamp("ts")
-                ) {
-                    engine.ddl("create table " + tableName + " (l long, i int, s symbol, ts timestamp) timestamp(ts) partition by day bypass wal", context);
-                    engine.insert(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
-                }
+                TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                        .col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL).symbolCapacity(32)
+                        .timestamp("ts");
+                engine.ddl("create table " + tableName + " (l long, i int, s symbol, ts timestamp) timestamp(ts) partition by day bypass wal", context);
+                engine.insert(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
 
                 // set partition read-only state
                 TableToken tableToken = engine.getTableTokenIfExists(tableName);

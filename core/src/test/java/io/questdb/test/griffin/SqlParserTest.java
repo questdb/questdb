@@ -41,7 +41,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -5893,7 +5893,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 "-- from acc\n" +
                                 "from acc(Date) sample by 1d\n" +
                                 "-- where x = 10\n"
-                );
+                ).close();
                 Assert.fail();
             } catch (SqlException e) {
                 // we now allow column reference from SQL although column access will fail
@@ -5998,7 +5998,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMissingWhere() {
         try {
-            select("select id, x + 10, x from tab id ~ 'HBRO'");
+            select("select id, x + 10, x from tab id ~ 'HBRO'").close();
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -8678,12 +8678,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
                     }
                 } finally {
-                    for (int i = 0, n = tableModels.length; i < n; i++) {
-                        TableModel tableModel = tableModels[i];
-                        TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
-                        Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
-                        tableModel.close();
+                    try (Path path = new Path()) {
+                        for (int i = 0, n = tableModels.length; i < n; i++) {
+                            TableModel tableModel = tableModels[i];
+                            TableToken tableToken = engine.verifyTableName(tableModel.getName());
+                            path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                            Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                        }
                     }
                 }
             }
@@ -8711,21 +8712,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 try {
                     try {
                         for (int i = 0, n = tableModels.length; i < n; i++) {
-                            CreateTableTestUtils.create(tableModels[i]);
+                            AbstractCairoTest.create(tableModels[i]);
                         }
-                        select("select * from tab");
+                        select("select * from tab").close();
                         Assert.fail("Exception expected");
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), "table is locked");
                     }
                 } finally {
-                    for (int i = 0, n = tableModels.length; i < n; i++) {
-                        TableModel tableModel = tableModels[i];
-                        TableToken tableToken1 = engine.verifyTableName(tableModel.getName());
-                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken1).slash$();
-                        configuration.getFilesFacade().rmdir(path);
-                        tableModel.close();
+                    try (Path path = new Path()) {
+                        for (int i = 0, n = tableModels.length; i < n; i++) {
+                            TableModel tableModel = tableModels[i];
+                            TableToken tableToken1 = engine.verifyTableName(tableModel.getName());
+                            path.of(tableModel.getConfiguration().getRoot()).concat(tableToken1).slash$();
+                            configuration.getFilesFacade().rmdir(path);
+                        }
                     }
                 }
             } finally {
@@ -8845,12 +8847,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTooManyColumnsEdgeInOrderBy() throws Exception {
-        try (TableModel model = modelOf("x")) {
-            for (int i = 0; i < SqlParser.MAX_ORDER_BY_COLUMNS - 1; i++) {
-                model.col("f" + i, ColumnType.INT);
-            }
-            CreateTableTestUtils.create(model);
+        TableModel model = modelOf("x");
+        for (int i = 0; i < SqlParser.MAX_ORDER_BY_COLUMNS - 1; i++) {
+            model.col("f" + i, ColumnType.INT);
         }
+        AbstractCairoTest.create(model);
 
         StringBuilder b = new StringBuilder();
         b.append("x order by ");
@@ -8877,7 +8878,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             b.append('f').append(i);
         }
         try {
-            select(b);
+            select(b).close();
             Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
@@ -9401,19 +9402,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
             refreshTablesInBaseEngine();
             assertMemoryLeak(() -> {
                 for (int i = 0, n = tableModels.length; i < n; i++) {
-                    CreateTableTestUtils.create(tableModels[i]);
+                    AbstractCairoTest.create(tableModels[i]);
                 }
                 for (String frameType : frameTypes) {
                     assertException(query.replace("#FRAME", frameType), position, contains, false);
                 }
             });
         } finally {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                TableModel tableModel = tableModels[i];
-                TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
-                configuration.getFilesFacade().rmdir(path);
-                tableModel.close();
+            try (Path path = new Path()) {
+                for (int i = 0, n = tableModels.length; i < n; i++) {
+                    TableModel tableModel = tableModels[i];
+                    TableToken tableToken = engine.verifyTableName(tableModel.getName());
+                    path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                    configuration.getFilesFacade().rmdir(path);
+                }
             }
         }
     }
