@@ -25,8 +25,11 @@
 package io.questdb.test.griffin.engine.functions.bind;
 
 import io.questdb.griffin.engine.functions.bind.StrBindVariable;
+import io.questdb.griffin.engine.functions.bind.VarcharBindVariable;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -55,6 +58,30 @@ public class StrBindVariableTest {
 
         StringSink sink = new StringSink();
         variable.getStr(null, sink);
+        TestUtils.assertEquals(expected, sink);
+    }
+
+    @Test
+    public void testNullVarchar() {
+        VarcharBindVariable variable = new VarcharBindVariable(Numbers.MAX_SCALE);
+        Assert.assertNull(variable.getVarcharA(null));
+        Assert.assertNull(variable.getVarcharB(null));
+
+        Utf8StringSink sink = new Utf8StringSink();
+        variable.getVarchar(null, sink);
+        Assert.assertEquals(0, sink.size());
+    }
+
+    @Test
+    public void testSimpleVarchar() {
+        Utf8String expected = new Utf8String("йцукен");
+        VarcharBindVariable variable = new VarcharBindVariable(Numbers.MAX_SCALE);
+        variable.setValue(expected);
+        TestUtils.assertEquals(expected, variable.getVarcharA(null));
+        TestUtils.assertEquals(expected, variable.getVarcharB(null));
+
+        Utf8StringSink sink = new Utf8StringSink();
+        variable.getVarchar(null, sink);
         TestUtils.assertEquals(expected, sink);
     }
 }
