@@ -455,6 +455,39 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByOffset = null;
     }
 
+    /**
+     * The goal of this method is to dismiss the nested model as
+     * the layer between this and the model the nested is referencing. We do that by copying ASTs from
+     * the nested model onto the current model and also maintaining all the maps in sync.
+     *
+     * The caller is responsible for checking if nested model is suitable for the removal. E.g. it does not
+     * contain arithmetic expressions. Although this method does not validate if nested has arithmetic.
+     *
+     * @param nested model containing columns mapped into the referenced model.
+     */
+    public void collapseWouldBeNestedModel(QueryModel nested, ObjectPool<QueryColumn> queryColumnPool) {
+        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+            QueryColumn thisColumn = bottomUpColumns.getQuick(i);
+            if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
+                QueryColumn thatColumn = nested.getAliasToColumnMap().get(thisColumn.getAst().token);
+
+                // We cannot mutate the column on this model, because columns might be shared between
+                // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
+                // `thisColumn` alias should let us lookup, the column's reference
+                QueryColumn col = queryColumnPool.next();
+                col.of(thisColumn.getAlias(), thatColumn.getAst());
+                bottomUpColumns.setQuick(i, col);
+
+                int index = aliasToColumnMap.keyIndex(thisColumn.getAlias());
+                assert index < 0;
+                final CharSequence immutableAlias = aliasToColumnMap.keyAt(index);
+                aliasToColumnMap.putAt(index, immutableAlias, col);
+                // maintain sync between alias and column name
+                aliasToColumnNameMap.put(immutableAlias, thatColumn.getAst().token);
+            }
+        }
+    }
+
     public boolean containsJoin() {
         QueryModel current = this;
         do {
@@ -1008,30 +1041,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return isUpdateModel;
     }
 
-    public void mergeInnerColumn(QueryColumn innerQC) {
-        final CharSequence nestedAlias = innerQC.getAlias();
-        final ExpressionNode nestedAst = innerQC.getAst();
-        assert nestedAlias != null;
-        final CharSequence alias = columnNameToAliasMap.get(nestedAlias);
-        if (alias == null) {
-            return;
-        }
-        final QueryColumn oldQC = aliasToColumnMap.get(alias);
-        if (oldQC == null) {
-            return;
-        }
-        final ExpressionNode oldAst = oldQC.getAst();
-        aliasToColumnNameMap.put(alias, nestedAst.token);
-        columnNameToAliasMap.remove(oldAst.token);
-        columnNameToAliasMap.put(nestedAst.token, alias);
-        aliasToColumnMap.put(alias, innerQC);
-        int colIndex = columnAliasIndexes.get(alias);
-        assert colIndex >= 0;
-        bottomUpColumns.set(colIndex, innerQC);
-        bottomUpColumnNames.set(colIndex, alias);
-        innerQC.setAlias(alias);
-    }
-
     public void moveGroupByFrom(QueryModel model) {
         groupBy.addAll(model.groupBy);
         // clear the source
@@ -1294,7 +1303,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    // method to make debugging easier 
+    // method to make debugging easier
     // not using toString name to prevent debugger from trying to use it on all model variables (because toSink0 can fail).
     @SuppressWarnings("unused")
     public String toString0() {

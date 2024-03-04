@@ -424,16 +424,23 @@ public class SqlOptimiser implements Mutable {
             QueryModel outerVirtualModel,
             QueryModel distinctModel
     ) throws SqlException {
-        // there were no aggregation functions emitted therefore
-        // this is just a function that goes into virtual model
-        innerVirtualModel.addBottomUpColumn(qc);
+
+        // Adds what intended to be a function (rather than a literal) to the
+        // inner virtual model. It is possible that the function will have
+        // the same alias as the existing table columns. We will "temporarily"
+        // rename the function alias, so it does not clash. And after that
+        // the "innerColumn" will restore the alias specified by the user. This
+        // alias comes on the `qc.getAlias()`.
+
+        QueryColumn virtualColumn = ensureAliasUniqueness(innerVirtualModel, qc);
+        innerVirtualModel.addBottomUpColumn(virtualColumn);
 
         // we also create column that references this inner layer from outer layer,
         // for example when we have:
         // select a, b+c ...
         // it should translate to:
         // select a, x from (select a, b+c x from (select a,b,c ...))
-        final QueryColumn innerColumn = nextColumn(qc.getAlias());
+        final QueryColumn innerColumn = nextColumn(qc.getAlias(), virtualColumn.getAlias());
 
         // pull literals only into translating model
         emitLiterals(qc.getAst(), translatingModel, null, validatingModel, false);
@@ -2331,13 +2338,6 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return r;
-    }
-
-    private void mergeInnerVirtualModel(QueryModel innerModel, QueryModel groupByModel) {
-        for (int i = 0, n = innerModel.getBottomUpColumns().size(); i < n; i++) {
-            QueryColumn qc = innerModel.getBottomUpColumns().getQuick(i);
-            groupByModel.mergeInnerColumn(qc);
-        }
     }
 
     private JoinContext moveClauses(QueryModel parent, JoinContext from, JoinContext to, IntList positions) {
@@ -4758,9 +4758,7 @@ public class SqlOptimiser implements Mutable {
                         emitLiterals(groupByModel.getBottomUpColumns().getQuick(j).getAst(), translatingModel, innerVirtualModel, baseModel, false);
                     }
                 } else {
-                    if (emitCursors(qc.getAst(), cursorModel, null, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback)) {
-                        qc = ensureAliasUniqueness(innerVirtualModel, qc);
-                    }
+                    emitCursors(qc.getAst(), cursorModel, null, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
                     if (useGroupByModel) {
                         if (isEffectivelyConstantExpression(qc.getAst())) {
                             outerVirtualIsSelectChoose = false;
@@ -4849,13 +4847,15 @@ public class SqlOptimiser implements Mutable {
                 }
             }
             boolean singleHourFunctionKey = totalFunctionKeyCount == 1 && hourFunctionKeyCount == 1;
-            if (useInnerModel
+            if (
+                    useInnerModel
                     && useGroupByModel && groupByModel.getSampleBy() == null
                     && columnsAndFunctionsOnly && !singleHourFunctionKey
-                    && SqlUtil.isPlainSelect(baseModel)) {
+                    && SqlUtil.isPlainSelect(baseModel)
+            ) {
                 // we can "steal" all keys from inner model in case of group-by
                 // this is necessary in case of further parallel execution
-                mergeInnerVirtualModel(innerVirtualModel, groupByModel);
+                groupByModel.collapseWouldBeNestedModel(innerVirtualModel, queryColumnPool);
                 useInnerModel = false;
             }
         }
@@ -4880,7 +4880,7 @@ public class SqlOptimiser implements Mutable {
                 }
             }
             if (!appearsInFuncArgs) {
-                mergeInnerVirtualModel(translatingModel, selectedModel);
+                selectedModel.collapseWouldBeNestedModel(translatingModel, queryColumnPool);
                 translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, true, false, false, false, translatingModel);
             }
         }

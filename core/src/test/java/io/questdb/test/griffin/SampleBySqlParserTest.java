@@ -210,7 +210,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCalendar() throws SqlException {
         assertQuery(
-                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k1 k, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k1 k, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp)",
+                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar",
                 model()
         );

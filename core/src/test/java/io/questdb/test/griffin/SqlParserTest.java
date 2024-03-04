@@ -4037,6 +4037,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual customerId + 1 column, name, count from (select-group-by [customerId, customerName name, count() count] customerId, customerName name, count() count from (select [customerId, customerName] from customers where customerName = 'X'))",
                 "select customerId+1, name, count from (select customerId, customerName name, count() count from customers) where name = 'X'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
+                // todo: is this a leak?
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
         );
     }
