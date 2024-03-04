@@ -31,6 +31,19 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testCeilEmptyStrKind() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertException("select timestamp_ceil('', null)");
+            } catch (SqlException e) {
+                Assert.assertEquals(22, e.getPosition());
+                TestUtils.assertContains("invalid unit ''", e.getFlyweightMessage());
+            }
+        });
+    }
+
     @Test
     public void testCeilInvalidKind() throws Exception {
         assertMemoryLeak(() -> {
@@ -39,6 +52,24 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains("invalid unit 'o'", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testCeilInvalidMinutesKind() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertException("select timestamp_ceil('-3m', null)");
+            } catch (SqlException e) {
+                Assert.assertEquals(22, e.getPosition());
+                TestUtils.assertContains("invalid unit '-3m'", e.getFlyweightMessage());
+            }
+            try {
+                assertException("select timestamp_ceil('0Y', null)");
+            } catch (SqlException e) {
+                Assert.assertEquals(22, e.getPosition());
+                TestUtils.assertContains("invalid unit '0Y'", e.getFlyweightMessage());
             }
         });
     }
@@ -164,7 +195,8 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
     public void testSimpleCeilWithStride() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\n" +
-                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.875000Z\t2016-02-10T16:18:40.000000Z\t2016-02-10T16:20:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-02-13T00:00:00.000000Z\t2016-02-29T00:00:00.000000Z\n", "with t as (\n" +
+                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.875000Z\t2016-02-10T16:18:40.000000Z\t2016-02-10T16:20:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-02-13T00:00:00.000000Z\t2016-02-29T00:00:00.000000Z\n",
+                "with t as (\n" +
                         "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
                         ")\n" +
                         "select\n" +
@@ -177,5 +209,85 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                         "  , timestamp_ceil('3w', ts) f_week\n" +
                         "  from t\n"
         ));
+    }
+
+
+    @Test
+    public void testSimpleStrideNoopCeil() throws Exception {
+        assertMemoryLeak(() -> {
+                    String expected = "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\n" +
+                            "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.863000Z\t2016-02-10T16:18:23.000000Z\t2016-02-10T16:19:00.000000Z\t2016-02-10T17:00:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-02-15T00:00:00.000000Z\n";
+
+
+                    assertSql(expected,
+                            "with t as (\n" +
+                                    "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
+                                    ")\n" +
+                                    "select\n" +
+                                    "  ts\n" +
+                                    "  , timestamp_ceil('1T', ts) f_milli\n" +
+                                    "  , timestamp_ceil('1s', ts) f_second\n" +
+                                    "  , timestamp_ceil('1m', ts) f_minute\n" +
+                                    "  , timestamp_ceil('1h', ts) f_hour\n" +
+                                    "  , timestamp_ceil('1d', ts) f_day\n" +
+                                    "  , timestamp_ceil('1w', ts) f_week\n" +
+                                    "  from t\n"
+                    );
+
+                    assertSql(expected,
+                            "with t as (\n" +
+                                    "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
+                                    ")\n" +
+                                    "select\n" +
+                                    "  ts\n" +
+                                    "  , timestamp_ceil('T', ts) f_milli\n" +
+                                    "  , timestamp_ceil('s', ts) f_second\n" +
+                                    "  , timestamp_ceil('m', ts) f_minute\n" +
+                                    "  , timestamp_ceil('h', ts) f_hour\n" +
+                                    "  , timestamp_ceil('d', ts) f_day\n" +
+                                    "  , timestamp_ceil('w', ts) f_week\n" +
+                                    "  from t\n"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testSimpleStrideNoopFloor() throws Exception {
+        assertMemoryLeak(() -> {
+                    String expected = "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\n" +
+                            "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.862000Z\t2016-02-10T16:18:22.000000Z\t2016-02-10T16:18:00.000000Z\t2016-02-10T16:00:00.000000Z\t2016-02-10T00:00:00.000000Z\t2016-02-08T00:00:00.000000Z\n";
+
+                    assertSql(expected,
+                            "with t as (\n" +
+                                    "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
+                                    ")\n" +
+                                    "select\n" +
+                                    "  ts\n" +
+                                    "  , timestamp_floor('1T', ts) f_milli\n" +
+                                    "  , timestamp_floor('1s', ts) f_second\n" +
+                                    "  , timestamp_floor('1m', ts) f_minute\n" +
+                                    "  , timestamp_floor('1h', ts) f_hour\n" +
+                                    "  , timestamp_floor('1d', ts) f_day\n" +
+                                    "  , timestamp_floor('1w', ts) f_week\n" +
+                                    "  from t\n"
+                    );
+
+                    assertSql(expected,
+                            "with t as (\n" +
+                                    "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
+                                    ")\n" +
+                                    "select\n" +
+                                    "  ts\n" +
+                                    "  , timestamp_floor('T', ts) f_milli\n" +
+                                    "  , timestamp_floor('s', ts) f_second\n" +
+                                    "  , timestamp_floor('m', ts) f_minute\n" +
+                                    "  , timestamp_floor('h', ts) f_hour\n" +
+                                    "  , timestamp_floor('d', ts) f_day\n" +
+                                    "  , timestamp_floor('w', ts) f_week\n" +
+                                    "  from t\n"
+                    );
+                }
+        );
     }
 }
