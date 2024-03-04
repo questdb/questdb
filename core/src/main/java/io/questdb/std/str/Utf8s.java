@@ -2,8 +2,8 @@ package io.questdb.std.str;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Chars;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -12,6 +12,8 @@ import org.jetbrains.annotations.Nullable;
  * UTF-8 specific variant of the {@link Chars} utility.
  */
 public final class Utf8s {
+
+    private final static io.questdb.std.ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     private Utf8s() {
     }
@@ -463,7 +465,7 @@ public final class Utf8s {
         if (hi == lo) {
             return "";
         }
-        Utf16Sink b = Misc.getThreadLocalSink();
+        Utf16Sink b = getThreadLocalSink();
         utf8ToUtf16(lo, hi, b);
         return b.toString();
     }
@@ -472,7 +474,7 @@ public final class Utf8s {
         if (seq.size() == 0) {
             return "";
         }
-        Utf16Sink b = Misc.getThreadLocalSink();
+        Utf16Sink b = getThreadLocalSink();
         utf8ToUtf16(seq, b);
         return b.toString();
     }
@@ -766,6 +768,12 @@ public final class Utf8s {
             }
         }
         return true;
+    }
+
+    private static StringSink getThreadLocalSink() {
+        StringSink b = tlSink.get();
+        b.clear();
+        return b;
     }
 
     private static boolean isMalformed3(int b1, int b2, int b3) {
