@@ -252,15 +252,10 @@ final class TimestampCeilFunctions {
     }
 
     static class TimestampCeilQuarterFunction extends AbstractTimestampCeilFunction {
-       private final int stride;
        public TimestampCeilQuarterFunction(Function arg) {
-           this(arg, 1);
+           super(arg);
         }
 
-        public TimestampCeilQuarterFunction(Function arg, int stride) {
-            super(arg);
-            this.stride = stride;
-        }
         @Override
         public long ceil(long timestamp) {
             return Timestamps.ceilQuarter(timestamp);
@@ -331,7 +326,6 @@ final class TimestampCeilFunctions {
         @Override
         public long ceil(long timestamp) {
             return stride > 1 ? Timestamps.ceilYYYY(timestamp, stride) : Timestamps.ceilYYYY(timestamp);
-
         }
 
         @Override

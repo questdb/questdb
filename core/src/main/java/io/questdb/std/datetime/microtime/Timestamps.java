@@ -120,6 +120,8 @@ public final class Timestamps {
 
     public static long addPeriod(long lo, char type, int period) {
         switch (type) {
+            case 'T':
+                return Timestamps.addMillis(lo, period);
             case 's':
                 return Timestamps.addSeconds(lo, period);
             case 'm':
@@ -137,6 +139,10 @@ public final class Timestamps {
             default:
                 return Numbers.LONG_NaN;
         }
+    }
+
+    public static long addMillis(long micros, int millis) {
+        return micros + millis * MILLI_MICROS;
     }
 
     public static long addSeconds(long micros, int seconds) {
@@ -166,19 +172,15 @@ public final class Timestamps {
     }
 
     public static long ceilCentury(long micros) {
-        return floorCentury(micros) + (YEAR_MICROS * 100);
+        return addYear(floorCentury(micros), 100);
     }
 
     public static long ceilDD(long micros) {
-        int y, m;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y))
-                + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
-                + (getDayOfMonth(micros, y, m, l)) * DAY_MICROS;
+        return ceilDD(micros, 1);
     }
 
     public static long ceilDD(long micros, int stride) {
-        return floorDD(micros, stride) + (DAY_MICROS * stride);
+        return addDays(floorDD(micros, stride), stride);
     }
 
     public static long ceilDOW(long micros) {
@@ -188,84 +190,71 @@ public final class Timestamps {
     }
 
     public static long ceilDecade(long micros) {
-        return ceilCentury(micros) + (YEAR_MICROS) * 10;
+        return addYear(floorDecade(micros), 10);
     }
 
     public static long ceilHH(long micros) {
-        return floorHH(micros) + HOUR_MICROS;
+        return ceilHH(micros, 1);
     }
 
     public static long ceilHH(long micros, int stride) {
-        return floorHH(micros, stride) + (HOUR_MICROS * stride);
+        return addHours(floorHH(micros, stride), stride);
     }
 
     public static long ceilMI(long micros) {
-        return floorMI(micros) + MINUTE_MICROS;
+        return ceilMI(micros, 1);
     }
 
     public static long ceilMI(long micros, int stride) {
-        return floorMI(micros, stride) + (MINUTE_MICROS * stride);
+        return addMinutes(floorMI(micros, stride), stride);
     }
 
     public static long ceilMM(long micros) {
-        int y, m;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y))
-                + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
-                + (getDaysPerMonth(m, l)) * DAY_MICROS;
+        return ceilMM(micros, 1);
     }
 
     public static long ceilMM(long micros, int stride) {
-        final int origin = getYear(0);
-        long m = ((getMonthsBetween(0, micros) / stride) * stride) + stride;
-        int y = (int) (origin + m / 12);
-        int mm = (int) (m % 12);
-        boolean l = isLeapYear(y);
-        return yearMicros(y, l) + (mm > 0 ? monthOfYearMicros(mm, l) : 0);
+        return addMonths(floorMM(micros, stride), stride);
     }
 
     public static long ceilMS(long micros) {
-        return floorMS(micros) + MILLI_MICROS;
+        return ceilMS(micros, 1);
     }
 
     public static long ceilMS(long micros, int stride) {
-        return floorMS(micros, stride) + (MILLI_MICROS * stride);
+        return addMillis(floorMS(micros, stride), stride);
     }
 
     public static long ceilMillennium(long micros) {
-        return floorMillennium(micros) + (YEAR_MICROS * 1000);
+        return addYear(floorMillennium(micros), 1000);
     }
 
     public static long ceilQuarter(long micros) {
-        return floorQuarter(micros) + (YEAR_MICROS * 3);
+        return addMonths(floorQuarter(micros), 3);
     }
 
     public static long ceilSS(long micros) {
-        return floorSS(micros) + SECOND_MICROS;
+        return ceilSS(micros, 1);
     }
 
     public static long ceilSS(long micros, int stride) {
-        return floorSS(micros, stride) + (SECOND_MICROS * stride);
+        return addSeconds(floorSS(micros, stride), stride);
     }
 
     public static long ceilWW(long micros) {
-        return floorWW(micros) + WEEK_MICROS;
+        return ceilWW(micros, 1);
     }
 
     public static long ceilWW(long micros, int stride) {
-        return floorWW(micros, stride) + (WEEK_MICROS * stride);
+        return addWeeks(floorWW(micros, stride), stride);
     }
 
     public static long ceilYYYY(long micros) {
-        int y;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y))
-                + monthOfYearMicros(12, l)
-                + (DAYS_PER_MONTH[11]) * DAY_MICROS;
+        return ceilYYYY(micros, 1);
     }
 
     public static long ceilYYYY(long micros, int stride) {
-        throw new UnsupportedOperationException();
+        return addYear(floorYYYY(micros, stride), stride);
     }
 
     public static long endOfYear(int year) {

@@ -174,8 +174,8 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimpleFloorWithStride() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\n" +
-                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.850000Z\t2016-02-10T16:18:20.000000Z\t2016-02-10T16:15:00.000000Z\t2016-02-10T15:00:00.000000Z\t2016-02-09T00:00:00.000000Z\t2016-02-08T00:00:00.000000Z\n", "with t as (\n" +
+                "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\tf_month\tf_year\n" +
+                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.850000Z\t2016-02-10T16:18:20.000000Z\t2016-02-10T16:15:00.000000Z\t2016-02-10T15:00:00.000000Z\t2016-02-09T00:00:00.000000Z\t2016-02-08T00:00:00.000000Z\t2016-01-01T00:00:00.000000Z\t2012-01-01T00:00:00.000000Z\n", "with t as (\n" +
                         "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
                         ")\n" +
                         "select\n" +
@@ -186,6 +186,8 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                         "  , timestamp_floor('9h', ts) f_hour\n" +
                         "  , timestamp_floor('4d', ts) f_day\n" +
                         "  , timestamp_floor('3w', ts) f_week\n" +
+                        "  , timestamp_floor('8M', ts) f_month\n" +
+                        "  , timestamp_floor('6y', ts) f_year\n" +
                         "  from t\n"
         ));
     }
@@ -194,8 +196,8 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimpleCeilWithStride() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\n" +
-                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.875000Z\t2016-02-10T16:18:40.000000Z\t2016-02-10T16:20:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-02-13T00:00:00.000000Z\t2016-02-29T00:00:00.000000Z\n",
+                "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\tf_month\tf_year\n" +
+                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.875000Z\t2016-02-10T16:18:40.000000Z\t2016-02-10T16:20:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-02-13T00:00:00.000000Z\t2016-02-29T00:00:00.000000Z\t2016-08-01T00:00:00.000000Z\t2018-01-01T00:00:00.000000Z\n",
                 "with t as (\n" +
                         "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
                         ")\n" +
@@ -207,6 +209,8 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                         "  , timestamp_ceil('9h', ts) f_hour\n" +
                         "  , timestamp_ceil('4d', ts) f_day\n" +
                         "  , timestamp_ceil('3w', ts) f_week\n" +
+                        "  , timestamp_ceil('8M', ts) f_month\n" +
+                        "  , timestamp_ceil('6y', ts) f_year\n" +
                         "  from t\n"
         ));
     }
@@ -215,8 +219,8 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimpleStrideNoopCeil() throws Exception {
         assertMemoryLeak(() -> {
-                    String expected = "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\n" +
-                            "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.863000Z\t2016-02-10T16:18:23.000000Z\t2016-02-10T16:19:00.000000Z\t2016-02-10T17:00:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-02-15T00:00:00.000000Z\n";
+                    String expected = "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\tf_month\tf_year\n" +
+                            "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.863000Z\t2016-02-10T16:18:23.000000Z\t2016-02-10T16:19:00.000000Z\t2016-02-10T17:00:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-02-15T00:00:00.000000Z\t2016-03-01T00:00:00.000000Z\t2017-01-01T00:00:00.000000Z\n";
 
 
                     assertSql(expected,
@@ -231,6 +235,8 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                                     "  , timestamp_ceil('1h', ts) f_hour\n" +
                                     "  , timestamp_ceil('1d', ts) f_day\n" +
                                     "  , timestamp_ceil('1w', ts) f_week\n" +
+                                    "  , timestamp_ceil('1M', ts) f_month\n" +
+                                    "  , timestamp_ceil('1y', ts) f_year\n" +
                                     "  from t\n"
                     );
 
@@ -246,6 +252,8 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                                     "  , timestamp_ceil('h', ts) f_hour\n" +
                                     "  , timestamp_ceil('d', ts) f_day\n" +
                                     "  , timestamp_ceil('w', ts) f_week\n" +
+                                    "  , timestamp_ceil('M', ts) f_month\n" +
+                                    "  , timestamp_ceil('y', ts) f_year\n" +
                                     "  from t\n"
                     );
                 }
@@ -255,8 +263,8 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimpleStrideNoopFloor() throws Exception {
         assertMemoryLeak(() -> {
-                    String expected = "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\n" +
-                            "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.862000Z\t2016-02-10T16:18:22.000000Z\t2016-02-10T16:18:00.000000Z\t2016-02-10T16:00:00.000000Z\t2016-02-10T00:00:00.000000Z\t2016-02-08T00:00:00.000000Z\n";
+                    String expected = "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\tf_month\tf_year\n" +
+                            "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.862000Z\t2016-02-10T16:18:22.000000Z\t2016-02-10T16:18:00.000000Z\t2016-02-10T16:00:00.000000Z\t2016-02-10T00:00:00.000000Z\t2016-02-08T00:00:00.000000Z\t2016-02-01T00:00:00.000000Z\t2016-01-01T00:00:00.000000Z\n";
 
                     assertSql(expected,
                             "with t as (\n" +
@@ -270,6 +278,8 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                                     "  , timestamp_floor('1h', ts) f_hour\n" +
                                     "  , timestamp_floor('1d', ts) f_day\n" +
                                     "  , timestamp_floor('1w', ts) f_week\n" +
+                                    "  , timestamp_floor('1M', ts) f_month\n" +
+                                    "  , timestamp_floor('1y', ts) f_year\n" +
                                     "  from t\n"
                     );
 
@@ -285,6 +295,8 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                                     "  , timestamp_floor('h', ts) f_hour\n" +
                                     "  , timestamp_floor('d', ts) f_day\n" +
                                     "  , timestamp_floor('w', ts) f_week\n" +
+                                    "  , timestamp_floor('M', ts) f_month\n" +
+                                    "  , timestamp_floor('y', ts) f_year\n" +
                                     "  from t\n"
                     );
                 }
