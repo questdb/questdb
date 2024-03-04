@@ -290,4 +290,15 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                 }
         );
     }
+
+    @Test
+    public void testDayOfWeek() throws Exception {
+        assertMemoryLeak(() -> {
+                    assertSql("ceil\tfloor\n" +
+                                    "2024-04-08T00:00:00.000000Z\t2024-04-01T00:00:00.000000Z\n",
+                            "select timestamp_ceil('w', '2024-04-01T14:03:21') as ceil, timestamp_floor('w', '2024-04-01T14:03:21') as floor"
+                    );
+                }
+        );
+    }
 }

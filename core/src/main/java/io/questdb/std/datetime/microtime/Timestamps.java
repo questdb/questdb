@@ -182,7 +182,9 @@ public final class Timestamps {
     }
 
     public static long ceilDOW(long micros) {
-        throw new UnsupportedOperationException();
+        long l = previousOrSameDayOfWeek(micros, 1);
+        l =  floorDD(l);
+        return l + DAY_MICROS * 6;
     }
 
     public static long ceilDecade(long micros) {
