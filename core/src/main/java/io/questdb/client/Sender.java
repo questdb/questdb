@@ -496,7 +496,7 @@ public interface Sender extends Closeable {
         /**
          * Set the interval in milliseconds at which the Sender automatically flushes its buffer.
          * <br>
-         * It flushed the buffer even when the number of buffered rows is less than the value set by {@link #autoFlushRows(int)}.
+         * It flushes the buffer even when the number of buffered rows is less than the value set by {@link #autoFlushRows(int)}.
          * This prevents rows from being locally buffered for too long when the rate of incoming data is low.
          * <p>
          * <strong>Important:</strong>This option does not cause the Sender to flush the buffer at regular intervals.
@@ -508,7 +508,7 @@ public interface Sender extends Closeable {
          * <br>
          * You cannot set this value when auto-flush is disabled. See {@link #disableAutoFlush()}.
          * <br>
-         * Default value is 10,000 milliseconds.
+         * Default value is 10000 milliseconds.
          *
          * @param autoFlushIntervalMillis interval at which the Sender automatically flushes its buffer in milliseconds.
          * @return this instance for method chaining
@@ -756,10 +756,21 @@ public interface Sender extends Closeable {
                         port(protocol == PROTOCOL_TCP ? DEFAULT_TCP_PORT : DEFAULT_HTTP_PORT);
                     }
                 } else if (Chars.equals("user", sink)) {
+                    // deprecated key: user, new key: username
                     pos = getValue(configurationString, pos, sink, "user");
                     user = sink.toString();
+                } else if (Chars.equals("username", sink)) {
+                    pos = getValue(configurationString, pos, sink, "username");
+                    user = sink.toString();
                 } else if (Chars.equals("pass", sink)) {
+                    // deprecated key: pass, new key: password
                     pos = getValue(configurationString, pos, sink, "pass");
+                    if (protocol == PROTOCOL_TCP) {
+                        throw new LineSenderException("password is not supported for TCP protocol");
+                    }
+                    password = sink.toString();
+                } else if (Chars.equals("password", sink)) {
+                    pos = getValue(configurationString, pos, sink, "password");
                     if (protocol == PROTOCOL_TCP) {
                         throw new LineSenderException("password is not supported for TCP protocol");
                     }

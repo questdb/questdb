@@ -249,10 +249,14 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost;tls_roots=/some/path;", "tls_roots was configured, but tls_roots_password is missing");
             assertConfStrError("http::addr=localhost;tls_roots_password=hunter123;", "tls_roots_password was configured, but tls_roots is missing");
             assertConfStrError("tcp::addr=localhost;user=foo;", "token cannot be empty nor null");
+            assertConfStrError("tcp::addr=localhost;username=foo;", "token cannot be empty nor null");
             assertConfStrError("tcp::addr=localhost;token=foo;", "TCP token is configured, but user is missing");
             assertConfStrError("http::addr=localhost;user=foo;", "password cannot be empty nor null");
+            assertConfStrError("http::addr=localhost;username=foo;", "password cannot be empty nor null");
             assertConfStrError("http::addr=localhost;pass=foo;", "HTTP password is configured, but username is missing");
+            assertConfStrError("http::addr=localhost;password=foo;", "HTTP password is configured, but username is missing");
             assertConfStrError("tcp::addr=localhost;pass=foo;", "password is not supported for TCP protocol");
+            assertConfStrError("tcp::addr=localhost;password=foo;", "password is not supported for TCP protocol");
             assertConfStrError("tcp::addr=localhost;retry_timeout=;", "retry_timeout cannot be empty");
             assertConfStrError("tcp::addr=localhost;max_buf_size=;", "max_buf_size cannot be empty");
             assertConfStrError("tcp::addr=localhost;init_buf_size=;", "init_buf_size cannot be empty");
@@ -261,6 +265,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost:8080;tls_verify=unsafe_off;", "TSL validation disabled, but TLS was not enabled");
             assertConfStrError("http::addr=localhost:8080;tls_verify=bad;", "invalid tls_verify [value=bad, allowed-values=[on, unsafe_off]]");
             assertConfStrError("tcps::addr=localhost;pass=unsafe_off;", "password is not supported for TCP protocol");
+            assertConfStrError("tcps::addr=localhost;password=unsafe_off;", "password is not supported for TCP protocol");
             assertConfStrError("http::addr=localhost:8080;max_buf_size=-32;", "maximum buffer capacity cannot be less than initial buffer capacity [maximumBufferCapacity=-32, initialBufferCapacity=65536]");
             assertConfStrError("http::addr=localhost:8080;max_buf_size=notanumber;", "invalid max_buf_size [value=notanumber]");
             assertConfStrError("http::addr=localhost:8080;init_buf_size=notanumber;", "invalid init_buf_size [value=notanumber]");
