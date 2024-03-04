@@ -158,4 +158,24 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                         "  from t\n"
         ));
     }
+
+
+    @Test
+    public void testSimpleCeilWithStride() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "ts\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_week\n" +
+                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.875000Z\t2016-02-10T16:18:40.000000Z\t2016-02-10T16:20:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-02-13T00:00:00.000000Z\t2016-02-29T00:00:00.000000Z\n", "with t as (\n" +
+                        "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
+                        ")\n" +
+                        "select\n" +
+                        "  ts\n" +
+                        "  , timestamp_ceil('25T', ts) f_milli\n" +
+                        "  , timestamp_ceil('20s', ts) f_second\n" +
+                        "  , timestamp_ceil('5m', ts) f_minute\n" +
+                        "  , timestamp_ceil('9h', ts) f_hour\n" +
+                        "  , timestamp_ceil('4d', ts) f_day\n" +
+                        "  , timestamp_ceil('3w', ts) f_week\n" +
+                        "  from t\n"
+        ));
+    }
 }

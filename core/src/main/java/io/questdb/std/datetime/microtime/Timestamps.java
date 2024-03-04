@@ -227,7 +227,7 @@ public final class Timestamps {
     }
 
     public static long ceilMS(long micros, int stride) {
-        return floorMS(micros) + (MILLI_MICROS * stride);
+        return floorMS(micros, stride) + (MILLI_MICROS * stride);
     }
 
     public static long ceilMillennium(long micros) {
@@ -243,7 +243,7 @@ public final class Timestamps {
     }
 
     public static long ceilSS(long micros, int stride) {
-        return floorSS(micros) + (SECOND_MICROS * stride);
+        return floorSS(micros, stride) + (SECOND_MICROS * stride);
     }
 
     public static long ceilWW(long micros) {
@@ -251,7 +251,7 @@ public final class Timestamps {
     }
 
     public static long ceilWW(long micros, int stride) {
-        return floorWW(micros) + (WEEK_MICROS * stride);
+        return floorWW(micros, stride) + (WEEK_MICROS * stride);
     }
 
     public static long ceilYYYY(long micros) {
