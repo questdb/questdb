@@ -50,6 +50,10 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         return new CastGeoByteToStrBitsFunc(value, srcBitsPrecision);
     }
 
+    // TODO: getGeo*ToVarcharCastFunction methods are currently unused due to the lack
+    // of support for cast(geohash_col as VARCHAR). Issue that tracks this:
+    // https://github.com/questdb/questdb/issues/4262
+
     @NotNull
     public static Function getGeoByteToVarcharCastFunction(Function value, int srcBitsPrecision) {
         if (srcBitsPrecision % 5 == 0) {
