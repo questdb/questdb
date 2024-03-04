@@ -175,4 +175,11 @@ public interface ColumnTypeDriver {
     void setDataVectorEntriesToNull(long dataMemAddr, long rowCount);
 
     void shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr);
+
+    /**
+     * Appends null encoding to the memory.
+     * @param dataMem the data memory
+     * @param auxMem the aux memory (fixed part)
+     */
+    void appendNull(MemoryA dataMem, MemoryA auxMem);
 }
