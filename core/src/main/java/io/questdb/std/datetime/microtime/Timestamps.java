@@ -214,7 +214,12 @@ public final class Timestamps {
     }
 
     public static long ceilMM(long micros, int stride) {
-        throw new UnsupportedOperationException();
+        final int origin = getYear(0);
+        long m = ((getMonthsBetween(0, micros) / stride) * stride) + stride;
+        int y = (int) (origin + m / 12);
+        int mm = (int) (m % 12);
+        boolean l = isLeapYear(y);
+        return yearMicros(y, l) + (mm > 0 ? monthOfYearMicros(mm, l) : 0);
     }
 
     public static long ceilMS(long micros) {
