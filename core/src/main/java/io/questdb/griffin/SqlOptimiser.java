@@ -1709,7 +1709,7 @@ public class SqlOptimiser implements Mutable {
 
     // This method will create CROSS join models in the "baseModel" for all unique cursor
     // function it finds on the node. The "translatingModel" is used to ensure uniqueness
-    private boolean emitCursors(
+    private void emitCursors(
             @Transient ExpressionNode node,
             QueryModel cursorModel,
             @Nullable QueryModel innerVirtualModel,
@@ -1718,7 +1718,6 @@ public class SqlOptimiser implements Mutable {
             SqlExecutionContext sqlExecutionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        boolean replaced = false;
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -1741,7 +1740,6 @@ public class SqlOptimiser implements Mutable {
                         sqlNodeStack.push(node.rhs);
                     } else {
                         node.rhs = n;
-                        replaced = true;
                     }
                 }
 
@@ -1759,13 +1757,11 @@ public class SqlOptimiser implements Mutable {
                 } else {
                     node.lhs = n;
                     node = null;
-                    replaced = true;
                 }
             } else {
                 node = sqlNodeStack.poll();
             }
         }
-        return replaced;
     }
 
     //warning: this method replaces literal with aliases (changes node)
@@ -4183,7 +4179,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Replaces "sample by" models with group-by. Not all forms of "sample by"
+     * Recursive. Replaces "sample by" models with group-by. Not all forms of "sample by"
      * can be implemented via this method. Therefore, the rewrite avoids the following:
      * - fills
      * - custom non-wall-clock alignments
@@ -4195,7 +4191,12 @@ public class SqlOptimiser implements Mutable {
      * a trick to add artificial timestamp to the original model and then wrap the original
      * model into a sub-query, to select all the intended columns but the artificial timestamp.
      */
-    private QueryModel rewriteSampleBy(QueryModel model) {
+    private QueryModel rewriteSampleBy(@Nullable QueryModel model) {
+
+        if (model == null) {
+            return null;
+        }
+
         QueryModel nested = model.getNestedModel();
         if (nested != null) {
             // "sample by" details will be on the nested model of the query
@@ -4210,7 +4211,7 @@ public class SqlOptimiser implements Mutable {
                     sampleBy != null
                             && timestamp != null
                             && (sampleByOffset != null && Chars.equals(sampleByOffset.token, "'00:00'"))
-                            && sampleByFill.size() == 0
+                            && (sampleByFill.size() == 0 || (sampleByFill.size() == 1 && SqlKeywords.isNoneKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByTimezoneName == null
                             && sampleByUnit == null
             ) {
@@ -4296,7 +4297,18 @@ public class SqlOptimiser implements Mutable {
                     return wrapWithSelectModel(model, model.getBottomUpColumns().size() - 1);
                 }
             }
+
+            // recurse nested models
+            nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
         }
+
+        // join models
+        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+            model.getJoinModels().setQuick(i, rewriteSampleBy(model.getJoinModels().getQuick(i)));
+        }
+
+        // unions
+        model.setUnionModel(rewriteSampleBy(model.getUnionModel()));
         return model;
     }
 

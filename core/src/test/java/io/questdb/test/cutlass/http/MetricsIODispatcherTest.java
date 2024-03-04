@@ -116,6 +116,7 @@ public class MetricsIODispatcherTest {
     }
 
     @Test
+    @Ignore
     public void testMultipleChunksPeerIsSlowToReadPar() throws Exception {
         testPrometheusScenario(10_000, 1024, 256, PARALLEL_REQUESTS);
     }

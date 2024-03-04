@@ -2669,12 +2669,13 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByAllowsPredicatePushdown() throws Exception {
-        String plan = "Filter filter: (tstmp>=1669852800000000 and 0<length(sym)*tstmp::long)\n" +
-                "    SampleBy\n" +
-                "      keys: [tstmp,sym]\n" +
-                "      values: [first(val),avg(val),last(val),max(val)]\n" +
-                "        SelectedRecord\n" +
+    public void testSampleByAllowsPredicatePushDown() throws Exception {
+        String plan = "Sort light\n" +
+                "  keys: [tstmp]\n" +
+                "    Filter filter: (tstmp>=1669852800000000 and 0<length(sym)*tstmp::long)\n" +
+                "        GroupBy vectorized: false\n" +
+                "          keys: [tstmp,sym]\n" +
+                "          values: [first(val),avg(val),last(val),max(val)]\n" +
                 "            Async JIT Filter workers: 1\n" +
                 "              filter: sym='B'\n" +
                 "                DataFrame\n" +
@@ -2686,7 +2687,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByAllowsPredicatePushdownWhenTsIsNotIncludedInColumnList() throws Exception {
+    public void testSampleByAllowsPredicatePushDownWhenTsIsNotIncludedInColumnList() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlan(
@@ -2695,15 +2696,17 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ) " +
                             "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0",
-                    "SampleBy\n" +
-                            "  keys: [tstmp,sym]\n" +
-                            "  values: [first(val),avg(val),last(val),max(val)]\n" +
-                            "    SelectedRecord\n" +
-                            "        Async Filter workers: 1\n" +
-                            "          filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: x\n"
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [ts1]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [tstmp,sym,ts1]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "            Async Filter workers: 1\n" +
+                            "              filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
             );
         });
     }
@@ -4969,6 +4972,8 @@ public class SampleByTest extends AbstractCairoTest {
                         "UVSD\t49.42890511958454\t1970-01-04T06:30:00.000000Z\n" +
                         "\t58.912164838797885\t1970-01-04T07:30:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T08:30:00.000000Z\n",
+                true,
+                true,
                 false
         );
     }

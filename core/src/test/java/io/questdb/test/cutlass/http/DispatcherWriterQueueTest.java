@@ -40,7 +40,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
@@ -52,7 +51,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class DispatcherWriterQueueTest extends AbstractCairoTest {
-    private static final String UTF_8 = "UTF-8";
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -270,41 +268,6 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 "alter+table+<x>+drop+column+s");
     }
 
-    @Ignore// update statements don't time out anymore but can be cancelled manually
-    @Test
-    public void testRestUpdateTimeout() throws Exception {
-        HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
-                )
-                .withAlterTableStartWaitTimeout(30_000)
-                .withFilesFacade(new TestFilesFacadeImpl() {
-                    @Override
-                    public int openRW(LPSZ name, long opts) {
-                        if (Utf8s.endsWithAscii(name, "x.d.1")) {
-                            Os.sleep(50);
-                        }
-                        return super.openRW(name, opts);
-                    }
-                });
-
-        runUpdateOnBusyTable((writer, rdr) -> {
-                    // Test no resources leak, update can go through or not, it is not deterministic
-                },
-                writer -> {
-                },
-                1,
-                queryTestBuilder,
-                null,
-                null,
-                1,
-                3,
-                URLEncoder.encode("update x set x=1 from tables() where s = 'a'", UTF_8)
-        );
-    }
-
     @Test
     public void testUpdateBusyTable() throws Exception {
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
@@ -338,8 +301,8 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 null,
                 -1L,
                 3,
-                URLEncoder.encode("update x set x=1 where s = 'a'", UTF_8),
-                URLEncoder.encode("update x set x=10 where s = 'b'", UTF_8)
+                URLEncoder.encode("update x set x=1 where s = 'a'", StandardCharsets.UTF_8),
+                URLEncoder.encode("update x set x=10 where s = 'b'", StandardCharsets.UTF_8)
         );
     }
 
@@ -375,7 +338,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 null,
                 1000,
                 0,
-                URLEncoder.encode("update x set x=1 from tables()", UTF_8)
+                URLEncoder.encode("update x set x=1 from tables()", StandardCharsets.UTF_8)
         );
     }
 
