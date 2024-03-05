@@ -62,7 +62,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                 return new FirstGeoHashGroupByFunctionByte(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record, long rowId) {
-                        mapValue.putByte(this.valueIndex, this.arg.getGeoByte(record));
+                        computeFirst(mapValue, record, rowId);
                     }
 
                     @Override
@@ -84,7 +84,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                 return new FirstGeoHashGroupByFunctionShort(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record, long rowId) {
-                        mapValue.putShort(this.valueIndex, this.arg.getGeoShort(record));
+                        computeFirst(mapValue, record, rowId);
                     }
 
                     @Override
@@ -106,7 +106,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                 return new FirstGeoHashGroupByFunctionInt(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record, long rowId) {
-                        mapValue.putInt(this.valueIndex, this.arg.getGeoInt(record));
+                        computeFirst(mapValue, record, rowId);
                     }
 
                     @Override
@@ -128,7 +128,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                 return new FirstGeoHashGroupByFunctionLong(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record, long rowId) {
-                        mapValue.putLong(this.valueIndex, this.arg.getGeoLong(record));
+                        computeFirst(mapValue, record, rowId);
                     }
 
                     @Override

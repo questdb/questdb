@@ -37,7 +37,7 @@ public class LastDoubleGroupByFunction extends FirstDoubleGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        super.computeFirst(mapValue, record, rowId);
+        computeFirst(mapValue, record, rowId);
     }
 
     @Override
