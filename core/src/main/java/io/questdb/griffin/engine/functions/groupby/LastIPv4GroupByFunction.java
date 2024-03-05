@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class LastIPv4GroupByFunction extends FirstIPv4GroupByFunction {
@@ -35,12 +36,22 @@ public class LastIPv4GroupByFunction extends FirstIPv4GroupByFunction {
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        super.computeFirst(mapValue, record);
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        super.computeFirst(mapValue, record, rowId);
     }
 
     @Override
     public String getName() {
         return "last";
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId > destRowId || destRowId == Numbers.LONG_NaN) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putInt(valueIndex + 1, srcValue.getIPv4(valueIndex + 1));
+        }
     }
 }

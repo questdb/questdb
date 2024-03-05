@@ -64,9 +64,9 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void computeNext(MapValue mapValue, Record record) {
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (mapValue.getIPv4(valueIndex) == Numbers.IPv4_NULL) {
-                computeFirst(mapValue, record);
+                computeFirst(mapValue, record, rowId);
             }
         }
 

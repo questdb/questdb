@@ -37,7 +37,7 @@ public class CountSymbolGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         int value = arg.getInt(record);
         if (value != SymbolTable.VALUE_IS_NULL) {
             mapValue.putLong(valueIndex, 1);
@@ -47,7 +47,7 @@ public class CountSymbolGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         int value = arg.getInt(record);
         if (value != SymbolTable.VALUE_IS_NULL) {
             mapValue.addLong(valueIndex, 1);

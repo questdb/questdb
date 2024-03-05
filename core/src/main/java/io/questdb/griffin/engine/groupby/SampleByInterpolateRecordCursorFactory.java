@@ -230,6 +230,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private long loSample = -1;
         private Record managedRecord;
         private long prevSample = -1;
+        private long rowId;
 
         public SampleByInterpolateRecordCursor(
                 CairoConfiguration configuration,
@@ -282,6 +283,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             loSample = -1;
             hiSample = -1;
             prevSample = -1;
+            rowId = 0;
             isHasNextPending = false;
             isMapInitialized = false;
             isMapFilled = false;
@@ -303,6 +305,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 loSample = -1;
                 hiSample = -1;
                 prevSample = -1;
+                rowId = 0;
                 isHasNextPending = false;
                 isMapInitialized = false;
                 isMapFilled = false;
@@ -520,11 +523,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     if (value.isNew()) {
                         value.putByte(0, (byte) 0); // not a gap
                         for (int i = 0; i < groupByFunctionCount; i++) {
-                            groupByFunctions.getQuick(i).computeFirst(value, managedRecord);
+                            groupByFunctions.getQuick(i).computeFirst(value, managedRecord, rowId++);
                         }
                     } else {
                         for (int i = 0; i < groupByFunctionCount; i++) {
-                            groupByFunctions.getQuick(i).computeNext(value, managedRecord);
+                            groupByFunctions.getQuick(i).computeNext(value, managedRecord, rowId++);
                         }
                     }
                 }

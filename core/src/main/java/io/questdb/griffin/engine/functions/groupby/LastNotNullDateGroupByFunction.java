@@ -37,9 +37,9 @@ public class LastNotNullDateGroupByFunction extends FirstDateGroupByFunction {
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (arg.getDate(record) != Numbers.LONG_NaN) {
-            computeFirst(mapValue, record);
+            computeFirst(mapValue, record, rowId);
         }
     }
 

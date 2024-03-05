@@ -36,7 +36,7 @@ import org.junit.Test;
 public class LastBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testAllNull() throws SqlException {
+    public void testAllFalse() throws SqlException {
         ddl("create table tab (f boolean)");
 
         try (TableWriter w = getWriter("tab")) {

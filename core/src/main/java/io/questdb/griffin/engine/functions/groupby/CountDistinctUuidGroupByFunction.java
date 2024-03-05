@@ -34,10 +34,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
-import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
-import io.questdb.std.LongLongHashSet;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 
 public final class CountDistinctUuidGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
@@ -60,7 +57,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         long lo = arg.getLong128Lo(record);
         long hi = arg.getLong128Hi(record);
         if (!Uuid.isNull(lo, hi)) {
@@ -74,12 +71,13 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
             mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
             mapValue.putLong(valueIndex, 0);
-            mapValue.putLong(valueIndex + 1, 0);;
+            mapValue.putLong(valueIndex + 1, 0);
+            ;
         }
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         long lo = arg.getLong128Lo(record);
         long hi = arg.getLong128Hi(record);
         if (!Uuid.isNull(lo, hi)) {

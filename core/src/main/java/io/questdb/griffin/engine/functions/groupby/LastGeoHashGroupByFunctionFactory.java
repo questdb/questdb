@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
@@ -46,7 +47,13 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         Function function = args.getQuick(0);
         int type = function.getType();
 
@@ -55,7 +62,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
             case ColumnType.GEOBYTE:
                 return new FirstGeoHashGroupByFunctionByte(type, function) {
                     @Override
-                    public void computeNext(MapValue mapValue, Record record) {
+                    public void computeNext(MapValue mapValue, Record record, long rowId) {
                         mapValue.putByte(this.valueIndex, this.arg.getGeoByte(record));
                     }
 
@@ -63,11 +70,21 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     public String getName() {
                         return "last";
                     }
+
+                    @Override
+                    public void merge(MapValue destValue, MapValue srcValue) {
+                        long srcRowId = srcValue.getLong(valueIndex);
+                        long destRowId = destValue.getLong(valueIndex);
+                        if (srcRowId > destRowId || destRowId == Numbers.LONG_NaN) {
+                            destValue.putLong(valueIndex, srcRowId);
+                            destValue.putByte(valueIndex + 1, srcValue.getGeoByte(valueIndex + 1));
+                        }
+                    }
                 };
             case ColumnType.GEOSHORT:
                 return new FirstGeoHashGroupByFunctionShort(type, function) {
                     @Override
-                    public void computeNext(MapValue mapValue, Record record) {
+                    public void computeNext(MapValue mapValue, Record record, long rowId) {
                         mapValue.putShort(this.valueIndex, this.arg.getGeoShort(record));
                     }
 
@@ -75,11 +92,21 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     public String getName() {
                         return "last";
                     }
+
+                    @Override
+                    public void merge(MapValue destValue, MapValue srcValue) {
+                        long srcRowId = srcValue.getLong(valueIndex);
+                        long destRowId = destValue.getLong(valueIndex);
+                        if (srcRowId > destRowId || destRowId == Numbers.LONG_NaN) {
+                            destValue.putLong(valueIndex, srcRowId);
+                            destValue.putShort(valueIndex + 1, srcValue.getGeoShort(valueIndex + 1));
+                        }
+                    }
                 };
             case ColumnType.GEOINT:
                 return new FirstGeoHashGroupByFunctionInt(type, function) {
                     @Override
-                    public void computeNext(MapValue mapValue, Record record) {
+                    public void computeNext(MapValue mapValue, Record record, long rowId) {
                         mapValue.putInt(this.valueIndex, this.arg.getGeoInt(record));
                     }
 
@@ -87,17 +114,37 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     public String getName() {
                         return "last";
                     }
+
+                    @Override
+                    public void merge(MapValue destValue, MapValue srcValue) {
+                        long srcRowId = srcValue.getLong(valueIndex);
+                        long destRowId = destValue.getLong(valueIndex);
+                        if (srcRowId > destRowId || destRowId == Numbers.LONG_NaN) {
+                            destValue.putLong(valueIndex, srcRowId);
+                            destValue.putInt(valueIndex + 1, srcValue.getGeoInt(valueIndex + 1));
+                        }
+                    }
                 };
             default:
                 return new FirstGeoHashGroupByFunctionLong(type, function) {
                     @Override
-                    public void computeNext(MapValue mapValue, Record record) {
+                    public void computeNext(MapValue mapValue, Record record, long rowId) {
                         mapValue.putLong(this.valueIndex, this.arg.getGeoLong(record));
                     }
 
                     @Override
                     public String getName() {
                         return "last";
+                    }
+
+                    @Override
+                    public void merge(MapValue destValue, MapValue srcValue) {
+                        long srcRowId = srcValue.getLong(valueIndex);
+                        long destRowId = destValue.getLong(valueIndex);
+                        if (srcRowId > destRowId || destRowId == Numbers.LONG_NaN) {
+                            destValue.putLong(valueIndex, srcRowId);
+                            destValue.putLong(valueIndex + 1, srcValue.getGeoLong(valueIndex + 1));
+                        }
                     }
                 };
         }

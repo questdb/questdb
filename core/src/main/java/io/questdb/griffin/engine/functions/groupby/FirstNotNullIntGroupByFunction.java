@@ -36,9 +36,9 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (mapValue.getInt(valueIndex) == Numbers.INT_NaN) {
-            computeFirst(mapValue, record);
+            computeFirst(mapValue, record, rowId);
         }
     }
 

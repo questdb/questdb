@@ -37,9 +37,9 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (mapValue.getLong(valueIndex) == Numbers.LONG_NaN) {
-            computeFirst(mapValue, record);
+            computeFirst(mapValue, record, rowId);
         }
     }
 

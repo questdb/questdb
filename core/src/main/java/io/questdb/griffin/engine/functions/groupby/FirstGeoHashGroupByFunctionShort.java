@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 
 public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
@@ -44,12 +45,13 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putShort(valueIndex, arg.getGeoShort(record));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        mapValue.putShort(valueIndex + 1, arg.getGeoShort(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         // empty
     }
 
@@ -65,7 +67,7 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
 
     @Override
     public short getGeoShort(Record rec) {
-        return rec.getGeoShort(valueIndex);
+        return rec.getGeoShort(valueIndex + 1);
     }
 
     @Override
@@ -80,13 +82,29 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
 
     @Override
     public boolean isParallelismSupported() {
-        return false;
+        return UnaryFunction.super.isParallelismSupported();
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putShort(valueIndex + 1, srcValue.getGeoShort(valueIndex + 1));
+        }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.SHORT);
+        columnTypes.add(ColumnType.LONG);  // row id
+        columnTypes.add(ColumnType.SHORT); // value
     }
 
     @Override
@@ -96,7 +114,8 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
 
     @Override
     public void setShort(MapValue mapValue, short value) {
-        mapValue.putShort(valueIndex, value);
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putShort(valueIndex + 1, value);
     }
 
     @Override

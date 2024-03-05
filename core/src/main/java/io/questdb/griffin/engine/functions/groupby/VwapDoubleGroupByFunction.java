@@ -46,7 +46,7 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double price = priceFunction.getDouble(record);
         final double volume = volumeFunction.getDouble(record);
         if (Numbers.isFinite(price) && Numbers.isFinite(volume) && volume > 0.0d) {
@@ -63,7 +63,7 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double price = priceFunction.getDouble(record);
         final double volume = volumeFunction.getDouble(record);
         if (Numbers.isFinite(price) && Numbers.isFinite(volume) && volume > 0.0d) {

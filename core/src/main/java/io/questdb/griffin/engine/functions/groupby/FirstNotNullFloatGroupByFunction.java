@@ -36,9 +36,9 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (Float.isNaN(mapValue.getFloat(valueIndex))) {
-            computeFirst(mapValue, record);
+            computeFirst(mapValue, record, rowId);
         }
     }
 

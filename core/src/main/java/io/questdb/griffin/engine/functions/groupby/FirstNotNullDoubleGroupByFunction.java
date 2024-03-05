@@ -36,9 +36,9 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        if (Double.isNaN(mapValue.getDouble(valueIndex))) {
-            computeFirst(mapValue, record);
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        if (Double.isNaN(mapValue.getDouble(valueIndex + 1))) {
+            computeFirst(mapValue, record, rowId);
         }
     }
 

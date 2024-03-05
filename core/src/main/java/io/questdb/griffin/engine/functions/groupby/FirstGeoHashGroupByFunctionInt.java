@@ -30,11 +30,12 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GeoByteFunction;
+import io.questdb.griffin.engine.functions.GeoIntFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 
-class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByFunction, UnaryFunction {
+class FirstGeoHashGroupByFunctionInt extends GeoIntFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
     protected int valueIndex;
 
@@ -44,12 +45,13 @@ class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByF
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putInt(valueIndex, arg.getGeoInt(record));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        mapValue.putInt(valueIndex + 1, arg.getGeoInt(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         // empty
     }
 
@@ -59,13 +61,8 @@ class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByF
     }
 
     @Override
-    public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getGeoInt(Record rec) {
-        return rec.getGeoInt(valueIndex);
+        return rec.getGeoInt(valueIndex + 1);
     }
 
     @Override
@@ -80,18 +77,35 @@ class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByF
 
     @Override
     public boolean isParallelismSupported() {
-        return false;
+        return UnaryFunction.super.isParallelismSupported();
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putInt(valueIndex + 1, srcValue.getGeoInt(valueIndex + 1));
+        }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.INT);  // value
     }
 
     @Override
     public void setInt(MapValue mapValue, int value) {
-        mapValue.putInt(valueIndex, value);
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putInt(valueIndex + 1, value);
     }
 
     @Override

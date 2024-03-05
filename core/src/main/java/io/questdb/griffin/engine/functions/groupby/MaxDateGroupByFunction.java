@@ -44,12 +44,12 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, arg.getLong(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.maxLong(valueIndex, arg.getDate(record));
     }
 

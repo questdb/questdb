@@ -32,10 +32,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstBooleanGroupByFunction extends BooleanFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
+    protected final Function arg;
     protected int valueIndex;
 
     public FirstBooleanGroupByFunction(@NotNull Function arg) {
@@ -43,12 +44,13 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putBool(valueIndex, arg.getBool(record));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        mapValue.putBool(valueIndex + 1, arg.getBool(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         // empty
     }
 
@@ -59,7 +61,7 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
 
     @Override
     public boolean getBool(Record rec) {
-        return rec.getBool(valueIndex);
+        return rec.getBool(valueIndex + 1);
     }
 
     @Override
@@ -74,22 +76,35 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
 
     @Override
     public boolean isParallelismSupported() {
-        return false;
+        return UnaryFunction.super.isParallelismSupported();
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putBool(valueIndex + 1, srcValue.getBool(valueIndex + 1));
+        }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.BOOLEAN);
-    }
-
-    public void setBool(MapValue mapValue, boolean value) {
-        mapValue.putBool(valueIndex, value);
+        columnTypes.add(ColumnType.LONG);    // row id
+        columnTypes.add(ColumnType.BOOLEAN); // value
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        setBool(mapValue, false);
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putBool(valueIndex + 1, false);
     }
 
     @Override

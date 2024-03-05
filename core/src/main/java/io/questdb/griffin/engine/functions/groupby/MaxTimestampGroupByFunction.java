@@ -44,12 +44,12 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putTimestamp(valueIndex, arg.getTimestamp(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.maxLong(valueIndex, arg.getTimestamp(record));
     }
 

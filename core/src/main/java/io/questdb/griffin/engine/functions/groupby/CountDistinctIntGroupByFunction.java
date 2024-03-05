@@ -56,7 +56,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         int val = arg.getInt(record);
         if (val != Numbers.INT_NaN) {
             mapValue.putLong(valueIndex, 1);
@@ -71,7 +71,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         int val = arg.getInt(record);
         if (val != Numbers.INT_NaN) {
             long ptr = mapValue.getLong(valueIndex + 1);
