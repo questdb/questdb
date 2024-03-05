@@ -92,7 +92,7 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcMax = srcValue.getLong(valueIndex);
         long destMax = destValue.getLong(valueIndex);
-        if (srcMax > destMax || destMax == Numbers.LONG_NaN) {
+        if (srcMax > destMax) {
             destValue.putLong(valueIndex, srcMax);
         }
     }

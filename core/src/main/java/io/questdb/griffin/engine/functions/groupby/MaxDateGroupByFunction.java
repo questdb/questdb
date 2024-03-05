@@ -92,7 +92,7 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcMax = srcValue.getDate(valueIndex);
         long destMax = destValue.getDate(valueIndex);
-        if (srcMax > destMax || destMax == Numbers.LONG_NaN) {
+        if (srcMax > destMax) {
             destValue.putDate(valueIndex, srcMax);
         }
     }

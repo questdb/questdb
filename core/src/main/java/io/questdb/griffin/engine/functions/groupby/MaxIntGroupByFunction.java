@@ -92,7 +92,7 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void merge(MapValue destValue, MapValue srcValue) {
         int srcMax = srcValue.getInt(valueIndex);
         int destMax = destValue.getInt(valueIndex);
-        if (srcMax > destMax || destMax == Numbers.INT_NaN) {
+        if (srcMax > destMax) {
             destValue.putInt(valueIndex, srcMax);
         }
     }

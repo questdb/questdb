@@ -46,4 +46,18 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
     public String getName() {
         return "last_not_null";
     }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcVal = srcValue.getDouble(valueIndex + 1);
+        if (Double.isNaN(srcVal)) {
+            return;
+        }
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId > destRowId) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putDouble(valueIndex + 1, srcVal);
+        }
+    }
 }

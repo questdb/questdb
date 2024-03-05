@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
@@ -75,7 +74,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     public void merge(MapValue destValue, MapValue srcValue) {
                         long srcRowId = srcValue.getLong(valueIndex);
                         long destRowId = destValue.getLong(valueIndex);
-                        if (srcRowId > destRowId || destRowId == Numbers.LONG_NaN) {
+                        if (srcRowId > destRowId) {
                             destValue.putLong(valueIndex, srcRowId);
                             destValue.putByte(valueIndex + 1, srcValue.getGeoByte(valueIndex + 1));
                         }
@@ -97,7 +96,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     public void merge(MapValue destValue, MapValue srcValue) {
                         long srcRowId = srcValue.getLong(valueIndex);
                         long destRowId = destValue.getLong(valueIndex);
-                        if (srcRowId > destRowId || destRowId == Numbers.LONG_NaN) {
+                        if (srcRowId > destRowId) {
                             destValue.putLong(valueIndex, srcRowId);
                             destValue.putShort(valueIndex + 1, srcValue.getGeoShort(valueIndex + 1));
                         }
@@ -119,7 +118,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     public void merge(MapValue destValue, MapValue srcValue) {
                         long srcRowId = srcValue.getLong(valueIndex);
                         long destRowId = destValue.getLong(valueIndex);
-                        if (srcRowId > destRowId || destRowId == Numbers.LONG_NaN) {
+                        if (srcRowId > destRowId) {
                             destValue.putLong(valueIndex, srcRowId);
                             destValue.putInt(valueIndex + 1, srcValue.getGeoInt(valueIndex + 1));
                         }
@@ -141,7 +140,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     public void merge(MapValue destValue, MapValue srcValue) {
                         long srcRowId = srcValue.getLong(valueIndex);
                         long destRowId = destValue.getLong(valueIndex);
-                        if (srcRowId > destRowId || destRowId == Numbers.LONG_NaN) {
+                        if (srcRowId > destRowId) {
                             destValue.putLong(valueIndex, srcRowId);
                             destValue.putLong(valueIndex + 1, srcValue.getGeoLong(valueIndex + 1));
                         }

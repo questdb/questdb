@@ -46,4 +46,18 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
     public String getName() {
         return "last_not_null";
     }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        float srcVal = srcValue.getFloat(valueIndex + 1);
+        if (Float.isNaN(srcVal)) {
+            return;
+        }
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId > destRowId) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putFloat(valueIndex + 1, srcVal);
+        }
+    }
 }
