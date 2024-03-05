@@ -58,7 +58,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
  * <p>
  * Header and record is described in @link TableTransactionLogFile
  * <p>
- * Transaction record: 28 bytes
+ * Transaction record: 60 bytes
  * <p>
  */
 public class TableTransactionLogV2 implements TableTransactionLogFile {
@@ -207,7 +207,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public boolean isDropped() {
         long lastTxn = maxTxn.get();
         if (lastTxn > 0) {
-            return WalUtils.DROP_TABLE_WALID == txnMem.getInt(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
+            long prevTxn = lastTxn - 1;
+            openTxnPart(prevTxn);
+            long lastPartTxn = (prevTxn) % partTransactionCount;
+            return WalUtils.DROP_TABLE_WALID == txnPartMem.getLong(lastPartTxn * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
         }
         return false;
     }

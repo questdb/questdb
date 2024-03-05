@@ -40,6 +40,9 @@ import java.io.Closeable;
  * Table Create Timestamp - 8 bytes
  * Partition Size - 4 bytes
  * <p>
+ * The header Version and Partition Size determines the storage format:
+ * 0 - single file, V1
+ * 1 - multiple files, V2, additional fields
  * <p>
  * The transaction has fields
  * <p>
@@ -49,16 +52,21 @@ import java.io.Closeable;
  * Segment Txn - 4 bytes
  * Commit Timestamp - 8 bytes
  * <p>
- * Total is 28 bytes
+ * Total V1 record size is 28 bytes
+ * <p>
+ * There are additional fields for V2 of the file format:
+ * <p>
+ * Txn Min Timestamp  8 bytes
+ * Txn Max Timestamp  8 bytes
+ * Txn Row Count      8 bytes
+ * Reserved           8 bytes, initialized with 0s
+ * Total V2 record size is 60 bytes
  * <p>
  * All the records are either stored in the single file for when the version is 0
  * or in multiple files with N records per file.
  * <p>
  * See different implementations of the interface for the storage details.
  * <p>
- * Note: the header Version and Partition Size determines the storage format:
- * 0 - single file, V1
- * 1 - multiple files, V2
  */
 public interface TableTransactionLogFile extends Closeable {
     int HEADER_RESERVED = 6 * Long.BYTES + Integer.BYTES;
@@ -75,15 +83,16 @@ public interface TableTransactionLogFile extends Closeable {
 
     /**
      * Adds a new data transaction to the log
+     * <p>
+     * s     * @param structureVersion version of the table structure
      *
-     * @param structureVersion version of the table structure
-     * @param walId            id of the WAL
-     * @param segmentId        id of the segment
-     * @param segmentTxn       transaction id within the segment
-     * @param timestamp        commit timestamp
-     * @param txnMinTimestamp  minimum timestamp in the transaction
-     * @param txnMaxTimestamp  maximum timestamp in the transaction
-     * @param txnRowCount      number of rows in the transaction
+     * @param walId           id of the WAL
+     * @param segmentId       id of the segment
+     * @param segmentTxn      transaction id within the segment
+     * @param timestamp       commit timestamp
+     * @param txnMinTimestamp minimum timestamp in the transaction
+     * @param txnMaxTimestamp maximum timestamp in the transaction
+     * @param txnRowCount     number of rows in the transaction
      * @return committed transaction id
      */
     long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount);
