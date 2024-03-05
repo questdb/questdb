@@ -39,7 +39,7 @@ public class VarcharAdapter extends AbstractTypeAdapter {
 
     @Override
     public int getType() {
-        return ColumnType.STRING;
+        return ColumnType.VARCHAR;
     }
 
     @Override
