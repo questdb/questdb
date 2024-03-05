@@ -4294,17 +4294,18 @@ public class SqlOptimiser implements Mutable {
                 // all available columns.
                 if (excludeLastColumn) {
                     // copy columns from the "sample by" SELECT model
-                    return wrapWithSelectModel(model, model.getBottomUpColumns().size() - 1);
+                    model = wrapWithSelectModel(model, model.getBottomUpColumns().size() - 1);
                 }
             }
 
             // recurse nested models
             nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
-        }
 
-        // join models
-        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
-            model.getJoinModels().setQuick(i, rewriteSampleBy(model.getJoinModels().getQuick(i)));
+            // join models
+            for (int i = 1, n = nested.getJoinModels().size(); i < n; i++) {
+                QueryModel joinModel = nested.getJoinModels().getQuick(i);
+                joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel()));
+            }
         }
 
         // unions
@@ -4861,9 +4862,9 @@ public class SqlOptimiser implements Mutable {
             boolean singleHourFunctionKey = totalFunctionKeyCount == 1 && hourFunctionKeyCount == 1;
             if (
                     useInnerModel
-                    && useGroupByModel && groupByModel.getSampleBy() == null
-                    && columnsAndFunctionsOnly && !singleHourFunctionKey
-                    && SqlUtil.isPlainSelect(baseModel)
+                            && useGroupByModel && groupByModel.getSampleBy() == null
+                            && columnsAndFunctionsOnly && !singleHourFunctionKey
+                            && SqlUtil.isPlainSelect(baseModel)
             ) {
                 // we can "steal" all keys from inner model in case of group-by
                 // this is necessary in case of further parallel execution
@@ -5290,6 +5291,12 @@ public class SqlOptimiser implements Mutable {
             QueryColumn qcFrom = model.getBottomUpColumns().getQuick(i);
             _model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
         }
+
+        // bubble up the union model, so that wrapper models are
+        // subject to set operations
+        QueryModel unionModel = model.getUnionModel();
+        model.setUnionModel(null);
+        _model.setUnionModel(unionModel);
         return _model;
     }
 

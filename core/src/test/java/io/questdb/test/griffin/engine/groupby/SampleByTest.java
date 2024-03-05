@@ -3716,6 +3716,146 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByRewriteUnionTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar " +
+                            " union all " +
+                            "select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar ",
+                    "Union All\n" +
+                            "    Sort light\n" +
+                            "      keys: [tstmp]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [tstmp,sym]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [tstmp,sym]\n" +
+                            "      values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteUnionNoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar " +
+                            " union all " +
+                            "select sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar ",
+                    "Union All\n" +
+                            "    SelectedRecord\n" +
+                            "        Sort light\n" +
+                            "          keys: [ts1]\n" +
+                            "            GroupBy vectorized: false\n" +
+                            "              keys: [sym,ts1]\n" +
+                            "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n" +
+                            "    SelectedRecord\n" +
+                            "        Sort light\n" +
+                            "          keys: [ts1]\n" +
+                            "            GroupBy vectorized: false\n" +
+                            "              keys: [sym,ts1]\n" +
+                            "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteJoinNoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select * from " +
+                            "(select sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar) a " +
+                            " left join " +
+                            "(select sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar) b on(sym) ",
+                    "SelectedRecord\n" +
+                            "    Hash Outer Join Light\n" +
+                            "      condition: b.sym=a.sym\n" +
+                            "        SelectedRecord\n" +
+                            "            Sort light\n" +
+                            "              keys: [ts1]\n" +
+                            "                GroupBy vectorized: false\n" +
+                            "                  keys: [sym,ts1]\n" +
+                            "                  values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n" +
+                            "        Hash\n" +
+                            "            SelectedRecord\n" +
+                            "                Sort light\n" +
+                            "                  keys: [ts1]\n" +
+                            "                    GroupBy vectorized: false\n" +
+                            "                      keys: [sym,ts1]\n" +
+                            "                      values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteJoinTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select * from " +
+                            "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar) a " +
+                            " asof join " +
+                            "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar) b ",
+                    "SelectedRecord\n" +
+                            "    AsOf Join\n" +
+                            "        Sort light\n" +
+                            "          keys: [ts1]\n" +
+                            "            GroupBy vectorized: false\n" +
+                            "              keys: [ts1,sym]\n" +
+                            "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n" +
+                            "        Sort light\n" +
+                            "          keys: [ts1]\n" +
+                            "            GroupBy vectorized: false\n" +
+                            "              keys: [ts1,sym]\n" +
+                            "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByWithEmptyCursor() throws Exception {
         assertQuery("to_timezone\ts\tlat\tlon\n",
                 "select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
@@ -4522,28 +4662,6 @@ public class SampleByTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    @NotNull
-    private static CairoConfiguration createMmapFailingConfiguration(int x) {
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            int count = x;
-
-            @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (count-- > 0) {
-                    return super.mmap(fd, len, offset, flags, memoryTag);
-                }
-                return -1;
-            }
-        };
-
-        return new DefaultTestCairoConfiguration(root) {
-            @Override
-            public @NotNull FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
     }
 
     @Test
@@ -10499,6 +10617,28 @@ public class SampleByTest extends AbstractCairoTest {
         );
     }
 
+    @NotNull
+    private static CairoConfiguration createMmapFailingConfiguration(int x) {
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            int count = x;
+
+            @Override
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+                if (count-- > 0) {
+                    return super.mmap(fd, len, offset, flags, memoryTag);
+                }
+                return -1;
+            }
+        };
+
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+    }
+
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
         String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
                 .replace("in ('a')", "in ('a', 'none')");
@@ -10597,9 +10737,7 @@ public class SampleByTest extends AbstractCairoTest {
                             final RecordCursorFactory factory = factories[finalI];
                             while (!writerDone.get()) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                    while (cursor.hasNext()) {
-                                        // no-op
-                                    }
+                                    TestUtils.drainCursor(cursor);
                                 } catch (Throwable e) {
                                     e.printStackTrace();
                                     errors.incrementAndGet();

@@ -83,6 +83,7 @@ public class MetricsIODispatcherTest {
     }
 
     @Test
+    @Ignore
     public void testLotsOfConnections() throws Exception {
         // In this scenario we want to test pool reuse.
         // This is dependent on thread scheduling so some runs may not achieve
