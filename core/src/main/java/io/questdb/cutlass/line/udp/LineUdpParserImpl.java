@@ -62,6 +62,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final short defaultFloatColumnType;
     private final short defaultIntegerColumnType;
+    private final boolean useLegacyStringDefault;
     private final CairoEngine engine;
     private final IntList geoHashBitsSizeByColIdx = new IntList(); // 0 if not a GeoHash, else bits precision
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
@@ -102,8 +103,10 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         this.udpConfiguration = udpConfiguration;
         this.timestampAdapter = udpConfiguration.getTimestampAdapter();
 
-        defaultFloatColumnType = udpConfiguration.getDefaultColumnTypeForFloat();
-        defaultIntegerColumnType = udpConfiguration.getDefaultColumnTypeForInteger();
+        this.defaultFloatColumnType = udpConfiguration.getDefaultColumnTypeForFloat();
+        this.defaultIntegerColumnType = udpConfiguration.getDefaultColumnTypeForInteger();
+        this.useLegacyStringDefault = udpConfiguration.isUseLegacyStringDefault();
+
         this.autoCreateNewTables = udpConfiguration.getAutoCreateNewTables();
         this.autoCreateNewColumns = udpConfiguration.getAutoCreateNewColumns();
     }
@@ -342,7 +345,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void parseFieldValue(CachedCharSequence value, CharSequenceCache cache) {
-        int valueType = LineUdpParserSupport.getValueType(value, defaultFloatColumnType, defaultIntegerColumnType);
+        int valueType = LineUdpParserSupport.getValueType(value, defaultFloatColumnType, defaultIntegerColumnType, useLegacyStringDefault);
         if (valueType == ColumnType.UNDEFINED) {
             switchModeToSkipLine();
         } else {
@@ -351,7 +354,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
-        int valueType = LineUdpParserSupport.getValueType(value, defaultFloatColumnType, defaultIntegerColumnType);
+        int valueType = LineUdpParserSupport.getValueType(value, defaultFloatColumnType, defaultIntegerColumnType, useLegacyStringDefault);
         if (valueType == ColumnType.UNDEFINED || valueType == ColumnType.NULL) { // cannot create a col of type null
             switchModeToSkipLine();
         } else {
@@ -400,6 +403,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                         valid = columnTypeTag == ColumnType.BOOLEAN;
                         break;
                     case ColumnType.STRING:
+                    case ColumnType.VARCHAR:
                         valid = columnTypeTag == ColumnType.STRING ||
                                 columnTypeTag == ColumnType.VARCHAR ||
                                 columnTypeTag == ColumnType.CHAR ||

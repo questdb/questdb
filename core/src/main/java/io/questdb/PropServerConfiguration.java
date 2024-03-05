@@ -3869,6 +3869,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int ownThreadAffinity() {
             return lineUdpOwnThreadAffinity;
         }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
+        }
     }
 
     private class PropMetricsConfiguration implements MetricsConfiguration {

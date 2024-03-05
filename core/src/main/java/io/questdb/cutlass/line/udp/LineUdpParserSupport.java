@@ -37,10 +37,14 @@ public class LineUdpParserSupport {
     private final static Log LOG = LogFactory.getLog(LineUdpParserSupport.class);
 
     public static int getValueType(CharSequence value) {
-        return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG);
+        return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG, true);
     }
 
-    public static int getValueType(CharSequence value, short defaultFloatColumnType, short defaultIntegerColumnType) {
+    public static int getValueType(CharSequence value, boolean useLegacyStringDefault) {
+        return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG, useLegacyStringDefault);
+    }
+
+    public static int getValueType(CharSequence value, short defaultFloatColumnType, short defaultIntegerColumnType, boolean useLegacyStringDefault) {
         // method called for inbound ilp messages on each value.
         // returning UNDEFINED makes the whole line be skipped.
         // 0 len values, return null type.
@@ -82,7 +86,7 @@ public class LineUdpParserSupport {
                         LOG.error().$("incorrectly quoted string: ").$(value).$();
                         return ColumnType.UNDEFINED;
                     }
-                    return ColumnType.STRING;
+                    return useLegacyStringDefault ? ColumnType.STRING : ColumnType.VARCHAR;
                 default:
                     if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
                         return defaultFloatColumnType;

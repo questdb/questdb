@@ -134,4 +134,9 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     public int ownThreadAffinity() {
         return -1;
     }
+
+    @Override
+    public boolean isUseLegacyStringDefault() {
+        return true;
+    }
 }
