@@ -401,6 +401,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                         break;
                     case ColumnType.STRING:
                         valid = columnTypeTag == ColumnType.STRING ||
+                                columnTypeTag == ColumnType.VARCHAR ||
                                 columnTypeTag == ColumnType.CHAR ||
                                 columnTypeTag == ColumnType.IPv4 ||
                                 isForField &&

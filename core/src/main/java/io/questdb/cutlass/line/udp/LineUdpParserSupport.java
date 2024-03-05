@@ -28,8 +28,10 @@ import io.questdb.cairo.*;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.Utf8StringSink;
 
 public class LineUdpParserSupport {
     private final static Log LOG = LogFactory.getLog(LineUdpParserSupport.class);
@@ -127,6 +129,12 @@ public class LineUdpParserSupport {
                         break;
                     case ColumnType.STRING:
                         row.putStr(columnIndex, value, 1, value.length() - 2);
+                        break;
+                    case ColumnType.VARCHAR:
+                        Utf8StringSink utf8Sink = Misc.getThreadLocalUtf8Sink();
+                        utf8Sink.clear();
+                        utf8Sink.put(value, 1, value.length() - 1);
+                        row.putVarchar(columnIndex, utf8Sink);
                         break;
                     case ColumnType.SYMBOL:
                         row.putSym(columnIndex, value);
@@ -247,6 +255,9 @@ public class LineUdpParserSupport {
                 break;
             case ColumnType.STRING:
                 row.putStr(columnIndex, null);
+                break;
+            case ColumnType.VARCHAR:
+                row.putVarchar(columnIndex, null);
                 break;
             case ColumnType.SYMBOL:
                 row.putSym(columnIndex, null);

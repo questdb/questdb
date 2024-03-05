@@ -667,33 +667,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
 
     @Test
     public void testInsertStringTableExists() throws Exception {
-        assertType(ColumnType.STRING,
-                "value\ttimestamp\n" +
-                        "e\t1970-01-01T00:00:01.000000Z\n" +
-                        "xxx\t1970-01-01T00:00:02.000000Z\n" +
-                        "paff\t1970-01-01T00:00:03.000000Z\n" +
-                        "tt\"tt\t1970-01-01T00:00:08.000000Z\n" +
-                        "tt\\\"tt\t1970-01-01T00:00:11.000000Z\n" +
-                        "tt\\\"tt\\\" \\\n" +
-                        " =, ,=\\\"\t1970-01-01T00:00:12.000000Z\n" +
-                        "\t1970-01-01T00:00:15.000000Z\n",
-                new String[]{
-                        "\"e\"", // valid
-                        "\"xxx\"", // valid
-                        "\"paff\"", // valid
-                        "\"paff", // discarded bad value
-                        "paff\"", // discarded bad value
-                        "null", // discarded bad type symbol
-                        "yyy", // discarded bad type symbol
-                        "\"tt\"tt\"", // valid
-                        "tt\"tt\"", // discarded bad value
-                        "\"tt\"tt", // discarded bad value
-                        "\"tt\\\"tt\"", // valid
-                        "\"tt\\\"tt\\\" \\\n =, ,=\\\"\"", // valid
-                        "A", // discarded bad type symbol
-                        "@plant2", // discarded bad type symbol
-                        "" // valid null
-                });
+        assertStringTypes(false);
     }
 
     @Test
@@ -785,6 +759,41 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "null", // discarded bad type symbol
                         "1970-01-01T00:00:05.000000Z", // discarded bad type symbol
                         "t", // discarded bad type boolean
+                });
+    }
+
+    @Test
+    public void testInsertVarcharTableExists() throws Exception {
+        assertStringTypes(true);
+    }
+
+    private static void assertStringTypes(boolean varchar) throws Exception {
+        assertType(varchar ? ColumnType.VARCHAR : ColumnType.STRING,
+                "value\ttimestamp\n" +
+                        "e\t1970-01-01T00:00:01.000000Z\n" +
+                        "xxx\t1970-01-01T00:00:02.000000Z\n" +
+                        "paff\t1970-01-01T00:00:03.000000Z\n" +
+                        "tt\"tt\t1970-01-01T00:00:08.000000Z\n" +
+                        "tt\\\"tt\t1970-01-01T00:00:11.000000Z\n" +
+                        "tt\\\"tt\\\" \\\n" +
+                        " =, ,=\\\"\t1970-01-01T00:00:12.000000Z\n" +
+                        "\t1970-01-01T00:00:15.000000Z\n",
+                new String[]{
+                        "\"e\"", // valid
+                        "\"xxx\"", // valid
+                        "\"paff\"", // valid
+                        "\"paff", // discarded bad value
+                        "paff\"", // discarded bad value
+                        "null", // discarded bad type symbol
+                        "yyy", // discarded bad type symbol
+                        "\"tt\"tt\"", // valid
+                        "tt\"tt\"", // discarded bad value
+                        "\"tt\"tt", // discarded bad value
+                        "\"tt\\\"tt\"", // valid
+                        "\"tt\\\"tt\\\" \\\n =, ,=\\\"\"", // valid
+                        "A", // discarded bad type symbol
+                        "@plant2", // discarded bad type symbol
+                        "" // valid null
                 });
     }
 
