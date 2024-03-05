@@ -3773,12 +3773,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from (select ts, i as i1, i as i2 from a ) where 0 < i1 and i2 < 10 latest on ts partition by i1",
                 "LatestBy light order_by_timestamp: true\n" +
                         "    SelectedRecord\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              filter: (0<i and i<10)\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n"
+                        "        Async JIT Filter workers: 1\n" +
+                        "          filter: (0<i and i<10)\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n"
         );
     }
 
@@ -3788,11 +3787,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts);",
                 "select ts, i as i1, i as i2 from a where 0 < i and i < 10 latest on ts partition by i",
                 "SelectedRecord\n" +
-                        "    SelectedRecord\n" +
-                        "        LatestByAllFiltered\n" +
-                        "            Row backward scan\n" +
-                        "              filter: (0<i and i<10)\n" +
-                        "            Frame backward scan on: a\n"
+                        "    LatestByAllFiltered\n" +
+                        "        Row backward scan\n" +
+                        "          filter: (0<i and i<10)\n" +
+                        "        Frame backward scan on: a\n"
         );
     }
 
@@ -8839,13 +8837,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "SelectedRecord\n" +
                         "    Filter filter: l1*i2!=0\n" +
                         "        SelectedRecord\n" +
-                        "            SelectedRecord\n" +
-                        "                Async Filter workers: 1\n" +
-                        "                  limit: 100\n" +
-                        "                  filter: l::short<i\n" +
-                        "                    DataFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: a\n"
+                        "            Async Filter workers: 1\n" +
+                        "              limit: 100\n" +
+                        "              filter: l::short<i\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: a\n"
         );
     }
 
@@ -8864,10 +8861,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Sort light lo: 100 partiallySorted: true\n" +
                         "          keys: [ts1, l1]\n" +
                         "            SelectedRecord\n" +
-                        "                SelectedRecord\n" +
-                        "                    DataFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: a\n"
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: a\n"
         );
     }
 

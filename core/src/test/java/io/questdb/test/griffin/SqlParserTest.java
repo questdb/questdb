@@ -883,7 +883,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAliasWithWildcard1() throws SqlException {
         assertQuery(
-                "select-choose a1, a1 a, b from (select-choose [a a1, b] a a1, b from (select [a, b] from x))",
+                "select-choose a a1, a, b from (select [a, b] from x)",
                 "select a as a1, * from x",
                 modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -3555,7 +3555,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testDuplicateColumnsBasicSelect() throws SqlException {
         assertQuery(
-                "select-choose b, a, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1 from (select [b, a, k] from x timestamp (timestamp)))",
+                "select-choose b, a, k k1, k from (select [b, a, k] from x timestamp (timestamp))",
                 "select b, a, k k1, k from x",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );

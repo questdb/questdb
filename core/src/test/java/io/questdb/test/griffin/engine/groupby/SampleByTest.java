@@ -3747,6 +3747,69 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByRewriteMultipleTimestamps1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select ts1 a, ts1 b, sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar ",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [b]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [b,sym]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteMultipleTimestamps2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
+                            "from x " +
+                            "sample by 1m align to calendar ",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [d]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [d,sym]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteMultipleTimestamps1NotKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select ts1 a, ts1 b, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar ",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [b]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [b]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByRewriteUnionNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
