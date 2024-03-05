@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -184,6 +185,13 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                         if (cs != null && cs.length() > 0) {
                             // Touch the first page of the string contents only.
                             sum += cs.charAt(0);
+                        }
+                        break;
+                    case ColumnType.VARCHAR:
+                        Utf8Sequence vs = record.getVarcharA(i);
+                        if (vs != null && vs.size() > 0) {
+                            // Touch the first page of the varchar contents only.
+                            sum += vs.byteAt(0);
                         }
                         break;
                     case ColumnType.BINARY:
