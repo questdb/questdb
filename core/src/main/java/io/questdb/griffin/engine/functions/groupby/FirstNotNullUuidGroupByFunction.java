@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
 
 public class FirstNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
@@ -37,7 +38,7 @@ public class FirstNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Uuid.isNull(mapValue.getLong128Lo(valueIndex), mapValue.getLong128Hi(valueIndex))) {
+        if (Uuid.isNull(mapValue.getLong128Lo(valueIndex + 1), mapValue.getLong128Hi(valueIndex + 1))) {
             computeFirst(mapValue, record, rowId);
         }
     }
@@ -45,5 +46,21 @@ public class FirstNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
     @Override
     public String getName() {
         return "first_not_null";
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcValLo = srcValue.getLong128Lo(valueIndex + 1);
+        long srcValHi = srcValue.getLong128Hi(valueIndex + 1);
+        if (Uuid.isNull(srcValLo, srcValHi)) {
+            return;
+        }
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        // srcRowId is non-null at this point since we know that the value is non-null
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putLong128(valueIndex + 1, srcValLo, srcValHi);
+        }
     }
 }

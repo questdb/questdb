@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactory {
@@ -73,7 +74,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getGeoByte(valueIndex) == GeoHashes.BYTE_NULL) {
+            if (mapValue.getGeoByte(valueIndex + 1) == GeoHashes.BYTE_NULL) {
                 computeFirst(mapValue, record, rowId);
             }
         }
@@ -81,6 +82,21 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
         @Override
         public String getName() {
             return NAME;
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            byte srcVal = srcValue.getGeoByte(valueIndex + 1);
+            if (srcVal == GeoHashes.BYTE_NULL) {
+                return;
+            }
+            long srcRowId = srcValue.getLong(valueIndex);
+            long destRowId = destValue.getLong(valueIndex);
+            // srcRowId is non-null at this point since we know that the value is non-null
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+                destValue.putLong(valueIndex, srcRowId);
+                destValue.putByte(valueIndex + 1, srcVal);
+            }
         }
     }
 
@@ -91,7 +107,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getGeoInt(valueIndex) == GeoHashes.INT_NULL) {
+            if (mapValue.getGeoInt(valueIndex + 1) == GeoHashes.INT_NULL) {
                 computeFirst(mapValue, record, rowId);
             }
         }
@@ -99,6 +115,21 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
         @Override
         public String getName() {
             return NAME;
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            int srcVal = srcValue.getGeoInt(valueIndex + 1);
+            if (srcVal == GeoHashes.INT_NULL) {
+                return;
+            }
+            long srcRowId = srcValue.getLong(valueIndex);
+            long destRowId = destValue.getLong(valueIndex);
+            // srcRowId is non-null at this point since we know that the value is non-null
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+                destValue.putLong(valueIndex, srcRowId);
+                destValue.putInt(valueIndex + 1, srcVal);
+            }
         }
     }
 
@@ -109,7 +140,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getGeoLong(valueIndex) == GeoHashes.NULL) {
+            if (mapValue.getGeoLong(valueIndex + 1) == GeoHashes.NULL) {
                 computeFirst(mapValue, record, rowId);
             }
         }
@@ -117,6 +148,21 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
         @Override
         public String getName() {
             return NAME;
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            long srcVal = srcValue.getGeoLong(valueIndex + 1);
+            if (srcVal == GeoHashes.NULL) {
+                return;
+            }
+            long srcRowId = srcValue.getLong(valueIndex);
+            long destRowId = destValue.getLong(valueIndex);
+            // srcRowId is non-null at this point since we know that the value is non-null
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+                destValue.putLong(valueIndex, srcRowId);
+                destValue.putLong(valueIndex + 1, srcVal);
+            }
         }
     }
 
@@ -127,7 +173,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            if (mapValue.getGeoShort(valueIndex) == GeoHashes.SHORT_NULL) {
+            if (mapValue.getGeoShort(valueIndex + 1) == GeoHashes.SHORT_NULL) {
                 computeFirst(mapValue, record, rowId);
             }
         }
@@ -135,6 +181,21 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
         @Override
         public String getName() {
             return NAME;
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            short srcVal = srcValue.getGeoShort(valueIndex + 1);
+            if (srcVal == GeoHashes.SHORT_NULL) {
+                return;
+            }
+            long srcRowId = srcValue.getLong(valueIndex);
+            long destRowId = destValue.getLong(valueIndex);
+            // srcRowId is non-null at this point since we know that the value is non-null
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+                destValue.putLong(valueIndex, srcRowId);
+                destValue.putShort(valueIndex + 1, srcVal);
+            }
         }
     }
 }

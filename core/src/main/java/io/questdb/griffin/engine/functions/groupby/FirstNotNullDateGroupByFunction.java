@@ -38,7 +38,7 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getDate(valueIndex) == Numbers.LONG_NaN) {
+        if (mapValue.getDate(valueIndex + 1) == Numbers.LONG_NaN) {
             computeFirst(mapValue, record, rowId);
         }
     }
@@ -46,5 +46,20 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
     @Override
     public String getName() {
         return "first_not_null";
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcVal = srcValue.getDate(valueIndex + 1);
+        if (srcVal == Numbers.LONG_NaN) {
+            return;
+        }
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        // srcRowId is non-null at this point since we know that the value is non-null
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putDate(valueIndex + 1, srcVal);
+        }
     }
 }
