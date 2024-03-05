@@ -769,34 +769,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
 
     @Test
     public void testInsertStringTableDoesNotExist() throws Exception {
-        assertTypeNoTable(
-                "value\ttimestamp\n" +
-                        "e\t1970-01-01T00:00:01.000000Z\n" +
-                        "xxx\t1970-01-01T00:00:02.000000Z\n" +
-                        "paff\t1970-01-01T00:00:03.000000Z\n" +
-                        "tt\"tt\t1970-01-01T00:00:11.000000Z\n" +
-                        "tt\"tt\" \n" +
-                        " =, ,=\"\t1970-01-01T00:00:12.000000Z\n" +
-                        "\t1970-01-01T00:00:15.000000Z\n",
-                new CharSequence[]{
-                        "\"e\"", // valid
-                        "\"xxx\"", // valid
-                        "\"paff\"", // valid
-                        "\"paff", // discarded bad value
-                        "paff\"", // discarded bad value
-                        "null", // discarded bad type symbol
-                        "yyy", // discarded bad type symbol
-                        "\"tt\"tt\"", // discarded bad value
-                        "tt\"tt\"", // discarded bad value
-                        "\"tt\"tt", // discarded bad value
-                        "\"tt\\\"tt\"", // valid
-                        "\"tt\\\"tt\\\" \\\n =, ,=\\\"\"", // valid
-                        "A", // discarded bad type symbol
-                        "@plant2", // discarded bad type symbol
-                        "" // valid null
-                },
-                false
-        );
+        assertStringTypesNoTable(false);
     }
 
     @Test
@@ -945,13 +918,27 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testInsertVarcharTableDoesNotExist() throws Exception {
+        assertStringTypesNoTable(true);
+    }
+
+    @Test
     public void testInsertVarcharTableExists() throws Exception {
         assertStringTypes(true);
     }
 
     private void assertStringTypes(boolean varchar) throws Exception {
-        assertType(
-                varchar ? ColumnType.VARCHAR : ColumnType.STRING,
+        assertStringTypes(varchar ? ColumnType.VARCHAR : ColumnType.STRING);
+    }
+
+    private void assertStringTypesNoTable(boolean varchar) throws Exception {
+        useLegacyString = !varchar;
+        assertStringTypes(ColumnType.UNDEFINED);
+        useLegacyString = true; // restore default
+    }
+
+    private void assertStringTypes(int columnType) throws Exception {
+        assertType(columnType,
                 "value\ttimestamp\n" +
                         "e\t1970-01-01T00:00:01.000000Z\n" +
                         "xxx\t1970-01-01T00:00:02.000000Z\n" +
