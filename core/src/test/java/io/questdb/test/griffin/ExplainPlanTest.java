@@ -1714,14 +1714,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "and timestamp > dateadd('m', -30, now())) " +
                         "timestamp(x))",
                 "SelectedRecord\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      values: [last(timestamp),last(price)]\n" +
-                        "        Async JIT Filter workers: 1\n" +
-                        "          filter: symbol='BTC-USD'\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Interval forward scan on: trades\n" +
-                        "                  intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
+                        "      filter: symbol='BTC-USD'\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Interval forward scan on: trades\n" +
+                        "              intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
         );
     }
 
@@ -2798,8 +2797,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))",
                 "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2811,13 +2811,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)",
                 "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42",
-                "GroupBy vectorized: false\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
-                        "    Async JIT Filter workers: 1\n" +
-                        "      filter: 42<i\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n"
+                        "  filter: 42<i\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 
@@ -2862,13 +2861,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // constant values used in aggregates disable vectorization
+    @Test
     public void testGroupByNotKeyed5() throws Exception {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select first(10), last(d), avg(10), min(10), max(10) from a",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [first(10),last(d),avg(10),min(10),max(10)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
