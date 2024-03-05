@@ -4802,6 +4802,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                 final int orderByAdviceSize = orderByAdvice.size();
                 if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.hasIntervalFilters()) {
+                    // This function cannot handle dotted aliases
+                    assert !Chars.contains(model.getOrderByAdvice().getQuick(0).token, ".");
+
                     // we can only deal with 'order by symbol, timestamp' at best
                     // skip this optimisation if order by is more extensive
                     final int columnIndex = myMeta.getColumnIndexQuiet(model.getOrderByAdvice().getQuick(0).token);

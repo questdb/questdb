@@ -1926,9 +1926,13 @@ public class SqlOptimiser implements Mutable {
         return func;
     }
 
+
+
+
     private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model, int orderByMnemonic) {
         orderByAdvice.clear();
         ObjList<ExpressionNode> orderBy = model.getOrderBy();
+
         int len = orderBy.size();
         if (len == 0) {
             // propagate advice in case nested model can implement it efficiently (e.g. with backward scan)
@@ -2874,12 +2878,29 @@ public class SqlOptimiser implements Mutable {
         }
 
         final ObjList<QueryModel> jm = model.getJoinModels();
+
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
                 if (model.getGroupBy().size() == 0
                         && model.getSampleBy() == null
-                        && model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT) { // order by should not copy through group by, sample by or distinct
+                        && model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT
+                    ) { // order by should not copy through group by, sample by or distinct
+
+                    // if it has names qualified by table
+                    if (checkForDot(orderByAdvice)) {
+                        // if these are for more than one table
+                        if (!checkForConsistentPrefix(orderByAdvice)) {
+                            // don't push
+                            continue;
+                        }
+
+                        // if its for one table, check that this is the valid model to push it to
+                        if (!Chars.equals(qm.getTableName(), getTablePrefix(orderByAdvice.getQuick(0).token))) {
+                            continue;
+                        }
+                    }
+
                     qm.setOrderByAdviceMnemonic(orderByMnemonic);
                     qm.copyOrderByAdvice(orderByAdvice);
                     qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
@@ -2896,6 +2917,40 @@ public class SqlOptimiser implements Mutable {
             optimiseOrderBy(union, orderByMnemonic);
         }
     }
+
+    private CharSequence getTablePrefix(CharSequence seq) {
+        int loc = Chars.indexOf(seq, '.');
+        assert loc > -1;
+        return seq.subSequence(0, loc);
+    }
+
+    private boolean checkForDot(ObjList<ExpressionNode> orderByAdvice) {
+        for (int j = 0, n = orderByAdvice.size(); j < n; j++) {
+            if (Chars.contains(orderByAdvice.getQuick(j).token, ".")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean checkForConsistentPrefix(ObjList<ExpressionNode> orderByAdvice) {
+        CharSequence prefix = "";
+        boolean consistentPrefix = true;
+        for (int j = 0; j < orderByAdvice.size(); j++) {
+            CharSequence advice = orderByAdvice.getQuick(j).token;
+            int loc = Chars.indexOf(advice, '.');
+            if (loc > -1) {
+                if (prefix == "") {
+                    prefix = advice.subSequence(0, loc);
+                }
+                if (!Chars.equalsIgnoreCase(prefix, advice.subSequence(0, loc))) {
+                    consistentPrefix = false;
+                }
+            }
+        }
+
+        return consistentPrefix;
+    };
 
     private void parseFunctionAndEnumerateColumns(
             @NotNull QueryModel model,

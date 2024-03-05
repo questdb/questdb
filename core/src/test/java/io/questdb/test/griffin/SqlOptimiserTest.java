@@ -170,6 +170,83 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testOrderByAdviceWorksWithAsofJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (\n" +
+                    "  s SYMBOL index,\n" +
+                    "  ts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY;");
+
+            ddl("CREATE TABLE t2 (\n" +
+                    "  s SYMBOL index,\n" +
+                    "  ts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY;");
+
+            final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                    "FROM t1\n" +
+                    "ASOF JOIN t2 ON t1.s = t2.s\n" +
+                    "WHERE t1.ts in '2023-09-01T00:00:00.000Z' AND t1.ts <= '2023-09-01T01:00:00.000Z'\n" +
+                    "ORDER BY t1.s, t1.ts\n" +
+                    "LIMIT 1000000;";
+
+            compile(query);
+        });
+    }
+
+    @Test
+    public void testOrderByAdviceWorksWithAsofJoin2() throws Exception {
+        // Case when order by is for more than one table prefix
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (\n" +
+                    "  s SYMBOL index,\n" +
+                    "  ts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY;");
+
+            ddl("CREATE TABLE t2 (\n" +
+                    "  s SYMBOL index,\n" +
+                    "  ts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY;");
+
+            final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                    "    FROM t1\n" +
+                    "    ASOF JOIN t2 ON t1.s = t2.s\n" +
+                    "    WHERE t1.ts in '2023-09-01T00:00:00.000Z' AND t1.ts <= '2023-09-01T01:00:00.000Z'\n" +
+                    "    ORDER BY t1.s, t2.ts\n" +
+                    "    LIMIT 1000000;";
+
+            select(query);
+        });
+    }
+
+
+
+
+
+    @Test
+    public void testOrderByAdviceWorksWithRegularJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (\n" +
+                    "  s SYMBOL index,\n" +
+                    "  ts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY;");
+
+            ddl("CREATE TABLE t2 (\n" +
+                    "  s SYMBOL index,\n" +
+                    "  ts TIMESTAMP\n" +
+                    ") timestamp(ts) PARTITION BY DAY;");
+
+            final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                    "FROM t1\n" +
+                    "JOIN t2 ON t1.s = t2.s\n" +
+                    "WHERE t1.ts in '2023-09-01T00:00:00.000Z' AND t1.ts <= '2023-09-01T01:00:00.000Z'\n" +
+                    "ORDER BY t1.s, t1.ts\n" +
+                    "LIMIT 1000000;";
+
+            compile(query);
+        });
+    }
+
     protected QueryModel compileModel(String query, int modelType) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
