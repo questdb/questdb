@@ -4310,6 +4310,8 @@ public class SqlOptimiser implements Mutable {
                 ObjList<CharSequence> insetColumnAliases = new ObjList<>();
                 tempList.clear();
 
+                boolean timestampOnly = true;
+
                 // the "select" clause does not include timestamp
                 if (timestampAlias == null) {
 
@@ -4321,6 +4323,8 @@ public class SqlOptimiser implements Mutable {
 
                     timestampAlias = createColumnAlias(timestamp.token, model);
                     model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias));
+
+                    timestampOnly = false;
                 } else {
                     // Check if there are more aliased timestamp references, e.g.
                     // `select timestamp a, timestamp b, timestamp c`
@@ -4329,7 +4333,6 @@ public class SqlOptimiser implements Mutable {
                     // columnToAlias map is lossy, it only stores "last" alias (non-deterministic)
                     // to find other aliases we have to loop thru all the columns. We are removing
                     // columns in this loop, that is why there is no auto-increment.
-
 
                     for (int i = 0, k = 0, n = model.getBottomUpColumns().size(); i < n; k++) {
                         QueryColumn qc = model.getBottomUpColumns().getQuick(i);
@@ -4349,6 +4352,9 @@ public class SqlOptimiser implements Mutable {
                             n--;
                             wrapAction = SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES;
                         } else {
+                            if (!Chars.equalsIgnoreCase(qc.getAst().token, timestamp.token)) {
+                                timestampOnly = false;
+                            }
                             i++;
                         }
                     }
@@ -4382,6 +4388,10 @@ public class SqlOptimiser implements Mutable {
                         timestampPos,
                         queryColumnPool.next().of(timestampAlias, top)
                 );
+
+                if (timestampOnly) {
+                    nested.addGroupBy(top);
+                }
 
                 // check if order by is already present
                 if (nested.getOrderBy().size() == 0) {
