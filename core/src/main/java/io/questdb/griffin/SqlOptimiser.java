@@ -2881,6 +2881,7 @@ public class SqlOptimiser implements Mutable {
 
         boolean orderByAdviceHasDot = checkForDot(orderByAdvice);
 
+        ObjList<ExpressionNode> newAdvice = null;
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
@@ -2888,12 +2889,6 @@ public class SqlOptimiser implements Mutable {
                         && model.getSampleBy() == null
                         && model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT
                     ) { // order by should not copy through group by, sample by or distinct
-
-                    // if the model is a join
-                    if (qm.getJoinModels().size() > 1) {
-                        // don't push down
-                        continue;
-                    }
 
                     // if order by advice has names qualified by table
                     if (orderByAdviceHasDot) {
@@ -2905,23 +2900,61 @@ public class SqlOptimiser implements Mutable {
                         }
 
                         // if it is for one table, check that this is the valid model to push it to
-                        if (!Chars.equals(qm.getTableName(), getTablePrefix(orderByAdvice.getQuick(0).token))) {
+                        CharSequence prefix = getTablePrefix(orderByAdvice.getQuick(0).token);
+
+                        // check if the table name matchies
+                        if (!(Chars.equalsNc(prefix, qm.getTableName())
+                        || (qm.getAlias() != null && Chars.equalsNc(prefix, qm.getAlias().token)))) {
                             continue;
                         }
 
-                        // it is pushable advice - now remove the table alias
+                        // it is pushable advice - now deal with table alias
                         int d;
                         CharSequence token;
-                        for (int j = 0, m = orderByAdvice.size(); j < m; j++) {
-                            token = orderByAdvice.getQuick(j).token;
-                            d = Chars.indexOf(token, '.');
-                            orderByAdvice.getQuick(j).token = token.subSequence(d + 1, token.length());
-                        }
-                    }
+                        ExpressionNode node;
 
-                    qm.setOrderByAdviceMnemonic(orderByMnemonic);
-                    qm.copyOrderByAdvice(orderByAdvice);
-                    qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+                        if (newAdvice == null) {
+                            newAdvice = new ObjList<ExpressionNode>();
+                            for (int j = 0, m = orderByAdvice.size(); j < m; j++) {
+                                node = orderByAdvice.getQuick(j);
+                                token = orderByAdvice.getQuick(j).token;
+                                d = Chars.indexOf(token, '.');
+                                newAdvice.add(expressionNodePool.next().of(node.type, token.subSequence(d + 1, token.length()), node.precedence, node.position));
+                            }
+                        }
+
+                        // if asof, only push if timestamp is first col
+                        if (qm.getJoinType() == QueryModel.JOIN_ASOF) {
+                            token = orderByAdvice.getQuick(0).token;
+                            QueryColumn qc = qm.getAliasToColumnMap().get(token);
+
+                            if (qc == null) {
+                                continue;
+                            }
+
+                            // if the first col is the designated timestamp
+                            if (qc.getColumnType() != ColumnType.TIMESTAMP) {
+                                // not timestamp so don't push down
+                                continue;
+                            }
+
+                            if (!Chars.equalsIgnoreCase(qm.getTimestamp().token, qc.getAst().token)) {
+                                // no designated so don't push down
+                                continue;
+                            }
+
+                        }
+
+                        qm.setOrderByAdviceMnemonic(orderByMnemonic);
+                        qm.copyOrderByAdvice(newAdvice);
+                        qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+                        // now choose to push
+                        // if its asof, only push if timestamp is first
+                    } else {
+                        qm.setOrderByAdviceMnemonic(orderByMnemonic);
+                        qm.copyOrderByAdvice(orderByAdvice);
+                        qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+                    }
                 }
                 optimiseOrderBy(qm, orderByMnemonic);
             }
