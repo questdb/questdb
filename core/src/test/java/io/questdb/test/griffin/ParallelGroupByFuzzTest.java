@@ -42,6 +42,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -1974,6 +1975,22 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStringKeyedFirstFunctionFuzz() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testFirstLastFunctionFuzz(
+                "SELECT key, " +
+                        " first(aboolean) aboolean, first(abyte) abyte, first(ageobyte) ageobyte, " +
+                        " first(ashort) ashort, first(ageoshort) ageoshort, first(achar) achar, " +
+                        " first(anint) anint, first(anipv4) anipv4, first(ageoint) ageoint, first(afloat) afloat, " +
+                        " first(along) along, first(adouble) adouble, first(adate) adate, first(ts) ts, first(ageolong) ageolong, " +
+                        " first(asymbol) asymbol, first(astring) astring, " +
+                        " first(auuid) auuid " +
+                        "FROM tab ORDER BY key DESC"
+        );
+    }
+
+    @Test
     public void testParallelStringKeyedFirstNotNullFunction() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -1992,6 +2009,22 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k2\t0101\t011101100011\tL\t1978144263\t171.117.213.66\t0111100011010111\t0.5709\t-7439145921574737517\t0.7763904674818695\t2015-09-18T13:48:49.642Z\t1970-01-05T15:15:00.000000Z\t01010100000001000011010111010101\tCPSW\tOOZZV\t9b27eba5-e9cf-41e2-9660-300cea7db540\n" +
                         "k1\t1100\t001111011001\tT\t-85170055\t149.34.19.60\t0010110111110001\t0.8757\t8416773233910814357\t0.8799634725391621\t2015-08-17T21:12:06.116Z\t1970-01-05T15:06:40.000000Z\t10110001001100000010111011111011\tCPSW\tDXYSBEO\t4c009450-0fbf-4dfe-b6fb-2001fe5dfb09\n" +
                         "k0\t0000\t000000110100\tO\t-640305320\t22.51.83.99\t1011000000001111\t0.9918\t-5315599072928175674\t0.32424562653969957\t2015-02-10T08:56:03.707Z\t1970-01-05T15:40:00.000000Z\t11011011111111001010110010100110\tCPSW\tQZSLQVFGPPRGSXB\ta1d06d6e-b3a5-4079-8972-5663d8da9768\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyedFirstNotNullFunctionFuzz() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testFirstLastFunctionFuzz(
+                "SELECT key, " +
+                        " first_not_null(ageobyte) ageobyte, " +
+                        " first_not_null(ageoshort) ageoshort, first_not_null(achar) achar, " +
+                        " first_not_null(anint) anint, first_not_null(anipv4) anipv4, first_not_null(ageoint) ageoint, first_not_null(afloat) afloat, " +
+                        " first_not_null(along) along, first_not_null(adouble) adouble, first_not_null(adate) adate, first_not_null(ts) ts, first_not_null(ageolong) ageolong, " +
+                        " first_not_null(asymbol) asymbol, first_not_null(astring) astring, " +
+                        " first_not_null(auuid) auuid " +
+                        "FROM tab ORDER BY key DESC"
         );
     }
 
@@ -2034,6 +2067,22 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStringKeyedLastFunctionFuzz() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testFirstLastFunctionFuzz(
+                "SELECT key, " +
+                        " last(aboolean) aboolean, last(abyte) abyte, last(ageobyte) ageobyte, " +
+                        " last(ashort) ashort, last(ageoshort) ageoshort, last(achar) achar, " +
+                        " last(anint) anint, last(anipv4) anipv4, last(ageoint) ageoint, last(afloat) afloat, " +
+                        " last(along) along, last(adouble) adouble, last(adate) adate, last(ts) ts, last(ageolong) ageolong, " +
+                        " last(asymbol) asymbol, last(astring) astring, " +
+                        " last(auuid) auuid " +
+                        "FROM tab ORDER BY key DESC"
+        );
+    }
+
+    @Test
     public void testParallelStringKeyedLastNotNullFunction() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -2052,6 +2101,22 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k2\t0110\t101001101101\tS\t1284672871\t123.157.83.21\t0000001101111100\t0.0007\t9154573717374787696\t0.151734552716993\t2015-02-06T11:08:08.607Z\t1970-01-28T18:06:40.000000Z\t00011101011001001010001110011010\tCPSW\tPWKZMYWJ\tcd1c6b4b-1b2d-4324-9477-dc8aeb3e13f3\n" +
                         "k1\t1100\t011101001110\tI\t1516951853\t88.98.63.55\t1010001110110001\t0.5834\t-6618178923628468143\t0.1996073004071821\t2015-05-23T20:25:36.412Z\t1970-01-28T17:58:20.000000Z\t11001011111011110001101111100000\tPEHN\tFBGWS\t232fceaa-4da1-4f63-8f6d-0b7977b184bf\n" +
                         "k0\t0100\t111101110010\tY\t1033747429\t210.8.117.61\t0100111000110011\t0.0301\t6812734169481155056\t0.15322992873721464\t2015-06-04T13:11:05.363Z\t1970-01-28T18:31:40.000000Z\t01001000100000110011110011111100\tHYRX\tFYJXOSBUGGYTSKTY\t8055fd98-3b39-4806-9dbf-5a050468a62a\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyedLastNotNullFunctionFuzz() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testFirstLastFunctionFuzz(
+                "SELECT key, " +
+                        " last_not_null(ageobyte) ageobyte, " +
+                        " last_not_null(ageoshort) ageoshort, last_not_null(achar) achar, " +
+                        " last_not_null(anint) anint, last_not_null(anipv4) anipv4, last_not_null(ageoint) ageoint, last_not_null(afloat) afloat, " +
+                        " last_not_null(along) along, last_not_null(adouble) adouble, last_not_null(adate) adate, last_not_null(ts) ts, last_not_null(ageolong) ageolong, " +
+                        " last_not_null(asymbol) asymbol, last_not_null(astring) astring, " +
+                        " last_not_null(auuid) auuid " +
+                        "FROM tab ORDER BY key DESC"
         );
     }
 
@@ -2251,8 +2316,73 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private void testParallelGroupByAllTypes(String... queriesAndExpectedResults) throws Exception {
-        testParallelGroupByAllTypes(null, queriesAndExpectedResults);
+    private void testFirstLastFunctionFuzz(String query) throws Exception {
+        // With this test, we aim to verify correctness of merge() method
+        // implementation in first/last functions.
+
+        // This test controls sets enable parallel GROUP BY flag on its own.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        sqlExecutionContext.setRandom(rnd);
+
+                        ddl(
+                                compiler,
+                                "create table tab as (select" +
+                                        " 'k' || ((50 + x) % 5) key," +
+                                        " rnd_boolean() aboolean," +
+                                        " rnd_byte(2,50) abyte," +
+                                        " rnd_geohash(4) ageobyte," +
+                                        " rnd_short(10,1024) ashort," +
+                                        " rnd_geohash(12) ageoshort," +
+                                        " rnd_char() achar," +
+                                        " rnd_int(0,1000,3) anint," +
+                                        " rnd_ipv4() anipv4," +
+                                        " rnd_geohash(16) ageoint," +
+                                        " rnd_symbol(4,4,4,2) asymbol," +
+                                        " rnd_float(3) afloat," +
+                                        " rnd_long(0,1000,3) along," +
+                                        " rnd_double(3) adouble," +
+                                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 3) adate," +
+                                        " rnd_geohash(32) ageolong," +
+                                        " rnd_str(5,16,3) astring," +
+                                        " rnd_uuid4() auuid," +
+                                        " timestamp_sequence(400000000000, 500000000) ts" +
+                                        " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+
+                        // Run with single-threaded GROUP BY.
+                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, "false");
+                        TestUtils.printSql(
+                                engine,
+                                sqlExecutionContext,
+                                query,
+                                sink
+                        );
+
+                        // Run with parallel GROUP BY.
+                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, "true");
+                        final StringSink sinkB = new StringSink();
+                        TestUtils.printSql(
+                                engine,
+                                sqlExecutionContext,
+                                query,
+                                sinkB
+                        );
+
+                        // Compare the results.
+                        TestUtils.assertEquals(sink, sinkB);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     private void testParallelGroupByAllTypes(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {
@@ -2297,6 +2427,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    private void testParallelGroupByAllTypes(String... queriesAndExpectedResults) throws Exception {
+        testParallelGroupByAllTypes(null, queriesAndExpectedResults);
     }
 
     private void testParallelGroupByFaultTolerance(String query) throws Exception {
