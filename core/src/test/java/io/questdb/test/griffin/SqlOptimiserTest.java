@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
@@ -215,13 +216,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    ORDER BY t1.s, t2.ts\n" +
                     "    LIMIT 1000000;";
 
-            select(query);
+            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            }
+
         });
     }
-
-
-
-
 
     @Test
     public void testOrderByAdviceWorksWithRegularJoin() throws Exception {

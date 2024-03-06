@@ -2887,23 +2887,65 @@ public class SqlOptimiser implements Mutable {
                         && model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT
                     ) { // order by should not copy through group by, sample by or distinct
 
-                    // if it has names qualified by table
+                    // if order by advice has names qualified by table
                     if (checkForDot(orderByAdvice)) {
+
+
+
                         // if these are for more than one table
                         if (!checkForConsistentPrefix(orderByAdvice)) {
                             // don't push
                             continue;
                         }
 
-                        // if its for one table, check that this is the valid model to push it to
+                        // if it is for one table, check that this is the valid model to push it to
                         if (!Chars.equals(qm.getTableName(), getTablePrefix(orderByAdvice.getQuick(0).token))) {
                             continue;
                         }
+
+                        // it is pushable advice - now deal with table alias
+                        int d;
+                        CharSequence token;
+                        ExpressionNode node;
+                        ObjList<ExpressionNode> newAdvice = new ObjList<ExpressionNode>();
+                        for (int j = 0, m = orderByAdvice.size(); j < m; j++) {
+                            node = orderByAdvice.getQuick(j);
+                            token = orderByAdvice.getQuick(j).token;
+                            d = Chars.indexOf(token, '.');
+                            newAdvice.add(expressionNodePool.next().of(node.type, token.subSequence(d + 1, token.length()), node.precedence, node.position));
+                        }
+
+                        // if asof, only push if timestamp is first col
+                        if (qm.getJoinType() == QueryModel.JOIN_ASOF) {
+                            token = orderByAdvice.getQuick(0).token;
+                            QueryColumn qc = qm.getAliasToColumnMap().get(token);
+                            // if the first col is the designated timestamp
+                            if (qc.getColumnType() != ColumnType.TIMESTAMP) {
+                                // not timestamp so don't push down
+                                continue;
+                            }
+
+                            if (!Chars.equalsIgnoreCase(qm.getTimestamp().token, qc.getAst().token)) {
+                                // no designated so don't push down
+                                continue;
+                            }
+
+                            qm.setOrderByAdviceMnemonic(orderByMnemonic);
+                            qm.copyOrderByAdvice(newAdvice);
+                            qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+                        }
+                        // now choose to push
+                        // if its asof, only push if timestamp is first
+
+                        continue;
+
+                    } else {
+                        qm.setOrderByAdviceMnemonic(orderByMnemonic);
+                        qm.copyOrderByAdvice(orderByAdvice);
+                        qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
                     }
 
-                    qm.setOrderByAdviceMnemonic(orderByMnemonic);
-                    qm.copyOrderByAdvice(orderByAdvice);
-                    qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+
                 }
                 optimiseOrderBy(qm, orderByMnemonic);
             }
