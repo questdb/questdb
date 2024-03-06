@@ -64,7 +64,7 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long val = arg.getLong(record);
         if (val != Numbers.LONG_NaN) {
             final long hash = Hash.murmur3ToLong(val);
@@ -79,7 +79,7 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long val = arg.getLong(record);
         if (val != Numbers.LONG_NaN) {
             final long hash = Hash.murmur3ToLong(val);

@@ -55,7 +55,7 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final CharSequence val = arg.getStr(record);
         if (val == null) {
             mapValue.putLong(valueIndex, 0);
@@ -66,7 +66,7 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final CharSequence val = arg.getStr(record);
         if (val != null) {
             final long ptr = mapValue.getLong(valueIndex);

@@ -37,9 +37,35 @@ public interface GroupByFunction extends Function, Mutable {
     default void clear() {
     }
 
-    void computeFirst(MapValue mapValue, Record record);
+    /**
+     * Performs the first aggregation within a group.
+     * <p>
+     * Row id is provided for aggregation functions that consider row order, such as first/last.
+     * The value is guaranteed to be growing between subsequent calls. In case of parallel GROUP BY,
+     * this means that all row ids of a later page frame are guaranteed to be greater than row ids
+     * of all previous page frames. {@link Record#getRowId()} shouldn't be used for this purpose
+     * since not all records implement it, and it's not guaranteed to be growing.
+     *
+     * @param mapValue map value holding the group
+     * @param record   record holding the aggregated row
+     * @param rowId    row id; the value may be different from record.getRowId()
+     */
+    void computeFirst(MapValue mapValue, Record record, long rowId);
 
-    void computeNext(MapValue mapValue, Record record);
+    /**
+     * Performs a subsequent aggregation within a group.
+     * <p>
+     * Row id is provided for aggregation functions that consider row order, such as first/last.
+     * The value is guaranteed to be growing between subsequent calls. In case of parallel GROUP BY,
+     * this means that all row ids of a later page frame are guaranteed to be greater than row ids
+     * of all previous page frames. {@link Record#getRowId()} shouldn't be used for this purpose
+     * since not all records implement it, and it's not guaranteed to be growing.
+     *
+     * @param mapValue map value holding the group
+     * @param record   record holding the aggregated row
+     * @param rowId    row id; the value may be different from record.getRowId()
+     */
+    void computeNext(MapValue mapValue, Record record, long rowId);
 
     // only makes sense for non-keyed group by
     default boolean earlyExit(MapValue mapValue) {
@@ -97,10 +123,12 @@ public interface GroupByFunction extends Function, Mutable {
     default void setAllocator(GroupByAllocator allocator) {
     }
 
+    // used when doing interpolation
     default void setByte(MapValue mapValue, byte value) {
         throw new UnsupportedOperationException();
     }
 
+    // used when doing interpolation
     default void setDouble(MapValue mapValue, double value) {
         throw new UnsupportedOperationException();
     }
@@ -109,20 +137,24 @@ public interface GroupByFunction extends Function, Mutable {
         setNull(value);
     }
 
+    // used when doing interpolation
     default void setFloat(MapValue mapValue, float value) {
         throw new UnsupportedOperationException();
     }
 
+    // used when doing interpolation
     default void setInt(MapValue mapValue, int value) {
         throw new UnsupportedOperationException();
     }
 
+    // used when doing interpolation
     default void setLong(MapValue mapValue, long value) {
         throw new UnsupportedOperationException();
     }
 
     void setNull(MapValue mapValue);
 
+    // used when doing interpolation
     default void setShort(MapValue mapValue, short value) {
         throw new UnsupportedOperationException();
     }

@@ -43,12 +43,13 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong128(valueIndex, arg.getLong128Lo(record), arg.getLong128Hi(record));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        mapValue.putLong128(valueIndex + 1, arg.getLong128Lo(record), arg.getLong128Hi(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         // empty
     }
 
@@ -59,12 +60,12 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
 
     @Override
     public long getLong128Hi(Record rec) {
-        return rec.getLong128Hi(valueIndex);
+        return rec.getLong128Hi(valueIndex + 1);
     }
 
     @Override
     public long getLong128Lo(Record rec) {
-        return rec.getLong128Lo(valueIndex);
+        return rec.getLong128Lo(valueIndex + 1);
     }
 
     @Override
@@ -79,18 +80,35 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
 
     @Override
     public boolean isParallelismSupported() {
-        return false;
+        return UnaryFunction.super.isParallelismSupported();
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putLong128(valueIndex + 1, srcValue.getLong128Lo(valueIndex + 1), srcValue.getLong128Hi(valueIndex + 1));
+        }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.UUID);
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.UUID); // value
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong128(valueIndex, Numbers.LONG_NaN, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong128(valueIndex + 1, Numbers.LONG_NaN, Numbers.LONG_NaN);
     }
 
     @Override

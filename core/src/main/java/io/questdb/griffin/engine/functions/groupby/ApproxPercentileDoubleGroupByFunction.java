@@ -63,7 +63,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final DoubleHistogram histogram;
         if (histograms.size() <= histogramIndex) {
             // We pre-size the histogram for 1000x ratio to avoid resizes in some basic use cases
@@ -83,7 +83,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final DoubleHistogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
         final double val = exprFunc.getDouble(record);
         if (Numbers.isFinite(val)) {
