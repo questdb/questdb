@@ -139,6 +139,33 @@ public class SqlOptimiser implements Mutable {
         this.maxRecursion = configuration.getSqlWindowMaxRecursion();
     }
 
+    /**
+     * Checks if an alias appears in the columns and function args of a model.
+     * <p>
+     * Consider a query:<br>
+     * (select x1, sum(x1) from (select x as x1 from y))<br>
+     * If you were to move lift the column from the RHS to the LHS, you might get:<br>
+     * (select x x1, sum(x1) from y)<br>
+     * Now x1 is invalid.
+     */
+    public static boolean aliasAppearsInFuncArgs(QueryModel model, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
+        if (model == null) {
+            return false;
+        }
+        boolean appearsInArgs = false;
+        ObjList<QueryColumn> modelColumns = model.getColumns();
+        for (int i = 0, n = modelColumns.size(); i < n; i++) {
+            QueryColumn col = modelColumns.get(i);
+            switch (col.getAst().type) {
+                case FUNCTION:
+                case OPERATION:
+                    appearsInArgs |= searchExpressionNodeForAlias(col.getAst(), alias, sqlNodeStack);
+                    break;
+            }
+        }
+        return appearsInArgs;
+    }
+
     public void clear() {
         clearForUnionModelInJoin();
         contextPool.clear();
@@ -169,11 +196,11 @@ public class SqlOptimiser implements Mutable {
         constNameToToken.clear();
     }
 
-    public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAlises, ExpressionNode node) {
+    public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
         for (int i = 0, max = groupByNodes.size(); i < max; i++) {
             ExpressionNode n = groupByNodes.getQuick(i);
             if (ExpressionNode.compareNodesExact(node, n)) {
-                return groupByAlises.getQuick(i);
+                return groupByAliases.getQuick(i);
             }
         }
         return null;
@@ -206,6 +233,34 @@ public class SqlOptimiser implements Mutable {
 
     private static boolean modelIsFlex(QueryModel model) {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
+    }
+
+    /**
+     * Recurse down expression node tree looking for an alias.
+     */
+    private static boolean searchExpressionNodeForAlias(ExpressionNode node, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
+        sqlNodeStack.clear();
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (Chars.equalsIgnoreCase(node.token, alias)) {
+                    return true;
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.add(node.args.getQuick(i));
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return false;
     }
 
     private static void unlinkDependencies(QueryModel model, int parent, int child) {
@@ -932,6 +987,22 @@ public class SqlOptimiser implements Mutable {
         }
 
         return false;
+    }
+
+    private boolean checkIfTranslatingModelIsRedundant(boolean useInnerModel, boolean useGroupByModel, boolean useWindowModel, boolean forceTranslatingModel, boolean checkTranslatingModel, QueryModel translatingModel) {
+        // check if translating model is redundant, e.g.
+        // that it neither chooses between tables nor renames columns
+        boolean translationIsRedundant = (useInnerModel || useGroupByModel || useWindowModel) && !forceTranslatingModel;
+        if (translationIsRedundant && checkTranslatingModel) {
+            for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
+                QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
+                if (!Chars.equalsIgnoreCase(column.getAst().token, column.getAlias())) {
+                    translationIsRedundant = false;
+                    break;
+                }
+            }
+        }
+        return translationIsRedundant;
     }
 
     private void checkIsNotAggregateOrWindowFunction(ExpressionNode node, QueryModel model) throws SqlException {
@@ -4524,7 +4595,7 @@ public class SqlOptimiser implements Mutable {
 
                     addMissingTablePrefixes(qc.getAst(), baseModel);
                     final int beforeSplit = groupByModel.getBottomUpColumns().size();
-                    // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in  outer virtual model
+                    // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
                     ExpressionNode en = rewriteGroupBySelectExpression(qc.getAst(), groupByModel, groupByNodes, groupByAliases);
                     if (qc.getAst() == en) {
                         useOuterModel = true;
@@ -4809,77 +4880,6 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return root;
-    }
-
-    private boolean checkIfTranslatingModelIsRedundant(boolean useInnerModel, boolean useGroupByModel, boolean useWindowModel, boolean forceTranslatingModel, boolean checkTranslatingModel, QueryModel translatingModel) {
-        // check if translating model is redundant, e.g.
-        // that it neither chooses between tables nor renames columns
-        boolean translationIsRedundant = (useInnerModel || useGroupByModel || useWindowModel) && !forceTranslatingModel;
-        if (translationIsRedundant && checkTranslatingModel) {
-            for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
-                QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
-                if (!Chars.equalsIgnoreCase(column.getAst().token, column.getAlias())) {
-                    translationIsRedundant = false;
-                    break;
-                }
-            }
-        }
-        return translationIsRedundant;
-    }
-
-    /**
-     * Checks if an alias appears in the columns and function args of a model.
-     * <p>
-     * Consider a query:<br>
-     * (select x1, sum(x1) from (select x as x1 from y))<br>
-     * If you were to move lift the column from the RHS to the LHS, you might get:<br>
-     * (select x x1, sum(x1) from y)<br>
-     * Now x1 is invalid.
-     */
-    public static boolean aliasAppearsInFuncArgs(QueryModel model, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
-        if (model == null) {
-            return false;
-        }
-        boolean appearsInArgs = false;
-        ObjList<QueryColumn> modelColumns = model.getColumns();
-        for (int i = 0, n = modelColumns.size(); i < n; i++) {
-            QueryColumn col = modelColumns.get(i);
-            switch (col.getAst().type) {
-                case FUNCTION:
-                case OPERATION:
-                    appearsInArgs |= searchExpressionNodeForAlias(col.getAst(), alias, sqlNodeStack);
-                    break;
-            }
-        }
-        return appearsInArgs;
-    }
-
-    /**
-     * Recurse down expression node tree looking for an alias.
-     */
-    private static boolean searchExpressionNodeForAlias(ExpressionNode node, CharSequence alias, ArrayDeque<ExpressionNode> sqlNodeStack) {
-        sqlNodeStack.clear();
-
-        // pre-order iterative tree traversal
-        // see: http://en.wikipedia.org/wiki/Tree_traversal
-
-        while (!sqlNodeStack.isEmpty() || node != null) {
-            if (node != null) {
-                if (Chars.equalsIgnoreCase(node.token, alias)) {
-                    return true;
-                }
-                for (int i = 0, n = node.args.size(); i < n; i++) {
-                    sqlNodeStack.add(node.args.getQuick(i));
-                }
-                if (node.rhs != null) {
-                    sqlNodeStack.push(node.rhs);
-                }
-                node = node.lhs;
-            } else {
-                node = sqlNodeStack.poll();
-            }
-        }
-        return false;
     }
 
     // the intent is to either validate top-level columns in select columns or replace them with function calls
