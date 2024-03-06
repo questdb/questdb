@@ -103,6 +103,8 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
 
     @Override
     public void setFloat(MapValue mapValue, float value) {
+        // This method is used to define interpolated points and to init
+        // an empty value, so it's ok to reset the row id field here.
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putFloat(valueIndex + 1, value);
     }

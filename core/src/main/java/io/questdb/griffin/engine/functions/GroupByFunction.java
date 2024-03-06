@@ -41,11 +41,14 @@ public interface GroupByFunction extends Function, Mutable {
      * Performs the first aggregation within a group.
      * <p>
      * Row id is provided for aggregation functions that consider row order, such as first/last.
-     * {@link Record#getRowId()} shouldn't be used for this purpose since not all records implement it.
+     * The value is guaranteed to be growing between subsequent calls. In case of parallel GROUP BY,
+     * this means that all row ids of a later page frame are guaranteed to be greater than row ids
+     * of all previous page frames. {@link Record#getRowId()} shouldn't be used for this purpose
+     * since not all records implement it, and it's not guaranteed to be growing.
      *
      * @param mapValue map value holding the group
      * @param record   record holding the aggregated row
-     * @param rowId    row id, guaranteed to be growing; the value may be different from record.getRowId()
+     * @param rowId    row id; the value may be different from record.getRowId()
      */
     void computeFirst(MapValue mapValue, Record record, long rowId);
 
@@ -53,11 +56,14 @@ public interface GroupByFunction extends Function, Mutable {
      * Performs a subsequent aggregation within a group.
      * <p>
      * Row id is provided for aggregation functions that consider row order, such as first/last.
-     * {@link Record#getRowId()} shouldn't be used for this purpose since not all records implement it.
+     * The value is guaranteed to be growing between subsequent calls. In case of parallel GROUP BY,
+     * this means that all row ids of a later page frame are guaranteed to be greater than row ids
+     * of all previous page frames. {@link Record#getRowId()} shouldn't be used for this purpose
+     * since not all records implement it, and it's not guaranteed to be growing.
      *
      * @param mapValue map value holding the group
      * @param record   record holding the aggregated row
-     * @param rowId    row id, guaranteed to be growing; the value may be different from record.getRowId()
+     * @param rowId    row id; the value may be different from record.getRowId()
      */
     void computeNext(MapValue mapValue, Record record, long rowId);
 

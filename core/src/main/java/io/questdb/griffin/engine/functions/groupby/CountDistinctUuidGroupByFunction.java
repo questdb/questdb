@@ -72,7 +72,6 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
-            ;
         }
     }
 

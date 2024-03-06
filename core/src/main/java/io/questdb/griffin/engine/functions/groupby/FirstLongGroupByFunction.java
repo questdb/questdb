@@ -103,6 +103,8 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
 
     @Override
     public void setLong(MapValue mapValue, long value) {
+        // This method is used to define interpolated points and to init
+        // an empty value, so it's ok to reset the row id field here.
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putLong(valueIndex + 1, value);
     }

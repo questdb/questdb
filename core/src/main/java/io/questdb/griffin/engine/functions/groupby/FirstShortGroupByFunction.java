@@ -107,6 +107,8 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     }
 
     public void setShort(MapValue mapValue, short value) {
+        // This method is used to define interpolated points and to init
+        // an empty value, so it's ok to reset the row id field here.
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putShort(valueIndex + 1, value);
     }

@@ -103,6 +103,8 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
 
     @Override
     public void setDouble(MapValue mapValue, double value) {
+        // This method is used to define interpolated points and to init
+        // an empty value, so it's ok to reset the row id field here.
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putDouble(valueIndex + 1, value);
     }

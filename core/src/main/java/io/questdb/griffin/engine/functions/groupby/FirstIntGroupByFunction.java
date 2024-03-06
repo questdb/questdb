@@ -109,6 +109,8 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
 
     @Override
     public void setInt(MapValue mapValue, int value) {
+        // This method is used to define interpolated points and to init
+        // an empty value, so it's ok to reset the row id field here.
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putInt(valueIndex + 1, value);
     }
