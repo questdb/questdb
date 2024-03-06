@@ -45,7 +45,7 @@ public interface GroupByFunction extends Function, Mutable {
      *
      * @param mapValue map value holding the group
      * @param record   record holding the aggregated row
-     * @param rowId    row id, guaranteed to be monotonically growing; the value may be different from record.getRowId()
+     * @param rowId    row id, guaranteed to be growing; the value may be different from record.getRowId()
      */
     void computeFirst(MapValue mapValue, Record record, long rowId);
 
@@ -57,7 +57,7 @@ public interface GroupByFunction extends Function, Mutable {
      *
      * @param mapValue map value holding the group
      * @param record   record holding the aggregated row
-     * @param rowId    row id, guaranteed to be monotonically growing; the value may be different from record.getRowId()
+     * @param rowId    row id, guaranteed to be growing; the value may be different from record.getRowId()
      */
     void computeNext(MapValue mapValue, Record record, long rowId);
 
