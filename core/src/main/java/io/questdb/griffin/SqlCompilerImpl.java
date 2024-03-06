@@ -1124,7 +1124,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (reader != null) {
                 partitionBy = reader.getPartitionedBy();
             } else {
-                try(var meta = engine.getTableMetadata(tableToken)) {
+                try(TableMetadata meta = engine.getTableMetadata(tableToken)) {
                     partitionBy = meta.getPartitionBy();
                 }
             }
