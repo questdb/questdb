@@ -1120,13 +1120,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
+            final int partitionBy;
             if (reader != null) {
-                try {
-                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy(), 0, -1);
-                    alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
-                } catch (CairoException e) {
-                    throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
+                partitionBy = reader.getPartitionedBy();
+            } else {
+                try(var meta = engine.getTableMetadata(tableToken)) {
+                    partitionBy = meta.getPartitionBy();
                 }
+            }
+            try {
+                long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy, 0, -1);
+                alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
+            } catch (CairoException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
             }
 
             tok = SqlUtil.fetchNext(lexer);
