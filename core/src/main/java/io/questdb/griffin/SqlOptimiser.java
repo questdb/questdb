@@ -3023,12 +3023,15 @@ public class SqlOptimiser implements Mutable {
         CharSequence token;
         ExpressionNode node;
 
-        ObjList<ExpressionNode> newAdvice = new ObjList<ExpressionNode>();
-        for (int j = 0, m = orderByAdvice.size(); j < m; j++) {
-            node = orderByAdvice.getQuick(j);
-            token = node.token;
-            d = Chars.indexOf(token, '.');
-            newAdvice.add(expressionNodePool.next().of(node.type, token.subSequence(d + 1, token.length()), node.precedence, node.position));
+        ObjList<ExpressionNode> newAdvice = orderByAdvice;
+        if (orderByAdviceHasDot) {
+            newAdvice = new ObjList<ExpressionNode>();
+            for (int j = 0, m = orderByAdvice.size(); j < m; j++) {
+                node = orderByAdvice.getQuick(j);
+                token = node.token;
+                d = Chars.indexOf(token, '.');
+                newAdvice.add(expressionNodePool.next().of(node.type, token.subSequence(d + 1, token.length()), node.precedence, node.position));
+            }
         }
 
         if (secondaryJoinModel != null) {
@@ -3045,6 +3048,8 @@ public class SqlOptimiser implements Mutable {
                         setAndCopyAdvice(primaryJoinModel, newAdvice, orderByMnemonic, orderByDirectionAdvice);
                     }
                     break;
+                default:
+                    setAndCopyAdvice(primaryJoinModel, newAdvice, orderByMnemonic, orderByDirectionAdvice);
             }
         }
         // recursive call to propagate advice
