@@ -164,7 +164,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAlignToCalendarWithTimeZoneAndLimit() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(a) sum from (select [a] from x timestamp (timestamp)) sample by 1h align to calendar time zone 'UTC' with offset '00:00' limit 1",
+                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp] a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp from (select [a, timestamp] from x timestamp (timestamp)) order by timestamp limit 1)",
                 "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC' limit 1;",
                 model()
         );
@@ -173,7 +173,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAlignToCalendarWithTimeZoneAndOrderBy() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(a) sum from (select [a] from x timestamp (timestamp)) sample by 1h align to calendar time zone 'UTC' with offset '00:00' order by a desc",
+                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp] a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp from (select [a, timestamp] from x timestamp (timestamp)) order by a desc)",
                 "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC' order by a desc;",
                 model()
         );
@@ -182,7 +182,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAlignToCalendarWithTimeZoneEndingWithSemicolon() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(a) sum from (select [a] from x timestamp (timestamp)) sample by 1h align to calendar time zone 'UTC' with offset '00:00'",
+                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp] a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp from (select [a, timestamp] from x timestamp (timestamp)) order by timestamp)",
                 "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC';",
                 model()
         );

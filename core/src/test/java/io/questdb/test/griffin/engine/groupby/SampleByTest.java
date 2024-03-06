@@ -2678,14 +2678,13 @@ public class SampleByTest extends AbstractCairoTest {
         String plan = "Sort light\n" +
                 "  keys: [tstmp]\n" +
                 "    Filter filter: (tstmp>=1669852800000000 and 0<length(sym)*tstmp::long)\n" +
-                "        GroupBy vectorized: false\n" +
+                "        Async JIT Group By workers: 1\n" +
                 "          keys: [tstmp,sym]\n" +
                 "          values: [first(val),avg(val),last(val),max(val)]\n" +
-                "            Async JIT Filter workers: 1\n" +
-                "              filter: sym='B'\n" +
-                "                DataFrame\n" +
-                "                    Row forward scan\n" +
-                "                    Frame forward scan on: #TABLE#\n";
+                "          filter: sym='B'\n" +
+                "            DataFrame\n" +
+                "                Row forward scan\n" +
+                "                Frame forward scan on: #TABLE#\n";
 
         testSampleByPushdown("", "align to calendar", plan);
         testSampleByPushdown("none", "align to calendar", plan);
@@ -2704,14 +2703,13 @@ public class SampleByTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Sort light\n" +
                             "      keys: [ts1]\n" +
-                            "        GroupBy vectorized: false\n" +
+                            "        Async Group By workers: 1\n" +
                             "          keys: [tstmp,sym,ts1]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
-                            "            Async Filter workers: 1\n" +
-                            "              filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: x\n"
+                            "          filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
             );
         });
     }
@@ -3200,7 +3198,8 @@ public class SampleByTest extends AbstractCairoTest {
         assertQuery("id\ttime\tgeo6\tlat\tlon\n",
                 "select   id, time, geo6, last(lat) lat, last(lon) lon " +
                         "from pos " +
-                        "where id = 'A' sample by 15m ALIGN to CALENDAR",
+                        "where id = 'A' sample by 15m ALIGN to CALENDAR " +
+                        "order by time, id",
                 "CREATE TABLE pos (" +
                         "  time TIMESTAMP," +
                         "  id SYMBOL INDEX," +
@@ -3217,12 +3216,14 @@ public class SampleByTest extends AbstractCairoTest {
                 "id\ttime\tgeo6\tlat\tlon\n" +
                         "A\t1970-01-01T00:00:00.000000Z\tzzzzzz\t13.0\t13.0\n" +
                         "A\t1970-01-01T00:00:00.000000Z\tyyyyyy\t14.0\t14.0\n" +
-                        "A\t1970-01-01T00:15:00.000000Z\tyyyyyy\t28.0\t28.0\n" +
                         "A\t1970-01-01T00:15:00.000000Z\tzzzzzz\t29.0\t29.0\n" +
-                        "A\t1970-01-01T00:30:00.000000Z\tzzzzzz\t39.0\t39.0\n" +
+                        "A\t1970-01-01T00:15:00.000000Z\tyyyyyy\t28.0\t28.0\n" +
                         "A\t1970-01-01T00:30:00.000000Z\tyyyyyy\t40.0\t40.0\n" +
+                        "A\t1970-01-01T00:30:00.000000Z\tzzzzzz\t39.0\t39.0\n" +
                         "A\t1970-01-01T01:00:00.000000Z\tzzzzzz\t101.0\t101.0\n",
-                true, true, false
+                true,
+                true,
+                false
         );
     }
 
@@ -3739,9 +3740,10 @@ public class SampleByTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Sort light\n" +
                             "              keys: [ts1]\n" +
-                            "                GroupBy vectorized: false\n" +
+                            "                Async Group By workers: 1\n" +
                             "                  keys: [sym,ts1]\n" +
                             "                  values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "                  filter: null\n" +
                             "                    DataFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: x\n" +
@@ -3749,9 +3751,10 @@ public class SampleByTest extends AbstractCairoTest {
                             "            SelectedRecord\n" +
                             "                Sort light\n" +
                             "                  keys: [ts1]\n" +
-                            "                    GroupBy vectorized: false\n" +
+                            "                    Async Group By workers: 1\n" +
                             "                      keys: [sym,ts1]\n" +
                             "                      values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "                      filter: null\n" +
                             "                        DataFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: x\n"
@@ -3776,41 +3779,22 @@ public class SampleByTest extends AbstractCairoTest {
                             "    AsOf Join\n" +
                             "        Sort light\n" +
                             "          keys: [ts1]\n" +
-                            "            GroupBy vectorized: false\n" +
+                            "            Async Group By workers: 1\n" +
                             "              keys: [ts1,sym]\n" +
                             "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "              filter: null\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n" +
                             "        Sort light\n" +
                             "          keys: [ts1]\n" +
-                            "            GroupBy vectorized: false\n" +
+                            "            Async Group By workers: 1\n" +
                             "              keys: [ts1,sym]\n" +
                             "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "              filter: null\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n"
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByRewriteUTCOffset() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
-                            "select ts1, sym, min(val), avg(val), max(val) " +
-                            "from x " +
-                            "sample by 1m align to calendar time zone 'UTC'",
-                    "Sort light\n" +
-                            "  keys: [ts1]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts1,sym]\n" +
-                            "      values: [min(val),avg(val),max(val)]\n" +
-                            "      filter: null\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n"
             );
         });
     }
@@ -3864,9 +3848,10 @@ public class SampleByTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Sort light\n" +
                             "      keys: [b]\n" +
-                            "        GroupBy vectorized: false\n" +
+                            "        Async Group By workers: 1\n" +
                             "          keys: [b,sym]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "          filter: null\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
@@ -3885,9 +3870,10 @@ public class SampleByTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Sort light\n" +
                             "      keys: [b]\n" +
-                            "        GroupBy vectorized: false\n" +
+                            "        Async Group By workers: 1\n" +
                             "          keys: [b]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "          filter: null\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
@@ -3906,12 +3892,34 @@ public class SampleByTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Sort light\n" +
                             "      keys: [d]\n" +
-                            "        GroupBy vectorized: false\n" +
+                            "        Async Group By workers: 1\n" +
                             "          keys: [d,sym]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "          filter: null\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteUTCOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select ts1, sym, min(val), avg(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar time zone 'UTC'",
+                    "Sort light\n" +
+                            "  keys: [ts1]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts1,sym]\n" +
+                            "      values: [min(val),avg(val),max(val)]\n" +
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
             );
         });
     }
@@ -3932,18 +3940,20 @@ public class SampleByTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        Sort light\n" +
                             "          keys: [ts1]\n" +
-                            "            GroupBy vectorized: false\n" +
+                            "            Async Group By workers: 1\n" +
                             "              keys: [sym,ts1]\n" +
                             "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "              filter: null\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n" +
                             "    SelectedRecord\n" +
                             "        Sort light\n" +
                             "          keys: [ts1]\n" +
-                            "            GroupBy vectorized: false\n" +
+                            "            Async Group By workers: 1\n" +
                             "              keys: [sym,ts1]\n" +
                             "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "              filter: null\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n"
@@ -3966,15 +3976,17 @@ public class SampleByTest extends AbstractCairoTest {
                     "Union All\n" +
                             "    Sort light\n" +
                             "      keys: [tstmp]\n" +
-                            "        GroupBy vectorized: false\n" +
+                            "        Async Group By workers: 1\n" +
                             "          keys: [tstmp,sym]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "          filter: null\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [tstmp,sym]\n" +
                             "      values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
@@ -3993,9 +4005,10 @@ public class SampleByTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Sort light\n" +
                             "      keys: [d]\n" +
-                            "        GroupBy vectorized: false\n" +
+                            "        Async Group By workers: 1\n" +
                             "          keys: [d,sym]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "          filter: null\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
