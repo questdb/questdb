@@ -2353,7 +2353,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " rnd_str(5,16,3) astring," +
                                         " rnd_uuid4() auuid," +
                                         " timestamp_sequence(400000000000, 500000000) ts" +
-                                        " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
+                                        " from long_sequence(10000)) timestamp(ts) partition by day",
                                 sqlExecutionContext
                         );
 
