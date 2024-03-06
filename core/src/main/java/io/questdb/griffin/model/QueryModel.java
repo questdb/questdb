@@ -465,7 +465,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
      *
      * @param nested model containing columns mapped into the referenced model.
      */
-    public void collapseWouldBeNestedModel(QueryModel nested, ObjectPool<QueryColumn> queryColumnPool) {
+    public void mergePartially(QueryModel nested, ObjectPool<QueryColumn> queryColumnPool) {
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             QueryColumn thisColumn = bottomUpColumns.getQuick(i);
             if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
@@ -485,6 +485,25 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 // maintain sync between alias and column name
                 aliasToColumnNameMap.put(immutableAlias, thatColumn.getAst().token);
             }
+        }
+
+        if (nested.getOrderBy().size() > 0) {
+            assert getOrderBy().size() == 0;
+            for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
+                addOrderBy(nested.getOrderBy().getQuick(i), nested.getOrderByDirection().getQuick(i));
+            }
+            nested.getOrderBy().clear();
+            nested.getOrderByDirection().clear();
+        }
+
+        // If nested model has limits, the outer model must not have different limits.
+        // We are merging models affecting "select" clause and not the row count.
+        if (nested.limitLo != null || nested.limitHi != null) {
+            limitLo = nested.limitLo;
+            limitHi = nested.limitHi;
+            limitPosition = nested.limitPosition;
+            limitAdviceLo = nested.limitAdviceLo;
+            limitAdviceHi = nested.limitAdviceHi;
         }
     }
 

@@ -1052,7 +1052,27 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
-    private void collapseNestedChooseModels(@Nullable QueryModel model) {
+    /**
+     * Choose models are required in 3 specific cases:
+     * - Column duplicating.
+     * - Column reordering.
+     * - Column hiding. Nested model might select more columns for purpose of using them for
+     * ordering. But ordered column is not visible to the user and hidden by the select model.
+     * - Multiplexing joined tables.
+     * <p>
+     * It is conceivable that the optimiser creates degenerate cases of "chose" models:
+     * - Column renaming
+     * - No op, e.g. selecting the exact same columns as the nested models.
+     * - Choose model stacking, e.g. choose->choose->group by
+     * <p>
+     * This particular method implementation deals with stacked models.
+     * <p>
+     * Limitation: this does not collapse top-down-model, which makes it
+     * necessary to call this method before top-down-models.
+     *
+     * @param model the starting model.
+     */
+    private void collapseStackedChooseModels(@Nullable QueryModel model) {
         if (model == null) {
             return;
         }
@@ -1062,23 +1082,23 @@ public class SqlOptimiser implements Mutable {
                 model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
                         && nested != null
                         && nested.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
-                        && nested.getOrderBy().size() == 0
+                        && nested.getBottomUpColumns().size() <= model.getBottomUpColumns().size()
         ) {
             QueryModel nn = nested.getNestedModel();
-            model.collapseWouldBeNestedModel(nested, queryColumnPool);
+            model.mergePartially(nested, queryColumnPool);
             model.setNestedModel(nn);
 
             // same model, we changed nested
-            collapseNestedChooseModels(model);
+            collapseStackedChooseModels(model);
         } else {
-            collapseNestedChooseModels(nested);
+            collapseStackedChooseModels(nested);
         }
 
         for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
-            collapseNestedChooseModels(model.getJoinModels().getQuick(i));
+            collapseStackedChooseModels(model.getJoinModels().getQuick(i));
         }
 
-        collapseNestedChooseModels(model.getUnionModel());
+        collapseStackedChooseModels(model.getUnionModel());
     }
 
     private void collectModelAlias(QueryModel parent, int modelIndex, QueryModel model) throws SqlException {
@@ -4975,7 +4995,7 @@ public class SqlOptimiser implements Mutable {
             ) {
                 // we can "steal" all keys from inner model in case of group-by
                 // this is necessary in case of further parallel execution
-                groupByModel.collapseWouldBeNestedModel(innerVirtualModel, queryColumnPool);
+                groupByModel.mergePartially(innerVirtualModel, queryColumnPool);
                 useInnerModel = false;
             }
         }
@@ -5000,7 +5020,7 @@ public class SqlOptimiser implements Mutable {
                 }
             }
             if (!appearsInFuncArgs) {
-                selectedModel.collapseWouldBeNestedModel(translatingModel, queryColumnPool);
+                selectedModel.mergePartially(translatingModel, queryColumnPool);
                 translationIsRedundant = checkIfTranslatingModelIsRedundant(useInnerModel, true, false, false, false, translatingModel);
             }
         }
@@ -5450,7 +5470,7 @@ public class SqlOptimiser implements Mutable {
             createOrderHash(rewrittenModel);
             moveWhereInsideSubQueries(rewrittenModel);
             eraseColumnPrefixInWhereClauses(rewrittenModel);
-            collapseNestedChooseModels(rewrittenModel);
+            collapseStackedChooseModels(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);

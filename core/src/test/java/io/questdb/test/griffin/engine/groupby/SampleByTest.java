@@ -3789,6 +3789,27 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByRewriteWith() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "with y as (select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
+                            "from x " +
+                            "sample by 1m align to calendar) select * from y ",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [d]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [d,sym]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByRewriteMultipleTimestamps1NotKeyed() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
