@@ -42,8 +42,8 @@ public class GroupByFunctionsUpdaterFactory {
      * <p>
      * The generated class will have the following methods:
      * <ul>
-     * <li>updateNew(MapValue value, Record record) - calls f0, f1, f2 ... fn.computeFirst(value, record) for each group by function</li>
-     * <li>updateExisting(MapValue value, Record record) - calls f0, f1, f2 ... fn.computeNext(value, record) for each group by function</li>
+     * <li>updateNew(MapValue value, Record record, long rowId) - calls f0, f1, f2 ... fn.computeFirst(value, record, rowId) for each group by function</li>
+     * <li>updateExisting(MapValue value, Record record, long rowId) - calls f0, f1, f2 ... fn.computeNext(value, record, rowId) for each group by function</li>
      * <li>updateEmpty(MapValue value) - calls f0, f1, f2 ... fn.setEmpty(value) for each group by function</li>
      * <li>merge(MapValue destValue, MapValue srcValue) - calls fn.merge(destValue, srcValue) for each group by function</li>
      * <li>setFunctions(ObjList&lt;GroupByFunction&gt; groupByFunctions) - sets the group by functions to the fields. This method is called by the factory and should not be called by the caller.</li>
@@ -81,15 +81,15 @@ public class GroupByFunctionsUpdaterFactory {
             }
         }
 
-        final int computeFirstIndex = asm.poolInterfaceMethod(GroupByFunction.class, "computeFirst", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;)V");
-        final int computeNextIndex = asm.poolInterfaceMethod(GroupByFunction.class, "computeNext", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;)V");
+        final int computeFirstIndex = asm.poolInterfaceMethod(GroupByFunction.class, "computeFirst", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;J)V");
+        final int computeNextIndex = asm.poolInterfaceMethod(GroupByFunction.class, "computeNext", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;J)V");
         final int setEmptyIndex = asm.poolInterfaceMethod(GroupByFunction.class, "setEmpty", "(Lio/questdb/cairo/map/MapValue;)V");
         final int mergeFunctionIndex = asm.poolInterfaceMethod(GroupByFunction.class, "merge", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/map/MapValue;)V");
 
         final int updateNewIndex = asm.poolUtf8("updateNew");
-        final int updateNewSigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;)V");
+        final int updateNewSigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;J)V");
         final int updateExistingIndex = asm.poolUtf8("updateExisting");
-        final int updateExistingSigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;)V");
+        final int updateExistingSigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;J)V");
         final int updateEmptyIndex = asm.poolUtf8("updateEmpty");
         final int updateEmptySigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;)V");
         final int setFunctionsIndex = asm.poolUtf8("setFunctions");
@@ -201,13 +201,14 @@ public class GroupByFunctionsUpdaterFactory {
             int updateNameIndex,
             int updateSigIndex
     ) {
-        asm.startMethod(updateNameIndex, updateSigIndex, 3, 3);
+        asm.startMethod(updateNameIndex, updateSigIndex, 5, 5);
         for (int i = 0; i < fieldCount; i++) {
             asm.aload(0);
             asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
             asm.aload(1); // map value
             asm.aload(2); // record
-            asm.invokeInterface(computeNextIndex, 2);
+            asm.lload(3); // row id
+            asm.invokeInterface(computeNextIndex, 4);
         }
         asm.return_();
         asm.endMethodCode();
@@ -238,13 +239,14 @@ public class GroupByFunctionsUpdaterFactory {
             int updateNameIndex,
             int updateSigIndex
     ) {
-        asm.startMethod(updateNameIndex, updateSigIndex, 3, 3);
+        asm.startMethod(updateNameIndex, updateSigIndex, 5, 5);
         for (int i = 0; i < fieldCount; i++) {
             asm.aload(0);
             asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
             asm.aload(1); // map value
             asm.aload(2); // record
-            asm.invokeInterface(computeFirstIndex, 2);
+            asm.lload(3); // row id
+            asm.invokeInterface(computeFirstIndex, 4);
         }
         asm.return_();
         asm.endMethodCode();

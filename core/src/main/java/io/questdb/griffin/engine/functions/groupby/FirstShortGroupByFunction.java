@@ -32,10 +32,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
+    protected final Function arg;
     protected int valueIndex;
 
     public FirstShortGroupByFunction(@NotNull Function arg) {
@@ -43,12 +44,13 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putShort(valueIndex, arg.getShort(record));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        mapValue.putShort(valueIndex + 1, arg.getShort(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         // empty
     }
 
@@ -64,7 +66,7 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
 
     @Override
     public short getShort(Record rec) {
-        return rec.getShort(valueIndex);
+        return rec.getShort(valueIndex + 1);
     }
 
     @Override
@@ -74,13 +76,29 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
 
     @Override
     public boolean isParallelismSupported() {
-        return false;
+        return UnaryFunction.super.isParallelismSupported();
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putShort(valueIndex + 1, srcValue.getShort(valueIndex + 1));
+        }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.SHORT);
+        columnTypes.add(ColumnType.LONG);  // row id
+        columnTypes.add(ColumnType.SHORT); // value
     }
 
     @Override
@@ -89,7 +107,10 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     }
 
     public void setShort(MapValue mapValue, short value) {
-        mapValue.putShort(valueIndex, value);
+        // This method is used to define interpolated points and to init
+        // an empty value, so it's ok to reset the row id field here.
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putShort(valueIndex + 1, value);
     }
 
     @Override

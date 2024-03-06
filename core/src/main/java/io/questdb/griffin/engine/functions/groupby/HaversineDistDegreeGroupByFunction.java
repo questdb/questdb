@@ -51,7 +51,7 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         // first item
         saveFirstItem(mapValue, latDegree.getDouble(record), lonDegree.getDouble(record), timestamp.getTimestamp(record));
         // last item
@@ -61,7 +61,7 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         double lat1Degrees = getLastLatitude(mapValue);
         double lon1Degrees = getLastLongitude(mapValue);
         long timestamp1 = getLastTimestamp(mapValue);

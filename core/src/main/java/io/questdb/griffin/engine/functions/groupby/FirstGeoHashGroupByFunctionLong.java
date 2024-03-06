@@ -30,11 +30,12 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GeoByteFunction;
+import io.questdb.griffin.engine.functions.GeoLongFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 
-class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupByFunction, UnaryFunction {
+class FirstGeoHashGroupByFunctionLong extends GeoLongFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
     protected int valueIndex;
 
@@ -44,12 +45,13 @@ class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupBy
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong(valueIndex, arg.getGeoLong(record));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        mapValue.putLong(valueIndex + 1, arg.getGeoLong(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         // empty
     }
 
@@ -59,13 +61,8 @@ class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupBy
     }
 
     @Override
-    public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public long getGeoLong(Record rec) {
-        return rec.getGeoLong(valueIndex);
+        return rec.getGeoLong(valueIndex + 1);
     }
 
     @Override
@@ -80,18 +77,37 @@ class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupBy
 
     @Override
     public boolean isParallelismSupported() {
-        return false;
+        return UnaryFunction.super.isParallelismSupported();
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putLong(valueIndex + 1, srcValue.getGeoLong(valueIndex + 1));
+        }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.LONG); // value
     }
 
     @Override
     public void setLong(MapValue mapValue, long value) {
-        mapValue.putLong(valueIndex, value);
+        // This method is used to define interpolated points and to init
+        // an empty value, so it's ok to reset the row id field here.
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex + 1, value);
     }
 
     @Override

@@ -1716,14 +1716,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "and timestamp > dateadd('m', -30, now())) " +
                         "timestamp(x))",
                 "SelectedRecord\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      values: [last(timestamp),last(price)]\n" +
-                        "        Async JIT Filter workers: 1\n" +
-                        "          filter: symbol='BTC-USD'\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Interval forward scan on: trades\n" +
-                        "                  intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
+                        "      filter: symbol='BTC-USD'\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Interval forward scan on: trades\n" +
+                        "              intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
         );
     }
 
@@ -2378,7 +2377,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
-    @Test // only none, single int|symbol key cases are vectorized
+    @Test
     public void testGroupByBoolean() throws Exception {
         assertPlan(
                 "create table a (l long, b boolean)",
@@ -2408,7 +2407,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // only none, single int|symbol key cases are vectorized
+    @Test
     public void testGroupByBooleanWithFilter() throws Exception {
         assertPlan(
                 "create table a (l long, b boolean)",
@@ -2423,7 +2422,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // only none, single int|symbol key cases are vectorized
+    @Test
     public void testGroupByDouble() throws Exception {
         assertPlan(
                 "create table a (l long, d double)",
@@ -2438,7 +2437,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // only none, single int|symbol key cases are vectorized
+    @Test
     public void testGroupByFloat() throws Exception {
         assertPlan(
                 "create table a (l long, f float)",
@@ -2453,7 +2452,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test //special case
+    @Test // special case
     public void testGroupByHour() throws Exception {
         assertPlan(
                 "create table a (ts timestamp, d double)",
@@ -2493,6 +2492,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [i]\n" +
                         "      values: [min(d)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByInt3() throws Exception {
+        assertPlan(
+                "create table a (i int, l long)",
+                "select i, max(l) - min(l) delta from a group by i",
+                "VirtualRecord\n" +
+                        "  functions: [i,max-min]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [i]\n" +
+                        "      values: [min(l),max(l)]\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
@@ -2621,7 +2636,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // only none, single int|symbol key cases are vectorized
+    @Test
     public void testGroupByLong() throws Exception {
         assertPlan(
                 "create table a ( l long, d double)",
@@ -2765,7 +2780,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByNotKeyed1() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select min(d) from a",
                 "GroupBy vectorized: true\n" +
                         "  values: [min(d)]\n" +
@@ -2778,7 +2793,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByNotKeyed10() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select max(i) from (select * from a join a b on i )",
                 "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
@@ -2798,10 +2813,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByNotKeyed11() throws Exception {
         assertPlan(
-                "create table a ( gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))",
+                "create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))",
                 "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2811,12 +2827,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByNotKeyed12() throws Exception {
         assertPlan(
-                "create table a ( gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)",
+                "create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)",
                 "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42",
-                "GroupBy vectorized: false\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
-                        "    Async JIT Filter workers: 1\n" +
-                        "      filter: 42<i\n" +
+                        "  filter: 42<i\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNotKeyed13() throws Exception {
+        assertPlan(
+                "create table a (i int)",
+                "select max(i) - min(i) from a",
+                "VirtualRecord\n" +
+                        "  functions: [max-min]\n" +
+                        "    GroupBy vectorized: true\n" +
+                        "      values: [min(i),max(i)]\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
@@ -2826,7 +2856,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // expressions in aggregates disable vectorized impl
     public void testGroupByNotKeyed2() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select min(d), max(d*d) from a",
                 "Async Group By workers: 1\n" +
                         "  values: [min(d),max(d*d)]\n" +
@@ -2840,7 +2870,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // expressions in aggregates disable vectorized impl
     public void testGroupByNotKeyed3() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select max(d+1) from a",
                 "Async Group By workers: 1\n" +
                         "  values: [max(d+1)]\n" +
@@ -2854,7 +2884,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByNotKeyed4() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select count(*), max(i), min(d) from a",
                 "GroupBy vectorized: true\n" +
                         "  values: [count(*),max(i),min(d)]\n" +
@@ -2864,13 +2894,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // constant values used in aggregates disable vectorization
+    @Test
     public void testGroupByNotKeyed5() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select first(10), last(d), avg(10), min(10), max(10) from a",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [first(10),last(d),avg(10),min(10),max(10)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2880,7 +2911,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // group by on filtered data is not vectorized
     public void testGroupByNotKeyed6() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select max(i) from a where i < 10",
                 "Async JIT Group By workers: 1\n" +
                         "  values: [max(i)]\n" +
@@ -2894,7 +2925,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // order by is ignored and grouped by - vectorized
     public void testGroupByNotKeyed7() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select max(i) from (select * from a order by d)",
                 "GroupBy vectorized: true\n" +
                         "  values: [max(i)]\n" +
@@ -2907,7 +2938,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // order by can't be ignored; group by is not vectorized
     public void testGroupByNotKeyed8() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select max(i) from (select * from a order by d limit 10)",
                 "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
@@ -2922,7 +2953,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // TODO: group by could be vectorized for union tables and result merged
     public void testGroupByNotKeyed9() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select max(i) from (select * from a union all select * from a)",
                 "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
@@ -2977,6 +3008,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupBySymbol2() throws Exception {
+        assertPlan(
+                "create table a (l long, s symbol)",
+                "select s, max(l) - min(l) a from a",
+                "VirtualRecord\n" +
+                        "  functions: [s,max-min]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [s]\n" +
+                        "      values: [min(l),max(l)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
         );
     }
 

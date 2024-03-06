@@ -48,7 +48,7 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final Long256 value = arg.getLong256A(record);
         if (!value.equals(Long256Impl.NULL_LONG256)) {
             mapValue.putLong256(valueIndex, value);
@@ -60,7 +60,7 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final Long256 value = arg.getLong256A(record);
         if (!value.equals(Long256Impl.NULL_LONG256)) {
             mapValue.addLong256(valueIndex, value);

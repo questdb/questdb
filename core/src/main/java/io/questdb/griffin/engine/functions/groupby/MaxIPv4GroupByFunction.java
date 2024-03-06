@@ -45,12 +45,12 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putInt(valueIndex, arg.getIPv4(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         long max = Numbers.ipv4ToLong(mapValue.getIPv4(valueIndex));
         long next = Numbers.ipv4ToLong(arg.getIPv4(record));
         if (next > max) {

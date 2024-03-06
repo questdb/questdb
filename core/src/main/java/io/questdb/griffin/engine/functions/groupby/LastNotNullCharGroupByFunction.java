@@ -37,14 +37,28 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (arg.getChar(record) != CharConstant.ZERO.getChar(null)) {
-            computeFirst(mapValue, record);
+            computeFirst(mapValue, record, rowId);
         }
     }
 
     @Override
     public String getName() {
         return "last_not_null";
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        char srcVal = srcValue.getChar(valueIndex + 1);
+        if (srcVal == CharConstant.ZERO.getChar(null)) {
+            return;
+        }
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId > destRowId) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putChar(valueIndex + 1, srcVal);
+        }
     }
 }

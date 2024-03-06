@@ -54,7 +54,7 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double x = xFunction.getDouble(record);
         final double y = yFunction.getDouble(record);
         mapValue.putDouble(valueIndex, 0);
@@ -68,7 +68,7 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double x = xFunction.getDouble(record);
         final double y = yFunction.getDouble(record);
         if (Numbers.isFinite(x) && Numbers.isFinite(y)) {
