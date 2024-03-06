@@ -95,6 +95,7 @@ public interface GroupByFunction extends Function, Mutable {
     void pushValueTypes(ArrayColumnTypes columnTypes);
 
     default void setAllocator(GroupByAllocator allocator) {
+        // no-op
     }
 
     default void setByte(MapValue mapValue, byte value) {

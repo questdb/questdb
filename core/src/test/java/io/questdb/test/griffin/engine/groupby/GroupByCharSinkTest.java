@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.GroupByCharSink;
 import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -38,14 +38,8 @@ public class GroupByCharSinkTest extends AbstractCairoTest {
 
     @Test
     public void testClear() throws Exception {
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                 GroupByCharSink sink = new GroupByCharSink();
                 sink.setAllocator(allocator);
                 sink.put("foobar");
@@ -63,14 +57,8 @@ public class GroupByCharSinkTest extends AbstractCairoTest {
     @Test
     public void testPutChar() throws Exception {
         final int N = 1000;
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                 GroupByCharSink sink = new GroupByCharSink();
                 sink.setAllocator(allocator);
                 for (int i = 0; i < N; i++) {
@@ -87,14 +75,8 @@ public class GroupByCharSinkTest extends AbstractCairoTest {
     @Test
     public void testPutCharSequence() throws Exception {
         final int N = 1000;
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                 GroupByCharSink sink = new GroupByCharSink();
                 sink.setAllocator(allocator);
                 int len = 0;

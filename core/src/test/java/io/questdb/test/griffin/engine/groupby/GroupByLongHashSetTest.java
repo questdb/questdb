@@ -24,9 +24,8 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -38,15 +37,19 @@ import org.junit.Test;
 public class GroupByLongHashSetTest extends AbstractCairoTest {
 
     @Test
+    public void testFuzzWithLongNullAsNoKeyValue() throws Exception {
+        testFuzz(Numbers.LONG_NaN);
+    }
+
+    @Test
+    public void testFuzzWithZeroAsNoKeyValue() throws Exception {
+        testFuzz(0);
+    }
+
+    @Test
     public void testMerge() throws Exception {
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
-        TestUtils.assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                 GroupByLongHashSet setA = new GroupByLongHashSet(16, 0.5, -1);
                 setA.setAllocator(allocator);
                 setA.of(0);
@@ -77,31 +80,16 @@ public class GroupByLongHashSetTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testSmokeWithLongNullAsNoKeyValue() throws Exception {
-        testSmoke(Numbers.LONG_NaN);
-    }
-
-    @Test
-    public void testSmokeWithZeroAsNoKeyValue() throws Exception {
-        testSmoke(0);
-    }
-
-    private void testSmoke(long noKeyValue) throws Exception {
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
-        TestUtils.assertMemoryLeak(() -> {
-            Rnd rnd = new Rnd();
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+    private void testFuzz(long noKeyValue) throws Exception {
+        assertMemoryLeak(() -> {
+            final int N = 1000;
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final long seed0 = rnd.getSeed0();
+            final long seed1 = rnd.getSeed1();
+            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                 GroupByLongHashSet set = new GroupByLongHashSet(16, 0.7, noKeyValue);
                 set.setAllocator(allocator);
                 set.of(0);
-
-                final int N = 1000;
 
                 for (int i = 0; i < N; i++) {
                     set.add(rnd.nextPositiveLong() + 1);
@@ -110,14 +98,14 @@ public class GroupByLongHashSetTest extends AbstractCairoTest {
                 Assert.assertEquals(N, set.size());
                 Assert.assertTrue(set.capacity() >= N);
 
-                rnd.reset();
+                rnd.reset(seed0, seed1);
 
                 for (int i = 0; i < N; i++) {
                     Assert.assertTrue(set.keyIndex(rnd.nextPositiveLong() + 1) < 0);
                 }
 
                 set.of(0);
-                rnd.reset();
+                rnd.reset(seed0, seed1);
 
                 for (int i = 0; i < N; i++) {
                     long val = rnd.nextPositiveLong() + 1;
