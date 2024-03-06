@@ -103,7 +103,7 @@ public class MapFactory {
         final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
 
         final int keySize = totalSize(keyTypes);
-        final int valueSize = totalSize(keyTypes);
+        final int valueSize = totalSize(valueTypes);
         if (keySize > 0) {
             if (keySize <= Short.BYTES && valueSize <= maxEntrySize) {
                 return new Unordered2Map(keyTypes, valueTypes);
@@ -149,16 +149,19 @@ public class MapFactory {
      * or -1 if there is a var-size column in the given list.
      */
     private static int totalSize(ColumnTypes types) {
-        int keySize = 0;
+        if (types == null) {
+            return 0;
+        }
+        int totalSize = 0;
         for (int i = 0, n = types.getColumnCount(); i < n; i++) {
             final int columnType = types.getColumnType(i);
             final int size = ColumnType.sizeOf(columnType);
             if (size > 0) {
-                keySize += size;
+                totalSize += size;
             } else {
                 return -1;
             }
         }
-        return keySize;
+        return totalSize;
     }
 }

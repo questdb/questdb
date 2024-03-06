@@ -199,11 +199,11 @@ public class SqlOptimiser implements Mutable {
         constNameToToken.clear();
     }
 
-    public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAlises, ExpressionNode node) {
+    public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
         for (int i = 0, max = groupByNodes.size(); i < max; i++) {
             ExpressionNode n = groupByNodes.getQuick(i);
             if (ExpressionNode.compareNodesExact(node, n)) {
-                return groupByAlises.getQuick(i);
+                return groupByAliases.getQuick(i);
             }
         }
         return null;
@@ -4856,7 +4856,7 @@ public class SqlOptimiser implements Mutable {
 
                     addMissingTablePrefixes(qc.getAst(), baseModel);
                     final int beforeSplit = groupByModel.getBottomUpColumns().size();
-                    // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in  outer virtual model
+                    // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
                     ExpressionNode en = rewriteGroupBySelectExpression(qc.getAst(), groupByModel, groupByNodes, groupByAliases);
                     if (qc.getAst() == en) {
                         useOuterModel = true;

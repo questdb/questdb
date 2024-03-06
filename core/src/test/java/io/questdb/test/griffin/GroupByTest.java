@@ -1028,11 +1028,11 @@ public class GroupByTest extends AbstractCairoTest {
                     "    union all " +
                     "    select 1, 'a', -2 )");
 
-            String query = "select s, max, max(l) from t group by s, max order by s";
+            String query = "select s, max, max(l) from t group by s, max order by 1, 2, 3";
             assertPlan(
                     query,
                     "Sort light\n" +
-                            "  keys: [s]\n" +
+                            "  keys: [s, max, max1]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [s,max]\n" +
                             "      values: [max(l)]\n" +
@@ -1402,280 +1402,6 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNestedGroupByWithExplicitGroupByClause() throws Exception {
-        assertQuery(
-                "url\tu_count\tcnt\tavg_m_sum\n" +
-                        "RXPEHNRXGZ\t4\t4\t414.25\n" +
-                        "DXYSBEOUOJ\t1\t1\t225.0\n" +
-                        "SXUXIBBTGP\t2\t2\t379.5\n" +
-                        "GWFFYUDEYY\t5\t5\t727.2\n" +
-                        "LOFJGETJRS\t2\t2\t524.5\n" +
-                        "ZSRYRFBVTM\t2\t2\t337.0\n" +
-                        "VTJWCPSWHY\t1\t1\t660.0\n" +
-                        "HGOOZZVDZJ\t1\t1\t540.0\n" +
-                        "SHRUEDRQQU\t2\t2\t468.0\n",
-                "WITH x_sample AS (\n" +
-                        "  SELECT id, uuid, url, sum(metric) m_sum\n" +
-                        "  FROM x\n" +
-                        "  WHERE ts >= '1023-03-31T00:00:00' and ts <= '2023-04-02T23:59:59'\n" +
-                        "  GROUP BY id, uuid, url\n" +
-                        ")\n" +
-                        "SELECT url, count_distinct(uuid) u_count, count() cnt, avg(m_sum) avg_m_sum\n" +
-                        "FROM x_sample\n" +
-                        "GROUP BY url",
-                "create table x as (\n" +
-                        "select timestamp_sequence(100000000, 100000000) ts,\n" +
-                        "  rnd_int(0, 10, 0) id,\n" +
-                        "  rnd_uuid4() uuid,\n" +
-                        "  rnd_str(10, 10, 10, 0) url,\n" +
-                        "  rnd_long(0, 1000, 0) metric\n" +
-                        "from long_sequence(20)) timestamp(ts)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testOrderByOnAliasedColumnAfterGroupBy() throws Exception {
-        ddl("create table tst ( ts timestamp ) timestamp(ts);");
-        insert("insert into tst values ('2023-05-29T15:30:00.000000Z')");
-
-        ddl("create table data ( dts timestamp, s symbol ) timestamp(dts);");
-        insert("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
-
-        // single table
-        assertQuery(
-                "ref0\n2023-05-29T15:30:00.000000Z\n",
-                "SELECT ts AS ref0 " +
-                        "FROM tst " +
-                        "GROUP BY ts " +
-                        "ORDER BY ts",
-                "",
-                true,
-                true
-        );
-
-        assertQuery(
-                "ref0\n2023-05-29T15:30:00.000000Z\n",
-                "SELECT tst.ts AS ref0 " +
-                        "FROM tst " +
-                        "GROUP BY tst.ts " +
-                        "ORDER BY tst.ts",
-                "",
-                true,
-                true
-        );
-
-        assertQuery(
-                "ref0\n2023-05-29T15:30:00.000000Z\n",
-                "SELECT tst.ts AS ref0 " +
-                        "FROM tst " +
-                        "GROUP BY ts " +
-                        "ORDER BY tst.ts",
-                "",
-                true,
-                true
-        );
-
-        assertQuery(
-                "ref0\n2023-05-29T15:30:00.000000Z\n",
-                "SELECT ts AS ref0 " +
-                        "FROM tst " +
-                        "GROUP BY tst.ts " +
-                        "ORDER BY ts",
-                "",
-                true,
-                true
-        );
-
-        // joins
-        for (String join : Arrays.asList("LT JOIN data ", "ASOF JOIN data ", "LEFT JOIN data on (tst.ts > data.dts) ", "INNER JOIN data on (tst.ts > data.dts) ", "CROSS JOIN data ")) {
-            assertQuery(
-                    "ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
-                    "SELECT ts AS ref0, dts " +
-                            "FROM tst " +
-                            join +
-                            "GROUP BY tst.ts, data.dts " +
-                            "ORDER BY ts",
-                    "",
-                    true,
-                    true
-            );
-
-            assertQuery(
-                    "ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
-                    "SELECT ts AS ref0, dts " +
-                            "FROM tst " +
-                            join +
-                            "GROUP BY ts, data.dts " +
-                            "ORDER BY tst.ts",
-                    "",
-                    true,
-                    true
-            );
-        }
-    }
-
-    @Test
-    public void testSelectDistinctOnAliasedColumnWithOrderBy() throws Exception {
-        ddl("create table tab (created timestamp, i int) timestamp(created)");
-        insert("insert into tab select x::timestamp, x from long_sequence(3)");
-        drainWalQueue();
-
-        String query = "SELECT DISTINCT tab.created AS ref0 " +
-                "FROM tab " +
-                "WHERE (tab.created) IS NOT NULL " +
-                "GROUP BY tab.created " +
-                "ORDER BY tab.created";
-
-        assertPlan(
-                query,
-                "Sort light\n" +
-                        "  keys: [ref0]\n" +
-                        "    Distinct\n" +
-                        "      keys: ref0\n" +
-                        "        VirtualRecord\n" +
-                        "          functions: [created]\n" +
-                        "            Async JIT Group By workers: 1\n" +
-                        "              keys: [created]\n" +
-                        "              filter: created!=null\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: tab\n"
-        );
-
-        assertQuery(
-                "ref0\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000002Z\n" +
-                        "1970-01-01T00:00:00.000003Z\n",
-                query,
-                null,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testSelectDistinctOnExpressionWithOrderBy() throws Exception {
-        ddl("create table tab (created timestamp, i int) timestamp(created)");
-        insert("insert into tab select x::timestamp, x from long_sequence(3)");
-        drainWalQueue();
-
-        String query = "SELECT DISTINCT dateadd('h', 1, tab.created) AS ref0 " +
-                "FROM tab " +
-                "WHERE (tab.created) IS NOT NULL " +
-                "GROUP BY tab.created " +
-                "ORDER BY dateadd('h', 1, tab.created)";
-
-        assertPlan(
-                query,
-                "Sort light\n" +
-                        "  keys: [ref0]\n" +
-                        "    Distinct\n" +
-                        "      keys: ref0\n" +
-                        "        VirtualRecord\n" +
-                        "          functions: [dateadd('h',1,created)]\n" +
-                        "            Async JIT Group By workers: 1\n" +
-                        "              keys: [created]\n" +
-                        "              filter: created!=null\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: tab\n"
-        );
-
-        assertQuery(
-                "ref0\n" +
-                        "1970-01-01T01:00:00.000001Z\n" +
-                        "1970-01-01T01:00:00.000002Z\n" +
-                        "1970-01-01T01:00:00.000003Z\n",
-                query,
-                null,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testSelectDistinctOnUnaliasedColumnWithOrderBy() throws Exception {
-        ddl("create table tab (created timestamp, i int) timestamp(created)");
-        insert("insert into tab select x::timestamp, x from long_sequence(3)");
-        drainWalQueue();
-
-        String query = "SELECT DISTINCT tab.created " +
-                "FROM tab " +
-                "WHERE (tab.created) IS NOT NULL " +
-                "GROUP BY tab.created " +
-                "ORDER BY tab.created";
-
-        assertPlan(
-                query,
-                "Sort light\n" +
-                        "  keys: [created]\n" +
-                        "    Distinct\n" +
-                        "      keys: created\n" +
-                        "        Async JIT Group By workers: 1\n" +
-                        "          keys: [created]\n" +
-                        "          filter: created!=null\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: tab\n"
-        );
-
-        assertQuery(
-                "created\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000002Z\n" +
-                        "1970-01-01T00:00:00.000003Z\n",
-                query,
-                null,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testSelectMatchingButInDifferentOrderThanGroupBy() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table x (" +
-                    "    sym symbol," +
-                    "    bid double, " +
-                    "    ts timestamp " +
-                    ") timestamp(ts) partition by DAY");
-            ddl("insert into x " +
-                    " select rnd_symbol('A', 'B'), rnd_double(), dateadd('m', x::int, 0::timestamp) " +
-                    " from long_sequence(20)");
-
-            String query = "select sym, hour(ts), avg(bid) avgBid from x group by hour(ts), sym order by hour(ts), sym";
-            assertPlan(
-                    query,
-                    "Sort light\n" +
-                            "  keys: [hour, sym]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [sym,hour,avgBid]\n" +
-                            "        GroupBy vectorized: false\n" +
-                            "          keys: [sym,hour]\n" +
-                            "          values: [avg(bid)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [sym,hour(ts),bid]\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: x\n"
-            );
-            assertQuery(
-                    "sym\thour\tavgBid\n" +
-                            "A\t0\t0.4922298136511458\n" +
-                            "B\t0\t0.4796420804429589\n",
-                    query,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
     public void testLiftAliasesFromInnerSelect1() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
@@ -1696,6 +1422,182 @@ public class GroupByTest extends AbstractCairoTest {
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n");
             assertQuery("a\tb\tz\tviews\n" +
+                            "1\t2\t3\t1\n",
+                    query,
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLiftAliasesFromInnerSelect10() throws Exception {
+        // test that it properly handles max(ts) ts on lhs and data.ts ts on rhs
+        assertMemoryLeak(() -> {
+            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            insert("insert into tab " +
+                    "select (100000+x)::timestamp, " +
+                    "rnd_long(1,20,10), " +
+                    "rnd_long(1,1000,5) " +
+                    "from long_sequence(1000000)");
+
+            String expected = "ts\ti\tavg\tsum\tfirst_value\n" +
+                    "1970-01-01T00:00:01.099967Z\tNaN\t495.40261282660333\t1668516.0\t481.0\n" +
+                    "1970-01-01T00:00:01.099995Z\t1\t495.08707124010556\t1688742.0\tNaN\n" +
+                    "1970-01-01T00:00:01.099973Z\t2\t506.5011448196909\t1769715.0\t697.0\n" +
+                    "1970-01-01T00:00:01.099908Z\t3\t505.95267958950967\t1774882.0\t16.0\n" +
+                    "1970-01-01T00:00:01.099977Z\t4\t501.16155593412833\t1765091.0\t994.0\n" +
+                    "1970-01-01T00:00:01.099994Z\t5\t494.87667161961366\t1665260.0\t701.0\n" +
+                    "1970-01-01T00:00:01.099991Z\t6\t500.67453098351336\t1761373.0\t830.0\n" +
+                    "1970-01-01T00:00:01.099998Z\t7\t497.7231450719823\t1797776.0\t293.0\n" +
+                    "1970-01-01T00:00:01.099997Z\t8\t498.6340425531915\t1757685.0\t868.0\n" +
+                    "1970-01-01T00:00:01.099992Z\t9\t499.1758750361585\t1725651.0\t528.0\n" +
+                    "1970-01-01T00:00:01.099989Z\t10\t500.3242937853107\t1771148.0\t936.0\n" +
+                    "1970-01-01T00:00:01.099976Z\t11\t501.4019192774485\t1776467.0\t720.0\n" +
+                    "1970-01-01T00:00:01.099984Z\t12\t489.8953058321479\t1721982.0\t949.0\n" +
+                    "1970-01-01T00:00:01.099952Z\t13\t500.65723270440253\t1751299.0\t518.0\n" +
+                    "1970-01-01T00:00:01.099996Z\t14\t506.8769141866513\t1754301.0\tNaN\n" +
+                    "1970-01-01T00:00:01.100000Z\t15\t497.0794058840331\t1740275.0\t824.0\n" +
+                    "1970-01-01T00:00:01.099979Z\t16\t499.3338209479228\t1706723.0\t38.0\n" +
+                    "1970-01-01T00:00:01.099951Z\t17\t492.7804469273743\t1764154.0\t698.0\n" +
+                    "1970-01-01T00:00:01.099999Z\t18\t501.4806333050608\t1773737.0\t204.0\n" +
+                    "1970-01-01T00:00:01.099957Z\t19\t501.01901034386356\t1792145.0\t712.0\n" +
+                    "1970-01-01T00:00:01.099987Z\t20\t498.1350566366541\t1715079.0\t188.0\n";
+
+            String query1 = " select max(data.ts) as ts, data.i as i, avg(data.j) as avg, sum(data.j::double) as sum, first(data.j::double) as first_value " +
+                    "from " +
+                    "( select i, max(ts) as max from tab group by i) cnt " +
+                    "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                    "group by data.i " +
+                    "order by data.i ";
+
+            // cross-check with re-write using aggregate functions
+            assertSql(
+                    expected,
+                    query1
+            );
+
+            assertPlan(
+                    query1,
+                    "Sort light\n" +
+                            "  keys: [i]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [ts,i,avg,sum,first_value]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [i]\n" +
+                            "          values: [max(ts),avg(j),sum(j::double),first(j::double)]\n" +
+                            "            SelectedRecord\n" +
+                            "                Filter filter: data.ts>=cnt.max-80000\n" +
+                            "                    Hash Join Light\n" +
+                            "                      condition: data.i=cnt.i\n" +
+                            "                        Async Group By workers: 1\n" +
+                            "                          keys: [i]\n" +
+                            "                          values: [max(ts)]\n" +
+                            "                          filter: null\n" +
+                            "                            DataFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: tab\n" +
+                            "                        Hash\n" +
+                            "                            DataFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: tab\n"
+            );
+
+            String query2 = "select last(ts) as ts, " +
+                    "i, " +
+                    "last(avg) as avg, " +
+                    "last(sum) as sum, " +
+                    "last(first_value) as first_value " +
+                    "from (  " +
+                    "  select * from (" +
+                    "    select ts, i, " +
+                    "    avg(j) over (partition by i order by ts range between 80000 preceding and current row) avg, " +
+                    "    sum(j) over (partition by i order by ts range between 80000 preceding and current row) sum, " +
+                    "    first_value(j) over (partition by i order by ts range between 80000 preceding and current row) first_value, " +
+                    "    from tab ) " +
+                    "  limit -100 )" +
+                    "order by i";
+
+            assertQuery(
+                    expected,
+                    query2,
+                    null,
+                    true,
+                    true,
+                    false
+            );
+
+            assertPlan(
+                    query2,
+                    "Sort light\n" +
+                            "  keys: [i]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [i]\n" +
+                            "      values: [last(ts),last(avg),last(sum),last(first_value)]\n" +
+                            "        Limit lo: -100\n" +
+                            "            Window\n" +
+                            "              functions: [avg(j) over (partition by [i] range between 80000 preceding and current row),sum(j) over (partition by [i] range between 80000 preceding and current row),first_value(j) over (partition by [i] range between 80000 preceding and current row)]\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLiftAliasesFromInnerSelect11() throws Exception {
+        // test output naming
+        assertMemoryLeak(() -> {
+            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            drainWalQueue();
+            String query =
+                    "select a, b as B, c as z, count(*) as views\n" +
+                            "from x\n" +
+                            "where a = 1\n" +
+                            "group by a,b,z\n";
+            assertPlan(
+                    query,
+                    "Async JIT Group By workers: 1\n" +
+                            "  keys: [a,b,z]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: a=1\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n");
+            assertQuery(
+                    "a\tb\tz\tviews\n" +
+                            "1\t2\t3\t1\n",
+                    query,
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLiftAliasesFromInnerSelect12() throws Exception {
+        // test output naming
+        assertMemoryLeak(() -> {
+            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
+            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
+            drainWalQueue();
+            String query =
+                    "select a, b as B, c as z, count(*) as views\n" +
+                            "from x\n" +
+                            "where a = 1\n" +
+                            "group by a,B,z\n";
+            assertPlan(
+                    query,
+                    "Async JIT Group By workers: 1\n" +
+                            "  keys: [a,B,z]\n" +
+                            "  values: [count(*)]\n" +
+                            "  filter: a=1\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n");
+            assertQuery("" +
+                            "a\tB\tz\tviews\n" +
                             "1\t2\t3\t1\n",
                     query,
                     null,
@@ -2028,10 +1930,10 @@ public class GroupByTest extends AbstractCairoTest {
             String query = "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2";
             assertQuery(
                     "k1\tkey2\tkey21\tcount\n" +
-                    "0\t0\t0\t2\n" +
-                    "0\t2\t2\t3\n" +
-                    "1\t1\t1\t3\n" +
-                    "1\t3\t3\t2\n",
+                            "0\t0\t0\t2\n" +
+                            "0\t2\t2\t3\n" +
+                            "1\t1\t1\t3\n" +
+                            "1\t3\t3\t2\n",
                     query,
                     null,
                     true,
@@ -2129,180 +2031,277 @@ public class GroupByTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testNestedGroupByWithExplicitGroupByClause() throws Exception {
+        assertQuery(
+                "url\tu_count\tcnt\tavg_m_sum\n" +
+                        "RXPEHNRXGZ\t4\t4\t414.25\n" +
+                        "DXYSBEOUOJ\t1\t1\t225.0\n" +
+                        "SXUXIBBTGP\t2\t2\t379.5\n" +
+                        "GWFFYUDEYY\t5\t5\t727.2\n" +
+                        "LOFJGETJRS\t2\t2\t524.5\n" +
+                        "ZSRYRFBVTM\t2\t2\t337.0\n" +
+                        "VTJWCPSWHY\t1\t1\t660.0\n" +
+                        "HGOOZZVDZJ\t1\t1\t540.0\n" +
+                        "SHRUEDRQQU\t2\t2\t468.0\n",
+                "WITH x_sample AS (\n" +
+                        "  SELECT id, uuid, url, sum(metric) m_sum\n" +
+                        "  FROM x\n" +
+                        "  WHERE ts >= '1023-03-31T00:00:00' and ts <= '2023-04-02T23:59:59'\n" +
+                        "  GROUP BY id, uuid, url\n" +
+                        ")\n" +
+                        "SELECT url, count_distinct(uuid) u_count, count() cnt, avg(m_sum) avg_m_sum\n" +
+                        "FROM x_sample\n" +
+                        "GROUP BY url",
+                "create table x as (\n" +
+                        "select timestamp_sequence(100000000, 100000000) ts,\n" +
+                        "  rnd_int(0, 10, 0) id,\n" +
+                        "  rnd_uuid4() uuid,\n" +
+                        "  rnd_str(10, 10, 10, 0) url,\n" +
+                        "  rnd_long(0, 1000, 0) metric\n" +
+                        "from long_sequence(20)) timestamp(ts)",
+                null,
+                true,
+                true
+        );
+    }
 
     @Test
-    public void testLiftAliasesFromInnerSelect10() throws Exception {
-        // test that it properly handles max(ts) ts on lhs and data.ts ts on rhs
-        assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
-            insert("insert into tab " +
-                    "select (100000+x)::timestamp, " +
-                    "rnd_long(1,20,10), " +
-                    "rnd_long(1,1000,5) " +
-                    "from long_sequence(1000000)");
+    public void testOrderByOnAliasedColumnAfterGroupBy() throws Exception {
+        ddl("create table tst ( ts timestamp ) timestamp(ts);");
+        insert("insert into tst values ('2023-05-29T15:30:00.000000Z')");
 
-            String expected = "ts\ti\tavg\tsum\tfirst_value\n" +
-                    "1970-01-01T00:00:01.099967Z\tNaN\t495.40261282660333\t1668516.0\t481.0\n" +
-                    "1970-01-01T00:00:01.099995Z\t1\t495.08707124010556\t1688742.0\tNaN\n" +
-                    "1970-01-01T00:00:01.099973Z\t2\t506.5011448196909\t1769715.0\t697.0\n" +
-                    "1970-01-01T00:00:01.099908Z\t3\t505.95267958950967\t1774882.0\t16.0\n" +
-                    "1970-01-01T00:00:01.099977Z\t4\t501.16155593412833\t1765091.0\t994.0\n" +
-                    "1970-01-01T00:00:01.099994Z\t5\t494.87667161961366\t1665260.0\t701.0\n" +
-                    "1970-01-01T00:00:01.099991Z\t6\t500.67453098351336\t1761373.0\t830.0\n" +
-                    "1970-01-01T00:00:01.099998Z\t7\t497.7231450719823\t1797776.0\t293.0\n" +
-                    "1970-01-01T00:00:01.099997Z\t8\t498.6340425531915\t1757685.0\t868.0\n" +
-                    "1970-01-01T00:00:01.099992Z\t9\t499.1758750361585\t1725651.0\t528.0\n" +
-                    "1970-01-01T00:00:01.099989Z\t10\t500.3242937853107\t1771148.0\t936.0\n" +
-                    "1970-01-01T00:00:01.099976Z\t11\t501.4019192774485\t1776467.0\t720.0\n" +
-                    "1970-01-01T00:00:01.099984Z\t12\t489.8953058321479\t1721982.0\t949.0\n" +
-                    "1970-01-01T00:00:01.099952Z\t13\t500.65723270440253\t1751299.0\t518.0\n" +
-                    "1970-01-01T00:00:01.099996Z\t14\t506.8769141866513\t1754301.0\tNaN\n" +
-                    "1970-01-01T00:00:01.100000Z\t15\t497.0794058840331\t1740275.0\t824.0\n" +
-                    "1970-01-01T00:00:01.099979Z\t16\t499.3338209479228\t1706723.0\t38.0\n" +
-                    "1970-01-01T00:00:01.099951Z\t17\t492.7804469273743\t1764154.0\t698.0\n" +
-                    "1970-01-01T00:00:01.099999Z\t18\t501.4806333050608\t1773737.0\t204.0\n" +
-                    "1970-01-01T00:00:01.099957Z\t19\t501.01901034386356\t1792145.0\t712.0\n" +
-                    "1970-01-01T00:00:01.099987Z\t20\t498.1350566366541\t1715079.0\t188.0\n";
+        ddl("create table data ( dts timestamp, s symbol ) timestamp(dts);");
+        insert("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
 
-            String query1 = " select max(data.ts) as ts, data.i as i, avg(data.j) as avg, sum(data.j::double) as sum, first(data.j::double) as first_value " +
-                    "from " +
-                    "( select i, max(ts) as max from tab group by i) cnt " +
-                    "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                    "group by data.i " +
-                    "order by data.i ";
+        // single table
+        assertQuery(
+                "ref0\n2023-05-29T15:30:00.000000Z\n",
+                "SELECT ts AS ref0 " +
+                        "FROM tst " +
+                        "GROUP BY ts " +
+                        "ORDER BY ts",
+                "",
+                true,
+                true
+        );
 
-            // cross-check with re-write using aggregate functions
-            assertSql(
-                    expected,
-                    query1
+        assertQuery(
+                "ref0\n2023-05-29T15:30:00.000000Z\n",
+                "SELECT tst.ts AS ref0 " +
+                        "FROM tst " +
+                        "GROUP BY tst.ts " +
+                        "ORDER BY tst.ts",
+                "",
+                true,
+                true
+        );
+
+        assertQuery(
+                "ref0\n2023-05-29T15:30:00.000000Z\n",
+                "SELECT tst.ts AS ref0 " +
+                        "FROM tst " +
+                        "GROUP BY ts " +
+                        "ORDER BY tst.ts",
+                "",
+                true,
+                true
+        );
+
+        assertQuery(
+                "ref0\n2023-05-29T15:30:00.000000Z\n",
+                "SELECT ts AS ref0 " +
+                        "FROM tst " +
+                        "GROUP BY tst.ts " +
+                        "ORDER BY ts",
+                "",
+                true,
+                true
+        );
+
+        // joins
+        for (String join : Arrays.asList("LT JOIN data ", "ASOF JOIN data ", "LEFT JOIN data on (tst.ts > data.dts) ", "INNER JOIN data on (tst.ts > data.dts) ", "CROSS JOIN data ")) {
+            assertQuery(
+                    "ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
+                    "SELECT ts AS ref0, dts " +
+                            "FROM tst " +
+                            join +
+                            "GROUP BY tst.ts, data.dts " +
+                            "ORDER BY ts",
+                    "",
+                    true,
+                    true
             );
-
-            assertPlan(
-                    query1,
-                    "Sort light\n" +
-                            "  keys: [i]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [ts,i,avg,sum,first_value]\n" +
-                            "        GroupBy vectorized: false\n" +
-                            "          keys: [i]\n" +
-                            "          values: [max(ts),avg(j),sum(j::double),first(j::double)]\n" +
-                            "            SelectedRecord\n" +
-                            "                Filter filter: data.ts>=cnt.max-80000\n" +
-                            "                    Hash Join Light\n" +
-                            "                      condition: data.i=cnt.i\n" +
-                            "                        Async Group By workers: 1\n" +
-                            "                          keys: [i]\n" +
-                            "                          values: [max(ts)]\n" +
-                            "                          filter: null\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: tab\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: tab\n"
-            );
-
-            String query2 = "select last(ts) as ts, " +
-                    "i, " +
-                    "last(avg) as avg, " +
-                    "last(sum) as sum, " +
-                    "last(first_value) as first_value " +
-                    "from (  " +
-                    "  select * from (" +
-                    "    select ts, i, " +
-                    "    avg(j) over (partition by i order by ts range between 80000 preceding and current row) avg, " +
-                    "    sum(j) over (partition by i order by ts range between 80000 preceding and current row) sum, " +
-                    "    first_value(j) over (partition by i order by ts range between 80000 preceding and current row) first_value, " +
-                    "    from tab ) " +
-                    "  limit -100 )" +
-                    "order by i";
 
             assertQuery(
-                    expected,
-                    query2,
-                    null,
+                    "ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
+                    "SELECT ts AS ref0, dts " +
+                            "FROM tst " +
+                            join +
+                            "GROUP BY ts, data.dts " +
+                            "ORDER BY tst.ts",
+                    "",
                     true,
-                    true,
-                    false
+                    true
             );
+        }
+    }
 
+    @Test
+    public void testSelectDistinctOnAliasedColumnWithOrderBy() throws Exception {
+        ddl("create table tab (created timestamp, i int) timestamp(created)");
+        insert("insert into tab select x::timestamp, x from long_sequence(3)");
+        drainWalQueue();
+
+        String query = "SELECT DISTINCT tab.created AS ref0 " +
+                "FROM tab " +
+                "WHERE (tab.created) IS NOT NULL " +
+                "GROUP BY tab.created " +
+                "ORDER BY tab.created";
+
+        assertPlan(
+                query,
+                "Sort light\n" +
+                        "  keys: [ref0]\n" +
+                        "    Distinct\n" +
+                        "      keys: ref0\n" +
+                        "        VirtualRecord\n" +
+                        "          functions: [created]\n" +
+                        "            Async JIT Group By workers: 1\n" +
+                        "              keys: [created]\n" +
+                        "              filter: created!=null\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: tab\n"
+        );
+
+        assertQuery(
+                "ref0\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000002Z\n" +
+                        "1970-01-01T00:00:00.000003Z\n",
+                query,
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSelectDistinctOnExpressionWithOrderBy() throws Exception {
+        ddl("create table tab (created timestamp, i int) timestamp(created)");
+        insert("insert into tab select x::timestamp, x from long_sequence(3)");
+        drainWalQueue();
+
+        String query = "SELECT DISTINCT dateadd('h', 1, tab.created) AS ref0 " +
+                "FROM tab " +
+                "WHERE (tab.created) IS NOT NULL " +
+                "GROUP BY tab.created " +
+                "ORDER BY dateadd('h', 1, tab.created)";
+
+        assertPlan(
+                query,
+                "Sort light\n" +
+                        "  keys: [ref0]\n" +
+                        "    Distinct\n" +
+                        "      keys: ref0\n" +
+                        "        VirtualRecord\n" +
+                        "          functions: [dateadd('h',1,created)]\n" +
+                        "            Async JIT Group By workers: 1\n" +
+                        "              keys: [created]\n" +
+                        "              filter: created!=null\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: tab\n"
+        );
+
+        assertQuery(
+                "ref0\n" +
+                        "1970-01-01T01:00:00.000001Z\n" +
+                        "1970-01-01T01:00:00.000002Z\n" +
+                        "1970-01-01T01:00:00.000003Z\n",
+                query,
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSelectDistinctOnUnaliasedColumnWithOrderBy() throws Exception {
+        ddl("create table tab (created timestamp, i int) timestamp(created)");
+        insert("insert into tab select x::timestamp, x from long_sequence(3)");
+        drainWalQueue();
+
+        String query = "SELECT DISTINCT tab.created " +
+                "FROM tab " +
+                "WHERE (tab.created) IS NOT NULL " +
+                "GROUP BY tab.created " +
+                "ORDER BY tab.created";
+
+        assertPlan(
+                query,
+                "Sort light\n" +
+                        "  keys: [created]\n" +
+                        "    Distinct\n" +
+                        "      keys: created\n" +
+                        "        Async JIT Group By workers: 1\n" +
+                        "          keys: [created]\n" +
+                        "          filter: created!=null\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tab\n"
+        );
+
+        assertQuery(
+                "created\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000002Z\n" +
+                        "1970-01-01T00:00:00.000003Z\n",
+                query,
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSelectMatchingButInDifferentOrderThanGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (" +
+                    "    sym symbol," +
+                    "    bid double, " +
+                    "    ts timestamp " +
+                    ") timestamp(ts) partition by DAY");
+            ddl("insert into x " +
+                    " select rnd_symbol('A', 'B'), rnd_double(), dateadd('m', x::int, 0::timestamp) " +
+                    " from long_sequence(20)");
+
+            String query = "select sym, hour(ts), avg(bid) avgBid from x group by hour(ts), sym order by hour(ts), sym";
             assertPlan(
-                    query2,
+                    query,
                     "Sort light\n" +
-                            "  keys: [i]\n" +
-                            "    GroupBy vectorized: false\n" +
-                            "      keys: [i]\n" +
-                            "      values: [last(ts),last(avg),last(sum),last(first_value)]\n" +
-                            "        Limit lo: -100\n" +
-                            "            Window\n" +
-                            "              functions: [avg(j) over (partition by [i] range between 80000 preceding and current row),sum(j) over (partition by [i] range between 80000 preceding and current row),first_value(j) over (partition by [i] range between 80000 preceding and current row)]\n" +
+                            "  keys: [hour, sym]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [sym,hour,avgBid]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [sym,hour]\n" +
+                            "          values: [avg(bid)]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [sym,hour(ts),bid]\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n"
+                            "                    Frame forward scan on: x\n"
             );
-        });
-    }
-
-    @Test
-    public void testLiftAliasesFromInnerSelect11() throws Exception {
-        // test output naming
-        assertMemoryLeak(() -> {
-            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
-            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
-            drainWalQueue();
-            String query =
-                    "select a, b as B, c as z, count(*) as views\n" +
-                            "from x\n" +
-                            "where a = 1\n" +
-                            "group by a,b,z\n";
-            assertPlan(
-                    query,
-                    "Async JIT Group By workers: 1\n" +
-                            "  keys: [a,b,z]\n" +
-                            "  values: [count(*)]\n" +
-                            "  filter: a=1\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n");
             assertQuery(
-                    "a\tb\tz\tviews\n" +
-                            "1\t2\t3\t1\n",
+                    "sym\thour\tavgBid\n" +
+                            "A\t0\t0.4922298136511458\n" +
+                            "B\t0\t0.4796420804429589\n",
                     query,
                     null,
                     true,
-                    true);
-        });
-    }
-
-    @Test
-    public void testLiftAliasesFromInnerSelect12() throws Exception {
-        // test output naming
-        assertMemoryLeak(() -> {
-            ddl("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
-            insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
-            drainWalQueue();
-            String query =
-                    "select a, b as B, c as z, count(*) as views\n" +
-                            "from x\n" +
-                            "where a = 1\n" +
-                            "group by a,B,z\n";
-            assertPlan(
-                    query,
-                    "Async JIT Group By workers: 1\n" +
-                            "  keys: [a,B,z]\n" +
-                            "  values: [count(*)]\n" +
-                            "  filter: a=1\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n");
-            assertQuery("" +
-                            "a\tB\tz\tviews\n" +
-                            "1\t2\t3\t1\n",
-                    query,
-                    null,
-                    true,
-                    true);
+                    true
+            );
         });
     }
 
