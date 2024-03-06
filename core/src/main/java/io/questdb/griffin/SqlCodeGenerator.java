@@ -2353,6 +2353,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 listColumnFilterA.clear();
                 intHashSet.clear();
 
+                int orderedByTimestampIndex = -1;
                 // column index sign indicates direction
                 // therefore 0 index is not allowed
                 for (int i = 0; i < orderByColumnCount; i++) {
@@ -2380,6 +2381,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             listColumnFilterA.add(-index - 1);
                         } else {
                             listColumnFilterA.add(index + 1);
+                            if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
+                                orderedByTimestampIndex = index;
+                            }
                         }
                     }
                 }
@@ -2415,9 +2419,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     orderedMetadata = GenericRecordMetadata.copyOf(metadata);
                 } else {
                     orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
-                    if (model.isOrderByTimestamp()) {
-                        orderedMetadata.setTimestampIndex(firstOrderByColumnIndex);
-                    }
+                    orderedMetadata.setTimestampIndex(orderedByTimestampIndex);
                 }
                 final Function loFunc = getLoFunction(model, executionContext);
                 final Function hiFunc = getHiFunction(model, executionContext);

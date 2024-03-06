@@ -482,7 +482,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "1970-01-02T00:00:00.000000Z\t4\n" +
                             "1970-01-03T00:00:00.000000Z\t3\n",
                     query,
-                    null,
+                    "date_report",
                     true,
                     true
             );
@@ -515,7 +515,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "1970-01-02T00:00:00.000000Z\t4\n" +
                             "1970-01-03T00:00:00.000000Z\t3\n",
                     query,
-                    null,
+                    "date_report",
                     true,
                     true
             );
@@ -549,7 +549,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "1970-01-02T00:00:00.000000Z\t4\n" +
                             "1970-01-03T00:00:00.000000Z\t3\n",
                     query,
-                    null,
+                    "date_report",
                     true,
                     true
             );
@@ -586,7 +586,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "1970-01-02T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t4\n" +
                             "1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t3\n",
                     query,
-                    null,
+                    "date_report1",
                     true,
                     true
             );
@@ -624,7 +624,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "1970-01-02T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t1864000000003\t4\n" +
                             "1970-01-03T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z\t11728000000003\t3\n",
                     query,
-                    null,
+                    "date_report",
                     true,
                     true
             );
@@ -662,7 +662,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "1970-01-02T00:00:00.000000Z\t02.01.1970\t1970-01-03T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t4\n" +
                             "1970-01-03T00:00:00.000000Z\t03.01.1970\t1970-01-04T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t3\n",
                     query,
-                    null,
+                    "date_report",
                     true,
                     true
             );
@@ -713,7 +713,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "1970-01-12T00:00:00.000000Z\t12.01.1970\t1970-01-13T00:00:00.000000Z\t1\t4\t1970-01-01T00:00:00.000000Z\n" +
                             "1970-01-13T00:00:00.000000Z\t13.01.1970\t1970-01-14T00:00:00.000000Z\t2\t3\t1970-01-02T00:00:00.000000Z\n",
                     query,
-                    null,
+                    "date_report",
                     true,
                     true
             );
@@ -1596,8 +1596,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n");
-            assertQuery("" +
-                            "a\tB\tz\tviews\n" +
+            assertQuery("a\tB\tz\tviews\n" +
                             "1\t2\t3\t1\n",
                     query,
                     null,
@@ -1657,8 +1656,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n");
-            assertQuery("" +
-                            "a\tb\tc\tviews\n" +
+            assertQuery("a\tb\tc\tviews\n" +
                             "1\t2\t3\t1\n",
                     query,
                     null,
@@ -1779,7 +1777,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertQuery(expected,
                     query,
-                    null,
+                    "y_utc_15m",
                     true,
                     true
             );
@@ -1830,8 +1828,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n");
-            assertQuery("" +
-                            "a\tsum\tz\tviews\n" +
+            assertQuery("a\tsum\tz\tviews\n" +
                             "1\t2\t3\t1\n" +
                             "1\t3\t1\t1\n" +
                             "1\t5\t4\t1\n",
@@ -2081,7 +2078,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "FROM tst " +
                         "GROUP BY ts " +
                         "ORDER BY ts",
-                "",
+                "ref0",
                 true,
                 true
         );
@@ -2092,7 +2089,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "FROM tst " +
                         "GROUP BY tst.ts " +
                         "ORDER BY tst.ts",
-                "",
+                "ref0",
                 true,
                 true
         );
@@ -2103,7 +2100,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "FROM tst " +
                         "GROUP BY ts " +
                         "ORDER BY tst.ts",
-                "",
+                "ref0",
                 true,
                 true
         );
@@ -2114,7 +2111,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "FROM tst " +
                         "GROUP BY tst.ts " +
                         "ORDER BY ts",
-                "",
+                "ref0",
                 true,
                 true
         );
@@ -2128,7 +2125,7 @@ public class GroupByTest extends AbstractCairoTest {
                             join +
                             "GROUP BY tst.ts, data.dts " +
                             "ORDER BY ts",
-                    "",
+                    "ref0",
                     true,
                     true
             );
@@ -2140,7 +2137,7 @@ public class GroupByTest extends AbstractCairoTest {
                             join +
                             "GROUP BY ts, data.dts " +
                             "ORDER BY tst.ts",
-                    "",
+                    "ref0",
                     true,
                     true
             );
@@ -2181,7 +2178,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000002Z\n" +
                         "1970-01-01T00:00:00.000003Z\n",
                 query,
-                null,
+                "ref0",
                 true,
                 false
         );
@@ -2221,7 +2218,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "1970-01-01T01:00:00.000002Z\n" +
                         "1970-01-01T01:00:00.000003Z\n",
                 query,
-                null,
+                "ref0",
                 true,
                 false
         );
@@ -2259,7 +2256,7 @@ public class GroupByTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000002Z\n" +
                         "1970-01-01T00:00:00.000003Z\n",
                 query,
-                null,
+                "created",
                 true,
                 false
         );

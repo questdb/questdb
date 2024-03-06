@@ -163,7 +163,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
     // position of the order by clause token
     private int orderByPosition;
-    private boolean orderByTimestamp = false;
     private IntList orderedJoinModels = orderedJoinModels2;
     // Expression clause that is actually part of left/outer join but not in join model.
     // Inner join expressions
@@ -432,7 +431,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         artificialStar = false;
         explicitTimestamp = false;
         showKind = -1;
-        orderByTimestamp = false;
     }
 
     public void clearColumnMapStructs() {
@@ -1023,10 +1021,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return nestedModelIsSubQuery;
     }
 
-    public boolean isOrderByTimestamp() {
-        return orderByTimestamp;
-    }
-
     public boolean isOrderByTimestamp(CharSequence orderByToken) {
         if (Chars.equalsIgnoreCase(orderByToken, timestamp.token)) {
             return true;
@@ -1248,10 +1242,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setOrderByPosition(int orderByPosition) {
         this.orderByPosition = orderByPosition;
-    }
-
-    public void setOrderByTimestamp(boolean orderByTimestamp) {
-        this.orderByTimestamp = orderByTimestamp;
     }
 
     public void setOrderedJoinModels(IntList that) {

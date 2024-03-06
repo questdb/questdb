@@ -926,7 +926,6 @@ public class SqlOptimiser implements Mutable {
                         for (int i = 0; i < n; i++) {
                             _nested.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
                         }
-                        _nested.setOrderByTimestamp(un.isOrderByTimestamp());
                         orderBy.clear();
                         orderByDirection.clear();
 
@@ -3858,11 +3857,9 @@ public class SqlOptimiser implements Mutable {
                 if (orderBy.size() == 0) {
                     if (order != null) {
                         order.addOrderBy(nested.getTimestamp(), QueryModel.ORDER_DIRECTION_ASCENDING);
-                        order.setOrderByTimestamp(true);
                     }
 
                     nested.addOrderBy(nested.getTimestamp(), QueryModel.ORDER_DIRECTION_DESCENDING);
-                    nested.setOrderByTimestamp(true);
                 } else {
                     final IntList orderByDirection = nested.getOrderByDirection();
                     if (order != null) {
@@ -3877,7 +3874,6 @@ public class SqlOptimiser implements Mutable {
                             order.getAliasToColumnMap().put(orderByToken, nextColumn(orderByToken));
                         }
                         order.addOrderBy(orderByNode, orderByDirection.getQuick(0));
-                        order.setOrderByTimestamp(true);
                     }
 
                     int newOrder;
@@ -4102,7 +4098,6 @@ public class SqlOptimiser implements Mutable {
                 //order by can't be pushed through limit clause because it'll produce bad results
                 if (base != baseParent && base != limitModel) {
                     limitModel.addOrderBy(orderBy, base.getOrderByDirection().getQuick(i));
-                    limitModel.setOrderByTimestamp(base.isOrderByTimestamp());
                 }
             }
 
@@ -4281,9 +4276,8 @@ public class SqlOptimiser implements Mutable {
             if (
                     sampleBy != null
                             && timestamp != null
-                            && (sampleByOffset != null && Chars.equals(sampleByOffset.token, "'00:00'"))
+                            && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
                             && (sampleByFill.size() == 0 || (sampleByFill.size() == 1 && SqlKeywords.isNoneKeyword(sampleByFill.getQuick(0).token)))
-                            && sampleByTimezoneName == null
                             && sampleByUnit == null
             ) {
                 // When timestamp is not explicitly selected, we will
@@ -4398,7 +4392,6 @@ public class SqlOptimiser implements Mutable {
                     orderBy.type = CONSTANT;
                     nested.getOrderBy().add(orderBy);
                     nested.getOrderByDirection().add(0);
-                    nested.setOrderByTimestamp(true);
                     nested.setTimestamp(nextLiteral(timestamp.token));
                 }
 

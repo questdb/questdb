@@ -5359,20 +5359,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * " +
                     "from full_range";
 
-            String expectedPlan = "SelectedRecord\n" +
-                    "    Sort\n" +
-                    "      keys: [timestamp]\n" +
+            String expectedPlan = "Sort\n" +
+                    "  keys: [timestamp]\n" +
+                    "    Union\n" +
                     "        Union\n" +
-                    "            Union\n" +
-                    "                DataFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: gas_prices\n" +
-                    "                VirtualRecord\n" +
-                    "                  functions: [915148800000000,null]\n" +
-                    "                    long_sequence count: 1\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: gas_prices\n" +
                     "            VirtualRecord\n" +
-                    "              functions: [1676851200000000,null]\n" +
-                    "                long_sequence count: 1\n";
+                    "              functions: [915148800000000,null]\n" +
+                    "                long_sequence count: 1\n" +
+                    "        VirtualRecord\n" +
+                    "          functions: [1676851200000000,null]\n" +
+                    "            long_sequence count: 1\n";
             assertPlan(query, expectedPlan);
             assertPlan(query + " order by timestamp", expectedPlan);
         });
