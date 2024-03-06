@@ -3275,13 +3275,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     denseSymbolMapWriters.add(symbolMapWriter);
                 }
                 if (metadata.isDedupKey(i)) {
-                    // Calculate non-timestamp dedup column count
                     dedupColCount++;
                 }
             }
         }
         if (isDeduplicationEnabled()) {
             dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
+            // Set dedup column count, excluding designated timestamp
             dedupColumnCommitAddresses.setDedupColumnCount(dedupColCount - 1);
         }
         final int timestampIndex = metadata.getTimestampIndex();
