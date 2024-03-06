@@ -319,7 +319,7 @@ public final class Vect {
     private static native void memcpy0(long src, long dst, long len);
 
     private static boolean memeq0(long a, long b, long len) {
-        int i = 0;
+        long i = 0;
         for (; i + 7 < len; i += 8) {
             if (Unsafe.getUnsafe().getLong(a + i) != Unsafe.getUnsafe().getLong(b + i)) {
                 return false;
