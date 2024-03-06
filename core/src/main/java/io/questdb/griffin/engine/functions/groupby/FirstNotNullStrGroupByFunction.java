@@ -41,6 +41,7 @@ public class FirstNotNullStrGroupByFunction extends FirstStrGroupByFunction {
         if (mapValue.getBool(valueIndex + 2)) {
             final CharSequence val = arg.getStr(record);
             if (val != null) {
+                mapValue.putLong(valueIndex, rowId);
                 long ptr = mapValue.getLong(valueIndex + 1);
                 sink.of(ptr).clear();
                 sink.put(val);
