@@ -8134,31 +8134,70 @@ create table tab as (
     }
 
     @Test
+    public void testSimpleVarcharInsert() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            PreparedStatement tbl = connection.prepareStatement("create table x as (" +
+                    "select " +
+                    "rnd_varchar('A','B','C') v, " +
+                    "rnd_str('A','B','C') s, " +
+                    "from long_sequence(5)" +
+                    ")");
+            tbl.execute();
+
+            PreparedStatement insert2 = connection.prepareStatement("insert into x(v,s) values ('F','F'),('G','G'),('H','H')");
+            insert2.execute();
+
+            PreparedStatement stmnt = connection.prepareStatement("select * from x");
+            ResultSet rs = stmnt.executeQuery();
+
+            final String expected = "v[VARCHAR],s[VARCHAR]\n" +
+                    "A,A\n" +
+                    "B,C\n" +
+                    "C,C\n" +
+                    "C,B\n" +
+                    "A,B\n" +
+                    "F,F\n" +
+                    "G,G\n" +
+                    "H,H\n";
+            assertResultSet(expected, sink, rs);
+        });
+    }
+
+    @Test
     public void testSimpleVarcharBindVars() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             PreparedStatement tbl = connection.prepareStatement("create table x as (" +
                     "select " +
                     "rnd_varchar('A','B','C') v, " +
+                    "rnd_str('A','B','C') s, " +
                     "from long_sequence(5)" +
                     ")");
             tbl.execute();
 
-            PreparedStatement insert = connection.prepareStatement("insert into x(v) values(?)");
+
+            PreparedStatement insert = connection.prepareStatement("insert into x(v,s) values (?,?)");
             for (int i = 0; i < 5; i++) {
-                insert.setString(1, "D");
+                insert.setString(1, String.valueOf((char)('D' + i)));
+                insert.setString(2, String.valueOf((char)('D' + i)));
                 insert.execute();
             }
 
-            PreparedStatement stmnt = connection.prepareStatement("select v from x where v != ?");
+            PreparedStatement stmnt = connection.prepareStatement("select v,s from x where v != ? and s != ?");
             stmnt.setString(1, "D");
+            stmnt.setString(2, "D");
+
             ResultSet rs = stmnt.executeQuery();
 
-            final String expected = "v[VARCHAR]\n" +
-                    "A\n" +
-                    "A\n" +
-                    "B\n" +
-                    "C\n" +
-                    "C\n";
+            final String expected = "v[VARCHAR],s[VARCHAR]\n" +
+                    "A,A\n" +
+                    "B,C\n" +
+                    "C,C\n" +
+                    "C,B\n" +
+                    "A,B\n" +
+                    "E,E\n" +
+                    "F,F\n" +
+                    "G,G\n" +
+                    "H,H\n";
             assertResultSet(expected, sink, rs);
         });
     }
