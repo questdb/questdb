@@ -2081,9 +2081,6 @@ public class SqlOptimiser implements Mutable {
         return func;
     }
 
-
-
-
     private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model, int orderByMnemonic) {
         orderByAdvice.clear();
         ObjList<ExpressionNode> orderBy = model.getOrderBy();
@@ -3053,20 +3050,19 @@ public class SqlOptimiser implements Mutable {
             // pull out the primary join model
             // i.e if your models are (model_1 (model_1a, model_1b))
             // get model 1, then get model_1a and model_1b as primary and secondary
-            QueryModel primaryJoinModel = jm.getQuiet(i);
-            primaryJoinModel = primaryJoinModel != null ? primaryJoinModel.getNestedModel() : null;
+            QueryModel jm1 = jm.getQuiet(i);
+            jm1 = jm1 != null ? jm1.getNestedModel() : null;
             // if there isn't one, we have nothing to push down to
-            if (primaryJoinModel == null) {
+            if (jm1 == null) {
                 return;
             }
             // get the secondary join model
-            QueryModel secondaryJoinModel = primaryJoinModel.getJoinModels().getQuiet(1);
+            QueryModel jm2 = jm1.getJoinModels().getQuiet(1);
             // if order by advice doesn't have names qualified by table then we noop and propagate it through
+            // this preserves prior behaviour for orderByAdvice.
             if (!orderByAdviceHasDot) {
-                primaryJoinModel.setOrderByAdviceMnemonic(orderByMnemonic);
-                primaryJoinModel.copyOrderByAdvice(orderByAdvice);
-                primaryJoinModel.copyOrderByDirectionAdvice(orderByDirectionAdvice);
-                optimiseOrderBy(primaryJoinModel, orderByMnemonic);
+                setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
+                optimiseOrderBy(jm1, orderByMnemonic);
                 return;
             }
             // if the order by advice is for more than one table, don't propagate, as a sort will be needed anyway
@@ -3075,47 +3071,49 @@ public class SqlOptimiser implements Mutable {
             }
             // if the orderByAdvice prefixes do not match the primary table name, don't propagate
             final CharSequence prefix = getTablePrefix(orderByAdvice.getQuick(0).token);
-            if (!(Chars.equalsNc(prefix, primaryJoinModel.getTableName())
-                    || (primaryJoinModel.getAlias() != null && Chars.equalsNc(prefix, primaryJoinModel.getAlias().token)))) {
-                optimiseOrderBy(primaryJoinModel, orderByMnemonic);
+            if (!(Chars.equalsNc(prefix, jm1.getTableName())
+                    || (jm1.getAlias() != null && Chars.equalsNc(prefix, jm1.getAlias().token)))) {
+                optimiseOrderBy(jm1, orderByMnemonic);
                 return;
             }
-            // advice is pushable, so we now we copy and strip the table prefix from it
+            // advice is pushable, so now we copy it and strip the table prefix
             ObjList<ExpressionNode> advice = duplicateAdviceAndTakeSuffix();
-            // if there's a secondary model, we need to handle joins
-            if (secondaryJoinModel != null) {
-                final int joinType = secondaryJoinModel.getJoinType();
+            // if there's a join, we need to handle it differently.
+            if (jm2 != null) {
+                final int joinType = jm2.getJoinType();
                 switch (joinType) {
-                    // For asof join, we only propagate advice if its ordered beginning with the designated timestamp
                     case QueryModel.JOIN_ASOF:
+                        // For asof join, we only propagate advice if its ordered beginning with the designated timestamp
                         CharSequence token = advice.getQuick(0).token;
-                        QueryColumn qc = primaryJoinModel.getAliasToColumnMap().get(token);
+                        QueryColumn qc = jm1.getAliasToColumnMap().get(token);
                         // if there is a matching column, and it is the designated timestamp, then propagate advice
                         if (qc != null
                                 && qc.getColumnType() == ColumnType.TIMESTAMP
-                                && Chars.equalsIgnoreCase(primaryJoinModel.getTimestamp().token, qc.getAst().token)) {
-                            setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
+                                && Chars.equalsIgnoreCase(jm1.getTimestamp().token, qc.getAst().token)) {
+                            setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
                         }
                         break;
-                        // for inner, we propagate on both sides
                     case QueryModel.JOIN_INNER:
-                        setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
-                        setAndCopyAdvice(secondaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
+                        // for inner, we propagate on both sides
+                        setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+                        setAndCopyAdvice(jm2, advice, orderByMnemonic, orderByDirectionAdvice);
                         break;
                     default:
-                        setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
+                        setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
                 }
             }
             else {
-                setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
+                // fallback to copy the advice to primary
+                setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
             }
-            // recursive call to propagate advice
-            optimiseOrderBy(primaryJoinModel, orderByMnemonic);
+            // recursive call
+            optimiseOrderBy(jm1, orderByMnemonic);
         }
     }
 
     /**
      * Copies orderByAdvice and removes table prefixes.
+     *
      * @return prefix-less advice
      */
     private ObjList<ExpressionNode> duplicateAdviceAndTakeSuffix() {
@@ -3133,7 +3131,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Copies the given order by advice information into the provided model.
+     * Copies the provided order by advice into the given model.
      *
      * @param model The target model
      * @param advice The order by advice to copy
@@ -3148,6 +3146,8 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Removes the table prefix from a name i.e maps 't1.ts' -> 'ts'
+     * Asserts that the prefix is present.
+     *
      * @param seq the prefixed name
      * @return the non-prefixed name
      */
@@ -3180,21 +3180,19 @@ public class SqlOptimiser implements Mutable {
      */
     private boolean checkForConsistentPrefix(ObjList<ExpressionNode> orderByAdvice) {
         CharSequence prefix = "";
-        boolean consistentPrefix = true;
-        for (int j = 0; j < orderByAdvice.size(); j++) {
+        for (int j = 0, n = orderByAdvice.size(); j < n; j++) {
             CharSequence advice = orderByAdvice.getQuick(j).token;
             int loc = Chars.indexOf(advice, '.');
             if (loc > -1) {
-                if (prefix == "") {
+                if (Chars.equalsIgnoreCase(prefix, "")) {
                     prefix = advice.subSequence(0, loc);
                 }
                 if (!Chars.equalsIgnoreCase(prefix, advice.subSequence(0, loc))) {
-                    consistentPrefix = false;
+                    return false;
                 }
             }
         }
-
-        return consistentPrefix;
+        return true;
     };
 
     private void parseFunctionAndEnumerateColumns(
