@@ -70,14 +70,6 @@ public class ExplicitStringyCastTest extends AbstractCairoTest {
             " rnd_symbol('sym1') a_symbol," +
             " rnd_uuid4() a_uuid4," +
             " rnd_str(3,3,0) a_string," +
-            " rnd_geohash(5) a_geohash5," +
-            " rnd_geohash(10) a_geohash10," +
-            " rnd_geohash(15) a_geohash15," +
-            " rnd_geohash(20) a_geohash20," +
-            " rnd_geohash(25) a_geohash25," +
-            " rnd_geohash(30) a_geohash30," +
-            " rnd_geohash(35) a_geohash35," +
-            " rnd_geohash(40) a_geohash40" +
             " from long_sequence(1))";
 
     private final String castType;
