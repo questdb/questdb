@@ -39,6 +39,7 @@ import java.util.Iterator;
 import java.util.Objects;
 
 import static io.questdb.griffin.SqlKeywords.isAndKeyword;
+import static io.questdb.griffin.SqlParser.ZERO_OFFSET;
 
 /**
  * Important note: Make sure to update clear, equals and hashCode methods, as well as
@@ -169,7 +170,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode outerJoinExpressionClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
-    private ExpressionNode sampleByOffset = null;
+    private ExpressionNode sampleByOffset = ZERO_OFFSET;
     private ExpressionNode sampleByTimezoneName = null;
     private ExpressionNode sampleByUnit;
     private int selectModelType = SELECT_MODEL_NONE;
