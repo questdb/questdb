@@ -30,7 +30,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Chars;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8String;
@@ -101,11 +100,6 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         return utf8Value;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return true;
     }
 
     @Override

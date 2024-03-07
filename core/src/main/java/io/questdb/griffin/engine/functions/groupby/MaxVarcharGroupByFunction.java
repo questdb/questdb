@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByUtf8Sink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
@@ -58,7 +57,7 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowid) {
         final Utf8Sequence val = arg.getVarcharA(record);
         if (val == null) {
             mapValue.putLong(valueIndex, 0);
@@ -68,8 +67,9 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
         }
     }
 
+
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowid) {
         final Utf8Sequence val = arg.getVarcharA(record);
         if (val != null) {
             final long ptr = mapValue.getLong(valueIndex);
@@ -99,18 +99,18 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     }
 
     @Override
-    public Utf8Sequence getVarcharA(Record rec) {
-        final long ptr = rec.getLong(valueIndex);
-        return ptr == 0 ? null : sinkA.of(ptr);
-    }
-
-    @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         final long ptr = rec.getLong(valueIndex);
         if (ptr != 0) {
             sinkA.of(ptr);
             utf8Sink.put(sinkA);
         }
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        final long ptr = rec.getLong(valueIndex);
+        return ptr == 0 ? null : sinkA.of(ptr);
     }
 
     @Override
@@ -122,11 +122,6 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     @Override
     public boolean isConstant() {
         return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
@@ -171,6 +166,11 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override

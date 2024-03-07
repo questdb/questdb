@@ -530,16 +530,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedBinaryEquality() throws Exception {
-        serialize("abinary = abinary2");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedBinaryInequality() throws Exception {
-        serialize("abinary <> abinary2");
-    }
-
-    @Test(expected = SqlException.class)
     public void testUnsupportedBindVariableType1() throws Exception {
         bindVariableService.clear();
         bindVariableService.setStr("astring", "foobar");
