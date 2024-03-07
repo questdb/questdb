@@ -50,10 +50,6 @@ public class MinStrGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function arg = args.getQuick(0);
-        if (arg.supportsDirectStr()) {
-            return new MinDirectStrGroupByFunction(arg);
-        }
-        return new MinStrGroupByFunction(arg);
+        return new MinStrGroupByFunction(args.getQuick(0));
     }
 }

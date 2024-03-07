@@ -50,10 +50,6 @@ public class MaxStrGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function arg = args.getQuick(0);
-        if (arg.supportsDirectStr()) {
-            return new MaxDirectStrGroupByFunction(arg);
-        }
-        return new MaxStrGroupByFunction(arg);
+        return new MaxStrGroupByFunction(args.getQuick(0));
     }
 }
