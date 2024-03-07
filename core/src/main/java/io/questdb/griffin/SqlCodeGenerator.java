@@ -4809,7 +4809,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final int orderByAdviceSize = orderByAdvice.size();
                 if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.hasIntervalFilters()) {
                     // This function cannot handle dotted aliases
-                    assert !Chars.contains(model.getOrderByAdvice().getQuick(0).token, ".");
+                    guardAgainstDotsInOrderByAdvice(model);
 
                     // we can only deal with 'order by symbol, timestamp' at best
                     // skip this optimisation if order by is more extensive
@@ -4959,6 +4959,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 null,
                 columnIndexes
         );
+    }
+
+    private void guardAgainstDotsInOrderByAdvice(QueryModel model) throws SqlException {
+        ObjList<ExpressionNode> advice = model.getOrderByAdvice();
+        for (int i = 0, n = advice.size(); i < n; i++) {
+            if (Chars.contains(advice.getQuick(i).token, ".")) {
+                throw SqlException.$(advice.getQuick(i).position, "cannot use table-prefixed names in order by");
+            }
+        }
     }
 
     private RecordCursorFactory generateUnionAllFactory(
