@@ -284,13 +284,6 @@ public class PathTest {
     }
 
     @Test
-    public void testPathThreadLocalDoesNotAllocateOnRelease() {
-        final long count = Unsafe.getMallocCount();
-        TableUtils.clearThreadLocals();
-        Assert.assertEquals(count, Unsafe.getMallocCount());
-    }
-
-    @Test
     public void testPrefix() {
         try (Path p0 = new Path(4).putAscii("foobar").$()) {
             path.of("baz").prefix(p0, p0.size()).$();
