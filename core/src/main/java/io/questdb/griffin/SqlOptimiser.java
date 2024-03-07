@@ -2968,7 +2968,7 @@ public class SqlOptimiser implements Mutable {
      *     ASOF JOIN
      *         Propagate if the ordering is for the primary table only, and timestamp-first
      *     INNER JOIN
-     *         Propagate to primary table and secondary tables.
+     *         Propagate to primary table and secondary table.
      *
      * @param model
      * @param jm
@@ -3003,7 +3003,6 @@ public class SqlOptimiser implements Mutable {
             }
             // get the secondary join model
             QueryModel secondaryJoinModel = primaryJoinModel.getJoinModels().getQuiet(1);
-
             // if order by advice doesn't have names qualified by table then we keep behaviour the same as before
             if (!orderByAdviceHasDot) {
                 // just do nothing and put it through
@@ -3013,40 +3012,26 @@ public class SqlOptimiser implements Mutable {
                 optimiseOrderBy(primaryJoinModel, orderByMnemonic);
                 return;
             }
-            // if the order by advice is for more than one table, don't propagate as sort will be needed anyway
+            // if the order by advice is for more than one table, don't propagate, as a sort will be needed anyway
             if (!checkForConsistentPrefix(orderByAdvice)) {
                 return;
             }
-            final CharSequence prefix = getTablePrefix(orderByAdvice.getQuick(0).token);
             // if the orderByAdvice prefixes do not match the primary table name, don't propagate
+            final CharSequence prefix = getTablePrefix(orderByAdvice.getQuick(0).token);
             if (!(Chars.equalsNc(prefix, primaryJoinModel.getTableName())
                     || (primaryJoinModel.getAlias() != null && Chars.equalsNc(prefix, primaryJoinModel.getAlias().token)))) {
                 optimiseOrderBy(primaryJoinModel, orderByMnemonic);
                 return;
             }
-
             // its potentially pushable advice, so we now we copy and strip the table prefix from it
-            int d;
-            CharSequence token;
-            ExpressionNode node;
-
-            ObjList<ExpressionNode> advice = orderByAdvice;
-            if (orderByAdviceHasDot) {
-                advice = new ObjList<ExpressionNode>();
-                for (int j = 0, m = orderByAdvice.size(); j < m; j++) {
-                    node = orderByAdvice.getQuick(j);
-                    token = node.token;
-                    d = Chars.indexOf(token, '.');
-                    advice.add(expressionNodePool.next().of(node.type, token.subSequence(d + 1, token.length()), node.precedence, node.position));
-                }
-            }
+            ObjList<ExpressionNode> advice = duplicateAdviceAndTakeSuffix();
             // if there's a secondary model, we need to handle joins
             if (secondaryJoinModel != null) {
                 final int joinType = secondaryJoinModel.getJoinType();
                 switch (joinType) {
                     // For asof join, we only propagate advice if its ordered beginning with the designated timestamp
                     case QueryModel.JOIN_ASOF:
-                        token = orderByAdvice.getQuick(0).token;
+                        CharSequence token = advice.getQuick(0).token;
                         QueryColumn qc = primaryJoinModel.getAliasToColumnMap().get(token);
                         // if there is a matching column, and it is the designated timestamp, then propagate advice
                         if (qc != null
@@ -3055,6 +3040,7 @@ public class SqlOptimiser implements Mutable {
                             setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
                         }
                         break;
+                        // for inner, we propagate on both sides
                     case QueryModel.JOIN_INNER:
                         setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
                         setAndCopyAdvice(secondaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
@@ -3065,13 +3051,23 @@ public class SqlOptimiser implements Mutable {
             else {
                 setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
             }
-
             // recursive call to propagate advice
             optimiseOrderBy(primaryJoinModel, orderByMnemonic);
-
         }
+    }
 
-
+    private ObjList<ExpressionNode> duplicateAdviceAndTakeSuffix() {
+        int d;
+        CharSequence token;
+        ExpressionNode node;
+        ObjList<ExpressionNode> advice = new ObjList<>();
+        for (int j = 0, m = orderByAdvice.size(); j < m; j++) {
+            node = orderByAdvice.getQuick(j);
+            token = node.token;
+            d = Chars.indexOf(token, '.');
+            advice.add(expressionNodePool.next().of(node.type, token.subSequence(d + 1, token.length()), node.precedence, node.position));
+        }
+        return advice;
     }
 
     private void setAndCopyAdvice(QueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
