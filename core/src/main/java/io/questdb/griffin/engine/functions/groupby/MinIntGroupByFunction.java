@@ -44,12 +44,12 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putInt(valueIndex, arg.getInt(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.minInt(valueIndex, arg.getInt(record));
     }
 

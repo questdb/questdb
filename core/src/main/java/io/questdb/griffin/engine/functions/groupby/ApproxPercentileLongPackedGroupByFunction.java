@@ -63,7 +63,7 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final PackedHistogram histogram;
         if (histograms.size() <= histogramIndex) {
             // We pre-size the histogram for [1, 1000] range to avoid resizes in some basic use cases
@@ -83,7 +83,7 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final PackedHistogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
         final long val = exprFunc.getLong(record);
         if (val != Numbers.LONG_NaN) {

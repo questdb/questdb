@@ -72,15 +72,29 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void computeNext(MapValue mapValue, Record record) {
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoByte(record) != GeoHashes.BYTE_NULL) {
-                computeFirst(mapValue, record);
+                computeFirst(mapValue, record, rowId);
             }
         }
 
         @Override
         public String getName() {
             return NAME;
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            byte srcVal = srcValue.getGeoByte(valueIndex + 1);
+            if (srcVal == GeoHashes.BYTE_NULL) {
+                return;
+            }
+            long srcRowId = srcValue.getLong(valueIndex);
+            long destRowId = destValue.getLong(valueIndex);
+            if (srcRowId > destRowId) {
+                destValue.putLong(valueIndex, srcRowId);
+                destValue.putByte(valueIndex + 1, srcVal);
+            }
         }
     }
 
@@ -90,15 +104,29 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void computeNext(MapValue mapValue, Record record) {
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoInt(record) != GeoHashes.INT_NULL) {
-                computeFirst(mapValue, record);
+                computeFirst(mapValue, record, rowId);
             }
         }
 
         @Override
         public String getName() {
             return NAME;
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            int srcVal = srcValue.getGeoInt(valueIndex + 1);
+            if (srcVal == GeoHashes.INT_NULL) {
+                return;
+            }
+            long srcRowId = srcValue.getLong(valueIndex);
+            long destRowId = destValue.getLong(valueIndex);
+            if (srcRowId > destRowId) {
+                destValue.putLong(valueIndex, srcRowId);
+                destValue.putInt(valueIndex + 1, srcVal);
+            }
         }
     }
 
@@ -108,15 +136,29 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void computeNext(MapValue mapValue, Record record) {
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoLong(record) != GeoHashes.NULL) {
-                computeFirst(mapValue, record);
+                computeFirst(mapValue, record, rowId);
             }
         }
 
         @Override
         public String getName() {
             return NAME;
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            long srcVal = srcValue.getGeoLong(valueIndex + 1);
+            if (srcVal == GeoHashes.NULL) {
+                return;
+            }
+            long srcRowId = srcValue.getLong(valueIndex);
+            long destRowId = destValue.getLong(valueIndex);
+            if (srcRowId > destRowId) {
+                destValue.putLong(valueIndex, srcRowId);
+                destValue.putLong(valueIndex + 1, srcVal);
+            }
         }
     }
 
@@ -126,15 +168,29 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void computeNext(MapValue mapValue, Record record) {
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoShort(record) != GeoHashes.SHORT_NULL) {
-                computeFirst(mapValue, record);
+                computeFirst(mapValue, record, rowId);
             }
         }
 
         @Override
         public String getName() {
             return NAME;
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            short srcVal = srcValue.getGeoShort(valueIndex + 1);
+            if (srcVal == GeoHashes.SHORT_NULL) {
+                return;
+            }
+            long srcRowId = srcValue.getLong(valueIndex);
+            long destRowId = destValue.getLong(valueIndex);
+            if (srcRowId > destRowId) {
+                destValue.putLong(valueIndex, srcRowId);
+                destValue.putShort(valueIndex + 1, srcVal);
+            }
         }
     }
 }

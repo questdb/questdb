@@ -46,6 +46,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     private boolean isMapBuildPending;
     private boolean isMapInitialized;
     private boolean isOpen;
+    private long rowId;
 
     public SampleByFillPrevRecordCursor(
             CairoConfiguration configuration,
@@ -112,6 +113,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         super.of(baseCursor, executionContext);
+        rowId = 0;
         isHasNextPending = false;
         isMapBuildPending = true;
         isMapInitialized = false;
@@ -129,6 +131,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     public void toTop() {
         super.toTop();
         map.clear();
+        rowId = 0;
         isHasNextPending = false;
         isMapBuildPending = true;
         isMapInitialized = false;
@@ -169,9 +172,9 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
 
                     if (value.getLong(0) != localEpoch) {
                         value.putLong(0, localEpoch);
-                        groupByFunctionsUpdater.updateNew(value, baseRecord);
+                        groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
                     } else {
-                        groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                     }
                 }
 

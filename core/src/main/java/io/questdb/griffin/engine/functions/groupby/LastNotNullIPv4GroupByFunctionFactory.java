@@ -57,15 +57,29 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void computeNext(MapValue mapValue, Record record) {
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (Numbers.IPv4_NULL != arg.getIPv4(record)) {
-                computeFirst(mapValue, record);
+                computeFirst(mapValue, record, rowId);
             }
         }
 
         @Override
         public String getName() {
             return "last_not_null";
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            int srcVal = srcValue.getIPv4(valueIndex + 1);
+            if (srcVal == Numbers.IPv4_NULL) {
+                return;
+            }
+            long srcRowId = srcValue.getLong(valueIndex);
+            long destRowId = destValue.getLong(valueIndex);
+            if (srcRowId > destRowId) {
+                destValue.putLong(valueIndex, srcRowId);
+                destValue.putInt(valueIndex + 1, srcVal);
+            }
         }
     }
 }

@@ -28,6 +28,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunction {
@@ -37,14 +38,29 @@ public class FirstNotNullSymbolGroupByFunction extends FirstSymbolGroupByFunctio
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        if (mapValue.getInt(valueIndex) == SymbolTable.VALUE_IS_NULL) {
-            computeFirst(mapValue, record);
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        if (mapValue.getInt(valueIndex + 1) == SymbolTable.VALUE_IS_NULL) {
+            computeFirst(mapValue, record, rowId);
         }
     }
 
     @Override
     public String getName() {
         return "first_not_null";
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        int srcVal = srcValue.getInt(valueIndex + 1);
+        if (srcVal == SymbolTable.VALUE_IS_NULL) {
+            return;
+        }
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        // srcRowId is non-null at this point since we know that the value is non-null
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putInt(valueIndex + 1, srcVal);
+        }
     }
 }
