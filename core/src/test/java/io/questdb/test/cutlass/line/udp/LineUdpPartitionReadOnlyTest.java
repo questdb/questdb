@@ -26,8 +26,6 @@ package io.questdb.test.cutlass.line.udp;
 
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -36,7 +34,6 @@ import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
-import io.questdb.std.str.Path;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cutlass.line.AbstractLinePartitionReadOnlyTest;
 import io.questdb.test.tools.TestUtils;
@@ -46,7 +43,6 @@ import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
 
-import static io.questdb.cairo.TableUtils.createTable;
 import static io.questdb.test.tools.TestUtils.*;
 
 public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyTest {
@@ -207,22 +203,17 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 // create a table with 4 partitions and 1111 rows
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
                 TableToken tableToken;
-                try (
-                        TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                                .col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).symbolCapacity(32)
-                                .timestamp("ts");
-                        MemoryMARW mem = Vm.getMARWInstance();
-                        Path path = new Path().of(cairoConfig.getRoot())
-                ) {
-                    tableToken = engine.lockTableName(tableName, 1, false);
-                    Assert.assertNotNull(tableToken);
-                    engine.registerTableToken(tableToken);
-                    createTable(cairoConfig, mem, path.concat(tableToken), tableModel, 1, tableToken.getDirName());
-                    engine.insert(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
-                    engine.unlockTableName(tableToken);
-                }
+                TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                        .col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL).symbolCapacity(32)
+                        .timestamp("ts");
+                tableToken = engine.lockTableName(tableName, 1, false);
+                Assert.assertNotNull(tableToken);
+                engine.registerTableToken(tableToken);
+                createTable(tableModel, cairoConfig, ColumnType.VERSION, 1, tableToken);
+                engine.insert(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
+                engine.unlockTableName(tableToken);
                 Assert.assertNotNull(tableToken);
 
                 // set partition read-only state

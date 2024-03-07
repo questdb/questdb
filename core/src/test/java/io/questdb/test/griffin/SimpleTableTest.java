@@ -69,10 +69,9 @@ public class SimpleTableTest extends AbstractCairoTest {
 
     @Test
     public void testWhereIsColumnNameInsensitive() throws SqlException, NumericException {
-        try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-            tm.timestamp("ts").col("ID", ColumnType.INT);
-            createPopulateTable(tm, 2, "2020-01-01", 1);
-        }
+        TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
+        tm.timestamp("ts").col("ID", ColumnType.INT);
+        createPopulateTable(tm, 2, "2020-01-01", 1);
 
         assertSql("ts\n" +
                 "2020-01-01T00:00:00.000000Z\n", "select ts from tab1 where id > 1");
