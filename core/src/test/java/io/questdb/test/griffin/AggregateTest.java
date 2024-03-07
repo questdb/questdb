@@ -77,7 +77,7 @@ public class AggregateTest extends AbstractCairoTest {
     public void setUp() {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, enableParallelGroupBy);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, enableParallelGroupBy);
     }
 
     @Test

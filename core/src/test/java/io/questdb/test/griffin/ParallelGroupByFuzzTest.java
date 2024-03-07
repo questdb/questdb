@@ -97,9 +97,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         // Set the sharding threshold to a small value to test sharding.
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_SHARDING_THRESHOLD, 2);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 2);
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, enableParallelGroupBy);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, enableParallelGroupBy);
     }
 
     @Test
@@ -2358,7 +2358,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         );
 
                         // Run with single-threaded GROUP BY.
-                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, "false");
+                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "false");
                         TestUtils.printSql(
                                 engine,
                                 sqlExecutionContext,
@@ -2367,7 +2367,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         );
 
                         // Run with parallel GROUP BY.
-                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, "true");
+                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
                         final StringSink sinkB = new StringSink();
                         TestUtils.printSql(
                                 engine,
