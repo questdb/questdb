@@ -26,14 +26,15 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectSequence;
+import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.DirectString;
 
 // contiguous readable
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-    private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
-    private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
+    private final DirectString csview = new DirectString();
+    private final DirectString csview2 = new DirectString();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     protected int fd = -1;
@@ -61,7 +62,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     }
 
     @Override
-    public DirectSequence getDirectStr(long offset) {
+    public DirectCharSequence getDirectStr(long offset) {
         return getStr(offset, csview);
     }
 

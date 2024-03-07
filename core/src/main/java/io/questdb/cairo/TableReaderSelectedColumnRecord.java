@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectSequence;
+import io.questdb.std.str.DirectCharSequence;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableReaderRecord.ifOffsetNegThen0ElseValue;
@@ -101,7 +101,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public DirectSequence getDirectStr(int columnIndex) {
+    public DirectCharSequence getDirectStr(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(

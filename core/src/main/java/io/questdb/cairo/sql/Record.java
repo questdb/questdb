@@ -27,7 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectSequence;
+import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Utf16Sink;
 
 /**
@@ -109,7 +109,7 @@ public interface Record {
      * @param col numeric index of the column
      * @return direct string, null if string is empty
      */
-    default DirectSequence getDirectStr(int col) {
+    default DirectCharSequence getDirectStr(int col) {
         throw new UnsupportedOperationException();
     }
 

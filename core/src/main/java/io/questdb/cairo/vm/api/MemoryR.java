@@ -29,7 +29,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectSequence;
+import io.questdb.std.str.DirectCharSequence;
 
 import java.io.Closeable;
 
@@ -59,7 +59,7 @@ public interface MemoryR extends Closeable {
      * Must return off-heap strings with stable pointers, i.e. once a string is returned,
      * its pointer remains actual until the memory is closed.
      */
-    DirectSequence getDirectStr(long offset);
+    DirectCharSequence getDirectStr(long offset);
 
     double getDouble(long offset);
 

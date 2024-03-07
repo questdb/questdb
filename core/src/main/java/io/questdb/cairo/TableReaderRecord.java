@@ -30,7 +30,7 @@ import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Rows;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectSequence;
+import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
@@ -99,7 +99,7 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
-    public DirectSequence getDirectStr(int col) {
+    public DirectCharSequence getDirectStr(int col) {
         final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
                 recordIndex,

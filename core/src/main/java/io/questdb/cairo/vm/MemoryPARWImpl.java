@@ -171,7 +171,7 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
-    public DirectSequence getDirectStr(long offset) {
+    public DirectCharSequence getDirectStr(long offset) {
         // Paged memory doesn't support stable pointers.
         throw new UnsupportedOperationException();
     }

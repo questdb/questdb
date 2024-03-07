@@ -30,18 +30,18 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectSequence;
+import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstDirectStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
-    protected final MemoryCR.CharSequenceView viewA = new MemoryCR.CharSequenceView();
-    protected final MemoryCR.CharSequenceView viewB = new MemoryCR.CharSequenceView();
+    protected final DirectString viewA = new DirectString();
+    protected final DirectString viewB = new DirectString();
     protected int valueIndex;
 
     public FirstDirectStrGroupByFunction(@NotNull Function arg) {
@@ -147,7 +147,7 @@ public class FirstDirectStrGroupByFunction extends StrFunction implements GroupB
         UnaryFunction.super.toTop();
     }
 
-    private CharSequence getStr(Record rec, MemoryCR.CharSequenceView view) {
+    private CharSequence getStr(Record rec, DirectString view) {
         final int len = rec.getInt(valueIndex + 2);
         if (len == TableUtils.NULL_LEN) {
             return null;

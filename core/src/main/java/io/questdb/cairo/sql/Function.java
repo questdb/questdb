@@ -33,7 +33,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectSequence;
+import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Utf16Sink;
 
 import java.io.Closeable;
@@ -96,7 +96,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * i.e. once a string is returned, its pointer remains actual until the end
      * of query execution.
      */
-    default DirectSequence getDirectStr(Record rec) {
+    default DirectCharSequence getDirectStr(Record rec) {
         throw new UnsupportedOperationException();
     }
 

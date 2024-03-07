@@ -31,15 +31,16 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectSequence;
+import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.DirectString;
 
 import java.io.Closeable;
 
 public class PageAddressCacheRecord implements Record, Closeable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-    private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
-    private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
+    private final DirectString csview = new DirectString();
+    private final DirectString csview2 = new DirectString();
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
@@ -115,7 +116,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public DirectSequence getDirectStr(int columnIndex) {
+    public DirectCharSequence getDirectStr(int columnIndex) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (dataPageAddress == 0) {
             return NullMemoryMR.INSTANCE.getDirectStr(0);
@@ -354,7 +355,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         return null;
     }
 
-    private MemoryCR.CharSequenceView getStr(long base, long offset, long size, MemoryCR.CharSequenceView view) {
+    private DirectString getStr(long base, long offset, long size, DirectString view) {
         final long address = base + offset;
         final int len = Unsafe.getUnsafe().getInt(address);
         if (len != TableUtils.NULL_LEN) {
