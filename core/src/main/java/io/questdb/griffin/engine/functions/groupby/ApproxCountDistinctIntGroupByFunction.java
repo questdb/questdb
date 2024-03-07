@@ -129,11 +129,6 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return true;
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return false;
     }
@@ -219,6 +214,11 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
         this.valueIndex = valueIndex;
         this.hllPtrIndex = valueIndex + 1;
         this.overwrittenFlagIndex = valueIndex + 2;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return true;
     }
 
     private void overwrite(MapValue mapValue, long value) {

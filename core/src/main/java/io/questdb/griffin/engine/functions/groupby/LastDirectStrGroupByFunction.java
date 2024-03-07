@@ -24,39 +24,45 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
+import io.questdb.std.str.DirectSequence;
 import org.jetbrains.annotations.NotNull;
 
-public class CountLong256GroupByFunction extends AbstractCountGroupByFunction {
+public class LastDirectStrGroupByFunction extends FirstDirectStrGroupByFunction {
 
-    public CountLong256GroupByFunction(@NotNull Function arg) {
+    public LastDirectStrGroupByFunction(@NotNull Function arg) {
         super(arg);
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final Long256 value = arg.getLong256A(record);
-        if (!Long256Impl.isNull(value)) {
-            mapValue.putLong(valueIndex, 1);
-        } else {
-            mapValue.putLong(valueIndex, 0);
-        }
-    }
-
-    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final Long256 value = arg.getLong256A(record);
-        if (!Long256Impl.isNull(value)) {
-            mapValue.addLong(valueIndex, 1);
+        mapValue.putLong(valueIndex, rowId);
+        final DirectSequence val = arg.getDirectStr(record);
+        if (val == null) {
+            mapValue.putLong(valueIndex + 1, 0);
+            mapValue.putInt(valueIndex + 2, TableUtils.NULL_LEN);
+        } else {
+            mapValue.putLong(valueIndex + 1, val.ptr());
+            mapValue.putInt(valueIndex + 2, val.size() >>> 1);
         }
     }
 
     @Override
-    public boolean supportsParallelism() {
-        return false;
+    public String getName() {
+        return "last";
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId > destRowId) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
+            destValue.putInt(valueIndex + 2, srcValue.getInt(valueIndex + 2));
+        }
     }
 }

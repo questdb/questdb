@@ -28,6 +28,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectSequence;
 import io.questdb.std.str.LPSZ;
 
 public class NullMemoryMR implements MemoryMR {
@@ -70,6 +71,11 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public char getChar(long offset) {
         return 0;
+    }
+
+    @Override
+    public DirectSequence getDirectStr(long offset) {
+        return null;
     }
 
     @Override

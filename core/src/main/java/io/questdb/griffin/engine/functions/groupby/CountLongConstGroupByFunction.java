@@ -57,11 +57,6 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return true;
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return true;
     }
@@ -96,6 +91,11 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return true;
     }
 
     @Override

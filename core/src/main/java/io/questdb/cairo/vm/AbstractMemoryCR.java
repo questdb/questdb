@@ -26,6 +26,7 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectSequence;
 
 // contiguous readable
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
@@ -57,6 +58,11 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     public final BinarySequence getBin(long offset) {
         return getBin(offset, bsview);
+    }
+
+    @Override
+    public DirectSequence getDirectStr(long offset) {
+        return getStr(offset, csview);
     }
 
     public int getFd() {

@@ -76,11 +76,6 @@ class FirstGeoHashGroupByFunctionLong extends GeoLongFunction implements GroupBy
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return UnaryFunction.super.isReadThreadSafe();
     }
@@ -118,5 +113,10 @@ class FirstGeoHashGroupByFunctionLong extends GeoLongFunction implements GroupBy
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

@@ -539,7 +539,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                             CharSequence b = record.getStrB(i);
                             if (b instanceof AbstractCharSequence) {
                                 // AbstractCharSequence are usually mutable. We cannot have same mutable instance for A and B
-                                Assert.assertNotSame("Expected string instances be different for getStr and getStrB", s, b);
+                                Assert.assertNotSame("Expected string instances to be different for getStr and getStrB", s, b);
                             }
                         } else {
                             Assert.assertNull(record.getStrB(i));

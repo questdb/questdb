@@ -28,6 +28,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
+import io.questdb.std.str.DirectSequence;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 
@@ -69,6 +70,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public BinarySequence getBin(long offset) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public DirectSequence getDirectStr(long offset) {
         throw new UnsupportedOperationException();
     }
 

@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectSequence;
 
 import java.io.Closeable;
 
@@ -111,6 +112,18 @@ public class PageAddressCacheRecord implements Record, Closeable {
             return NullMemoryMR.INSTANCE.getChar(0);
         }
         return Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
+    }
+
+    @Override
+    public DirectSequence getDirectStr(int columnIndex) {
+        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (dataPageAddress == 0) {
+            return NullMemoryMR.INSTANCE.getDirectStr(0);
+        }
+        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
+        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
+        final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
+        return getStr(dataPageAddress, offset, size, csview);
     }
 
     @Override
@@ -341,7 +354,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         return null;
     }
 
-    private CharSequence getStr(long base, long offset, long size, MemoryCR.CharSequenceView view) {
+    private MemoryCR.CharSequenceView getStr(long base, long offset, long size, MemoryCR.CharSequenceView view) {
         final long address = base + offset;
         final int len = Unsafe.getUnsafe().getInt(address);
         if (len != TableUtils.NULL_LEN) {

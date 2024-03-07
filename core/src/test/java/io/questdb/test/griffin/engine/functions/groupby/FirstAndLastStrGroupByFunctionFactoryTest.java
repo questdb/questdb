@@ -31,7 +31,8 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
 
     @Test
     public void testAllNull() throws Exception {
-        assertQuery("r1\tr2\n" +
+        assertQuery(
+                "r1\tr2\n" +
                         "\t\n",
                 "select first(a1) r1, last(a1) r2 from tab",
                 "create table tab as (select cast(list(null,null,null) as string) a1 from long_sequence(3))",
@@ -43,7 +44,8 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
 
     @Test
     public void testFirstNullLastSomething() throws Exception {
-        assertQuery("r1\tr2\n" +
+        assertQuery(
+                "r1\tr2\n" +
                         "\tsomething\n",
                 "select first(a1) r1, last(a1) r2 from tab",
                 "create table tab as (select cast(list(null,'else','something') as string) a1 from long_sequence(3))",
@@ -55,10 +57,50 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
 
     @Test
     public void testFirstSomethingLastNull() throws Exception {
-        assertQuery("r1\tr2\n" +
+        assertQuery(
+                "r1\tr2\n" +
                         "something\t\n",
                 "select first(a1) r1, last(a1) r2 from tab",
                 "create table tab as (select cast(list('something','else',null) as string) a1 from long_sequence(3))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testFunctionArgument() throws Exception {
+        assertQuery(
+                "r1\tr2\tr3\tr4\n" +
+                        "foobar\tbarbar\tfoobar\tbarbar\n",
+                "select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab",
+                "create table tab as (select rnd_str('foo','bar') a1, rnd_str('bar','baz') a2 from long_sequence(10))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testFunctionArgumentAllNulls() throws Exception {
+        assertQuery(
+                "r1\tr2\tr3\tr4\n" +
+                        "\t\t\t\n",
+                "select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab",
+                "create table tab as (select rnd_str(null) a1, rnd_str(null) a2 from long_sequence(10))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testFunctionArgumentSomeNulls() throws Exception {
+        assertQuery(
+                "r1\tr2\tr3\tr4\n" +
+                        "foobar\tfoobaz\tfoobar\tfoobaz\n",
+                "select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab",
+                "create table tab as (select rnd_str('foo','bar',null) a1, rnd_str('bar','baz',null) a2 from long_sequence(10))",
                 null,
                 false,
                 true
