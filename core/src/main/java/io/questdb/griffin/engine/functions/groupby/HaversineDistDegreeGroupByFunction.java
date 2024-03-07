@@ -150,11 +150,6 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
     public boolean isScalar() {
         return false;
     }
@@ -187,6 +182,11 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 
     private double calculateHaversineDistance(MapValue value1, MapValue value2) {

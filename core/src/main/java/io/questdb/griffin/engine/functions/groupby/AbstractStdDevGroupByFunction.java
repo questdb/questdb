@@ -85,11 +85,6 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
@@ -113,6 +108,11 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 
     protected void aggregate(MapValue mapValue, double value) {

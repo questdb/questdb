@@ -65,11 +65,6 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default boolean isParallelismSupported() {
-        return getLeft().isParallelismSupported() && getCenter().isParallelismSupported() && getRight().isParallelismSupported();
-    }
-
-    @Override
     default boolean isReadThreadSafe() {
         return getLeft().isReadThreadSafe() && getCenter().isReadThreadSafe() && getRight().isReadThreadSafe();
     }
@@ -85,6 +80,11 @@ public interface TernaryFunction extends Function {
         boolean cc = getRight().isConstant();
 
         return (ac || arc) && (bc || brc) && (cc || crc) && (arc || brc || crc);
+    }
+
+    @Override
+    default boolean supportsParallelism() {
+        return getLeft().supportsParallelism() && getCenter().supportsParallelism() && getRight().supportsParallelism();
     }
 
     @Override
