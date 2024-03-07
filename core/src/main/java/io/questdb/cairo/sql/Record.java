@@ -31,6 +31,7 @@ import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.Nullable;
+import io.questdb.std.str.DirectCharSequence;
 
 /**
  * Access the value of columns of a table record by column index.
@@ -103,6 +104,16 @@ public interface Record {
      */
     default long getDate(int col) {
         return getLong(col);
+    }
+
+    /**
+     * Gets the off-heap (direct) value of a string column by index
+     *
+     * @param col numeric index of the column
+     * @return direct string, null if string is empty
+     */
+    default DirectCharSequence getDirectStr(int col) {
+        throw new UnsupportedOperationException();
     }
 
     /**
@@ -244,6 +255,7 @@ public interface Record {
      * @param col numeric index of the column
      * @return 64-bit integer
      */
+    @SuppressWarnings("unused")
     default long getLongIPv4(int col) {
         throw new UnsupportedOperationException();
     }

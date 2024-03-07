@@ -874,15 +874,7 @@ public final class TestUtils {
         if (tableToken == null) {
             throw new RuntimeException("table already exists: " + model.getTableName());
         }
-        TableUtils.createTable(
-                engine.getConfiguration(),
-                model.getMem(),
-                model.getPath(),
-                model,
-                ColumnType.VERSION,
-                tableId,
-                tableToken.getDirName()
-        );
+        createTable(model, engine.getConfiguration(), ColumnType.VERSION, tableId, tableToken);
         engine.registerTableToken(tableToken);
         if (model.isWalEnabled()) {
             engine.getTableSequencerAPI().registerTable(tableId, model, tableToken);
@@ -1703,6 +1695,23 @@ public final class TestUtils {
                 || expected.getLong2() != actual.getLong2()
                 || expected.getLong3() != actual.getLong3()) {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
+        }
+    }
+
+    public static void createTable(TableModel model, CairoConfiguration configuration, int tableVersion, int tableId, TableToken tableToken) {
+        try (
+                Path path = new Path();
+                MemoryMARW mem = Vm.getMARWInstance()
+        ) {
+            TableUtils.createTable(
+                    configuration,
+                    mem,
+                    path,
+                    model,
+                    tableVersion,
+                    tableId,
+                    tableToken.getDirName()
+            );
         }
     }
 

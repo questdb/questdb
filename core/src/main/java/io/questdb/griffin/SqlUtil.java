@@ -774,7 +774,7 @@ public class SqlUtil {
 
     public static boolean isParallelismSupported(ObjList<Function> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
-            if (!functions.getQuick(i).isParallelismSupported()) {
+            if (!functions.getQuick(i).supportsParallelism()) {
                 return false;
             }
         }

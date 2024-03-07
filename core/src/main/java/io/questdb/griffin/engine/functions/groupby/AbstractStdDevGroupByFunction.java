@@ -51,7 +51,7 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
         mapValue.putDouble(valueIndex, 0);
         mapValue.putDouble(valueIndex + 1, 0);
@@ -62,7 +62,7 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
         if (Numbers.isFinite(d)) {
             aggregate(mapValue, d);
@@ -81,11 +81,6 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
 
     @Override
     public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
         return false;
     }
 
@@ -113,6 +108,11 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 
     protected void aggregate(MapValue mapValue, double value) {

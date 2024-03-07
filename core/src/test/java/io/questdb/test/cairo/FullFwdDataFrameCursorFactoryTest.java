@@ -28,10 +28,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -45,15 +44,13 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
             final int N = 100;
             TableToken tableToken;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, N / 4).
                     col("i", ColumnType.INT).
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
-            ) {
-                tableToken = CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            tableToken = AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];

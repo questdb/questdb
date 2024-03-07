@@ -176,6 +176,12 @@ public class MemoryPARWImpl implements MemoryARW {
         return getChar0(offset);
     }
 
+    @Override
+    public DirectCharSequence getDirectStr(long offset) {
+        // Paged memory doesn't support stable pointers.
+        throw new UnsupportedOperationException();
+    }
+
     public final double getDouble(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi - Double.BYTES) {
             return Unsafe.getUnsafe().getDouble(absolutePointer + offset);
@@ -350,11 +356,9 @@ public class MemoryPARWImpl implements MemoryARW {
         if (len == TableUtils.NULL_LEN) {
             return null;
         }
-
         if (len == 0) {
             return "";
         }
-
         return view.of(offset + STRING_LENGTH_BYTES, len);
     }
 

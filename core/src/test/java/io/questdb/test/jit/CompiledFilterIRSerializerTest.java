@@ -40,7 +40,7 @@ import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import org.junit.*;
@@ -78,35 +78,34 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Before
     public void setUp2() throws SqlException {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-            model.col("aboolean", ColumnType.BOOLEAN)
-                    .col("abyte", ColumnType.BYTE)
-                    .col("ageobyte", ColumnType.GEOBYTE)
-                    .col("ashort", ColumnType.SHORT)
-                    .col("ageoshort", ColumnType.GEOSHORT)
-                    .col("achar", ColumnType.CHAR)
-                    .col("anint", ColumnType.INT)
-                    .col("ageoint", ColumnType.GEOINT)
-                    .col("asymbol", ColumnType.SYMBOL)
-                    .col("anothersymbol", ColumnType.SYMBOL)
-                    .col("afloat", ColumnType.FLOAT)
-                    .col("along", ColumnType.LONG)
-                    .col("ageolong", ColumnType.GEOLONG)
-                    .col("adate", ColumnType.DATE)
-                    .col("atimestamp", ColumnType.TIMESTAMP)
-                    .col("adouble", ColumnType.DOUBLE)
-                    .col("astring", ColumnType.STRING)
-                    .col("astring2", ColumnType.STRING)
-                    .col("avarchar", ColumnType.VARCHAR)
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE);
+        model.col("aboolean", ColumnType.BOOLEAN)
+                .col("abyte", ColumnType.BYTE)
+                .col("ageobyte", ColumnType.GEOBYTE)
+                .col("ashort", ColumnType.SHORT)
+                .col("ageoshort", ColumnType.GEOSHORT)
+                .col("achar", ColumnType.CHAR)
+                .col("anint", ColumnType.INT)
+                .col("ageoint", ColumnType.GEOINT)
+                .col("asymbol", ColumnType.SYMBOL)
+                .col("anothersymbol", ColumnType.SYMBOL)
+                .col("afloat", ColumnType.FLOAT)
+                .col("along", ColumnType.LONG)
+                .col("ageolong", ColumnType.GEOLONG)
+                .col("adate", ColumnType.DATE)
+                .col("atimestamp", ColumnType.TIMESTAMP)
+                .col("adouble", ColumnType.DOUBLE)
+                .col("astring", ColumnType.STRING)
+                .col("astring2", ColumnType.STRING)
+                .col("avarchar", ColumnType.VARCHAR)
                     .col("avarchar2", ColumnType.VARCHAR)
                     .col("abinary", ColumnType.BINARY)
-                    .col("abinary2", ColumnType.BINARY)
-                    .col("auuid", ColumnType.UUID)
-                    .col("along128", ColumnType.LONG128)
+                .col("abinary2", ColumnType.BINARY)
+                .col("auuid", ColumnType.UUID)
+                .col("along128", ColumnType.LONG128)
                     .col("along256", ColumnType.LONG256)
-                    .timestamp();
-            CreateTableTestUtils.create(model);
-        }
+                .timestamp();
+        AbstractCairoTest.create(model);
 
         try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
             TableWriter.Row row = writer.newRow();
@@ -518,6 +517,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(1, bindVarFunctions.size());
         Assert.assertEquals(ColumnType.SYMBOL, bindVarFunctions.get(0).getType());
         Assert.assertEquals(UNKNOWN_SYMBOL, bindVarFunctions.get(0).getStr(null));
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedBinaryEquality() throws Exception {
+        serialize("abinary = abinary2");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedBinaryInequality() throws Exception {
+        serialize("abinary <> abinary2");
     }
 
     @Test(expected = SqlException.class)

@@ -29,10 +29,10 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
@@ -255,9 +255,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     private class SymbolTableView implements StaticSymbolTable {
-        private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
-        private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
-        private final MemoryCR.CharSequenceView csviewInternal = new MemoryCR.CharSequenceView();
+        private final DirectString csview = new DirectString();
+        private final DirectString csview2 = new DirectString();
+        private final DirectString csviewInternal = new DirectString();
         private RowCursor rowCursor;
 
         @Override

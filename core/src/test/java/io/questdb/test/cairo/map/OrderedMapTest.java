@@ -32,7 +32,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
@@ -871,10 +870,9 @@ public class OrderedMapTest extends AbstractCairoTest {
             int geohashType = ColumnType.getGeoHashTypeWithBits(precisionBits);
 
             BytecodeAssembler asm = new BytecodeAssembler();
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-                model.col("a", ColumnType.LONG).col("b", geohashType);
-                CreateTableTestUtils.create(model);
-            }
+            TableModel model = new TableModel(configuration, "x", PartitionBy.NONE);
+            model.col("a", ColumnType.LONG).col("b", geohashType);
+            AbstractCairoTest.create(model);
 
             try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < N; i++) {
@@ -2073,23 +2071,22 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     private void createTestTable(int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-            model
-                    .col("a", ColumnType.BYTE)
-                    .col("b", ColumnType.SHORT)
-                    .col("c", ColumnType.INT)
-                    .col("d", ColumnType.LONG)
-                    .col("e", ColumnType.DATE)
-                    .col("f", ColumnType.TIMESTAMP)
-                    .col("g", ColumnType.FLOAT)
-                    .col("h", ColumnType.DOUBLE)
-                    .col("i", ColumnType.STRING)
-                    .col("j", ColumnType.SYMBOL)
-                    .col("k", ColumnType.BOOLEAN)
-                    .col("l", ColumnType.BINARY)
-                    .col("m", ColumnType.UUID);
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE);
+        model
+                .col("a", ColumnType.BYTE)
+                .col("b", ColumnType.SHORT)
+                .col("c", ColumnType.INT)
+                .col("d", ColumnType.LONG)
+                .col("e", ColumnType.DATE)
+                .col("f", ColumnType.TIMESTAMP)
+                .col("g", ColumnType.FLOAT)
+                .col("h", ColumnType.DOUBLE)
+                .col("i", ColumnType.STRING)
+                .col("j", ColumnType.SYMBOL)
+                .col("k", ColumnType.BOOLEAN)
+                .col("l", ColumnType.BINARY)
+                .col("m", ColumnType.UUID);
+        AbstractCairoTest.create(model);
 
         try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
             for (int i = 0; i < n; i++) {

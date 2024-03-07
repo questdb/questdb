@@ -58,7 +58,7 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final CompactCharSequenceHashSet set;
         if (sets.size() <= setIndex) {
             sets.extendAndSet(setIndex, set = new CompactCharSequenceHashSet(setInitialCapacity, setLoadFactor));
@@ -78,7 +78,7 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final CompactCharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final CharSequence val = arg.getStr(record);
         if (val != null) {
@@ -117,11 +117,6 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return false;
     }
@@ -151,6 +146,11 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 
     @Override

@@ -32,6 +32,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
 import org.jetbrains.annotations.NotNull;
+import io.questdb.std.str.DirectCharSequence;
 
 import java.io.Closeable;
 
@@ -62,6 +63,14 @@ public interface MemoryR extends Closeable {
     byte getByte(long offset);
 
     char getChar(long offset);
+
+    /**
+     * Returns UTF-16 encoded off-heap string.
+     * <p>
+     * Must return off-heap strings with stable pointers, i.e. once a string is returned,
+     * its pointer remains actual until the memory is closed.
+     */
+    DirectCharSequence getDirectStr(long offset);
 
     double getDouble(long offset);
 

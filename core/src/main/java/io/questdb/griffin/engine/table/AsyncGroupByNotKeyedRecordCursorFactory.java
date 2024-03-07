@@ -164,6 +164,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
         final long frameRowCount = task.getFrameRowCount();
+        assert frameRowCount > 0;
         final AsyncGroupByNotKeyedAtom atom = task.getFrameSequence(AsyncGroupByNotKeyedAtom.class).getAtom();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
@@ -171,13 +172,15 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final SimpleMapValue value = atom.getMapValue(slotId);
         try {
+            record.setRowIndex(0);
+            long rowId = record.getRowId();
             for (long r = 0; r < frameRowCount; r++) {
                 record.setRowIndex(r);
                 if (value.isNew()) {
-                    functionUpdater.updateNew(value, record);
+                    functionUpdater.updateNew(value, record, rowId++);
                     value.setNew(false);
                 } else {
-                    functionUpdater.updateExisting(value, record);
+                    functionUpdater.updateExisting(value, record, rowId++);
                 }
             }
         } finally {
@@ -188,16 +191,18 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private static void aggregateFiltered(
             @NotNull PageAddressCacheRecord record,
             DirectLongList rows,
+            long baseRowId,
             SimpleMapValue value,
             GroupByFunctionsUpdater functionUpdater
     ) {
         for (long p = 0, n = rows.size(); p < n; p++) {
-            record.setRowIndex(rows.get(p));
+            long r = rows.get(p);
+            record.setRowIndex(r);
             if (value.isNew()) {
-                functionUpdater.updateNew(value, record);
+                functionUpdater.updateNew(value, record, baseRowId + r);
                 value.setNew(false);
             } else {
-                functionUpdater.updateExisting(value, record);
+                functionUpdater.updateExisting(value, record, baseRowId + r);
             }
         }
     }
@@ -214,6 +219,8 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
         rows.clear();
 
+        final long frameRowCount = task.getFrameRowCount();
+        assert frameRowCount > 0;
         final AsyncGroupByNotKeyedAtom atom = task.getFrameSequence(AsyncGroupByNotKeyedAtom.class).getAtom();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
@@ -225,12 +232,14 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         try {
             if (compiledFilter == null || pageAddressCache.hasColumnTops(task.getFrameIndex())) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                applyFilter(filter, rows, record, task.getFrameRowCount());
+                applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
 
-            aggregateFiltered(record, rows, value, functionUpdater);
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+            aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
         } finally {
             atom.release(slotId);
         }

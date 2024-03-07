@@ -44,12 +44,12 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putInt(valueIndex, arg.getInt(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.maxInt(valueIndex, arg.getInt(record));
     }
 
@@ -79,11 +79,6 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return UnaryFunction.super.isReadThreadSafe();
     }
@@ -92,7 +87,7 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void merge(MapValue destValue, MapValue srcValue) {
         int srcMax = srcValue.getInt(valueIndex);
         int destMax = destValue.getInt(valueIndex);
-        if (srcMax > destMax || destMax == Numbers.INT_NaN) {
+        if (srcMax > destMax) {
             destValue.putInt(valueIndex, srcMax);
         }
     }
@@ -116,5 +111,10 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

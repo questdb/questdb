@@ -119,6 +119,11 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean supportsParallelism() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         if (value == null) {
             sink.val("null::symbol");

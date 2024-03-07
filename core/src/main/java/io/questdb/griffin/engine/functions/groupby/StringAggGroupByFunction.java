@@ -77,7 +77,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final DirectUtf16Sink sink;
         if (sinks.size() <= sinkIndex) {
             sinks.extendAndSet(sinkIndex, sink = new DirectUtf16Sink(INITIAL_SINK_CAPACITY));
@@ -97,7 +97,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final DirectUtf16Sink sink = sinks.getQuick(mapValue.getInt(valueIndex));
         final CharSequence str = arg.getStr(record);
         if (str != null) {
@@ -140,11 +140,6 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
     public boolean isScalar() {
         return false;
     }
@@ -164,6 +159,11 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 
     @Override

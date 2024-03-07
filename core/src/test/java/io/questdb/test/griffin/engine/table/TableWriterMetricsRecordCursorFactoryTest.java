@@ -31,7 +31,6 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.TableWriterMetricsRecordCursorFactory;
 import io.questdb.std.str.StringSink;
@@ -82,10 +81,9 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
         MetricsSnapshot metricsBefore = snapshotMetrics();
         assertMetricsCursorEquals(metricsBefore);
 
-        try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-            tm.timestamp("ts").col("ID", ColumnType.INT);
-            createPopulateTable(tm, 1, "2020-01-01", 1);
-        }
+        TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
+        tm.timestamp("ts").col("ID", ColumnType.INT);
+        createPopulateTable(tm, 1, "2020-01-01", 1);
         MetricsSnapshot metricsAfter = snapshotMetrics();
         assertNotEquals(metricsBefore, metricsAfter);
 
@@ -114,7 +112,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
     }
 
     @Test
-    public void testSanity() throws SqlException {
+    public void testSanity() {
         // we want to make sure metrics in tests are enabled by default
         assertTrue(metrics.isEnabled());
         assertTrue(engine.getMetrics().isEnabled());

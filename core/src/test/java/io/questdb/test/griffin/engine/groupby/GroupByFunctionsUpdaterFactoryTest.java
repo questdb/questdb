@@ -50,36 +50,45 @@ public class GroupByFunctionsUpdaterFactoryTest {
         functions.add(new TestGroupByFunction());
         GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(new BytecodeAssembler(), functions);
 
-        MapValue value = new SimpleMapValue(1);
+        MapValue value = new SimpleMapValue(2);
         Record record = new TestRecord();
 
-        updater.updateNew(value, record);
+        updater.updateNew(value, record, 42);
         Assert.assertEquals(1, value.getLong(0));
+        Assert.assertEquals(42, value.getLong(1));
 
-        updater.updateExisting(value, record);
+        updater.updateExisting(value, record, 43);
         Assert.assertEquals(1 + functions.size(), value.getLong(0));
+        Assert.assertEquals(43, value.getLong(1));
 
         updater.updateEmpty(value);
         Assert.assertEquals(-1, value.getLong(0));
+        Assert.assertEquals(-1, value.getLong(1));
 
-        MapValue destValue = new SimpleMapValue(1);
-        MapValue srcValue = new SimpleMapValue(1);
+        MapValue destValue = new SimpleMapValue(2);
+        destValue.putLong(0, 0);
+        destValue.putLong(1, 0);
+        MapValue srcValue = new SimpleMapValue(2);
         srcValue.putLong(0, 42);
+        srcValue.putLong(1, 1);
         updater.merge(destValue, srcValue);
         Assert.assertEquals(42, destValue.getLong(0));
+        Assert.assertEquals(0, destValue.getLong(1));
     }
 
     private static class TestGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
 
         @Override
-        public void computeFirst(MapValue mapValue, Record record) {
+        public void computeFirst(MapValue mapValue, Record record, long rowId) {
             mapValue.putLong(0, 1);
+            mapValue.putLong(1, rowId);
         }
 
         @Override
-        public void computeNext(MapValue mapValue, Record record) {
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
             long value = mapValue.getLong(0);
             mapValue.putLong(0, value + 1);
+            mapValue.putLong(1, rowId);
         }
 
         @Override
@@ -98,14 +107,10 @@ public class GroupByFunctionsUpdaterFactoryTest {
         }
 
         @Override
-        public boolean isParallelismSupported() {
-            return false;
-        }
-
-        @Override
         public void merge(MapValue destValue, MapValue srcValue) {
             long value = srcValue.getLong(0);
             destValue.putLong(0, value);
+            destValue.putLong(1, Math.min(srcValue.getLong(1), destValue.getLong(1)));
         }
 
         @Override
@@ -115,10 +120,16 @@ public class GroupByFunctionsUpdaterFactoryTest {
         @Override
         public void setNull(MapValue mapValue) {
             mapValue.putLong(0, -1);
+            mapValue.putLong(1, -1);
         }
 
         @Override
         public void setValueIndex(int valueIndex) {
+        }
+
+        @Override
+        public boolean supportsParallelism() {
+            return false;
         }
     }
 }

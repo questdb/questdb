@@ -37,7 +37,7 @@ public class CountStrGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         int value = arg.getStrLen(record);
         if (value != TableUtils.NULL_LEN) {
             mapValue.putLong(valueIndex, 1);
@@ -47,7 +47,7 @@ public class CountStrGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         int value = arg.getStrLen(record);
         if (value != TableUtils.NULL_LEN) {
             mapValue.addLong(valueIndex, 1);

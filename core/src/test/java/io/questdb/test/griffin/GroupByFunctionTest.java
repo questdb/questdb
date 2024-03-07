@@ -141,7 +141,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         " rnd_double() volume_mw" +
                         " from long_sequence(100)" +
                         "), index(seller), index(buyer) timestamp(delivery_start_utc)",
-                null,
+                "y_utc_15m",
                 true,
                 true
         );

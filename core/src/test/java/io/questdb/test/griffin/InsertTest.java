@@ -138,9 +138,8 @@ public class InsertTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(() -> {
-            try (TableModel model = CreateTableTestUtils.getGeoHashTypesModelWithNewTypes(configuration, PartitionBy.YEAR)) {
-                TestUtils.create(model, engine);
-            }
+            TableModel model = CreateTableTestUtils.getGeoHashTypesModelWithNewTypes(configuration, PartitionBy.YEAR);
+            TestUtils.create(model, engine);
             Rnd rnd = new Rnd();
 
             final String sql;

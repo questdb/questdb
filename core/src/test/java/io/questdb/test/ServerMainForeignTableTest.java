@@ -626,20 +626,17 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         sink.put('\n');
         compiler.compile(sink.toString(), context);
 
-        try (
-                TableModel tableModel = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)
-                        .col("investmentMill", ColumnType.LONG)
-                        .col("ticketThous", ColumnType.INT)
-                        .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
-                        .timestamp("ts")
-        ) {
-            // todo: replace with metadata
-            if (isWal) {
-                tableModel.wal();
-            }
-            CharSequence insert = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
-            compiler.compile(insert, context);
+        TableModel tableModel = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)
+                .col("investmentMill", ColumnType.LONG)
+                .col("ticketThous", ColumnType.INT)
+                .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
+                .timestamp("ts");
+        // todo: replace with metadata
+        if (isWal) {
+            tableModel.wal();
         }
+        CharSequence insert = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
+        compiler.compile(insert, context);
         return engine.verifyTableName(tableName);
     }
 

@@ -41,7 +41,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -62,13 +61,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     public void testClose() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
+            TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
                     col("a", ColumnType.INT).
                     col("b", ColumnType.INT).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
             TableReader reader = newOffPoolReader(configuration, "x");
             FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
@@ -83,13 +80,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testEmptyPartitionSkip() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
+            TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
                     col("a", ColumnType.INT).
                     col("b", ColumnType.INT).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
             long timestamp;
             final Rnd rnd = new Rnd();
@@ -106,7 +101,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         TableReader reader = newOffPoolReader(configuration, "x");
                         FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor()
                 ) {
-
 
                     int frameCount = 0;
                     cursor.of(reader);
@@ -1527,48 +1521,50 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             };
 
             try (MyWorkScheduler workScheduler = new MyWorkScheduler(pubSeq, subSeq)) {
-                final WorkerPool workerPool;
-                if (subSeq != null) {
-                    workerPool = new TestWorkerPool(2, metrics);
-                    workerPool.assign(new ColumnIndexerJob(workScheduler));
-                    workerPool.start(LOG);
-                } else {
-                    workerPool = null;
-                }
-
-                long timestamp = 0;
-                try (TableWriter writer = newOffPoolWriter(configuration, "ABC", metrics, workScheduler)) {
-                    for (int i = 0; i < N; i++) {
-                        TableWriter.Row r = writer.newRow(timestamp += increment);
-                        r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
-                        r.putSym(1, sg.symB[rnd.nextPositiveInt() % S]);
-                        r.putSym(2, sg.symC[rnd.nextPositiveInt() % S]);
-                        r.putDouble(3, rnd.nextDouble());
-                        r.append();
+                WorkerPool workerPool = null;
+                try {
+                    if (subSeq != null) {
+                        workerPool = new TestWorkerPool(2, metrics);
+                        workerPool.assign(new ColumnIndexerJob(workScheduler));
+                        workerPool.start(LOG);
                     }
-                    writer.commit();
-                }
+
+                    long timestamp = 0;
+                    try (TableWriter writer = newOffPoolWriter(configuration, "ABC", metrics, workScheduler)) {
+                        for (int i = 0; i < N; i++) {
+                            TableWriter.Row r = writer.newRow(timestamp += increment);
+                            r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
+                            r.putSym(1, sg.symB[rnd.nextPositiveInt() % S]);
+                            r.putSym(2, sg.symC[rnd.nextPositiveInt() % S]);
+                            r.putDouble(3, rnd.nextDouble());
+                            r.append();
+                        }
+                        writer.commit();
+                    }
 
                 if (workerPool != null) {
                     workerPool.halt();
                     Misc.free(workerPool);
                 }
 
-                try (TableReader reader = createTableReader(configuration, "ABC")) {
+                    try (TableReader reader = createTableReader(configuration, "ABC")) {
 
-                    Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+                        Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
-                    FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                    TableReaderRecord record = new TableReaderRecord();
+                        FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
+                        TableReaderRecord record = new TableReaderRecord();
 
-                    cursor.of(reader);
-                    record.of(reader);
+                        cursor.of(reader);
+                        record.of(reader);
 
-                    assertIndexRowsMatchSymbol(cursor, record, 0, N);
-                    cursor.toTop();
-                    assertIndexRowsMatchSymbol(cursor, record, 1, N);
-                    cursor.toTop();
-                    assertIndexRowsMatchSymbol(cursor, record, 2, N);
+                        assertIndexRowsMatchSymbol(cursor, record, 0, N);
+                        cursor.toTop();
+                        assertIndexRowsMatchSymbol(cursor, record, 1, N);
+                        cursor.toTop();
+                        assertIndexRowsMatchSymbol(cursor, record, 2, N);
+                    }
+                } finally {
+                    Misc.free(workerPool);
                 }
             }
         });
@@ -1651,8 +1647,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
             }
 
-            try (final MyWorkScheduler workScheduler = new MyWorkScheduler()) {
-                WorkerPool workerPool = new TestWorkerPool(2, metrics);
+            try (
+                    final MyWorkScheduler workScheduler = new MyWorkScheduler();
+                    WorkerPool workerPool = new TestWorkerPool(2, metrics)
+            ) {
+
                 workerPool.assign(new ColumnIndexerJob(workScheduler));
 
                 try (TableWriter writer = newOffPoolWriter(configuration, "ABC", metrics, workScheduler)) {
@@ -1752,15 +1751,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+            TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, N / 4).
                     col("i", ColumnType.INT).
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
@@ -1828,15 +1825,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+            TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, N / 4).
                     col("i", ColumnType.INT).indexed(false, 0).
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
@@ -1899,15 +1894,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+            TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, N / 4).
                     col("i", ColumnType.INT).
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
@@ -1977,15 +1970,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             final int N = 100;
 
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+            TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, N / 4).
                     col("i", ColumnType.INT).
                     timestamp().
-                    col("c", ColumnType.SYMBOL).indexed(true, N / 4)
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    col("c", ColumnType.SYMBOL).indexed(true, N / 4);
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
@@ -2051,14 +2042,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             final int N = 100;
 
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+            TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, N / 4).
                     col("i", ColumnType.INT).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
@@ -2148,15 +2137,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             final int N = 100;
 
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+            TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, N / 4).
                     col("i", ColumnType.INT).
                     timestamp().
-                    col("c", ColumnType.SYMBOL).indexed(true, N / 4)
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    col("c", ColumnType.SYMBOL).indexed(true, N / 4);
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
@@ -2222,15 +2209,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             final int N = 100;
 
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+            TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, N / 4).
                     col("i", ColumnType.INT).
                     timestamp().
-                    col("c", ColumnType.SYMBOL)
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    col("c", ColumnType.SYMBOL);
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
@@ -2295,12 +2280,10 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     private void testSymbolIndexRead(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+            TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
@@ -2345,12 +2328,10 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     private void testSymbolIndexReadAfterAlter(int partitionBy, long increment, int expectedPartitionMin, int M) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+            TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(false, N / 4).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
@@ -2398,12 +2379,10 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     private void testSymbolIndexReadAfterRollback(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+            TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
@@ -2453,9 +2432,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     private void testSymbolIndexReadColumnAddAndAlter(int partitionBy, long increment, int expectedPartitionMin, int M) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).timestamp()) {
-                CreateTableTestUtils.create(model);
-            }
+            TableModel model = new TableModel(configuration, "x", partitionBy).timestamp();
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
@@ -2580,14 +2558,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 indexBlockSize = N / S;
             }
 
-            try (TableModel model = new TableModel(configuration, "ABC", partitionBy)
+            TableModel model = new TableModel(configuration, "ABC", partitionBy)
                     .col("a", ColumnType.SYMBOL).indexed(true, indexBlockSize)
                     .col("b", ColumnType.SYMBOL).indexed(true, indexBlockSize)
                     .col("c", ColumnType.SYMBOL).indexed(true, indexBlockSize)
                     .col("d", ColumnType.DOUBLE)
-                    .timestamp()) {
-                CreateTableTestUtils.create(model);
-            }
+                    .timestamp();
+            AbstractCairoTest.create(model);
         }
 
         long appendABC(CairoConfiguration configuration, Rnd rnd, long N, long timestamp, long increment) {

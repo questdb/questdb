@@ -44,12 +44,13 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong(valueIndex, arg.getTimestamp(record));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        mapValue.putLong(valueIndex + 1, arg.getTimestamp(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         // empty
     }
 
@@ -65,7 +66,7 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
 
     @Override
     public long getTimestamp(Record rec) {
-        return rec.getTimestamp(valueIndex);
+        return rec.getTimestamp(valueIndex + 1);
     }
 
     @Override
@@ -74,23 +75,40 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putTimestamp(valueIndex + 1, srcValue.getTimestamp(valueIndex + 1));
+        }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.TIMESTAMP);
+        columnTypes.add(ColumnType.LONG);      // row id
+        columnTypes.add(ColumnType.TIMESTAMP); // value
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putTimestamp(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putTimestamp(valueIndex + 1, Numbers.LONG_NaN);
     }
 
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

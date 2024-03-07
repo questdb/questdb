@@ -64,7 +64,7 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int val = arg.getInt(record);
         if (val != Numbers.INT_NaN) {
             final long hash = Hash.murmur3ToLong(val);
@@ -79,7 +79,7 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int val = arg.getInt(record);
         if (val != Numbers.INT_NaN) {
             final long hash = Hash.murmur3ToLong(val);
@@ -126,11 +126,6 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
     @Override
     public boolean isConstant() {
         return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return true;
     }
 
     @Override
@@ -219,6 +214,11 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
         this.valueIndex = valueIndex;
         this.hllPtrIndex = valueIndex + 1;
         this.overwrittenFlagIndex = valueIndex + 2;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return true;
     }
 
     private void overwrite(MapValue mapValue, long value) {

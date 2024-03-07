@@ -143,7 +143,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     private static class ConcatFunction extends StrFunction implements MultiArgFunction {
-        private final ObjList<TypeAdapter> adaptors;
+        private final ObjList<TypeAdapter> adapters;
         private final int functionCount;
         private final ObjList<Function> functions;
         private final StringSink sinkA = new StringSink();
@@ -152,9 +152,9 @@ public class ConcatFunctionFactory implements FunctionFactory {
         public ConcatFunction(ObjList<Function> functions) {
             this.functions = functions;
             this.functionCount = functions.size();
-            this.adaptors = new ObjList<>(functionCount);
+            this.adapters = new ObjList<>(functionCount);
             for (int i = 0; i < functionCount; i++) {
-                adaptors.add(adapterReferences.getQuick(functions.getQuick(i).getType()));
+                adapters.add(adapterReferences.getQuick(functions.getQuick(i).getType()));
             }
         }
 
@@ -166,7 +166,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
         @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
             for (int i = 0; i < functionCount; i++) {
-                adaptors.getQuick(i).sink(utf16Sink, functions.getQuick(i), rec);
+                adapters.getQuick(i).sink(utf16Sink, functions.getQuick(i), rec);
             }
         }
 

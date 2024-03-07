@@ -101,41 +101,38 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     public void testOutOfOrderDuplicateTimestamps() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
-            try (
-                    TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                            .col("i", ColumnType.INT)
-                            .timestamp("ts")
-                            .wal()
-            ) {
-                TableToken tt = createTable(model);
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("i", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal();
+            TableToken tt = createTable(model);
 
-                try (WalWriter walWriter = engine.getWalWriter(tt)) {
-                    TableWriter.Row row = walWriter.newRow(1000);
-                    row.putInt(0, 1);
-                    row.append();
-                    // second row is out-of-order
-                    row = walWriter.newRow(500);
-                    row.putInt(0, 2);
-                    row.append();
-                    // third row is in-order
-                    row = walWriter.newRow(1500);
-                    row.putInt(0, 3);
-                    row.append();
-                    // forth row is in-order with duplicate timestamp
-                    row = walWriter.newRow(1500);
-                    row.putInt(0, 4);
-                    row.append();
-                    walWriter.commit();
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                TableWriter.Row row = walWriter.newRow(1000);
+                row.putInt(0, 1);
+                row.append();
+                // second row is out-of-order
+                row = walWriter.newRow(500);
+                row.putInt(0, 2);
+                row.append();
+                // third row is in-order
+                row = walWriter.newRow(1500);
+                row.putInt(0, 3);
+                row.append();
+                // forth row is in-order with duplicate timestamp
+                row = walWriter.newRow(1500);
+                row.putInt(0, 4);
+                row.append();
+                walWriter.commit();
 
-                    drainWalQueue();
-                }
-
-                assertSql("i\tts\n" +
-                        "2\t1970-01-01T00:00:00.000500Z\n" +
-                        "1\t1970-01-01T00:00:00.001000Z\n" +
-                        "3\t1970-01-01T00:00:00.001500Z\n" +
-                        "4\t1970-01-01T00:00:00.001500Z\n", tableName);
+                drainWalQueue();
             }
+
+            assertSql("i\tts\n" +
+                    "2\t1970-01-01T00:00:00.000500Z\n" +
+                    "1\t1970-01-01T00:00:00.001000Z\n" +
+                    "3\t1970-01-01T00:00:00.001500Z\n" +
+                    "4\t1970-01-01T00:00:00.001500Z\n", tableName);
         });
     }
 
@@ -394,32 +391,30 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     public void testUpdateViaWal_CopyIntoDeletedColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.INT)
                     .timestamp("ts")
-                    .wal()
-            ) {
-                TableToken tableToken = createTable(model);
+                    .wal();
+            TableToken tableToken = createTable(model);
 
-                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putInt(0, 10);
-                    row.append();
-                    row = walWriter.newRow(0);
-                    row.putInt(0, 11);
-                    row.append();
-                    row = walWriter.newRow(0);
-                    row.putInt(0, 12);
-                    row.append();
-                    walWriter.commit();
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putInt(0, 10);
+                row.append();
+                row = walWriter.newRow(0);
+                row.putInt(0, 11);
+                row.append();
+                row = walWriter.newRow(0);
+                row.putInt(0, 12);
+                row.append();
+                walWriter.commit();
 
-                    WalWriterTest.removeColumn(walWriter, "b");
+                WalWriterTest.removeColumn(walWriter, "b");
 
-                    assertException("UPDATE " + tableName + " SET b = a");
-                } catch (Exception e) {
-                    assertTrue(e.getMessage().endsWith("Invalid column: b"));
-                }
+                assertException("UPDATE " + tableName + " SET b = a");
+            } catch (Exception e) {
+                assertTrue(e.getMessage().endsWith("Invalid column: b"));
             }
         });
     }
@@ -428,39 +423,37 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     public void testUpdateViaWal_CopyIntoNewColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.INT)
                     .timestamp("ts")
-                    .wal()
-            ) {
-                TableToken tableToken = createTable(model);
+                    .wal();
+            TableToken tableToken = createTable(model);
 
-                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putInt(0, 10);
-                    row.append();
-                    row = walWriter.newRow(0);
-                    row.putInt(0, 11);
-                    row.append();
-                    row = walWriter.newRow(0);
-                    row.putInt(0, 12);
-                    row.append();
-                    walWriter.commit();
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putInt(0, 10);
+                row.append();
+                row = walWriter.newRow(0);
+                row.putInt(0, 11);
+                row.append();
+                row = walWriter.newRow(0);
+                row.putInt(0, 12);
+                row.append();
+                walWriter.commit();
 
-                    addColumn(walWriter, "c", ColumnType.INT);
-                    drainWalQueue();
+                addColumn(walWriter, "c", ColumnType.INT);
+                drainWalQueue();
 
-                    update("UPDATE " + tableName + " SET b = a");
-                    update("UPDATE " + tableName + " SET c = a");
-                    drainWalQueue();
-                }
-
-                assertSql("a\tb\tts\tc\n" +
-                        "10\t10\t1970-01-01T00:00:00.000000Z\t10\n" +
-                        "11\t11\t1970-01-01T00:00:00.000000Z\t11\n" +
-                        "12\t12\t1970-01-01T00:00:00.000000Z\t12\n", tableName);
+                update("UPDATE " + tableName + " SET b = a");
+                update("UPDATE " + tableName + " SET c = a");
+                drainWalQueue();
             }
+
+            assertSql("a\tb\tts\tc\n" +
+                    "10\t10\t1970-01-01T00:00:00.000000Z\t10\n" +
+                    "11\t11\t1970-01-01T00:00:00.000000Z\t11\n" +
+                    "12\t12\t1970-01-01T00:00:00.000000Z\t12\n", tableName);
         });
     }
 
@@ -982,20 +975,16 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     private TableToken createTableAndCopy(String tableName, String tableCopyName) {
         AtomicReference<TableToken> tableToken = new AtomicReference<>();
         // tableName is WAL enabled
-        try (TableModel model = createTableModel(tableName).wal()) {
-            forEachNode(node -> tableToken.set(TestUtils.create(model, node.getEngine()))
-            );
-        }
+        final TableModel model = createTableModel(tableName).wal();
+        forEachNode(node -> tableToken.set(TestUtils.create(model, node.getEngine()))
+        );
 
         // tableCopyName is not WAL enabled
-        try (TableModel model = createTableModel(tableCopyName).noWal()) {
-            createTable(model);
-        }
+        createTable(createTableModel(tableCopyName).noWal());
         return tableToken.get();
     }
 
     private TableModel createTableModel(String tableName) {
-        //noinspection resource
         return new TableModel(configuration, tableName, PartitionBy.HOUR)
                 .col("int", ColumnType.INT)
                 .col("byte", ColumnType.BYTE)

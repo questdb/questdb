@@ -710,18 +710,17 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             String otherLocation = "CON-CHIN-CHINA";
             int txn = 0;
             TableToken tableToken;
-            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                tableToken = createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                                .timestamp("ts"),
-                        10000,
-                        partitionName[0],
-                        partitionCount
-                );
-            }
+            TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY);
+            tableToken = createPopulateTable(
+                    1,
+                    src.col("l", ColumnType.LONG)
+                            .col("i", ColumnType.INT)
+                            .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                            .timestamp("ts"),
+                    10000,
+                    partitionName[0],
+                    partitionCount
+            );
             txn++;
             assertSql("min\tmax\tcount\n" +
                     expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
@@ -1162,18 +1161,17 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     private TableToken createPopulateTable(String tableName, int partitionCount) throws Exception {
         TableToken tableToken;
-        try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-            tableToken = createPopulateTable(
-                    1,
-                    src.col("l", ColumnType.LONG)
-                            .col("i", ColumnType.INT)
-                            .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                            .timestamp("ts"),
-                    10000,
-                    "2022-10-17",
-                    partitionCount
-            );
-        }
+        TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY);
+        tableToken = createPopulateTable(
+                1,
+                src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                        .timestamp("ts"),
+                10000,
+                "2022-10-17",
+                partitionCount
+        );
         return tableToken;
     }
 

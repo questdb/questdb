@@ -242,13 +242,12 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                 try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, 0, null, null, metrics)) {
                     // create table
                     String tableName = "tab";
-                    try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                             .col("colour", ColumnType.SYMBOL)
                             .col("shape", ColumnType.SYMBOL)
                             .col("size", ColumnType.DOUBLE)
-                            .timestamp()) {
-                        TestUtils.create(model, engine);
-                    }
+                            .timestamp();
+                    TestUtils.create(model, engine);
 
                     // warm writer up
                     try (TableWriter w = getWriter(engine, tableName)) {

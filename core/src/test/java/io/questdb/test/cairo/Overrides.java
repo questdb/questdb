@@ -132,10 +132,6 @@ public class Overrides {
         changed = true;
     }
 
-    public void resetStatic() {
-        reset();
-    }
-
     public void setCurrentMicros(long currentMicros) {
         this.currentMicros = currentMicros;
     }

@@ -34,26 +34,19 @@ import io.questdb.test.tools.TestUtils;
 
 public class CreateTableTestUtils {
 
-    public static TableToken create(TableModel model) {
-        return TestUtils.create(model, AbstractCairoTest.engine);
-    }
-
     public static void createAllTable(CairoEngine engine, int partitionBy) {
-        try (TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy)) {
-            TestUtils.create(model, engine);
-        }
+        TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy);
+        TestUtils.create(model, engine);
     }
 
     public static void createAllTableWithNewTypes(CairoEngine engine, int partitionBy) {
-        try (TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy)) {
-            TestUtils.create(model, engine);
-        }
+        TableModel model = getAllTypesModelWithNewTypes(engine.getConfiguration(), partitionBy);
+        TestUtils.create(model, engine);
     }
 
     public static void createAllTableWithTimestamp(CairoEngine engine, int partitionBy) {
-        try (TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp()) {
-            TestUtils.create(model, engine);
-        }
+        TableModel model = getAllTypesModel(engine.getConfiguration(), partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp();
+        TestUtils.create(model, engine);
     }
 
     public static void createTableWithVersionAndId(TableModel model, CairoEngine engine, int version, int tableId) {
@@ -61,15 +54,7 @@ public class CreateTableTestUtils {
         if (tableToken == null) {
             throw CairoException.critical(0).put("table already exists: ").put(model.getTableName());
         }
-        TableUtils.createTable(
-                model.getConfiguration(),
-                model.getMem(),
-                model.getPath(),
-                model,
-                version,
-                tableId,
-                tableToken.getDirName()
-        );
+        TestUtils.createTable(model, model.getConfiguration(), version, tableId, tableToken);
         engine.registerTableToken(tableToken);
     }
 
@@ -79,24 +64,24 @@ public class CreateTableTestUtils {
 
     public static void createTestTable(CairoEngine engine, int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
         try {
-            try (TableModel model = new TableModel(engine.getConfiguration(), "x", PartitionBy.NONE)) {
-                model
-                        .col("a", ColumnType.BYTE)
-                        .col("b", ColumnType.SHORT)
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.LONG)
-                        .col("e", ColumnType.DATE)
-                        .col("f", ColumnType.TIMESTAMP)
-                        .col("g", ColumnType.FLOAT)
-                        .col("h", ColumnType.DOUBLE)
-                        .col("i", ColumnType.STRING)
-                        .col("j", ColumnType.SYMBOL)
-                        .col("k", ColumnType.BOOLEAN)
-                        .col("l", ColumnType.BINARY)
-                        .col("m", ColumnType.UUID)
+            TableModel model = new TableModel(engine.getConfiguration(), "x", PartitionBy.NONE);
+            model
+                    .col("a", ColumnType.BYTE)
+                    .col("b", ColumnType.SHORT)
+                    .col("c", ColumnType.INT)
+                    .col("d", ColumnType.LONG)
+                    .col("e", ColumnType.DATE)
+                    .col("f", ColumnType.TIMESTAMP)
+                    .col("g", ColumnType.FLOAT)
+                    .col("h", ColumnType.DOUBLE)
+                    .col("i", ColumnType.STRING)
+                    .col("j", ColumnType.SYMBOL)
+                    .col("k", ColumnType.BOOLEAN)
+                    .col("l", ColumnType.BINARY)
+                    .col("m", ColumnType.UUID)
                         .col("n", ColumnType.VARCHAR);
                 TestUtils.create(model, engine);
-            }
+
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
                 try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"))) {

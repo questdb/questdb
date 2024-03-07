@@ -81,8 +81,8 @@ public class TimestampQueryTest extends AbstractCairoTest {
     public void testDesignatedTimestampOpSymbolColumns() throws Exception {
         assertQuery(
                 "a\tdk\tk\n" +
-                "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
-                "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n",
+                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
+                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n",
                 "select a, dk, k from x where dk < cast(a as timestamp)",
                 "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
                 "k",
@@ -728,29 +728,28 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampConversion() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)) {
-                m.timestamp("dts")
-                        .col("ts", ColumnType.TIMESTAMP);
-                createPopulateTable(m, 31, "2021-03-14", 31);
-                String expected = "dts\tts\n" +
-                        "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
+            TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY);
+            m.timestamp("dts")
+                    .col("ts", ColumnType.TIMESTAMP);
+            createPopulateTable(m, 31, "2021-03-14", 31);
+            String expected = "dts\tts\n" +
+                    "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
 
-                assertQuery(
-                        expected,
-                        "tt where dts > '2021-04-02T13:45:49.207Z' and dts < '2021-04-03 13:45:49.207'",
-                        "dts",
-                        true,
-                        true
-                );
+            assertQuery(
+                    expected,
+                    "tt where dts > '2021-04-02T13:45:49.207Z' and dts < '2021-04-03 13:45:49.207'",
+                    "dts",
+                    true,
+                    true
+            );
 
-                assertQuery(
-                        expected,
-                        "tt where ts > '2021-04-02T13:45:49.207Z' and ts < '2021-04-03 13:45:49.207'",
-                        "dts",
-                        true,
-                        false
-                );
-            }
+            assertQuery(
+                    expected,
+                    "tt where ts > '2021-04-02T13:45:49.207Z' and ts < '2021-04-03 13:45:49.207'",
+                    "dts",
+                    true,
+                    false
+            );
         });
     }
 
@@ -1361,29 +1360,28 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampSymbolConversion() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)) {
-                m.timestamp("dts")
-                        .col("ts", ColumnType.TIMESTAMP);
-                createPopulateTable(m, 31, "2021-03-14", 31);
-                String expected = "dts\tts\n" +
-                        "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
+            TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY);
+            m.timestamp("dts")
+                    .col("ts", ColumnType.TIMESTAMP);
+            createPopulateTable(m, 31, "2021-03-14", 31);
+            String expected = "dts\tts\n" +
+                    "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
 
-                assertQuery(
-                        expected,
-                        "tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)",
-                        "dts",
-                        true,
-                        true
-                );
+            assertQuery(
+                    expected,
+                    "tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)",
+                    "dts",
+                    true,
+                    true
+            );
 
-                assertQuery(
-                        expected,
-                        "tt where ts > cast('2021-04-02T13:45:49.207Z' as symbol) and ts < cast('2021-04-03 13:45:49.207' as symbol)",
-                        "dts",
-                        true,
-                        false
-                );
-            }
+            assertQuery(
+                    expected,
+                    "tt where ts > cast('2021-04-02T13:45:49.207Z' as symbol) and ts < cast('2021-04-03 13:45:49.207' as symbol)",
+                    "dts",
+                    true,
+                    false
+            );
         });
     }
 

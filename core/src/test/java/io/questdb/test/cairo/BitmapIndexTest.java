@@ -37,7 +37,6 @@ import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -704,14 +703,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
             final int N = 100;
             final int indexBlockCapacity = 32;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
+            TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, indexBlockCapacity).
                     col("i", ColumnType.INT).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];

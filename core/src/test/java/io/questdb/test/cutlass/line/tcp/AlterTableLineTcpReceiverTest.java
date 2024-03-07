@@ -41,7 +41,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -158,13 +158,12 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((server) -> {
             long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
 
-            try (TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY)) {
-                tm.col("room", ColumnType.SYMBOL);
-                tm.col("watts", ColumnType.LONG);
-                tm.timestamp();
+            TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY);
+            tm.col("room", ColumnType.SYMBOL);
+            tm.col("watts", ColumnType.LONG);
+            tm.timestamp();
 
-                CreateTableTestUtils.create(tm);
-            }
+            AbstractCairoTest.create(tm);
 
             try (TableWriterAPI writer = getTableWriterAPI("plug")) {
                 TableWriter.Row row = writer.newRow(day1 / 1000);

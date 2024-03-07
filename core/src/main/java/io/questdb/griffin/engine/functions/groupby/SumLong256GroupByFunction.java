@@ -48,7 +48,7 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final Long256 value = arg.getLong256A(record);
         if (!value.equals(Long256Impl.NULL_LONG256)) {
             mapValue.putLong256(valueIndex, value);
@@ -60,7 +60,7 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final Long256 value = arg.getLong256A(record);
         if (!value.equals(Long256Impl.NULL_LONG256)) {
             mapValue.addLong256(valueIndex, value);
@@ -105,11 +105,6 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG256);
@@ -125,6 +120,11 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 
     private Long256 getLong256(Record rec, Long256Impl long256) {
