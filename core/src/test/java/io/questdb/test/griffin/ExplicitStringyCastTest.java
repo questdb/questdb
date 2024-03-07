@@ -52,6 +52,7 @@ public class ExplicitStringyCastTest extends AbstractCairoTest {
                 {"symbol", "sym1"},
                 {"uuid4", "83881d41-7184-4cf3-ae60-a01a5b3ea0db"},
                 {"string", "XIB"},
+                {"varchar", "鼷G\uD991\uDE7E"},
         });
     }
 
@@ -70,6 +71,7 @@ public class ExplicitStringyCastTest extends AbstractCairoTest {
             " rnd_symbol('sym1') a_symbol," +
             " rnd_uuid4() a_uuid4," +
             " rnd_str(3,3,0) a_string," +
+            " rnd_varchar(3,3,0) a_varchar," +
             " from long_sequence(1))";
 
     private final String castType;
