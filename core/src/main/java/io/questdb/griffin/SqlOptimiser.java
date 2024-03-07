@@ -3034,50 +3034,47 @@ public class SqlOptimiser implements Mutable {
         if (model == null) {
             return;
         }
-
         // don't propagate though group by, sample by or distinct
         if (model.getGroupBy().size() != 0
                 || model.getSampleBy() != null
                 || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
             return;
         }
-
+        // placeholder for prefix-stripped advice
+        ObjList<ExpressionNode> advice = null;
         // Check if the orderByAdvice has names qualified by table names i.e 't1.ts' versus 'ts'
         final boolean orderByAdviceHasDot = checkForDot(orderByAdvice);
-
         // loop over the join models
         for (int i = 0, n = jm.size(); i < n; i++) {
-            // pull out the primary join model
-            // i.e if your models are (model_1 (model_1a, model_1b))
-            // get model 1, then get model_1a and model_1b as primary and secondary
+            // get primary model
             QueryModel jm1 = jm.getQuiet(i);
             jm1 = jm1 != null ? jm1.getNestedModel() : null;
-            // if there isn't one, we have nothing to push down to
             if (jm1 == null) {
                 return;
             }
-            // get the secondary join model
+            // get secondary model
             QueryModel jm2 = jm1.getJoinModels().getQuiet(1);
-            // if order by advice doesn't have names qualified by table then we noop and propagate it through
-            // this preserves prior behaviour for orderByAdvice.
+            // if order by advice has no table prefixes, we preserve original behaviour and pass it on.
             if (!orderByAdviceHasDot) {
                 setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
                 optimiseOrderBy(jm1, orderByMnemonic);
                 return;
             }
-            // if the order by advice is for more than one table, don't propagate, as a sort will be needed anyway
+            // if the order by advice is for more than one table, don't propagate it, as a sort will be needed anyway
             if (!checkForConsistentPrefix(orderByAdvice)) {
                 return;
             }
-            // if the orderByAdvice prefixes do not match the primary table name, don't propagate
+            // if the orderByAdvice prefixes do not match the primary table name, don't propagate it
             final CharSequence prefix = getTablePrefix(orderByAdvice.getQuick(0).token);
             if (!(Chars.equalsNc(prefix, jm1.getTableName())
                     || (jm1.getAlias() != null && Chars.equalsNc(prefix, jm1.getAlias().token)))) {
                 optimiseOrderBy(jm1, orderByMnemonic);
                 return;
             }
-            // advice is pushable, so now we copy it and strip the table prefix
-            ObjList<ExpressionNode> advice = duplicateAdviceAndTakeSuffix();
+            // order by advice is pushable, so now we copy it and strip the table prefix
+            if (advice == null) {
+                advice = duplicateAdviceAndTakeSuffix();
+            }
             // if there's a join, we need to handle it differently.
             if (jm2 != null) {
                 final int joinType = jm2.getJoinType();
