@@ -135,6 +135,22 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                 cursor.hasNext();
                 Assert.fail();
             } catch (SqlException e) {
+                Assert.assertEquals("[0] interpolation is not supported for function: io.questdb.griffin.engine.functions.groupby.MinDirectStrGroupByFunction", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testSampleFillLinearNotSupported2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+            try (
+                    final RecordCursorFactory factory = select("select ts, avg(i), min(concat(s,'a')) from x sample by 1s fill(linear)");
+                    final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                cursor.hasNext();
+                Assert.fail();
+            } catch (SqlException e) {
                 Assert.assertEquals("[0] interpolation is not supported for function: io.questdb.griffin.engine.functions.groupby.MinStrGroupByFunction", e.getMessage());
             }
         });

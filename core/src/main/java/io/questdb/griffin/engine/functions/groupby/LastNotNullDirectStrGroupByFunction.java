@@ -28,7 +28,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.str.DirectSequence;
+import io.questdb.std.str.DirectCharSequence;
 import org.jetbrains.annotations.NotNull;
 
 public class LastNotNullDirectStrGroupByFunction extends FirstDirectStrGroupByFunction {
@@ -39,11 +39,11 @@ public class LastNotNullDirectStrGroupByFunction extends FirstDirectStrGroupByFu
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final DirectSequence val = arg.getDirectStr(record);
+        final DirectCharSequence val = arg.getDirectStr(record);
         if (val != null) {
             mapValue.putLong(valueIndex, rowId);
             mapValue.putLong(valueIndex + 1, val.ptr());
-            mapValue.putInt(valueIndex + 2, val.size() >>> 1);
+            mapValue.putInt(valueIndex + 2, val.length());
         }
     }
 

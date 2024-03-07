@@ -43,7 +43,17 @@ public class MinStrGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new MinStrGroupByFunction(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        final Function arg = args.getQuick(0);
+        if (arg.supportsDirectStr()) {
+            return new MinDirectStrGroupByFunction(arg);
+        }
+        return new MinStrGroupByFunction(arg);
     }
 }

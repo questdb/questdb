@@ -30,50 +30,52 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
+import io.questdb.std.Chars;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 
-public class FirstDirectStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
-    protected final Function arg;
-    protected final DirectString viewA = new DirectString();
-    protected final DirectString viewB = new DirectString();
-    protected int valueIndex;
+public class MinDirectStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
+    private final Function arg;
+    private final DirectString viewA = new DirectString();
+    private final DirectString viewB = new DirectString();
+    private int valueIndex;
 
-    public FirstDirectStrGroupByFunction(@NotNull Function arg) {
+    public MinDirectStrGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        mapValue.putLong(valueIndex, rowId);
         final DirectCharSequence val = arg.getDirectStr(record);
         if (val == null) {
-            mapValue.putLong(valueIndex + 1, 0);
-            mapValue.putInt(valueIndex + 2, TableUtils.NULL_LEN);
+            mapValue.putLong(valueIndex, 0);
+            mapValue.putInt(valueIndex + 1, TableUtils.NULL_LEN);
         } else {
-            mapValue.putLong(valueIndex + 1, val.ptr());
-            mapValue.putInt(valueIndex + 2, val.length());
+            mapValue.putLong(valueIndex, val.ptr());
+            mapValue.putInt(valueIndex + 1, val.length());
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        // empty
+        final DirectCharSequence val = arg.getDirectStr(record);
+        if (val != null) {
+            final long ptr = mapValue.getLong(valueIndex);
+            if (ptr == 0 || Chars.compare(viewA.of(ptr, mapValue.getInt(valueIndex + 1)), val) > 0) {
+                mapValue.putLong(valueIndex, val.ptr());
+                mapValue.putInt(valueIndex + 1, val.length());
+            }
+        }
     }
 
     @Override
     public Function getArg() {
-        return this.arg;
-    }
-
-    @Override
-    public String getName() {
-        return "first";
+        return arg;
     }
 
     @Override
@@ -108,28 +110,30 @@ public class FirstDirectStrGroupByFunction extends StrFunction implements GroupB
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        long srcRowId = srcValue.getLong(valueIndex);
-        long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
-            destValue.putLong(valueIndex, srcRowId);
-            destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
-            destValue.putInt(valueIndex + 2, srcValue.getInt(valueIndex + 2));
+        long srcPtr = srcValue.getLong(valueIndex);
+        if (srcPtr == 0) {
+            return;
+        }
+        int srcLen = srcValue.getInt(valueIndex + 1);
+
+        long destPtr = destValue.getLong(valueIndex);
+        if (destPtr == 0 || Chars.compare(viewA.of(destPtr, destValue.getInt(valueIndex + 1)), viewA.of(srcPtr, srcLen)) > 0) {
+            destValue.putLong(valueIndex, srcPtr);
+            destValue.putInt(valueIndex + 1, srcLen);
         }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // row id
         columnTypes.add(ColumnType.LONG); // direct string pointer
         columnTypes.add(ColumnType.INT);  // string length (in chars), TableUtils.NULL_LEN stands for null string
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-        mapValue.putLong(valueIndex + 1, 0);
-        mapValue.putInt(valueIndex + 2, TableUtils.NULL_LEN);
+        mapValue.putLong(valueIndex, 0);
+        mapValue.putInt(valueIndex + 1, TableUtils.NULL_LEN);
     }
 
     @Override
@@ -143,16 +147,21 @@ public class FirstDirectStrGroupByFunction extends StrFunction implements GroupB
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("min(").val(arg).val(')');
+    }
+
+    @Override
     public void toTop() {
         UnaryFunction.super.toTop();
     }
 
     private CharSequence getStr(Record rec, DirectString view) {
-        final int len = rec.getInt(valueIndex + 2);
+        final int len = rec.getInt(valueIndex + 1);
         if (len == TableUtils.NULL_LEN) {
             return null;
         }
-        final long ptr = rec.getLong(valueIndex + 1);
+        final long ptr = rec.getLong(valueIndex);
         return view.of(ptr, len);
     }
 }
