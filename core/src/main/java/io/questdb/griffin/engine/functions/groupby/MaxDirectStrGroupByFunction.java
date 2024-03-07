@@ -117,7 +117,7 @@ public class MaxDirectStrGroupByFunction extends StrFunction implements GroupByF
         int srcLen = srcValue.getInt(valueIndex + 1);
 
         long destPtr = destValue.getLong(valueIndex);
-        if (destPtr == 0 || Chars.compare(viewA.of(destPtr, destValue.getInt(valueIndex + 1)), viewA.of(srcPtr, srcLen)) < 0) {
+        if (destPtr == 0 || Chars.compare(viewA.of(destPtr, destValue.getInt(valueIndex + 1)), viewB.of(srcPtr, srcLen)) < 0) {
             destValue.putLong(valueIndex, srcPtr);
             destValue.putInt(valueIndex + 1, srcLen);
         }
