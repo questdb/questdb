@@ -102,11 +102,6 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return true;
-    }
-
-    @Override
     public boolean isSymbolTableStatic() {
         return symbolTableStatic;
     }
@@ -114,6 +109,11 @@ public class MapSymbolColumn extends SymbolFunction {
     @Override
     public @Nullable SymbolTable newSymbolTable() {
         return symbolTableSource.newSymbolTable(cursorColumnIndex);
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return true;
     }
 
     @Override

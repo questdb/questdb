@@ -26,42 +26,38 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByCharSink;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 
-public class FirstStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
+public class FirstDirectStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
-    protected final GroupByCharSink sink = new GroupByCharSink();
+    protected final DirectString viewA = new DirectString();
+    protected final DirectString viewB = new DirectString();
     protected int valueIndex;
 
-    public FirstStrGroupByFunction(@NotNull Function arg) {
+    public FirstDirectStrGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
-    }
-
-    @Override
-    public void clear() {
-        sink.of(0);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
-        final CharSequence val = arg.getStr(record);
+        final DirectCharSequence val = arg.getDirectStr(record);
         if (val == null) {
             mapValue.putLong(valueIndex + 1, 0);
-            mapValue.putBool(valueIndex + 2, true);
+            mapValue.putInt(valueIndex + 2, TableUtils.NULL_LEN);
         } else {
-            sink.of(0).put(val);
-            mapValue.putLong(valueIndex + 1, sink.ptr());
-            mapValue.putBool(valueIndex + 2, false);
+            mapValue.putLong(valueIndex + 1, val.ptr());
+            mapValue.putInt(valueIndex + 2, val.length());
         }
     }
 
@@ -82,17 +78,12 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
 
     @Override
     public CharSequence getStr(Record rec) {
-        final boolean nullValue = rec.getBool(valueIndex + 2);
-        if (nullValue) {
-            return null;
-        }
-        final long ptr = rec.getLong(valueIndex + 1);
-        return ptr == 0 ? null : sink.of(ptr);
+        return getStr(rec, viewA);
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getStr(rec);
+        return getStr(rec, viewB);
     }
 
     @Override
@@ -122,28 +113,23 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
         if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
-            destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
+            destValue.putInt(valueIndex + 2, srcValue.getInt(valueIndex + 2));
         }
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);    // row id
-        columnTypes.add(ColumnType.LONG);    // sink pointer
-        columnTypes.add(ColumnType.BOOLEAN); // null flag
-    }
-
-    @Override
-    public void setAllocator(GroupByAllocator allocator) {
-        sink.setAllocator(allocator);
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.LONG); // direct string pointer
+        columnTypes.add(ColumnType.INT);  // string length (in chars), TableUtils.NULL_LEN stands for null string
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putLong(valueIndex + 1, 0);
-        mapValue.putBool(valueIndex + 2, true);
+        mapValue.putInt(valueIndex + 2, TableUtils.NULL_LEN);
     }
 
     @Override
@@ -159,5 +145,14 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
+    }
+
+    private CharSequence getStr(Record rec, DirectString view) {
+        final int len = rec.getInt(valueIndex + 2);
+        if (len == TableUtils.NULL_LEN) {
+            return null;
+        }
+        final long ptr = rec.getLong(valueIndex + 1);
+        return view.of(ptr, len);
     }
 }

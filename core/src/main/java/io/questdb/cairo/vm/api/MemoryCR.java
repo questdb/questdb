@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
-import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
 
 //contiguous readable 
 public interface MemoryCR extends MemoryC, MemoryR {
@@ -102,7 +102,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return Unsafe.getUnsafe().getShort(addressOf(offset));
     }
 
-    default CharSequence getStr(long offset, CharSequenceView view) {
+    default DirectString getStr(long offset, DirectString view) {
         long addr = addressOf(offset);
         assert addr > 0;
         if (Vm.PARANOIA_MODE && offset + 4 > size()) {
@@ -162,32 +162,6 @@ public interface MemoryCR extends MemoryC, MemoryR {
         }
 
         public ByteSequenceView of(long address, long len) {
-            this.address = address;
-            this.len = len;
-            return this;
-        }
-    }
-
-    class CharSequenceView extends AbstractCharSequence implements Mutable {
-        private long address;
-        private int len;
-
-        @Override
-        public char charAt(int index) {
-            return Unsafe.getUnsafe().getChar(address + index * 2L);
-        }
-
-        @Override
-        public void clear() {
-            len = 0;
-        }
-
-        @Override
-        public int length() {
-            return len;
-        }
-
-        public CharSequenceView of(long address, int len) {
             this.address = address;
             this.len = len;
             return this;
