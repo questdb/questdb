@@ -36,7 +36,6 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
@@ -71,64 +70,59 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
 
         // same as x but with different number of values in symbol maps
-        try (TableModel model = new TableModel(configuration, "v", PartitionBy.NONE)) {
-            model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
-                    .col("bid", ColumnType.DOUBLE)
-                    .col("ask", ColumnType.DOUBLE)
-                    .col("bidSize", ColumnType.INT)
-                    .col("askSize", ColumnType.INT)
-                    .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
-                    .timestamp();
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = new TableModel(configuration, "v", PartitionBy.NONE);
+        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
+                .col("bid", ColumnType.DOUBLE)
+                .col("ask", ColumnType.DOUBLE)
+                .col("bidSize", ColumnType.INT)
+                .col("askSize", ColumnType.INT)
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .timestamp();
+        AbstractCairoTest.create(model);
 
-        try (TableModel model = new TableModel(configuration, "w", PartitionBy.NONE)) {
-            model.col("sym", ColumnType.SYMBOL)
-                    .col("bid", ColumnType.DOUBLE)
-                    .col("ask", ColumnType.DOUBLE)
-                    .col("bidSize", ColumnType.INT)
-                    .col("askSize", ColumnType.INT)
-                    .col("mode", ColumnType.SYMBOL)
-                    .col("ex", ColumnType.SYMBOL)
-                    .col("timestamp", ColumnType.TIMESTAMP);
-            CreateTableTestUtils.create(model);
-        }
+        model = new TableModel(configuration, "w", PartitionBy.NONE);
+        model.col("sym", ColumnType.SYMBOL)
+                .col("bid", ColumnType.DOUBLE)
+                .col("ask", ColumnType.DOUBLE)
+                .col("bidSize", ColumnType.INT)
+                .col("askSize", ColumnType.INT)
+                .col("mode", ColumnType.SYMBOL)
+                .col("ex", ColumnType.SYMBOL)
+                .col("timestamp", ColumnType.TIMESTAMP);
+        AbstractCairoTest.create(model);
 
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-            model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
-                    .col("bid", ColumnType.DOUBLE)
-                    .col("ask", ColumnType.DOUBLE)
-                    .col("bidSize", ColumnType.INT)
-                    .col("askSize", ColumnType.INT)
-                    .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
-                    .timestamp();
-            CreateTableTestUtils.create(model);
-        }
+        model = new TableModel(configuration, "x", PartitionBy.NONE);
+        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
+                .col("bid", ColumnType.DOUBLE)
+                .col("ask", ColumnType.DOUBLE)
+                .col("bidSize", ColumnType.INT)
+                .col("askSize", ColumnType.INT)
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .timestamp();
+        AbstractCairoTest.create(model);
 
-        try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
-            model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
-                    .col("bid", ColumnType.DOUBLE)
-                    .col("ask", ColumnType.DOUBLE)
-                    .col("bidSize", ColumnType.INT)
-                    .col("askSize", ColumnType.INT)
-                    .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4);
-            CreateTableTestUtils.create(model);
-        }
+        model = new TableModel(configuration, "y", PartitionBy.NONE);
+        model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
+                .col("bid", ColumnType.DOUBLE)
+                .col("ask", ColumnType.DOUBLE)
+                .col("bidSize", ColumnType.INT)
+                .col("askSize", ColumnType.INT)
+                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4);
+        AbstractCairoTest.create(model);
 
-        try (TableModel model = new TableModel(configuration, "z", PartitionBy.NONE)) {
-            model.col("sym", ColumnType.SYMBOL)
-                    .col("bid", ColumnType.DOUBLE)
-                    .col("ask", ColumnType.DOUBLE)
-                    .col("bidSize", ColumnType.INT)
-                    .col("askSize", ColumnType.INT)
-                    .col("mode", ColumnType.SYMBOL)
-                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
-                    .timestamp();
-            CreateTableTestUtils.create(model);
-        }
+        model = new TableModel(configuration, "z", PartitionBy.NONE);
+        model.col("sym", ColumnType.SYMBOL)
+                .col("bid", ColumnType.DOUBLE)
+                .col("ask", ColumnType.DOUBLE)
+                .col("bidSize", ColumnType.INT)
+                .col("askSize", ColumnType.INT)
+                .col("mode", ColumnType.SYMBOL)
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                .timestamp();
+        AbstractCairoTest.create(model);
 
         try (TableWriter writer = newOffPoolWriter(configuration, "v", Metrics.disabled())) {
             TableWriter.Row row = writer.newRow(0);
@@ -2453,8 +2447,10 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         // because 'systimestamp' is neither constant/runtime-constant, so the latter AND is not intrinsic and thus is out of the intervals model
         String whereExpression = "timestamp >= '2022-03-23T08:00:00.000000Z' AND timestamp < '2022-03-25T10:00:00.000000Z' AND timestamp > dateadd('d', -10, systimestamp())";
         currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
-        LongList intervals = modelOf(whereExpression).buildIntervalModel().calculateIntervals(sqlExecutionContext);
-        Assert.assertEquals("[1648022400000000,1648202399999999]", intervals.toString());
+        try (RuntimeIntrinsicIntervalModel intervalModel = modelOf(whereExpression).buildIntervalModel()) {
+            LongList intervals = intervalModel.calculateIntervals(sqlExecutionContext);
+            Assert.assertEquals("[1648022400000000,1648202399999999]", intervals.toString());
+        }
     }
 
     @Test
@@ -2933,8 +2929,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         if (!model.hasIntervalFilters()) {
             return "";
         }
-        RuntimeIntrinsicIntervalModel sm = model.buildIntervalModel();
-        return GriffinParserTestUtils.intervalToString(sm.calculateIntervals(sqlExecutionContext));
+        try (RuntimeIntrinsicIntervalModel sm = model.buildIntervalModel()) {
+            return GriffinParserTestUtils.intervalToString(sm.calculateIntervals(sqlExecutionContext));
+        }
     }
 
     private String keyValueFuncsToString(ObjList<Function> keyValueFuncs) {
@@ -3088,13 +3085,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             }
             sink.clear(sink.length() - separator.length());
             String expression = sink.toString();
-            Assert.assertEquals(
-                    expected,
-                    modelOf(expression)
-                            .buildIntervalModel()
-                            .calculateIntervals(sqlExecutionContext)
-                            .toString()
-            );
+            try (RuntimeIntrinsicIntervalModel intervalModel = modelOf(expression).buildIntervalModel()) {
+                Assert.assertEquals(
+                        expected,
+                        intervalModel.calculateIntervals(sqlExecutionContext).toString()
+                );
+            }
         }
     }
 

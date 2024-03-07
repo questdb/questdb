@@ -94,7 +94,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final ObjList<CharSequence> bottomUpColumnNames = new ObjList<>();
+    private final ObjList<CharSequence> bottomUpColumnAliases = new ObjList<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -246,12 +246,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         addBottomUpColumn(position, column, allowDuplicates, null);
     }
 
-    public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates, CharSequence additionalMessage) throws SqlException {
+    public void addBottomUpColumn(
+            int position,
+            QueryColumn column,
+            boolean allowDuplicates,
+            CharSequence additionalMessage
+    ) throws SqlException {
         if (!allowDuplicates && aliasToColumnMap.contains(column.getName())) {
             throw SqlException.duplicateColumn(position, column.getName(), additionalMessage);
         }
-        bottomUpColumns.add(column);
-        addField(column);
+        addBottomUpColumnIfNotExists(column);
+    }
+
+    public void addBottomUpColumnIfNotExists(QueryColumn column) {
+        if (addField(column)) {
+            bottomUpColumns.add(column);
+        }
     }
 
     public void addDependency(int index) {
@@ -263,15 +273,20 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         expressionModels.add(node);
     }
 
-    public void addField(QueryColumn column) {
+    public boolean addField(QueryColumn column) {
         final CharSequence alias = column.getAlias();
         final ExpressionNode ast = column.getAst();
         assert alias != null;
-        aliasToColumnNameMap.put(alias, ast.token);
-        columnNameToAliasMap.put(ast.token, alias);
-        bottomUpColumnNames.add(alias);
         aliasToColumnMap.put(alias, column);
-        columnAliasIndexes.put(alias, bottomUpColumnNames.size() - 1);
+        int aliasKeyIndex = aliasToColumnNameMap.keyIndex(alias);
+        if (aliasKeyIndex > -1) {
+            aliasToColumnNameMap.putAt(aliasKeyIndex, alias, ast.token);
+            bottomUpColumnAliases.add(alias);
+            columnNameToAliasMap.put(ast.token, alias);
+            columnAliasIndexes.put(alias, bottomUpColumnAliases.size() - 1);
+            return true;
+        }
+        return false;
     }
 
     public void addGroupBy(ExpressionNode node) {
@@ -395,7 +410,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         tableNameFunction = null;
         tableId = -1;
         metadataVersion = -1;
-        bottomUpColumnNames.clear();
+        bottomUpColumnAliases.clear();
         expressionModels.clear();
         distinct = false;
         nestedModelIsSubQuery = false;
@@ -420,7 +435,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void clearColumnMapStructs() {
         this.aliasToColumnNameMap.clear();
-        this.bottomUpColumnNames.clear();
+        this.bottomUpColumnAliases.clear();
         this.aliasToColumnMap.clear();
         this.bottomUpColumns.clear();
     }
@@ -436,6 +451,58 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByFill.clear();
         sampleByTimezoneName = null;
         sampleByOffset = null;
+    }
+
+    /**
+     * The goal of this method is to dismiss the nested model as
+     * the layer between this and the model the nested is referencing. We do that by copying ASTs from
+     * the nested model onto the current model and also maintaining all the maps in sync.
+     * <p>
+     * The caller is responsible for checking if nested model is suitable for the removal. E.g. it does not
+     * contain arithmetic expressions. Although this method does not validate if nested has arithmetic.
+     *
+     * @param nested model containing columns mapped into the referenced model.
+     */
+    public void mergePartially(QueryModel nested, ObjectPool<QueryColumn> queryColumnPool) {
+        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+            QueryColumn thisColumn = bottomUpColumns.getQuick(i);
+            if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
+                QueryColumn thatColumn = nested.getAliasToColumnMap().get(thisColumn.getAst().token);
+
+                // We cannot mutate the column on this model, because columns might be shared between
+                // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
+                // `thisColumn` alias should let us lookup, the column's reference
+                QueryColumn col = queryColumnPool.next();
+                col.of(thisColumn.getAlias(), thatColumn.getAst());
+                bottomUpColumns.setQuick(i, col);
+
+                int index = aliasToColumnMap.keyIndex(thisColumn.getAlias());
+                assert index < 0;
+                final CharSequence immutableAlias = aliasToColumnMap.keyAt(index);
+                aliasToColumnMap.putAt(index, immutableAlias, col);
+                // maintain sync between alias and column name
+                aliasToColumnNameMap.put(immutableAlias, thatColumn.getAst().token);
+            }
+        }
+
+        if (nested.getOrderBy().size() > 0) {
+            assert getOrderBy().size() == 0;
+            for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
+                addOrderBy(nested.getOrderBy().getQuick(i), nested.getOrderByDirection().getQuick(i));
+            }
+            nested.getOrderBy().clear();
+            nested.getOrderByDirection().clear();
+        }
+
+        // If nested model has limits, the outer model must not have different limits.
+        // We are merging models affecting "select" clause and not the row count.
+        if (nested.limitLo != null || nested.limitHi != null) {
+            limitLo = nested.limitLo;
+            limitHi = nested.limitHi;
+            limitPosition = nested.limitPosition;
+            limitAdviceLo = nested.limitAdviceLo;
+            limitAdviceHi = nested.limitAdviceHi;
+        }
     }
 
     public boolean containsJoin() {
@@ -483,8 +550,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
             this.aliasToColumnMap.put(alias, qc);
         }
-        ObjList<CharSequence> columnNames = other.bottomUpColumnNames;
-        this.bottomUpColumnNames.addAll(columnNames);
+        ObjList<CharSequence> columnNames = other.bottomUpColumnAliases;
+        this.bottomUpColumnAliases.addAll(columnNames);
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             final CharSequence name = columnNames.getQuick(i);
             this.aliasToColumnNameMap.put(name, name);
@@ -558,7 +625,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(aliasToColumnNameMap, that.aliasToColumnNameMap)
                 && Objects.equals(columnNameToAliasMap, that.columnNameToAliasMap)
                 && Objects.equals(aliasToColumnMap, that.aliasToColumnMap)
-                && Objects.equals(bottomUpColumnNames, that.bottomUpColumnNames)
+                && Objects.equals(bottomUpColumnAliases, that.bottomUpColumnAliases)
                 && Objects.equals(orderBy, that.orderBy)
                 && Objects.equals(groupBy, that.groupBy)
                 && Objects.equals(orderByDirection, that.orderByDirection)
@@ -628,8 +695,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return aliasToColumnNameMap;
     }
 
-    public ObjList<CharSequence> getBottomUpColumnNames() {
-        return bottomUpColumnNames;
+    public ObjList<CharSequence> getBottomUpColumnAliases() {
+        return bottomUpColumnAliases;
     }
 
     public ObjList<QueryColumn> getBottomUpColumns() {
@@ -909,7 +976,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return 31 * hash + Objects.hash(
                 bottomUpColumns, topDownNameSet, topDownColumns,
                 aliasToColumnNameMap, columnNameToAliasMap, aliasToColumnMap,
-                bottomUpColumnNames, orderBy,
+                bottomUpColumnAliases, orderBy,
                 orderByPosition, groupBy, orderByDirection,
                 dependencies, orderedJoinModels1, orderedJoinModels2,
                 columnAliasIndexes, modelAliasIndexes, expressionModels,
@@ -964,7 +1031,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             if (columnIndex < 1 && columnIndex > bottomUpColumns.size()) {
                 return false;
             }
-            return Chars.equalsIgnoreCase(bottomUpColumnNames.getQuick(columnIndex - 1), timestamp.token);
+            return Chars.equalsIgnoreCase(bottomUpColumnAliases.getQuick(columnIndex - 1), timestamp.token);
         } catch (NumericException e) {
             return false;
         }
@@ -985,30 +1052,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isUpdate() {
         return isUpdateModel;
-    }
-
-    public void mergeInnerColumn(QueryColumn innerQC) {
-        final CharSequence nestedAlias = innerQC.getAlias();
-        final ExpressionNode nestedAst = innerQC.getAst();
-        assert nestedAlias != null;
-        final CharSequence alias = columnNameToAliasMap.get(nestedAlias);
-        if (alias == null) {
-            return;
-        }
-        final QueryColumn oldQC = aliasToColumnMap.get(alias);
-        if (oldQC == null) {
-            return;
-        }
-        final ExpressionNode oldAst = oldQC.getAst();
-        aliasToColumnNameMap.put(alias, nestedAst.token);
-        columnNameToAliasMap.remove(oldAst.token);
-        columnNameToAliasMap.put(nestedAst.token, alias);
-        aliasToColumnMap.put(alias, innerQC);
-        int colIndex = columnAliasIndexes.get(alias);
-        assert colIndex >= 0;
-        bottomUpColumns.set(colIndex, innerQC);
-        bottomUpColumnNames.set(colIndex, alias);
-        innerQC.setAlias(alias);
     }
 
     public void moveGroupByFrom(QueryModel model) {
@@ -1082,6 +1125,21 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
         return getParsedWhere();
+    }
+
+    /**
+     * Removes column from the model by index. This method also removes all references to column alias, but
+     * leaves out column name to alias mapping. This is because the mapping is ambiguous.
+     *
+     * @param columnIndex of the column to remove. This index is based on bottomUpColumns list.
+     */
+    public void removeColumn(int columnIndex) {
+        CharSequence columnAlias = bottomUpColumns.getQuick(columnIndex).getAlias();
+        bottomUpColumns.remove(columnIndex);
+        bottomUpColumnAliases.remove(columnAlias);
+        aliasToColumnMap.remove(columnAlias);
+        aliasToColumnNameMap.remove(columnAlias);
+        columnAliasIndexes.remove(columnAlias);
     }
 
     public void removeDependency(int index) {
@@ -1269,7 +1327,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    // method to make debugging easier 
+    // method to make debugging easier
     // not using toString name to prevent debugger from trying to use it on all model variables (because toSink0 can fail).
     @SuppressWarnings("unused")
     public String toString0() {
@@ -1281,6 +1339,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Override
     public CharSequence translateAlias(CharSequence column) {
         return aliasToColumnNameMap.get(column);
+    }
+
+    public void updateColumnAliasIndexes() {
+        columnAliasIndexes.clear();
+        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+            columnAliasIndexes.put(bottomUpColumnAliases.getQuick(i), i);
+        }
     }
 
     private static void aliasToSink(CharSequence alias, CharSink<?> sink) {
