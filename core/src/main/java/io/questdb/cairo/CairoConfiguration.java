@@ -581,7 +581,7 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelGroupByEnabled();
 
-    String getSampleByDefaultAlignment();
+    boolean getSampleByDefaultAlignmentCalendar();
 
     boolean isTableTypeConversionEnabled();
 

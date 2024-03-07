@@ -321,7 +321,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
     private final int systemO3ColumnMemorySize;
-    private final String sqlSampleByDefaultAlignment;
+    private final boolean sqlSampleByDefaultAlignment;
     private final String systemTableNamePrefix;
     private final long systemWalWriterDataAppendPageSize;
     private final long systemWalWriterEventAppendPageSize;
@@ -964,7 +964,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerMiscAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_MISC_APPEND_PAGE_SIZE, Files.PAGE_SIZE));
 
             this.sqlSampleByIndexSearchPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 0);
-            this.sqlSampleByDefaultAlignment = getString(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT, "calendar");
+            this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
 
             this.sqlDoubleToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE, 12);
             this.sqlFloatToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE, 4);
@@ -2877,7 +2877,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public String getSampleByDefaultAlignment() { return sqlSampleByDefaultAlignment; };
+        public boolean getSampleByDefaultAlignmentCalendar() { return sqlSampleByDefaultAlignment; };
 
         @Override
         public boolean isTableTypeConversionEnabled() {
