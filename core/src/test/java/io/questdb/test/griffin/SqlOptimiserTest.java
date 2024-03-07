@@ -322,8 +322,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        SelectedRecord\n" +
                     "            Hash Join Light\n" +
                     "              condition: t2.s=t1.s\n" +
-                    "                DataFrame\n" +
-                    "                    Row forward scan\n" +
+                    "                SortedSymbolIndex\n" +
+                    "                    Index forward scan on: s\n" +
+                    "                      symbolOrder: asc\n" +
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
                     "                Hash\n" +

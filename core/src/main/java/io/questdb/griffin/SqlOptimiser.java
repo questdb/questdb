@@ -2963,8 +2963,12 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Propagates orderByAdvice to nested join models if certain conditions are met.
-     *
-     *
+     * Advice should only be propagated if relevant.
+     * Cases:
+     *     ASOF JOIN
+     *         Propagate if the ordering is for the primary table only, and timestamp-first
+     *     INNER JOIN
+     *         Propagate to primary table and secondary tables.
      *
      * @param model
      * @param jm
@@ -2972,6 +2976,10 @@ public class SqlOptimiser implements Mutable {
      * @param orderByDirectionAdvice
      */
     private void pushDownOrderByAdviceToJoinModels(QueryModel model, ObjList<QueryModel> jm, int orderByMnemonic, IntList orderByDirectionAdvice) {
+        if (model == null) {
+            return;
+        }
+
         // don't propagate though group by, sample by or distinct
         if (model.getGroupBy().size() != 0
                 || model.getSampleBy() != null
@@ -2982,78 +2990,88 @@ public class SqlOptimiser implements Mutable {
         // Check if the orderByAdvice has names qualified by table names i.e 't1.ts' versus 'ts'
         final boolean orderByAdviceHasDot = checkForDot(orderByAdvice);
 
-        // pull out first join model
-        QueryModel primaryJoinModel = jm.getQuiet(0);
-        primaryJoinModel = primaryJoinModel != null ? primaryJoinModel.getNestedModel() : null;
-        // if there isn't one, we have nothing to push down to
-        if (primaryJoinModel == null) {
-            return;
-        }
-
-        QueryModel secondaryJoinModel = jm.getQuiet(1);
-        secondaryJoinModel = secondaryJoinModel != null ? secondaryJoinModel.getNestedModel() : null;
-
-        // if order by advice doesn't have names qualified by table
-        if (!orderByAdviceHasDot) {
-            // just do nothing and put it through
-            primaryJoinModel.setOrderByAdviceMnemonic(orderByMnemonic);
-            primaryJoinModel.copyOrderByAdvice(orderByAdvice);
-            primaryJoinModel.copyOrderByDirectionAdvice(orderByDirectionAdvice);
-            optimiseOrderBy(primaryJoinModel, orderByMnemonic);
-            return;
-        }
-
-        // if the order by advice is for more than one table, don't propagate
-        if (!checkForConsistentPrefix(orderByAdvice)) {
-            return;
-        }
-
-        // get table name prefix
-        final CharSequence prefix = getTablePrefix(orderByAdvice.getQuick(0).token);
-
-        // if the orderByAdvice prefixes do not match the primary table name, don't propagate
-        if (!(Chars.equalsNc(prefix, primaryJoinModel.getTableName())
-                || (primaryJoinModel.getAlias() != null && Chars.equalsNc(prefix, primaryJoinModel.getAlias().token)))) {
-            optimiseOrderBy(primaryJoinModel, orderByMnemonic);
-            return;
-        }
-
-        // it may be pushable advice, so we should now we copy and strip the table alias
-        int d;
-        CharSequence token;
-        ExpressionNode node;
-
-        ObjList<ExpressionNode> newAdvice = orderByAdvice;
-        if (orderByAdviceHasDot) {
-            newAdvice = new ObjList<ExpressionNode>();
-            for (int j = 0, m = orderByAdvice.size(); j < m; j++) {
-                node = orderByAdvice.getQuick(j);
-                token = node.token;
-                d = Chars.indexOf(token, '.');
-                newAdvice.add(expressionNodePool.next().of(node.type, token.subSequence(d + 1, token.length()), node.precedence, node.position));
+        // loop over the join models
+        for (int i = 0, n = jm.size(); i < n; i++) {
+            // pull out the primary join model
+            // i.e if your models are (model_1 (model_1a, model_1b))
+            // get model 1, then get model_1a and model_1b as primary and secondary
+            QueryModel primaryJoinModel = jm.getQuiet(i);
+            primaryJoinModel = primaryJoinModel != null ? primaryJoinModel.getNestedModel() : null;
+            // if there isn't one, we have nothing to push down to
+            if (primaryJoinModel == null) {
+                return;
             }
+            // get the secondary join model
+            QueryModel secondaryJoinModel = primaryJoinModel.getJoinModels().getQuiet(1);
+
+            // if order by advice doesn't have names qualified by table then we keep behaviour the same as before
+            if (!orderByAdviceHasDot) {
+                // just do nothing and put it through
+                primaryJoinModel.setOrderByAdviceMnemonic(orderByMnemonic);
+                primaryJoinModel.copyOrderByAdvice(orderByAdvice);
+                primaryJoinModel.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+                optimiseOrderBy(primaryJoinModel, orderByMnemonic);
+                return;
+            }
+            // if the order by advice is for more than one table, don't propagate as sort will be needed anyway
+            if (!checkForConsistentPrefix(orderByAdvice)) {
+                return;
+            }
+            final CharSequence prefix = getTablePrefix(orderByAdvice.getQuick(0).token);
+            // if the orderByAdvice prefixes do not match the primary table name, don't propagate
+            if (!(Chars.equalsNc(prefix, primaryJoinModel.getTableName())
+                    || (primaryJoinModel.getAlias() != null && Chars.equalsNc(prefix, primaryJoinModel.getAlias().token)))) {
+                optimiseOrderBy(primaryJoinModel, orderByMnemonic);
+                return;
+            }
+
+            // its potentially pushable advice, so we now we copy and strip the table prefix from it
+            int d;
+            CharSequence token;
+            ExpressionNode node;
+
+            ObjList<ExpressionNode> advice = orderByAdvice;
+            if (orderByAdviceHasDot) {
+                advice = new ObjList<ExpressionNode>();
+                for (int j = 0, m = orderByAdvice.size(); j < m; j++) {
+                    node = orderByAdvice.getQuick(j);
+                    token = node.token;
+                    d = Chars.indexOf(token, '.');
+                    advice.add(expressionNodePool.next().of(node.type, token.subSequence(d + 1, token.length()), node.precedence, node.position));
+                }
+            }
+            // if there's a secondary model, we need to handle joins
+            if (secondaryJoinModel != null) {
+                final int joinType = secondaryJoinModel.getJoinType();
+                switch (joinType) {
+                    // For asof join, we only propagate advice if its ordered beginning with the designated timestamp
+                    case QueryModel.JOIN_ASOF:
+                        token = orderByAdvice.getQuick(0).token;
+                        QueryColumn qc = primaryJoinModel.getAliasToColumnMap().get(token);
+                        // if there is a matching column, and it is the designated timestamp, then propagate advice
+                        if (qc != null
+                                && qc.getColumnType() == ColumnType.TIMESTAMP
+                                && Chars.equalsIgnoreCase(primaryJoinModel.getTimestamp().token, qc.getAst().token)) {
+                            setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
+                        }
+                        break;
+                    case QueryModel.JOIN_INNER:
+                        setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
+                        setAndCopyAdvice(secondaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
+                    default:
+                        setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
+                }
+            }
+            else {
+                setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
+            }
+
+            // recursive call to propagate advice
+            optimiseOrderBy(primaryJoinModel, orderByMnemonic);
+
         }
 
-        if (secondaryJoinModel != null) {
-            final int joinType = secondaryJoinModel.getJoinType();
-            switch (joinType) {
-                // For asof join, we only propagate advice if its ordered beginning with the designated timestamp
-                case QueryModel.JOIN_ASOF:
-                    token = orderByAdvice.getQuick(0).token;
-                    QueryColumn qc = primaryJoinModel.getAliasToColumnMap().get(token);
-                    // if there is a matching column, and its the designated timestamp, then propagate advice
-                    if (qc != null
-                            && qc.getColumnType() == ColumnType.TIMESTAMP
-                            && Chars.equalsIgnoreCase(primaryJoinModel.getTimestamp().token, qc.getAst().token)) {
-                        setAndCopyAdvice(primaryJoinModel, newAdvice, orderByMnemonic, orderByDirectionAdvice);
-                    }
-                    break;
-                default:
-                    setAndCopyAdvice(primaryJoinModel, newAdvice, orderByMnemonic, orderByDirectionAdvice);
-            }
-        }
-        // recursive call to propagate advice
-        optimiseOrderBy(primaryJoinModel, orderByMnemonic);
+
     }
 
     private void setAndCopyAdvice(QueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
