@@ -797,8 +797,8 @@ public class PropServerConfigurationTest {
 
     @Test
     public void testMinimum4SharedWorkers() throws Exception {
-        Properties properties = new Properties();
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        final Properties properties = new Properties();
+        final PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
         Assert.assertEquals("shared", configuration.getWorkerPoolConfiguration().getPoolName());
         Assert.assertTrue("must be minimum of 4 shared workers", configuration.getWorkerPoolConfiguration().getWorkerCount() >= 4);
     }
