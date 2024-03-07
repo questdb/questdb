@@ -43,12 +43,12 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putFloat(valueIndex, arg.getFloat(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         float max = mapValue.getFloat(valueIndex);
         float next = arg.getFloat(record);
         if (next > max || Float.isNaN(max)) {

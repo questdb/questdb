@@ -55,6 +55,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected long topTzOffset;
     private boolean areTimestampsInitialized;
     private boolean isNotKeyedLoopInitialized;
+    private long rowId;
     private long topLocalEpoch;
     private long topNextDst;
 
@@ -104,6 +105,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         this.baseCursor = baseCursor;
         baseRecord = baseCursor.getRecord();
         circuitBreaker = executionContext.getCircuitBreaker();
+        rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
     }
@@ -124,6 +126,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         prevDst = Long.MIN_VALUE;
         nextDstUtc = topNextDst;
         baseRecord = baseCursor.getRecord();
+        rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
     }
@@ -221,7 +224,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             // looks like we need to populate key map
             // at the start of this loop 'lastTimestamp' will be set to timestamp
             // of first record in base cursor
-            groupByFunctionsUpdater.updateNew(mapValue, baseRecord);
+            groupByFunctionsUpdater.updateNew(mapValue, baseRecord, rowId++);
             isNotKeyedLoopInitialized = true;
         }
 
@@ -232,7 +235,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
                 adjustDstInFlight(timestamp - tzOffset);
-                groupByFunctionsUpdater.updateExisting(mapValue, baseRecord);
+                groupByFunctionsUpdater.updateExisting(mapValue, baseRecord, rowId++);
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp columns uses this variable
@@ -253,7 +256,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     }
 
     protected void updateValueWhenClockMovesBack(MapValue value) {
-        groupByFunctionsUpdater.updateExisting(value, baseRecord);
+        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId);
     }
 
     protected class TimestampFunc extends TimestampFunction implements Function {

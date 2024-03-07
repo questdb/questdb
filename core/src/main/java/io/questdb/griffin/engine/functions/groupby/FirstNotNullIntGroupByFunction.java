@@ -36,14 +36,29 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        if (mapValue.getInt(valueIndex) == Numbers.INT_NaN) {
-            computeFirst(mapValue, record);
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        if (mapValue.getInt(valueIndex + 1) == Numbers.INT_NaN) {
+            computeFirst(mapValue, record, rowId);
         }
     }
 
     @Override
     public String getName() {
         return "first_not_null";
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        int srcVal = srcValue.getInt(valueIndex + 1);
+        if (srcVal == Numbers.INT_NaN) {
+            return;
+        }
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        // srcRowId is non-null at this point since we know that the value is non-null
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putInt(valueIndex + 1, srcVal);
+        }
     }
 }

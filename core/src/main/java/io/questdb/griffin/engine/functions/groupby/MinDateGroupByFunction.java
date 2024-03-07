@@ -44,12 +44,12 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putDate(valueIndex, arg.getDate(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.minLong(valueIndex, arg.getDate(record));
     }
 

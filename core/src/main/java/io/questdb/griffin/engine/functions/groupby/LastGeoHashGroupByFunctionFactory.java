@@ -46,7 +46,13 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         Function function = args.getQuick(0);
         int type = function.getType();
 
@@ -55,49 +61,89 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
             case ColumnType.GEOBYTE:
                 return new FirstGeoHashGroupByFunctionByte(type, function) {
                     @Override
-                    public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putByte(this.valueIndex, this.arg.getGeoByte(record));
+                    public void computeNext(MapValue mapValue, Record record, long rowId) {
+                        computeFirst(mapValue, record, rowId);
                     }
 
                     @Override
                     public String getName() {
                         return "last";
+                    }
+
+                    @Override
+                    public void merge(MapValue destValue, MapValue srcValue) {
+                        long srcRowId = srcValue.getLong(valueIndex);
+                        long destRowId = destValue.getLong(valueIndex);
+                        if (srcRowId > destRowId) {
+                            destValue.putLong(valueIndex, srcRowId);
+                            destValue.putByte(valueIndex + 1, srcValue.getGeoByte(valueIndex + 1));
+                        }
                     }
                 };
             case ColumnType.GEOSHORT:
                 return new FirstGeoHashGroupByFunctionShort(type, function) {
                     @Override
-                    public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putShort(this.valueIndex, this.arg.getGeoShort(record));
+                    public void computeNext(MapValue mapValue, Record record, long rowId) {
+                        computeFirst(mapValue, record, rowId);
                     }
 
                     @Override
                     public String getName() {
                         return "last";
+                    }
+
+                    @Override
+                    public void merge(MapValue destValue, MapValue srcValue) {
+                        long srcRowId = srcValue.getLong(valueIndex);
+                        long destRowId = destValue.getLong(valueIndex);
+                        if (srcRowId > destRowId) {
+                            destValue.putLong(valueIndex, srcRowId);
+                            destValue.putShort(valueIndex + 1, srcValue.getGeoShort(valueIndex + 1));
+                        }
                     }
                 };
             case ColumnType.GEOINT:
                 return new FirstGeoHashGroupByFunctionInt(type, function) {
                     @Override
-                    public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putInt(this.valueIndex, this.arg.getGeoInt(record));
+                    public void computeNext(MapValue mapValue, Record record, long rowId) {
+                        computeFirst(mapValue, record, rowId);
                     }
 
                     @Override
                     public String getName() {
                         return "last";
+                    }
+
+                    @Override
+                    public void merge(MapValue destValue, MapValue srcValue) {
+                        long srcRowId = srcValue.getLong(valueIndex);
+                        long destRowId = destValue.getLong(valueIndex);
+                        if (srcRowId > destRowId) {
+                            destValue.putLong(valueIndex, srcRowId);
+                            destValue.putInt(valueIndex + 1, srcValue.getGeoInt(valueIndex + 1));
+                        }
                     }
                 };
             default:
                 return new FirstGeoHashGroupByFunctionLong(type, function) {
                     @Override
-                    public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putLong(this.valueIndex, this.arg.getGeoLong(record));
+                    public void computeNext(MapValue mapValue, Record record, long rowId) {
+                        computeFirst(mapValue, record, rowId);
                     }
 
                     @Override
                     public String getName() {
                         return "last";
+                    }
+
+                    @Override
+                    public void merge(MapValue destValue, MapValue srcValue) {
+                        long srcRowId = srcValue.getLong(valueIndex);
+                        long destRowId = destValue.getLong(valueIndex);
+                        if (srcRowId > destRowId) {
+                            destValue.putLong(valueIndex, srcRowId);
+                            destValue.putLong(valueIndex + 1, srcValue.getGeoLong(valueIndex + 1));
+                        }
                     }
                 };
         }
