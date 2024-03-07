@@ -224,5 +224,7 @@ public class SqlKeywordsTest {
         specialCases.put("isEmptyAlias", "''");
         specialCases.put("isKeyword", "select");
         specialCases.put("isServerVersionKeyword", "server_version");
+        specialCases.put("isUTC", "'UTC'");
+        specialCases.put("isZeroOffset", "'00:00'");
     }
 }

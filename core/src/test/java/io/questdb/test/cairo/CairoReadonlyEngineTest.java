@@ -68,7 +68,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCannotCreateSecondWriteInsance() throws Exception {
+    public void testCannotCreateSecondWriteInstance() throws Exception {
         assertMemoryLeak(() -> {
             try (CairoEngine ignore = new CairoEngine(new DefaultTestCairoConfiguration(root) {
                 @Override
@@ -187,15 +187,14 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
     }
 
     private static TableToken createTable(String tableName, CairoEngine cairoEngine) {
-        try (TableModel table1 = new TableModel(
+        TableModel table1 = new TableModel(
                 configuration,
                 tableName,
                 PartitionBy.NONE
-        )) {
-            table1.timestamp("ts")
-                    .col("x", ColumnType.INT)
-                    .col("y", ColumnType.STRING);
-            return TestUtils.create(table1, cairoEngine);
-        }
+        );
+        table1.timestamp("ts")
+                .col("x", ColumnType.INT)
+                .col("y", ColumnType.STRING);
+        return TestUtils.create(table1, cairoEngine);
     }
 }

@@ -44,13 +44,13 @@ public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putBool(valueIndex, true);
         mapValue.putLong(valueIndex + 1, Numbers.ipv4ToLong(arg.getIPv4(record)));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (mapValue.getBool(valueIndex)) {
             long prev = Numbers.ipv4ToLong(mapValue.getIPv4(valueIndex + 1));
             long curr = Numbers.ipv4ToLong(arg.getIPv4(record));

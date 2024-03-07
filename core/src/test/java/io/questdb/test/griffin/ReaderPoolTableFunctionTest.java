@@ -106,14 +106,12 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     public void testMultipleTables() throws Exception {
         assertMemoryLeak(() -> {
             // create a table
-            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 20, "2020-01-01", 1);
-            }
-            try (TableModel tm = new TableModel(configuration, "tab2", PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 20, "2020-01-01", 1);
-            }
+            TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
+            tm = new TableModel(configuration, "tab2", PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
 
             int readerAcquisitionCount = ReaderPool.ENTRY_SIZE * 2;
             long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
@@ -172,10 +170,9 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = "tab1";
             // create a table
-            try (TableModel tm = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 20, "2020-01-01", 1);
-            }
+            TableModel tm = new TableModel(configuration, tableName, PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
 
             // add 3 more transactions
             for (int i = 0; i < 3; i++) {
@@ -199,10 +196,9 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     public void testReleaseAcquisitionTimeRecorded() throws Exception {
         assertMemoryLeak(() -> {
             // create a table
-            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 20, "2020-01-01", 1);
-            }
+            TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
 
             long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
             long threadId = Thread.currentThread().getId();
@@ -230,10 +226,9 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 2, "2020-01-01", 1);
-            }
+            TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 2, "2020-01-01", 1);
 
             assertSql("ts\tID\n" +
                     "2020-01-01T00:00:00.000000Z\t1\n" +
@@ -247,10 +242,9 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     @Test
     public void testToTop() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 20, "2020-01-01", 1);
-            }
+            TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
 
             try (TableReader ignored = getReader("tab1");
                  RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());

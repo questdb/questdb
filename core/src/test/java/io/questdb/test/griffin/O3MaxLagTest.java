@@ -47,38 +47,35 @@ public class O3MaxLagTest extends AbstractO3Test {
     @Test
     public void testBigUncommittedCheckStrColFixedAndVarMappedSizes() throws Exception {
         executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
-                tableModel
-                        .col("id", ColumnType.STRING)
-                        .timestamp("ts");
-                testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
-            }
+            TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY);
+            tableModel
+                    .col("id", ColumnType.STRING)
+                    .timestamp("ts");
+            testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
         });
     }
 
     @Test
     public void testBigUncommittedMovesTimestampOnEdge() throws Exception {
         executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
-                tableModel
-                        .col("id", ColumnType.LONG)
-                        .timestamp("ts");
-                testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
-            }
+            TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY);
+            tableModel
+                    .col("id", ColumnType.LONG)
+                    .timestamp("ts");
+            testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
         });
     }
 
     @Test
     public void testBigUncommittedToMove() throws Exception {
         executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
-                tableModel
-                        .col("id", ColumnType.LONG)
-                        .col("ok", ColumnType.FLOAT)
-                        .col("str", ColumnType.STRING)
-                        .timestamp("ts");
-                testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
-            }
+            TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY);
+            tableModel
+                    .col("id", ColumnType.LONG)
+                    .col("ok", ColumnType.FLOAT)
+                    .col("str", ColumnType.STRING)
+                    .timestamp("ts");
+            testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
         });
     }
 

@@ -28,7 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -276,7 +275,6 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         }
     }
 
-    @SuppressWarnings("resource")
     private static TableModel defaultModel(String tableName) {
         return new TableModel(configuration, tableName, PartitionBy.DAY)
                 .timestamp("ts")
@@ -325,16 +323,8 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, rnd.nextInt(50));
         }
 
-        try (TableModel model = defaultModel(tableName)) {
-            return engine.createTable(
-                    AllowAllSecurityContext.INSTANCE,
-                    model.getMem(),
-                    model.getPath(),
-                    false,
-                    model,
-                    false
-            );
-        }
+        TableModel model = defaultModel(tableName);
+        return TestUtils.create(model, engine);
     }
 
     public enum SequencerType {

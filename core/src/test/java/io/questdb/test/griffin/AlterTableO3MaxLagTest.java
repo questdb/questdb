@@ -32,7 +32,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -44,9 +43,8 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     public void setMaxUncommittedRows() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tableSetMaxUncommittedRows";
-            try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createX(tbl);
-            }
+            TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createX(tbl);
             try (TableReader rdr = getReader(tableName)) {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 11111";
                 ddl(alterCommand, sqlExecutionContext);
@@ -64,9 +62,8 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     public void setMaxUncommittedRowsAndO3MaxLag() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tableSetMaxUncommittedRows";
-            try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createX(tbl);
-            }
+            TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createX(tbl);
             try (TableReader rdr = getReader(tableName)) {
                 String alterCommand2 = "ALTER TABLE " + tableName + " SET PARAM o3MaxLag = 1s";
                 ddl(alterCommand2, sqlExecutionContext);
@@ -107,9 +104,8 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     @Test
     public void setMaxUncommittedRowsFailsToReopenBackMetaFile() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
-                createX(tbl);
-            }
+            TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY);
+            createX(tbl);
             engine.releaseAllWriters();
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
 
@@ -154,40 +150,39 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     @Test
     public void setMaxUncommittedRowsFailsToSwapMetadataOnce() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
-                CreateTableTestUtils.create(tbl.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+            TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY);
+            AbstractCairoTest.create(tbl.timestamp("ts")
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
-                ff = new TestFilesFacadeImpl() {
-                    int attempt = 0;
+            ff = new TestFilesFacadeImpl() {
+                int attempt = 0;
 
-                    @Override
-                    public int rename(LPSZ from, LPSZ to) {
-                        if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME) && attempt++ == 0) {
-                            return Files.FILES_RENAME_ERR_OTHER;
-                        }
-                        return super.rename(from, to);
+                @Override
+                public int rename(LPSZ from, LPSZ to) {
+                    if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME) && attempt++ == 0) {
+                        return Files.FILES_RENAME_ERR_OTHER;
                     }
-                };
-                String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
-                try {
-                    ddl(alterCommand, sqlExecutionContext);
-                    Assert.fail("Alter table should fail");
-                } catch (CairoException e) {
-                    Assert.assertEquals(12, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
+                    return super.rename(from, to);
                 }
-
-                try (TableReader rdr = getReader("X")) {
-                    Assert.assertEquals(configuration.getMaxUncommittedRows(), rdr.getMetadata().getMaxUncommittedRows());
-                }
-
-                // Now try with success.
-                ff = new TestFilesFacadeImpl();
+            };
+            String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
+            try {
                 ddl(alterCommand, sqlExecutionContext);
-                assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE table_name = 'X'");
+                Assert.fail("Alter table should fail");
+            } catch (CairoException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
             }
+
+            try (TableReader rdr = getReader("X")) {
+                Assert.assertEquals(configuration.getMaxUncommittedRows(), rdr.getMetadata().getMaxUncommittedRows());
+            }
+
+            // Now try with success.
+            ff = new TestFilesFacadeImpl();
+            ddl(alterCommand, sqlExecutionContext);
+            assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE table_name = 'X'");
         });
     }
 
@@ -195,41 +190,40 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
-            try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
-                CreateTableTestUtils.create(tbl.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+            TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY);
+            AbstractCairoTest.create(tbl.timestamp("ts")
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
-                ff = new TestFilesFacadeImpl() {
-                    @Override
-                    public int rename(LPSZ from, LPSZ to) {
-                        if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME)) {
-                            return Files.FILES_RENAME_ERR_OTHER;
-                        }
-                        return super.rename(from, to);
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public int rename(LPSZ from, LPSZ to) {
+                    if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME)) {
+                        return Files.FILES_RENAME_ERR_OTHER;
                     }
-
-                };
-                String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
-                try {
-                    ddl(alterCommand, sqlExecutionContext);
-                    Assert.fail("Alter table should fail");
-                } catch (CairoError e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
+                    return super.rename(from, to);
                 }
 
-                engine.releaseAllReaders();
-                try (TableReader ignored = getReader("X")) {
-                    Assert.fail();
-                } catch (CairoException ignored) {
-                }
-
-                // Now try with success.
-                engine.clear();
-                ff = new TestFilesFacadeImpl();
+            };
+            String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
+            try {
                 ddl(alterCommand, sqlExecutionContext);
-                assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE table_name = 'X'");
+                Assert.fail("Alter table should fail");
+            } catch (CairoError e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
             }
+
+            engine.releaseAllReaders();
+            try (TableReader ignored = getReader("X")) {
+                Assert.fail();
+            } catch (CairoException ignored) {
+            }
+
+            // Now try with success.
+            engine.clear();
+            ff = new TestFilesFacadeImpl();
+            ddl(alterCommand, sqlExecutionContext);
+            assertSql("maxUncommittedRows\n11111\n", "SELECT maxUncommittedRows FROM tables() WHERE table_name = 'X'");
         });
     }
 
@@ -237,53 +231,52 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen2() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
-            try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
-                CreateTableTestUtils.create(tbl.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+            TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY);
+            AbstractCairoTest.create(tbl.timestamp("ts")
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
-                ff = new TestFilesFacadeImpl() {
-                    @Override
-                    public int rename(LPSZ from, LPSZ to) {
-                        if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME)) {
-                            return Files.FILES_RENAME_ERR_OTHER;
-                        }
-                        return super.rename(from, to);
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public int rename(LPSZ from, LPSZ to) {
+                    if (Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME)) {
+                        return Files.FILES_RENAME_ERR_OTHER;
                     }
-
-                };
-                String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
-                try {
-                    ddl(alterCommand, sqlExecutionContext);
-                    Assert.fail("Alter table should fail");
-                } catch (CairoError e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
+                    return super.rename(from, to);
                 }
 
-                engine.releaseAllReaders();
-                try (TableReader ignored = getReader("X")) {
-                    Assert.fail();
-                } catch (CairoException ignored) {
-                }
+            };
+            String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
+            try {
+                ddl(alterCommand, sqlExecutionContext);
+                Assert.fail("Alter table should fail");
+            } catch (CairoError e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
+            }
 
-                ff = new TestFilesFacadeImpl();
-                // Now try with another failure.
-                engine.releaseAllWriters();
-                ff = new TestFilesFacadeImpl() {
-                    @Override
-                    public int openRO(LPSZ from) {
-                        if (Utf8s.endsWithAscii(from, TableUtils.META_FILE_NAME)) {
-                            return -1;
-                        }
-                        return super.openRO(from);
+            engine.releaseAllReaders();
+            try (TableReader ignored = getReader("X")) {
+                Assert.fail();
+            } catch (CairoException ignored) {
+            }
+
+            ff = new TestFilesFacadeImpl();
+            // Now try with another failure.
+            engine.releaseAllWriters();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public int openRO(LPSZ from) {
+                    if (Utf8s.endsWithAscii(from, TableUtils.META_FILE_NAME)) {
+                        return -1;
                     }
-                };
-                try {
-                    ddl(alterCommand, sqlExecutionContext);
-                    Assert.fail();
-                } catch (CairoException | SqlException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
+                    return super.openRO(from);
                 }
+            };
+            try {
+                ddl(alterCommand, sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException | SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
             }
         });
     }
@@ -308,9 +301,8 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     public void setO3MaxLag() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "setO3MaxLagTable";
-            try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createX(tbl);
-            }
+            TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createX(tbl);
             try (TableReader rdr = getReader(tableName)) {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM o3MaxLag = 111s";
                 ddl(alterCommand, sqlExecutionContext);
@@ -359,9 +351,8 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
     @Test
     public void setUnknownParameter() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
-                createX(tbl);
-            }
+            TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY);
+            createX(tbl);
             try (TableReader ignored = getReader("X")) {
                 try {
                     ddl("alter TABLE X SET PARAM vommitLag = 111s");

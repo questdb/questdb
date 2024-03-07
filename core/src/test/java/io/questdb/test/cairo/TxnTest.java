@@ -33,7 +33,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -63,12 +62,9 @@ public class TxnTest extends AbstractCairoTest {
             assertMemoryLeak(() -> {
 
                 String tableName = "txntest";
-                try (
-                        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                ) {
-                    model.timestamp();
-                    CreateTableTestUtils.create(model);
-                }
+                TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
+                model.timestamp();
+                AbstractCairoTest.create(model);
 
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName(tableName);
@@ -131,10 +127,9 @@ public class TxnTest extends AbstractCairoTest {
             int maxSymbolCount = (int) (Files.PAGE_SIZE / 8 / 4);
             AtomicInteger partitionCountCheck = new AtomicInteger();
 
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
-                model.timestamp();
-                CreateTableTestUtils.create(model);
-            }
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
+            model.timestamp();
+            AbstractCairoTest.create(model);
             int truncateIteration = 33;
             Thread writerThread = createWriterThread(
                     start,
@@ -202,7 +197,7 @@ public class TxnTest extends AbstractCairoTest {
                 readers[th].join();
             }
 
-            if (exceptions.size() != 0) {
+            if (!exceptions.isEmpty()) {
                 Assert.fail(exceptions.poll().toString());
             }
             Assert.assertTrue(reloadCount.get() > 10);
@@ -228,10 +223,9 @@ public class TxnTest extends AbstractCairoTest {
             int maxSymbolCount = (int) (Files.PAGE_SIZE / 8 / 4);
             AtomicInteger partitionCountCheck = new AtomicInteger();
 
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
-                model.timestamp();
-                CreateTableTestUtils.create(model);
-            }
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
+            model.timestamp();
+            AbstractCairoTest.create(model);
             Thread writerThread = createWriterThread(
                     start,
                     done,
@@ -318,7 +312,7 @@ public class TxnTest extends AbstractCairoTest {
                 readers[th].join();
             }
 
-            if (exceptions.size() != 0) {
+            if (!exceptions.isEmpty()) {
                 Assert.fail(exceptions.poll().toString());
             }
             Assert.assertTrue(reloadCount.get() > 10);
@@ -412,7 +406,7 @@ public class TxnTest extends AbstractCairoTest {
                         txWriter.ofRW(path, PartitionBy.HOUR);
                     }
 
-                    if (exceptions.size() > 0) {
+                    if (!exceptions.isEmpty()) {
                         break;
                     }
                 }

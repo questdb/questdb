@@ -26,7 +26,6 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.LongList;
@@ -34,7 +33,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -52,7 +51,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-06T00:00:00.000Z"));
@@ -162,13 +161,11 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
     public void testClose() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
+            TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
                     col("a", ColumnType.INT).
                     col("b", ColumnType.INT).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
             TableReader reader = newOffPoolReader(configuration, "x");
             IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(new RuntimeIntervalModel(intervals), reader.getMetadata().getTimestampIndex());
@@ -247,12 +244,10 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testIntervalCursorNoTimestamp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
-                    col("b", ColumnType.SYMBOL).indexed(true, 4)
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    col("b", ColumnType.SYMBOL).indexed(true, 4);
+            AbstractCairoTest.create(model);
         });
     }
 
@@ -386,13 +381,11 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
 
             TableToken x;
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+            TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
                     col("b", ColumnType.SYMBOL).indexed(true, 4).
-                    timestamp()
-            ) {
-                x = CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            x = AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             long timestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
@@ -609,13 +602,11 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
     private void testIntervals(int partitionBy, long increment, int rowCount, CharSequence expected, long expectedCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
-            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+            TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
                     col("b", ColumnType.SYMBOL).indexed(true, 4).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             long timestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");

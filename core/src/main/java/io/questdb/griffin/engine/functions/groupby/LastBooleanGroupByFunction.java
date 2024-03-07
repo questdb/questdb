@@ -36,12 +36,22 @@ public class LastBooleanGroupByFunction extends FirstBooleanGroupByFunction {
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        super.computeFirst(mapValue, record);
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        computeFirst(mapValue, record, rowId);
     }
 
     @Override
     public String getName() {
         return "last";
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId > destRowId) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putBool(valueIndex + 1, srcValue.getBool(valueIndex + 1));
+        }
     }
 }

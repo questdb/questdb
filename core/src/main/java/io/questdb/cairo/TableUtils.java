@@ -317,6 +317,17 @@ public final class TableUtils {
 
     public static void createTable(
             CairoConfiguration configuration,
+            TableStructure structure,
+            int tableId,
+            CharSequence dirName
+    ) {
+        try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
+            createTable(configuration, mem, path, structure, ColumnType.VERSION, tableId, dirName);
+        }
+    }
+
+    public static void createTable(
+            CairoConfiguration configuration,
             MemoryMARW memory,
             Path path,
             TableStructure structure,
@@ -342,6 +353,23 @@ public final class TableUtils {
             CharSequence dirName
     ) {
         createTable(ff, root, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
+    }
+
+    public static void createTable(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            TableStructure structure,
+            int tableVersion,
+            int tableId,
+            CharSequence dirName
+    ) {
+        try (
+                Path path = new Path();
+                MemoryMARW mem = Vm.getMARWInstance()
+        ) {
+            createTable(ff, root, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
+        }
     }
 
     public static void createTable(

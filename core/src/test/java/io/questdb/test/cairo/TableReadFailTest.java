@@ -80,12 +80,11 @@ public class TableReadFailTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
             String x = "x";
-            try (TableModel model = new TableModel(configuration, x, PartitionBy.NONE)
+            TableModel model = new TableModel(configuration, x, PartitionBy.NONE)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.LONG)
-                    .timestamp()) {
-                CreateTableTestUtils.create(model);
-            }
+                    .timestamp();
+            AbstractCairoTest.create(model);
 
             try (
                     Path path = new Path();
@@ -226,7 +225,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                     public long getSpinLockTimeout() {
                         return 1;
                     }
-                }, "all");
+                }, "all").close();
                 Assert.fail();
             } catch (CairoException ignore) {
             }

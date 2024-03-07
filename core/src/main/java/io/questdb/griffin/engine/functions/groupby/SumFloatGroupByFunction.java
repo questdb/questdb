@@ -43,7 +43,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
         if (Float.isFinite(value)) {
             mapValue.putFloat(valueIndex, value);
@@ -55,7 +55,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
         if (Float.isFinite(value)) {
             mapValue.addFloat(valueIndex, value);

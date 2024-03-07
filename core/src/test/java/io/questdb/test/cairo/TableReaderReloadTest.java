@@ -149,10 +149,9 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         final Rnd rnd = new Rnd();
         final int bufferSize = 1024;
         long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        try (TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, partitionBy)) {
-            model.timestamp();
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, partitionBy);
+        model.timestamp();
+        AbstractCairoTest.create(model);
 
         long timestamp = 0;
         try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
@@ -201,10 +200,9 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         final Rnd rnd = new Rnd();
         final int bufferSize = 1024;
         long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        try (TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, partitionBy)) {
-            model.timestamp();
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, partitionBy);
+        model.timestamp();
+        AbstractCairoTest.create(model);
 
         long timestamp = 0;
         try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {

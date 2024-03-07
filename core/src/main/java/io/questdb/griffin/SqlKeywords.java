@@ -1251,7 +1251,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 't'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i++) | 32) == 'r'
-                && (tok.charAt(i++) | 32) == 's';
+                && (tok.charAt(i) | 32) == 's';
     }
 
     public static boolean isPartitionKeyword(CharSequence tok) {
@@ -1686,6 +1686,16 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'e';
     }
 
+    public static boolean isUTC(CharSequence tok) {
+        return
+                tok.length() == 5
+                        && (tok.charAt(0)) == '\''
+                        && (tok.charAt(1) | 32) == 'u'
+                        && (tok.charAt(2) | 32) == 't'
+                        && (tok.charAt(3) | 32) == 'c'
+                        && (tok.charAt(4)) == '\'';
+    }
+
     public static boolean isUnboundedKeyword(CharSequence tok) {
         return tok.length() == 9
                 && (tok.charAt(0) | 32) == 'u'
@@ -1797,6 +1807,18 @@ public class SqlKeywords {
                 && (tok.charAt(1) | 32) == 'e'
                 && (tok.charAt(2) | 32) == 'a'
                 && (tok.charAt(3) | 32) == 'r';
+    }
+
+    public static boolean isZeroOffset(CharSequence tok) {
+        return
+                tok.length() == 7
+                        && tok.charAt(0) == '\''
+                        && tok.charAt(1) == '0'
+                        && tok.charAt(2) == '0'
+                        && tok.charAt(3) == ':'
+                        && tok.charAt(4) == '0'
+                        && tok.charAt(5) == '0'
+                        && tok.charAt(6) == '\'';
     }
 
     public static boolean isZoneKeyword(CharSequence tok) {

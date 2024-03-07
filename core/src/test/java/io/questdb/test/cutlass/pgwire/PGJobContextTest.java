@@ -11019,6 +11019,8 @@ create table tab as (
                     assertEquals(testSize, stmt.getFetchSize());
 
                     try {
+                        // sleep to allow disconnect timer to trigger.
+                        Os.sleep(500);
                         stmt.executeQuery();
                         Assert.fail();
                     } catch (PSQLException ex) {

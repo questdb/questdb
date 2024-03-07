@@ -39,7 +39,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -103,10 +102,9 @@ public class AggregateTest extends AbstractCairoTest {
 
     @Test
     public void testCountAggregationWithConst() throws Exception {
-        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY)) {
-            tt1.col("tts", ColumnType.LONG).timestamp("ts");
-            createPopulateTable(tt1, 100, "2020-01-01", 2);
-        }
+        TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY);
+        tt1.col("tts", ColumnType.LONG).timestamp("ts");
+        createPopulateTable(tt1, 100, "2020-01-01", 2);
 
         String expected = "ts\tcount\n" +
                 "2020-01-01T00:28:47.990000Z:TIMESTAMP\t51:LONG\n" +
@@ -119,10 +117,9 @@ public class AggregateTest extends AbstractCairoTest {
 
     @Test
     public void testCountAggregations() throws Exception {
-        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
-            tt1.col("tts", ColumnType.LONG);
-            CreateTableTestUtils.create(tt1);
-        }
+        TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE);
+        tt1.col("tts", ColumnType.LONG);
+        AbstractCairoTest.create(tt1);
 
         String expected = "max\tcount\n" +
                 "NaN:LONG\t0:LONG\n";
@@ -162,11 +159,10 @@ public class AggregateTest extends AbstractCairoTest {
 
     @Test
     public void testCountCaseInsensitive() throws Exception {
-        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY)) {
-            tt1.col("tts", ColumnType.LONG).timestamp("ts")
-                    .col("ID", ColumnType.LONG);
-            createPopulateTable(tt1, 100, "2020-01-01", 2);
-        }
+        TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY);
+        tt1.col("tts", ColumnType.LONG).timestamp("ts")
+                .col("ID", ColumnType.LONG);
+        createPopulateTable(tt1, 100, "2020-01-01", 2);
 
         String expected = "ts\tcount\n" +
                 "2020-01-01T00:28:47.990000Z:TIMESTAMP\t1:LONG\n" +
@@ -2070,12 +2066,11 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     private void testAggregations(String[] aggregateFunctions, TypeVal[] aggregateColTypes) throws SqlException {
-        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
-            for (TypeVal colType : aggregateColTypes) {
-                tt1.col(colType.colName, colType.columnType);
-            }
-            CreateTableTestUtils.create(tt1);
+        TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE);
+        for (TypeVal colType : aggregateColTypes) {
+            tt1.col(colType.colName, colType.columnType);
         }
+        AbstractCairoTest.create(tt1);
 
         // Insert a lot of empty rows to test function's merge correctness.
         try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("tt1"))) {
