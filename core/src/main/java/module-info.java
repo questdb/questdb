@@ -534,6 +534,7 @@ open module io.questdb {
 
 //                  cast varchar to ...,
             io.questdb.griffin.engine.functions.cast.CastVarcharToVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastVarcharToStrFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastVarcharToBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastVarcharToByteFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastVarcharToShortFunctionFactory,
