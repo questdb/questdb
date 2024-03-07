@@ -3028,10 +3028,10 @@ public class SqlOptimiser implements Mutable {
      *     INNER JOIN
      *         Propagate to primary table and secondary table.
      *
-     * @param model
-     * @param jm
-     * @param orderByMnemonic
-     * @param orderByDirectionAdvice
+     * @param model The current query model
+     * @param jm The join model list for the current query model
+     * @param orderByMnemonic The advice 'strength'
+     * @param orderByDirectionAdvice The advice direction
      */
     private void pushDownOrderByAdviceToJoinModels(QueryModel model, ObjList<QueryModel> jm, int orderByMnemonic, IntList orderByDirectionAdvice) {
         if (model == null) {
@@ -3061,9 +3061,8 @@ public class SqlOptimiser implements Mutable {
             }
             // get the secondary join model
             QueryModel secondaryJoinModel = primaryJoinModel.getJoinModels().getQuiet(1);
-            // if order by advice doesn't have names qualified by table then we keep behaviour the same as before
+            // if order by advice doesn't have names qualified by table then we noop and propagate it through
             if (!orderByAdviceHasDot) {
-                // just do nothing and put it through
                 primaryJoinModel.setOrderByAdviceMnemonic(orderByMnemonic);
                 primaryJoinModel.copyOrderByAdvice(orderByAdvice);
                 primaryJoinModel.copyOrderByDirectionAdvice(orderByDirectionAdvice);
@@ -3081,7 +3080,7 @@ public class SqlOptimiser implements Mutable {
                 optimiseOrderBy(primaryJoinModel, orderByMnemonic);
                 return;
             }
-            // its potentially pushable advice, so we now we copy and strip the table prefix from it
+            // advice is pushable, so we now we copy and strip the table prefix from it
             ObjList<ExpressionNode> advice = duplicateAdviceAndTakeSuffix();
             // if there's a secondary model, we need to handle joins
             if (secondaryJoinModel != null) {
@@ -3114,6 +3113,10 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Copies orderByAdvice and removes table prefixes.
+     * @return prefix-less advice
+     */
     private ObjList<ExpressionNode> duplicateAdviceAndTakeSuffix() {
         int d;
         CharSequence token;
@@ -3128,18 +3131,37 @@ public class SqlOptimiser implements Mutable {
         return advice;
     }
 
+    /**
+     * Copies the given order by advice information into the provided model.
+     *
+     * @param model The target model
+     * @param advice The order by advice to copy
+     * @param orderByMnemonic The advice 'strength'
+     * @param orderByDirectionAdvice The advice direction
+     */
     private void setAndCopyAdvice(QueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
         model.setOrderByAdviceMnemonic(orderByMnemonic);
         model.copyOrderByAdvice(advice);
         model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
     }
 
+    /**
+     * Removes the table prefix from a name i.e maps 't1.ts' -> 'ts'
+     * @param seq the prefixed name
+     * @return the non-prefixed name
+     */
     private CharSequence getTablePrefix(CharSequence seq) {
         int loc = Chars.indexOf(seq, '.');
         assert loc > -1;
         return seq.subSequence(0, loc);
     }
 
+    /**
+     * Checks for a dot in the token.
+     *
+     * @param orderByAdvice the given advice
+     * @return whether dot is present or not
+     */
     private boolean checkForDot(ObjList<ExpressionNode> orderByAdvice) {
         for (int j = 0, n = orderByAdvice.size(); j < n; j++) {
             if (Chars.contains(orderByAdvice.getQuick(j).token, ".")) {
@@ -3149,6 +3171,12 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    /**
+     * Checks whether the given advice is for one table only i.e consistent table prefix.
+     *
+     * @param orderByAdvice the given advice
+     * @return whether prefix is consistent or not
+     */
     private boolean checkForConsistentPrefix(ObjList<ExpressionNode> orderByAdvice) {
         CharSequence prefix = "";
         boolean consistentPrefix = true;
