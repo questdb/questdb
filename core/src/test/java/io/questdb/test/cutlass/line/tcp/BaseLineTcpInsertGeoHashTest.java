@@ -25,7 +25,10 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -98,13 +101,12 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
                                  String expected,
                                  String... expectedExtraStringColumns) throws Exception {
         runInContext(() -> {
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(columnBits)).timestamp();
-                if (walEnabled) {
-                    model.wal();
-                }
-                TestUtils.create(model, engine);
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
+            model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(columnBits)).timestamp();
+            if (walEnabled) {
+                model.wal();
             }
+            TestUtils.create(model, engine);
             if (walEnabled) {
                 Assert.assertTrue(isWalTable(tableName));
             }

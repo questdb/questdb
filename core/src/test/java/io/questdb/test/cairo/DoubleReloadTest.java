@@ -29,21 +29,18 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class DoubleReloadTest extends AbstractCairoTest {
     @Test
     public void testSingleColumn() {
-        try (TableModel model = new TableModel(
+        TableModel model = new TableModel(
                 configuration,
                 "int_test",
                 PartitionBy.NONE
-        ).col("x", ColumnType.INT)) {
-            CreateTableTestUtils.create(model);
-        }
-
+        ).col("x", ColumnType.INT);
+        AbstractCairoTest.create(model);
 
         try (
                 TableReader reader = newOffPoolReader(configuration, "int_test");

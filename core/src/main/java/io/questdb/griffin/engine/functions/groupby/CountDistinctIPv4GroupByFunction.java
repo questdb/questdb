@@ -56,7 +56,7 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int val = arg.getIPv4(record);
         if (val != Numbers.IPv4_NULL) {
             mapValue.putLong(valueIndex, 1);
@@ -69,7 +69,7 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int val = arg.getIPv4(record);
         if (val != Numbers.IPv4_NULL) {
             long ptr = mapValue.getLong(valueIndex + 1);

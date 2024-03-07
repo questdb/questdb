@@ -64,7 +64,7 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int val = arg.getIPv4(record);
         if (val != Numbers.IPv4_NULL) {
             final long hash = Hash.murmur3ToLong(val);
@@ -79,7 +79,7 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int val = arg.getIPv4(record);
         if (val != Numbers.IPv4_NULL) {
             final long hash = Hash.murmur3ToLong(val);

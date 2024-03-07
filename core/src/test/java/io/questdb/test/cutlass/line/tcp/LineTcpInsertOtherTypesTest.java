@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.line.tcp;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
@@ -997,9 +996,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     private void assertType(int columnType, String expected, CharSequence[] values, boolean isTag) throws Exception {
         runInContext(() -> {
             if (columnType != ColumnType.UNDEFINED) {
-                try (TableModel model = new TableModel(configuration, TABLE, PartitionBy.DAY)) {
-                    TestUtils.create(model.col(TARGET_COLUMN_NAME, columnType).timestamp(), engine);
-                }
+                TableModel model = new TableModel(configuration, TABLE, PartitionBy.DAY);
+                TestUtils.create(model.col(TARGET_COLUMN_NAME, columnType).timestamp(), engine);
                 if (walEnabled) {
                     Assert.assertTrue(isWalTable(TABLE));
                 }

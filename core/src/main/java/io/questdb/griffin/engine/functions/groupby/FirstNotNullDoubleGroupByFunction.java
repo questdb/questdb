@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction {
@@ -36,14 +37,29 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        if (Double.isNaN(mapValue.getDouble(valueIndex))) {
-            computeFirst(mapValue, record);
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        if (Double.isNaN(mapValue.getDouble(valueIndex + 1))) {
+            computeFirst(mapValue, record, rowId);
         }
     }
 
     @Override
     public String getName() {
         return "first_not_null";
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcVal = srcValue.getDouble(valueIndex + 1);
+        if (Double.isNaN(srcVal)) {
+            return;
+        }
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        // srcRowId is non-null at this point since we know that the value is non-null
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putDouble(valueIndex + 1, srcVal);
+        }
     }
 }

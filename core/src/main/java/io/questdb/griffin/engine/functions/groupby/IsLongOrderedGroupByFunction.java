@@ -43,13 +43,13 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putBool(valueIndex, true);
         mapValue.putLong(valueIndex + 1, arg.getLong(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (mapValue.getBool(valueIndex)) {
             long prev = mapValue.getLong(valueIndex + 1);
             long curr = arg.getLong(record);

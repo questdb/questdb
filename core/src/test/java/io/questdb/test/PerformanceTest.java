@@ -69,7 +69,7 @@ public class PerformanceTest extends AbstractCairoTest {
             long result;
 
             String[] symbols = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
-            try (TableModel model = new TableModel(configuration, "quote", PartitionBy.NONE)
+            TableModel model = new TableModel(configuration, "quote", PartitionBy.NONE)
                     .timestamp()
                     .col("sym", ColumnType.SYMBOL)
                     .col("bid", ColumnType.DOUBLE)
@@ -77,9 +77,8 @@ public class PerformanceTest extends AbstractCairoTest {
                     .col("bidSize", ColumnType.INT)
                     .col("askSize", ColumnType.INT)
                     .col("mode", ColumnType.SYMBOL).symbolCapacity(2)
-                    .col("ex", ColumnType.SYMBOL).symbolCapacity(2)) {
-                CreateTableTestUtils.create(model);
-            }
+                    .col("ex", ColumnType.SYMBOL).symbolCapacity(2);
+            AbstractCairoTest.create(model);
 
             try (TableWriter w = newOffPoolWriter(configuration, "quote", Metrics.disabled())) {
                 for (int i = -count; i < count; i++) {
@@ -155,7 +154,7 @@ public class PerformanceTest extends AbstractCairoTest {
 
     private double measureReloadSpeed(int reloadTableRowCount, int reloadCount, int txCount) {
         String[] symbols = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
-        try (TableModel model = new TableModel(configuration, "quote", PartitionBy.DAY)
+        TableModel model = new TableModel(configuration, "quote", PartitionBy.DAY)
                 .timestamp()
                 .col("sym", ColumnType.SYMBOL)
                 .col("bid", ColumnType.DOUBLE)
@@ -163,9 +162,8 @@ public class PerformanceTest extends AbstractCairoTest {
                 .col("bidSize", ColumnType.INT)
                 .col("askSize", ColumnType.INT)
                 .col("mode", ColumnType.SYMBOL).symbolCapacity(2)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(2)) {
-            CreateTableTestUtils.create(model);
-        }
+                .col("ex", ColumnType.SYMBOL).symbolCapacity(2);
+        AbstractCairoTest.create(model);
 
         SOCountDownLatch stopLatch = new SOCountDownLatch(2);
         SOCountDownLatch startLatch = new SOCountDownLatch(2);

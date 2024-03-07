@@ -44,7 +44,6 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class CairoKeywordBenchmark {
 
-
     private final long memSize = "abcde.detached".length() + 1;
     private final StringSink sink = new StringSink();
     private final StringSink sink2 = new StringSink();

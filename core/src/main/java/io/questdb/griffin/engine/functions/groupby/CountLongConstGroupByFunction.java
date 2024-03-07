@@ -37,12 +37,12 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     private int valueIndex;
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, 1);
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.addLong(valueIndex, 1);
     }
 

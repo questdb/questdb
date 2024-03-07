@@ -33,8 +33,8 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.InterpolationUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class InterpolationGroupByFunction implements GroupByFunction {
     private final GroupByFunction wrappedFunction;
@@ -54,13 +54,13 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        wrappedFunction.computeFirst(mapValue, record);
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        wrappedFunction.computeFirst(mapValue, record, rowId);
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        wrappedFunction.computeNext(mapValue, record);
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        wrappedFunction.computeNext(mapValue, record, rowId);
     }
 
     @Override

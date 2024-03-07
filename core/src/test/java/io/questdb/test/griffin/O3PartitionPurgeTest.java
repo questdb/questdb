@@ -403,10 +403,9 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 100);
 
             TableToken token;
-            try (TableModel tm = new TableModel(configuration, "tbl", PartitionBy.DAY)
-                    .col("x", ColumnType.INT).timestamp()) {
-                token = createPopulateTable(1, tm, 2000, "2022-02-24T04", 2);
-            }
+            TableModel tm = new TableModel(configuration, "tbl", PartitionBy.DAY)
+                    .col("x", ColumnType.INT).timestamp();
+            token = createPopulateTable(1, tm, 2000, "2022-02-24T04", 2);
 
             Path path = Path.getThreadLocal("");
 

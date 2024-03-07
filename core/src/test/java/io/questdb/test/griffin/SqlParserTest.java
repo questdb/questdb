@@ -41,7 +41,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -883,7 +883,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAliasWithWildcard1() throws SqlException {
         assertQuery(
-                "select-choose a1, a1 a, b from (select-choose [a a1, b] a a1, b from (select [a, b] from x))",
+                "select-choose a a1, a, b from (select [a, b] from x)",
                 "select a as a1, * from x",
                 modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -3540,9 +3540,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByUnionAll() throws SqlException {
+        assertQuery(
+                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp) union all select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp)",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar" +
+                        " union all " +
+                        "select b, sum(a), k k1, k from x y sample by 3h align to calendar",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+    }
+
+
+
+    @Test
     public void testDuplicateColumnsBasicSelect() throws SqlException {
         assertQuery(
-                "select-choose b, a, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1 from (select [b, a, k] from x timestamp (timestamp)))",
+                "select-choose b, a, k k1, k from (select [b, a, k] from x timestamp (timestamp))",
                 "select b, a, k k1, k from x",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
@@ -4037,6 +4050,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual customerId + 1 column, name, count from (select-group-by [customerId, customerName name, count() count] customerId, customerName name, count() count from (select [customerId, customerName] from customers where customerName = 'X'))",
                 "select customerId+1, name, count from (select customerId, customerName name, count() count from customers) where name = 'X'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
+                // todo: is this a leak?
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
         );
     }
@@ -5892,7 +5906,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 "-- from acc\n" +
                                 "from acc(Date) sample by 1d\n" +
                                 "-- where x = 10\n"
-                );
+                ).close();
                 Assert.fail();
             } catch (SqlException e) {
                 // we now allow column reference from SQL although column access will fail
@@ -5997,7 +6011,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMissingWhere() {
         try {
-            select("select id, x + 10, x from tab id ~ 'HBRO'");
+            select("select id, x + 10, x from tab id ~ 'HBRO'").close();
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -8680,12 +8694,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
                     }
                 } finally {
-                    for (int i = 0, n = tableModels.length; i < n; i++) {
-                        TableModel tableModel = tableModels[i];
-                        TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
-                        Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
-                        tableModel.close();
+                    try (Path path = new Path()) {
+                        for (int i = 0, n = tableModels.length; i < n; i++) {
+                            TableModel tableModel = tableModels[i];
+                            TableToken tableToken = engine.verifyTableName(tableModel.getName());
+                            path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                            Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                        }
                     }
                 }
             }
@@ -8713,21 +8728,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 try {
                     try {
                         for (int i = 0, n = tableModels.length; i < n; i++) {
-                            CreateTableTestUtils.create(tableModels[i]);
+                            AbstractCairoTest.create(tableModels[i]);
                         }
-                        select("select * from tab");
+                        select("select * from tab").close();
                         Assert.fail("Exception expected");
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), "table is locked");
                     }
                 } finally {
-                    for (int i = 0, n = tableModels.length; i < n; i++) {
-                        TableModel tableModel = tableModels[i];
-                        TableToken tableToken1 = engine.verifyTableName(tableModel.getName());
-                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken1).slash$();
-                        configuration.getFilesFacade().rmdir(path);
-                        tableModel.close();
+                    try (Path path = new Path()) {
+                        for (int i = 0, n = tableModels.length; i < n; i++) {
+                            TableModel tableModel = tableModels[i];
+                            TableToken tableToken1 = engine.verifyTableName(tableModel.getName());
+                            path.of(tableModel.getConfiguration().getRoot()).concat(tableToken1).slash$();
+                            configuration.getFilesFacade().rmdir(path);
+                        }
                     }
                 }
             } finally {
@@ -8847,12 +8863,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTooManyColumnsEdgeInOrderBy() throws Exception {
-        try (TableModel model = modelOf("x")) {
-            for (int i = 0; i < SqlParser.MAX_ORDER_BY_COLUMNS - 1; i++) {
-                model.col("f" + i, ColumnType.INT);
-            }
-            CreateTableTestUtils.create(model);
+        TableModel model = modelOf("x");
+        for (int i = 0; i < SqlParser.MAX_ORDER_BY_COLUMNS - 1; i++) {
+            model.col("f" + i, ColumnType.INT);
         }
+        AbstractCairoTest.create(model);
 
         StringBuilder b = new StringBuilder();
         b.append("x order by ");
@@ -8879,7 +8894,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             b.append('f').append(i);
         }
         try {
-            select(b);
+            select(b).close();
             Assert.fail();
         } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
@@ -9403,19 +9418,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
             refreshTablesInBaseEngine();
             assertMemoryLeak(() -> {
                 for (int i = 0, n = tableModels.length; i < n; i++) {
-                    CreateTableTestUtils.create(tableModels[i]);
+                    AbstractCairoTest.create(tableModels[i]);
                 }
                 for (String frameType : frameTypes) {
                     assertException(query.replace("#FRAME", frameType), position, contains, false);
                 }
             });
         } finally {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                TableModel tableModel = tableModels[i];
-                TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
-                configuration.getFilesFacade().rmdir(path);
-                tableModel.close();
+            try (Path path = new Path()) {
+                for (int i = 0, n = tableModels.length; i < n; i++) {
+                    TableModel tableModel = tableModels[i];
+                    TableToken tableToken = engine.verifyTableName(tableModel.getName());
+                    path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                    configuration.getFilesFacade().rmdir(path);
+                }
             }
         }
     }
