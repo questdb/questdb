@@ -101,11 +101,6 @@ public interface GroupByFunction extends Function, Mutable {
         return false;
     }
 
-    @Override
-    default boolean isParallelismSupported() {
-        return false;
-    }
-
     default boolean isScalar() {
         return true;
     }
@@ -160,4 +155,9 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     void setValueIndex(int valueIndex);
+
+    @Override
+    default boolean supportsParallelism() {
+        return false;
+    }
 }

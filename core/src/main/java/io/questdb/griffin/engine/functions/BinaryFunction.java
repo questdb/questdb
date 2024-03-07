@@ -65,11 +65,6 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default boolean isParallelismSupported() {
-        return getLeft().isParallelismSupported() && getRight().isParallelismSupported();
-    }
-
-    @Override
     default boolean isReadThreadSafe() {
         return getLeft().isReadThreadSafe() && getRight().isReadThreadSafe();
     }
@@ -78,6 +73,11 @@ public interface BinaryFunction extends Function {
         final Function l = getLeft();
         final Function r = getRight();
         return (l.isConstant() && r.isRuntimeConstant()) || (r.isConstant() && l.isRuntimeConstant()) || (l.isRuntimeConstant() && r.isRuntimeConstant());
+    }
+
+    @Override
+    default boolean supportsParallelism() {
+        return getLeft().supportsParallelism() && getRight().supportsParallelism();
     }
 
     @Override

@@ -105,11 +105,6 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return BinaryFunction.super.isParallelismSupported();
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return BinaryFunction.super.isReadThreadSafe();
     }
@@ -150,5 +145,10 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return BinaryFunction.super.supportsParallelism();
     }
 }

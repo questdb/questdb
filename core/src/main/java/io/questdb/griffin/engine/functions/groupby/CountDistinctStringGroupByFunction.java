@@ -117,11 +117,6 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return false;
     }
@@ -151,6 +146,11 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 
     @Override

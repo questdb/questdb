@@ -129,11 +129,6 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return true;
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return false;
     }
@@ -220,6 +215,11 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
         this.valueIndex = valueIndex;
         this.hllPtrIndex = valueIndex + 1;
         this.overwrittenFlagIndex = valueIndex + 2;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return true;
     }
 
     private void overwrite(MapValue mapValue, long value) {

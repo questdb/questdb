@@ -140,11 +140,6 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return false;
     }
@@ -168,5 +163,10 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 }

@@ -43,7 +43,17 @@ public class LastStrGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LastStrGroupByFunction(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        final Function arg = args.getQuick(0);
+        if (arg.supportsDirectStr()) {
+            return new LastDirectStrGroupByFunction(arg);
+        }
+        return new LastStrGroupByFunction(arg);
     }
 }

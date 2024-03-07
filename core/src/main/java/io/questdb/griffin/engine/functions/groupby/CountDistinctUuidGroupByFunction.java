@@ -121,11 +121,6 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return false;
     }
@@ -195,6 +190,11 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override
