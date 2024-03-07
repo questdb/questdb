@@ -3101,6 +3101,7 @@ public class SqlOptimiser implements Mutable {
                     case QueryModel.JOIN_INNER:
                         setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
                         setAndCopyAdvice(secondaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
+                        break;
                     default:
                         setAndCopyAdvice(primaryJoinModel, advice, orderByMnemonic, orderByDirectionAdvice);
                 }
