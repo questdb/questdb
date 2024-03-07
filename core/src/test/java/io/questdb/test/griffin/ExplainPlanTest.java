@@ -1266,13 +1266,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  from tab\n" +
                             "  where id = 'XXX' \n" +
                             "  sample by 15m ALIGN to CALENDAR\n",
-                    "SampleByFirstLast\n" +
-                            "  keys: [ts, id]\n" +
-                            "  values: [last(val)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id\n" +
-                            "          filter: id=1\n" +
-                            "        Frame forward scan on: tab\n"
+                    "Sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [ts,id]\n" +
+                            "      values: [last(val)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id\n" +
+                            "              filter: id=1\n" +
+                            "            Frame forward scan on: tab\n"
             );
 
         });
@@ -2115,7 +2117,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         final StringSink sink = new StringSink();
 
-        IntObjHashMap<ObjList<Function>> constFuncs = new IntObjHashMap<ObjList<Function>>();
+        IntObjHashMap<ObjList<Function>> constFuncs = new IntObjHashMap<>();
         constFuncs.put(ColumnType.BOOLEAN, list(BooleanConstant.TRUE, BooleanConstant.FALSE));
         constFuncs.put(ColumnType.BYTE, list(new ByteConstant((byte) 1)));
         constFuncs.put(ColumnType.SHORT, list(new ShortConstant((short) 2)));
@@ -2336,7 +2338,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         if (factory.isWindow()) {
                             sqlExecutionContext.configureWindowContext(null, null, null, false, DataFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
                         }
-                        Function function = null;
+                        Function function;
                         try {
                             function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
                             function.toPlan(planSink);
@@ -3818,12 +3820,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from (select ts, i as i1, i as i2 from a ) where 0 < i1 and i2 < 10 latest on ts partition by i1",
                 "LatestBy light order_by_timestamp: true\n" +
                         "    SelectedRecord\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              filter: (0<i and i<10)\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n"
+                        "        Async JIT Filter workers: 1\n" +
+                        "          filter: (0<i and i<10)\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n"
         );
     }
 
@@ -3833,11 +3834,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts);",
                 "select ts, i as i1, i as i2 from a where 0 < i and i < 10 latest on ts partition by i",
                 "SelectedRecord\n" +
-                        "    SelectedRecord\n" +
-                        "        LatestByAllFiltered\n" +
-                        "            Row backward scan\n" +
-                        "              filter: (0<i and i<10)\n" +
-                        "            Frame backward scan on: a\n"
+                        "    LatestByAllFiltered\n" +
+                        "        Row backward scan\n" +
+                        "          filter: (0<i and i<10)\n" +
+                        "        Frame backward scan on: a\n"
         );
     }
 
@@ -5406,20 +5406,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * " +
                     "from full_range";
 
-            String expectedPlan = "SelectedRecord\n" +
-                    "    Sort\n" +
-                    "      keys: [timestamp]\n" +
+            String expectedPlan = "Sort\n" +
+                    "  keys: [timestamp]\n" +
+                    "    Union\n" +
                     "        Union\n" +
-                    "            Union\n" +
-                    "                DataFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: gas_prices\n" +
-                    "                VirtualRecord\n" +
-                    "                  functions: [915148800000000,null]\n" +
-                    "                    long_sequence count: 1\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: gas_prices\n" +
                     "            VirtualRecord\n" +
-                    "              functions: [1676851200000000,null]\n" +
-                    "                long_sequence count: 1\n";
+                    "              functions: [915148800000000,null]\n" +
+                    "                long_sequence count: 1\n" +
+                    "        VirtualRecord\n" +
+                    "          functions: [1676851200000000,null]\n" +
+                    "            long_sequence count: 1\n";
             assertPlan(query, expectedPlan);
             assertPlan(query + " order by timestamp", expectedPlan);
         });
@@ -8884,13 +8883,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "SelectedRecord\n" +
                         "    Filter filter: l1*i2!=0\n" +
                         "        SelectedRecord\n" +
-                        "            SelectedRecord\n" +
-                        "                Async Filter workers: 1\n" +
-                        "                  limit: 100\n" +
-                        "                  filter: l::short<i\n" +
-                        "                    DataFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: a\n"
+                        "            Async Filter workers: 1\n" +
+                        "              limit: 100\n" +
+                        "              filter: l::short<i\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: a\n"
         );
     }
 
@@ -8909,10 +8907,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Sort light lo: 100 partiallySorted: true\n" +
                         "          keys: [ts1, l1]\n" +
                         "            SelectedRecord\n" +
-                        "                SelectedRecord\n" +
-                        "                    DataFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: a\n"
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: a\n"
         );
     }
 
@@ -10119,7 +10116,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private <T> ObjList<T> list(T... values) {
-        return new ObjList<T>(values);
+        return new ObjList<>(values);
     }
 
     private void test2686Prepare() throws Exception {

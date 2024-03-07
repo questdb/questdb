@@ -58,7 +58,7 @@ public class WalListenerTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDownStatic()  {
+    public static void tearDownStatic() {
         engine.setWalListener(DefaultWalListener.INSTANCE);
         if (!listener.events.isEmpty()) {
             System.err.println("Unexpected or unasserted WalListener events:");
@@ -207,13 +207,12 @@ public class WalListenerTest extends AbstractCairoTest {
     }
 
     static TableToken createTable(String tableName) {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                 .col("a", ColumnType.BYTE)
                 .col("b", ColumnType.STRING)
                 .timestamp("ts")
-                .wal()) {
-            return createTable(model);
-        }
+                .wal();
+        return createTable(model);
     }
 
     enum WalListenerEventType {

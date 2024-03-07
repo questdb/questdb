@@ -104,6 +104,10 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
         return hashCode;
     }
 
+    public CharSequence keyAt(int index) {
+        return index < 0 ? keys[-index - 1] : null;
+    }
+
     public boolean put(CharSequence key, T value) {
         return putAt(keyIndex(key), key, value);
     }

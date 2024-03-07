@@ -830,7 +830,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "order by ts",
                 "create table weather as " +
                         "(select cast(x*36000000000 as timestamp) ts, \n" +
-                        "  rnd_float(0)*100 temp from long_sequence(1000));", null
+                        "  rnd_float(0)*100 temp from long_sequence(1000));", "ts"
         );
     }
 

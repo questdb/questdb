@@ -178,12 +178,11 @@ public class TableSequencerImplTest extends AbstractCairoTest {
 
     private void runAddColumnRace(CyclicBarrier barrier, String tableName, int iterations, int readerThreads, AtomicReference<Throwable> exception, Runnable runnable) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                     .col("int", ColumnType.INT)
                     .timestamp("ts")
-                    .wal()) {
-                createTable(model);
-            }
+                    .wal();
+            createTable(model);
             ObjList<Thread> readerThreadList = new ObjList<>();
             for (int i = 0; i < readerThreads; i++) {
                 Thread t = new Thread(runnable);

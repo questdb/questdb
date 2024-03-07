@@ -27,11 +27,11 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.TableModel;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TableModel;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
@@ -39,15 +39,13 @@ import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMetadataQuery() throws Exception {
-        try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
-            tm1.col("abc", ColumnType.STRING);
-            tm1.timestamp("ts1");
-            createPopulateTable(tm1, 0, "2020-01-01", 0);
-        }
-        try (TableModel tm1 = new TableModel(configuration, "table2", PartitionBy.NONE)) {
-            tm1.timestamp("ts2");
-            createPopulateTable(tm1, 0, "2020-01-01", 0);
-        }
+        TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
+        tm1.col("abc", ColumnType.STRING);
+        tm1.timestamp("ts1");
+        createPopulateTable(tm1, 0, "2020-01-01", 0);
+        tm1 = new TableModel(configuration, "table2", PartitionBy.NONE);
+        tm1.timestamp("ts2");
+        createPopulateTable(tm1, 0, "2020-01-01", 0);
 
         assertSql(
                 "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
@@ -61,11 +59,10 @@ public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 83737);
         node1.setProperty(PropertyKey.CAIRO_O3_MAX_LAG, 28);
 
-        try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
-            tm1.col("abc", ColumnType.STRING);
-            tm1.timestamp("ts1");
-            createPopulateTable(tm1, 0, "2020-01-01", 0);
-        }
+        TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
+        tm1.col("abc", ColumnType.STRING);
+        tm1.timestamp("ts1");
+        createPopulateTable(tm1, 0, "2020-01-01", 0);
 
         assertSql(
                 "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
@@ -75,15 +72,13 @@ public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testMetadataQueryMissingMetaFile() throws Exception {
-        try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
-            tm1.col("abc", ColumnType.STRING);
-            tm1.timestamp("ts1");
-            createPopulateTable(tm1, 0, "2020-01-01", 0);
-        }
-        try (TableModel tm1 = new TableModel(configuration, "table2", PartitionBy.NONE)) {
-            tm1.timestamp("ts2");
-            createPopulateTable(tm1, 0, "2020-01-01", 0);
-        }
+        TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
+        tm1.col("abc", ColumnType.STRING);
+        tm1.timestamp("ts1");
+        createPopulateTable(tm1, 0, "2020-01-01", 0);
+        tm1 = new TableModel(configuration, "table2", PartitionBy.NONE);
+        tm1.timestamp("ts2");
+        createPopulateTable(tm1, 0, "2020-01-01", 0);
 
         engine.releaseAllWriters();
         engine.releaseAllReaders();
@@ -104,15 +99,13 @@ public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testMetadataQueryWithWhere() throws Exception {
-        try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
-            tm1.col("abc", ColumnType.STRING);
-            tm1.timestamp("ts1");
-            createPopulateTable(tm1, 0, "2020-01-01", 0);
-        }
-        try (TableModel tm1 = new TableModel(configuration, "table2", PartitionBy.NONE)) {
-            tm1.timestamp("ts2");
-            createPopulateTable(tm1, 0, "2020-01-01", 0);
-        }
+        TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
+        tm1.col("abc", ColumnType.STRING);
+        tm1.timestamp("ts1");
+        createPopulateTable(tm1, 0, "2020-01-01", 0);
+        tm1 = new TableModel(configuration, "table2", PartitionBy.NONE);
+        tm1.timestamp("ts2");
+        createPopulateTable(tm1, 0, "2020-01-01", 0);
 
         assertSql(
                 "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
@@ -122,15 +115,13 @@ public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testMetadataQueryWithWhereAndSelect() throws Exception {
-        try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
-            tm1.col("abc", ColumnType.STRING);
-            tm1.timestamp("ts1");
-            createPopulateTable(tm1, 0, "2020-01-01", 0);
-        }
-        try (TableModel tm1 = new TableModel(configuration, "table2", PartitionBy.NONE)) {
-            tm1.timestamp("ts2");
-            createPopulateTable(tm1, 0, "2020-01-01", 0);
-        }
+        TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
+        tm1.col("abc", ColumnType.STRING);
+        tm1.timestamp("ts1");
+        createPopulateTable(tm1, 0, "2020-01-01", 0);
+        tm1 = new TableModel(configuration, "table2", PartitionBy.NONE);
+        tm1.timestamp("ts2");
+        createPopulateTable(tm1, 0, "2020-01-01", 0);
 
         assertSql(
                 "designatedTimestamp\n" +

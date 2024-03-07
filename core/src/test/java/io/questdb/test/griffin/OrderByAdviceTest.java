@@ -47,6 +47,58 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateDesignatedTimestampFromMultipleOrderBy() throws Exception {
+        assertQuery(
+                "a\tt\n" +
+                        "1\t1970-01-01T00:00:00.000000Z\n" +
+                        "2\t1970-01-01T00:00:00.001000Z\n" +
+                        "3\t1970-01-01T00:00:00.002000Z\n" +
+                        "4\t1970-01-01T00:00:00.003000Z\n" +
+                        "5\t1970-01-01T00:00:00.004000Z\n" +
+                        "6\t1970-01-01T00:00:00.005000Z\n" +
+                        "7\t1970-01-01T00:00:00.006000Z\n" +
+                        "8\t1970-01-01T00:00:00.007000Z\n" +
+                        "9\t1970-01-01T00:00:00.008000Z\n",
+                "select * from x order by t, a",
+                "create table x as (" +
+                        "select" +
+                        " x a," +
+                        " timestamp_sequence(0, 1000) t" +
+                        " from long_sequence(9)" +
+                        ")",
+                "t",
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testSkipDesignatedTimestampFromMultipleOrderBy() throws Exception {
+        assertQuery(
+                "a\tt\n" +
+                        "-1148479920\t1970-01-01T00:00:00.000000Z\n" +
+                        "-948263339\t1970-01-01T00:00:00.005000Z\n" +
+                        "-727724771\t1970-01-01T00:00:00.003000Z\n" +
+                        "73575701\t1970-01-01T00:00:00.004000Z\n" +
+                        "315515118\t1970-01-01T00:00:00.001000Z\n" +
+                        "592859671\t1970-01-01T00:00:00.007000Z\n" +
+                        "1326447242\t1970-01-01T00:00:00.006000Z\n" +
+                        "1548800833\t1970-01-01T00:00:00.002000Z\n" +
+                        "1868723706\t1970-01-01T00:00:00.008000Z\n",
+                "select * from x order by a, t",
+                "create table x as (" +
+                        "select" +
+                        " rnd_int() a," +
+                        " timestamp_sequence(0, 1000) t" +
+                        " from long_sequence(9)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDistinctWithOrderByAnotherColumn() throws Exception {
         ddl(
                 "create table x as (" +

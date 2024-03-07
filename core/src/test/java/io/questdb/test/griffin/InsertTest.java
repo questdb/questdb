@@ -42,7 +42,6 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -138,9 +137,8 @@ public class InsertTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(() -> {
-            try (TableModel model = CreateTableTestUtils.getGeoHashTypesModelWithNewTypes(configuration, PartitionBy.YEAR)) {
-                TestUtils.create(model, engine);
-            }
+            TableModel model = CreateTableTestUtils.getGeoHashTypesModelWithNewTypes(configuration, PartitionBy.YEAR);
+            TestUtils.create(model, engine);
             Rnd rnd = new Rnd();
 
             final String sql;

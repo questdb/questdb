@@ -164,13 +164,12 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         runInContext((server) -> {
             long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
 
-            try (TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY)) {
-                tm.col("room", ColumnType.SYMBOL);
-                tm.col("watts", ColumnType.LONG);
-                tm.timestamp();
-                tm.wal();
-                TableToken ignored = TestUtils.create(tm, engine);
-            }
+            TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY);
+            tm.col("room", ColumnType.SYMBOL);
+            tm.col("watts", ColumnType.LONG);
+            tm.timestamp();
+            tm.wal();
+            TableToken ignored = TestUtils.create(tm, engine);
 
             try (TableWriterAPI writer = getTableWriterAPI("plug")) {
                 TableWriter.Row row = writer.newRow(day1 / 1000);

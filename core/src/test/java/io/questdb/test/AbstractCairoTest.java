@@ -302,6 +302,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.getConfigurationOverrides().setMangleTableDirNames(mangle);
     }
 
+    public static TableToken create(TableModel model) {
+        return TestUtils.create(model, engine);
+    }
+
     public static boolean doubleEquals(double a, double b, double epsilon) {
         return a == b || Math.abs(a - b) < epsilon;
     }
@@ -1140,7 +1144,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static TableToken createTable(TableModel model) {
-        return engine.createTable(securityContext, model.getMem(), model.getPath(), false, model, false);
+        return TestUtils.create(model, engine);
     }
 
     protected static ApplyWal2TableJob createWalApplyJob(QuestDBTestNode node) {
