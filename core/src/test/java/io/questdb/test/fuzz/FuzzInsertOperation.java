@@ -44,6 +44,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.FLOAT,
             ColumnType.DOUBLE,
             ColumnType.STRING,
+            ColumnType.VARCHAR,
             ColumnType.BINARY,
             ColumnType.SHORT,
             ColumnType.BYTE,

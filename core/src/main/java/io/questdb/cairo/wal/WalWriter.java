@@ -1478,7 +1478,7 @@ public class WalWriter implements TableWriterAPI {
         MemoryMA dataMem = getDataColumn(columnIndex);
         final long varColSize = rowCount * columnTypeDriver.getDataVectorMinEntrySize();
         dataMem.jumpTo(varColSize);
-        if (rowCount > 0) {
+        if (rowCount > 0 && varColSize > 0) {
             final long dataMemAddr = TableUtils.mapRW(ff, dataMem.getFd(), varColSize, MEM_TAG);
             columnTypeDriver.setDataVectorEntriesToNull(
                     dataMemAddr,

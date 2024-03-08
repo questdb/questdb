@@ -211,16 +211,17 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     insertMethod.execute();
                     ddl("alter table " + tableName + " add column jjj int");
                     ddl("alter table " + tableName + " add column col_str string");
+                    ddl("alter table " + tableName + " add column col_var varchar");
                     insertMethod.commit();
                 }
             }
 
-            insert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd', 1234, 'sss-value')");
+            insert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T01', 'asdd', 1234, 'sss-value', 'var-val')");
 
             drainWalQueue();
-            assertSql("x\tsym\tts\tsym2\tjjj\tcol_str\n" +
-                    "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\t\n" +
-                    "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\tsss-value\n", tableName);
+            assertSql("x\tsym\tts\tsym2\tjjj\tcol_str\tcol_var\n" +
+                    "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\t\t\n" +
+                    "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\tsss-value\tvar-val\n", tableName);
 
         });
     }

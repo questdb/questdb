@@ -327,6 +327,7 @@ public class FuzzRunner {
             engine.ddl("alter table " + tableName + " add column str_top long", sqlExecutionContext);
             engine.ddl("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
             engine.ddl("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
+            engine.ddl("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
         return engine.verifyTableName(tableName);
     }
