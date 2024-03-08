@@ -62,9 +62,16 @@ public class CharGroupByFunctionTest extends AbstractCairoTest {
         tm.timestamp("ts").col("ch", ColumnType.CHAR);
         createPopulateTable(tm, 100, "2020-01-01", 2);
 
-        assertSql("ts\tmin\tmax\tfirst\tlast\tcount\n" +
+        String expected = "ts\tmin\tmax\tfirst\tlast\tcount\n" +
                 "2020-01-01T00:28:47.990000Z\t\u0001\t3\t\u0001\t3\t51\n" +
-                "2020-01-02T00:28:47.990000Z\t4\td\t4\td\t49\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to first observation"
+                "2020-01-02T00:28:47.990000Z\t4\td\t4\td\t49\n";
+        assertSql(expected, "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to first observation");
+        assertSql("ts\tmin\tmax\tfirst\tlast\tcount\n" +
+                "2020-01-01T00:00:00.000000Z\t\u0001\t2\t\u0001\t2\t50\n" +
+                "2020-01-02T00:00:00.000000Z\t3\td\t3\td\t50\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d");
+        assertSql("ts\tmin\tmax\tfirst\tlast\tcount\n" +
+                "2020-01-01T00:00:00.000000Z\t\u0001\t2\t\u0001\t2\t50\n" +
+                "2020-01-02T00:00:00.000000Z\t3\td\t3\td\t50\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to calendar"
         );
     }
 }

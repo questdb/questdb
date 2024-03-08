@@ -5091,7 +5091,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "select ip, ts, sum(bytes) from test sample by 1y align to calendar order by 2,1",
                 "ts",
                 true,
-                false
+                true
         );
     }
 

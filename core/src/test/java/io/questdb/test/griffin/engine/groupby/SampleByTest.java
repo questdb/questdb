@@ -626,6 +626,32 @@ public class SampleByTest extends AbstractCairoTest {
                 "k",
                 false
         );
+        assertQuery(
+                "k\ts\tlat\tlon\n" +
+                        "1970-01-04T00:00:00.000000Z\ta\t70.00560222114518\t168.04971262491318\n" +
+                        "1970-01-04T01:00:00.000000Z\ta\t6.612327943200507\t151.3046788842135\n" +
+                        "1970-01-04T03:00:00.000000Z\ta\t117.11888283070247\t128.42101395467057\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from x " +
+                        "where k > '1970-01-04' and s in ('a') " +
+                        "sample by 1h",
+                "k",
+                true,
+                true
+        );
+        assertQuery(
+                "k\ts\tlat\tlon\n" +
+                        "1970-01-04T00:00:00.000000Z\ta\t70.00560222114518\t168.04971262491318\n" +
+                        "1970-01-04T01:00:00.000000Z\ta\t6.612327943200507\t151.3046788842135\n" +
+                        "1970-01-04T03:00:00.000000Z\ta\t117.11888283070247\t128.42101395467057\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from x " +
+                        "where k > '1970-01-04' and s in ('a') " +
+                        "sample by 1h align to calendar",
+                "k",
+                true,
+                true
+        );
     }
 
     @Test
@@ -640,6 +666,16 @@ public class SampleByTest extends AbstractCairoTest {
                         ", index(s capacity 256) timestamp(k) partition by DAY",
                 "k",
                 false,
+                true
+        );
+        assertQuery(
+                "k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "sample by 2h align to calendar",
+                "k",
+                true,
                 true
         );
 
@@ -683,6 +719,48 @@ public class SampleByTest extends AbstractCairoTest {
                         "long_sequence(150)\n"
         );
 
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:00:00.000000Z\tb\t-3.0\t5.0\n" +
+                        "1970-01-01T01:00:00.000000Z\tb\t-7.0\t11.0\n" +
+                        "1970-01-01T02:00:00.000000Z\tb\t-13.0\t17.0\n" +
+                        "1970-01-01T03:00:00.000000Z\tb\t-19.0\t23.0\n" +
+                        "1970-01-01T04:00:00.000000Z\tb\t-25.0\t29.0\n" +
+                        "1970-01-01T05:00:00.000000Z\tb\t-31.0\t35.0\n" +
+                        "1970-01-01T06:00:00.000000Z\tb\t-37.0\t41.0\n" +
+                        "1970-01-01T07:00:00.000000Z\tb\t-43.0\t47.0\n" +
+                        "1970-01-01T08:00:00.000000Z\tb\t-49.0\t53.0\n" +
+                        "1970-01-01T09:00:00.000000Z\tb\t-55.0\t59.0\n" +
+                        "1970-01-01T10:00:00.000000Z\tb\t-61.0\t65.0\n" +
+                        "1970-01-01T11:00:00.000000Z\tb\t-67.0\t71.0\n" +
+                        "1970-01-01T12:00:00.000000Z\tb\t-73.0\t77.0\n" +
+                        "1970-01-01T13:00:00.000000Z\tb\t-79.0\t83.0\n" +
+                        "1970-01-01T14:00:00.000000Z\tb\t-85.0\t89.0\n" +
+                        "1970-01-01T15:00:00.000000Z\tb\t-91.0\t95.0\n" +
+                        "1970-01-01T16:00:00.000000Z\tb\t-97.0\t101.0\n" +
+                        "1970-01-01T17:00:00.000000Z\tb\t-103.0\t107.0\n" +
+                        "1970-01-01T18:00:00.000000Z\tb\t-109.0\t113.0\n" +
+                        "1970-01-01T19:00:00.000000Z\tb\t-115.0\t119.0\n" +
+                        "1970-01-01T20:00:00.000000Z\tb\t-121.0\t125.0\n" +
+                        "1970-01-01T21:00:00.000000Z\tb\t-127.0\t131.0\n" +
+                        "1970-01-01T22:00:00.000000Z\tb\t-133.0\t137.0\n" +
+                        "1970-01-01T23:00:00.000000Z\tb\t-139.0\t143.0\n" +
+                        "1970-01-02T00:00:00.000000Z\tb\t-145.0\t149.0\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k > '1970-01-01' and s in ('b')" +
+                        "sample by 1h align to calendar",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
+                        "from\n" +
+                        "long_sequence(150)\n",
+                true,
+                true
+        );
+
         assertWithSymbolColumnTop(
                 "k\ts\tlat\tlon\n" +
                         "1970-01-01T00:10:00.000000Z\t\t-2.0\t13.0\n" +
@@ -703,6 +781,29 @@ public class SampleByTest extends AbstractCairoTest {
                         "where k > '1970-01-01' and s = null \n" +
                         "sample by 2h align to first observation"
         );
+
+        assertWithSymbolColumnTop(
+                "k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:00:00.000000Z\t\t-1.0\t12.0\n" +
+                        "1970-01-01T02:00:00.000000Z\t\t-13.0\t24.0\n" +
+                        "1970-01-01T04:00:00.000000Z\t\t-25.0\t36.0\n" +
+                        "1970-01-01T06:00:00.000000Z\t\t-37.0\t48.0\n" +
+                        "1970-01-01T08:00:00.000000Z\t\t-49.0\t60.0\n" +
+                        "1970-01-01T10:00:00.000000Z\t\t-61.0\t72.0\n" +
+                        "1970-01-01T12:00:00.000000Z\t\t-73.0\t84.0\n" +
+                        "1970-01-01T14:00:00.000000Z\t\t-85.0\t96.0\n" +
+                        "1970-01-01T16:00:00.000000Z\t\t-97.0\t108.0\n" +
+                        "1970-01-01T18:00:00.000000Z\t\t-109.0\t120.0\n" +
+                        "1970-01-01T20:00:00.000000Z\t\t-121.0\t132.0\n" +
+                        "1970-01-01T22:00:00.000000Z\t\t-133.0\t144.0\n" +
+                        "1970-01-02T00:00:00.000000Z\t\t-145.0\t150.0\n",
+                "select k, s, first(lat) lat, last(lon) lon \n" +
+                        "from xx \n" +
+                        "where k > '1970-01-01' and s = null \n" +
+                        "sample by 2h align to calendar",
+                true,
+                true
+        );
     }
 
     @Test
@@ -717,6 +818,17 @@ public class SampleByTest extends AbstractCairoTest {
                         ", index(s capacity 256) timestamp(k) partition by DAY",
                 "k",
                 false,
+                true
+        );
+
+        assertQuery(
+                "k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "sample by 2h align to calendar",
+                "k",
+                true,
                 true
         );
 
@@ -740,6 +852,28 @@ public class SampleByTest extends AbstractCairoTest {
                         "long_sequence(180)\n"
         );
 
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
+                        "1970-01-01T20:00:00.000000Z\ta\t-128.0\t128.0\n" +
+                        "1970-01-01T22:00:00.000000Z\ta\t-134.0\t134.0\n" +
+                        "1970-01-02T00:00:00.000000Z\ta\t-146.0\t146.0\n" +
+                        "1970-01-02T02:00:00.000000Z\ta\t-158.0\t158.0\n" +
+                        "1970-01-02T04:00:00.000000Z\ta\t-170.0\t170.0\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k > '1970-01-01T21:00' and s in ('a')" +
+                        "sample by 2h align to calendar",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
+                        "from\n" +
+                        "long_sequence(180)\n",
+                true,
+                true
+        );
+
         assertWithSymbolColumnTop(
                 "k\ts\tlat\tlon\n" +
                         "1970-01-01T21:10:00.000000Z\t\t-128.0\t128.0\n" +
@@ -751,6 +885,31 @@ public class SampleByTest extends AbstractCairoTest {
                         "from xx " +
                         "where k > '1970-01-01T21:00' and s = null " +
                         "sample by 2h align to first observation"
+        );
+
+        assertWithSymbolColumnTop(
+                "k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:00:00.000000Z\t\t-1.0\t1.0\n" +
+                        "1970-01-01T02:00:00.000000Z\t\t-13.0\t13.0\n" +
+                        "1970-01-01T04:00:00.000000Z\t\t-25.0\t25.0\n" +
+                        "1970-01-01T06:00:00.000000Z\t\t-37.0\t37.0\n" +
+                        "1970-01-01T08:00:00.000000Z\t\t-49.0\t49.0\n" +
+                        "1970-01-01T10:00:00.000000Z\t\t-61.0\t61.0\n" +
+                        "1970-01-01T12:00:00.000000Z\t\t-73.0\t73.0\n" +
+                        "1970-01-01T14:00:00.000000Z\t\t-85.0\t85.0\n" +
+                        "1970-01-01T16:00:00.000000Z\t\t-97.0\t97.0\n" +
+                        "1970-01-01T18:00:00.000000Z\t\t-109.0\t109.0\n" +
+                        "1970-01-01T20:00:00.000000Z\t\t-121.0\t121.0\n" +
+                        "1970-01-01T22:00:00.000000Z\t\t-133.0\t133.0\n" +
+                        "1970-01-02T00:00:00.000000Z\t\t-145.0\t145.0\n" +
+                        "1970-01-02T02:00:00.000000Z\t\t-157.0\t157.0\n" +
+                        "1970-01-02T04:00:00.000000Z\t\t-169.0\t169.0\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k > '1970-01-01T21:00' and s = null " +
+                        "sample by 2h align to calendar",
+                true,
+                true
         );
     }
 
@@ -2838,25 +2997,63 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByDisallowsPredicatePushdown() throws Exception {
-        for (String align : Arrays.asList("align to calendar", "align to first observation", "")) {
-            for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
-                if (isNone(fill) && "align to calendar".equals(align)) {
-                    continue;
-                }
+        String align = "";
 
-                String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
-                        "    SampleBy\n" +
-                        (isNone(fill) ? "" : "      fill: " + fill + "\n") +
-                        "      keys: [tstmp,sym]\n" +
-                        "      values: [first(val),avg(val),last(val),max(val)]\n" +
-                        "        SelectedRecord\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: #TABLE#\n";
-
-                testSampleByPushdown(fill, align, plan);
+        for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
+            if (isNone(fill)) {
+                continue;
             }
+
+            String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+                    "    SampleBy\n" +
+                    (isNone(fill) ? "" : "      fill: " + fill + "\n") +
+                    "      keys: [tstmp,sym]\n" +
+                    "      values: [first(val),avg(val),last(val),max(val)]\n" +
+                    "        SelectedRecord\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: #TABLE#\n";
+
+            testSampleByPushdown(fill, align, plan);
         }
+
+        align = "align to first observation";
+
+        for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
+
+            String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+                    "    SampleBy\n" +
+                    (isNone(fill) ? "" : "      fill: " + fill + "\n") +
+                    "      keys: [tstmp,sym]\n" +
+                    "      values: [first(val),avg(val),last(val),max(val)]\n" +
+                    "        SelectedRecord\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: #TABLE#\n";
+
+            testSampleByPushdown(fill, align, plan);
+        }
+
+        align = "align to calendar";
+
+        for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
+            if (isNone(fill)) {
+                continue;
+            }
+
+            String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
+                    "    SampleBy\n" +
+                    (isNone(fill) ? "" : "      fill: " + fill + "\n") +
+                    "      keys: [tstmp,sym]\n" +
+                    "      values: [first(val),avg(val),last(val),max(val)]\n" +
+                    "        SelectedRecord\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: #TABLE#\n";
+
+            testSampleByPushdown(fill, align, plan);
+        }
+
     }
 
     @Test
@@ -10984,6 +11181,10 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
+        assertSampleByIndexQuery(expected, query, insert, false, false);
+    }
+
+    private void assertSampleByIndexQuery(String expected, String query, String insert, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
                 .replace("in ('a')", "in ('a', 'none')");
 
@@ -10992,8 +11193,8 @@ public class SampleByTest extends AbstractCairoTest {
                 forceNoIndexQuery,
                 insert,
                 "k",
-                false,
-                false
+                supportsRandomAccess,
+                expectSize
         );
 
         assertQuery(
@@ -11001,12 +11202,16 @@ public class SampleByTest extends AbstractCairoTest {
                 query,
                 null,
                 "k",
-                false,
-                false
+                supportsRandomAccess,
+                expectSize
         );
     }
 
     private void assertWithSymbolColumnTop(String expected, String query) throws Exception {
+        assertWithSymbolColumnTop(expected, query, false, false);
+    }
+
+    private void assertWithSymbolColumnTop(String expected, String query, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> {
             ddl("alter table xx drop column s", sqlExecutionContext);
             ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
@@ -11019,7 +11224,8 @@ public class SampleByTest extends AbstractCairoTest {
                 forceNoIndexQuery,
                 null,
                 "k",
-                false
+                supportsRandomAccess,
+                expectSize
         );
 
         assertQuery(
@@ -11027,7 +11233,8 @@ public class SampleByTest extends AbstractCairoTest {
                 query,
                 null,
                 "k",
-                false
+                supportsRandomAccess,
+                expectSize
         );
     }
 

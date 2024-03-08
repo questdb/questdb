@@ -45,10 +45,16 @@ public class FloatGroupByFunctionsTest extends AbstractCairoTest {
                 "2020-01-01T00:28:47.990000Z\t0.0010\t0.0510\t0.0010\t0.0510\t51\n" +
                 "2020-01-02T00:28:47.990000Z\t0.0520\t0.1000\t0.0520\t0.1000\t49\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to first observation"
         );
+
+        assertSql("ts\tmin\tmax\tfirst\tlast\tcount\n" +
+                "2020-01-01T00:00:00.000000Z\t0.0010\t0.0500\t0.0010\t0.0500\t50\n" +
+                "2020-01-02T00:00:00.000000Z\t0.0510\t0.1000\t0.0510\t0.1000\t50\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to calendar"
+        );
     }
 
     @Test
     public void testSampleByWithNulls() throws SqlException {
+        // This test does not have a SampleBy?
         sqlExecutionContext.setRandom(new Rnd());
         ddl("create table tab as ( select rnd_float() ch from long_sequence(100) )");
 

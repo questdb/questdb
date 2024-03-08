@@ -6599,7 +6599,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
 
         assertPlan(
-                "create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, first(i), last(i) from a sample by 1d fill(1,2) align to calendar",
                 "SampleBy\n" +
                         "  fill: value\n" +
@@ -6626,7 +6625,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
 
         assertPlan(
-                "create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to calendar",
                 "SampleBy\n" +
                         "  fill: value\n" +
