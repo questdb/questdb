@@ -3061,7 +3061,7 @@ public class SqlOptimiser implements Mutable {
                 return;
             }
             // if the order by advice is for more than one table, don't propagate it, as a sort will be needed anyway
-            if (!checkForConsistentPrefix(orderByAdvice)) {
+            if (i ==0 && !checkForConsistentPrefix(orderByAdvice)) {
                 return;
             }
             // if the orderByAdvice prefixes do not match the primary table name, don't propagate it
@@ -3162,7 +3162,7 @@ public class SqlOptimiser implements Mutable {
      */
     private boolean checkForDot(ObjList<ExpressionNode> orderByAdvice) {
         for (int j = 0, n = orderByAdvice.size(); j < n; j++) {
-            if (Chars.contains(orderByAdvice.getQuick(j).token, ".")) {
+            if (Chars.indexOf(orderByAdvice.getQuick(i).token, '.') > -1) {
                 return true;
             }
         }
@@ -3181,10 +3181,10 @@ public class SqlOptimiser implements Mutable {
             CharSequence advice = orderByAdvice.getQuick(j).token;
             int loc = Chars.indexOf(advice, '.');
             if (loc > -1) {
-                if (Chars.equalsIgnoreCase(prefix, "")) {
+                if (prefix.length() == 0) {
                     prefix = advice.subSequence(0, loc);
                 }
-                if (!Chars.equalsIgnoreCase(prefix, advice.subSequence(0, loc))) {
+                else if (!Chars.equalsIgnoreCase(prefix, advice, loc))) {
                     return false;
                 }
             }
