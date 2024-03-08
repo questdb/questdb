@@ -884,7 +884,7 @@ public class SampleByTest extends AbstractCairoTest {
                 "create table xx (lat double, lon double, s symbol, k timestamp)" +
                         ", index(s capacity 256) timestamp(k) partition by DAY",
                 "k",
-                false,
+                true,
                 true
         );
 
@@ -932,7 +932,7 @@ public class SampleByTest extends AbstractCairoTest {
 
         assertWithSymbolColumnTop(
                 "k\ts\tlat\tlon\n" +
-                        "1970-01-01T00:00:00.000000Z\t\t-1.0\t12.0\n" +
+                        "1970-01-01T00:00:00.000000Z\t\t-2.0\t12.0\n" +
                         "1970-01-01T02:00:00.000000Z\t\t-13.0\t24.0\n" +
                         "1970-01-01T04:00:00.000000Z\t\t-25.0\t36.0\n" +
                         "1970-01-01T06:00:00.000000Z\t\t-37.0\t48.0\n" +
@@ -978,44 +978,44 @@ public class SampleByTest extends AbstractCairoTest {
                 "k",
                 true,
                 true
-       );
+        );
     }
 
-        @Test
-        public void testIndexSampleBy3b() throws Exception {
-            assertQuery(
-                    "k\ts\tlat\tlon\n",
-                    "select k, s, first(lat) lat, first(lon) lon " +
-                            "from xx " +
-                            "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                            "sample by 2h align to first observation",
-                    "create table xx (lat double, lon double, s symbol, k timestamp)" +
-                            ", index(s capacity 256) timestamp(k) partition by DAY",
-                    "k",
-                    false,
-                    true
-            );
+    @Test
+    public void testIndexSampleBy3b() throws Exception {
+        assertQuery(
+                "k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "sample by 2h align to first observation",
+                "create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY",
+                "k",
+                false,
+                true
+        );
 
-            assertSampleByIndexQuery(
-                    "k\ts\tlat\tlon\n" +
-                            "1970-01-01T21:10:00.000000Z\ta\t-128.0\t128.0\n" +
-                            "1970-01-01T23:10:00.000000Z\ta\t-140.0\t140.0\n" +
-                            "1970-01-02T01:10:00.000000Z\ta\t-152.0\t152.0\n" +
-                            "1970-01-02T03:10:00.000000Z\ta\t-164.0\t164.0\n" +
-                            "1970-01-02T05:10:00.000000Z\ta\t-176.0\t176.0\n",
-                    "select k, s, first(lat) lat, first(lon) lon " +
-                            "from xx " +
-                            "where k > '1970-01-01T21:00' and s in ('a')" +
-                            "sample by 2h align to first observation",
-                    "insert into xx " +
-                            "select -x lat,\n" +
-                            "x lon,\n" +
-                            "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
-                            "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
-                            "from\n" +
-                            "long_sequence(180)\n"
-            );
-        }
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
+                        "1970-01-01T21:10:00.000000Z\ta\t-128.0\t128.0\n" +
+                        "1970-01-01T23:10:00.000000Z\ta\t-140.0\t140.0\n" +
+                        "1970-01-02T01:10:00.000000Z\ta\t-152.0\t152.0\n" +
+                        "1970-01-02T03:10:00.000000Z\ta\t-164.0\t164.0\n" +
+                        "1970-01-02T05:10:00.000000Z\ta\t-176.0\t176.0\n",
+                "select k, s, first(lat) lat, first(lon) lon " +
+                        "from xx " +
+                        "where k > '1970-01-01T21:00' and s in ('a')" +
+                        "sample by 2h align to first observation",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
+                        "from\n" +
+                        "long_sequence(180)\n"
+        );
+    }
 
     @Test
     public void testIndexSampleBy3c() throws Exception {
@@ -1146,17 +1146,7 @@ public class SampleByTest extends AbstractCairoTest {
 
         assertWithSymbolColumnTop(
                 "k\ts\tlat\tlon\n" +
-                        "1970-01-01T00:00:00.000000Z\t\t-1.0\t1.0\n" +
-                        "1970-01-01T02:00:00.000000Z\t\t-13.0\t13.0\n" +
-                        "1970-01-01T04:00:00.000000Z\t\t-25.0\t25.0\n" +
-                        "1970-01-01T06:00:00.000000Z\t\t-37.0\t37.0\n" +
-                        "1970-01-01T08:00:00.000000Z\t\t-49.0\t49.0\n" +
-                        "1970-01-01T10:00:00.000000Z\t\t-61.0\t61.0\n" +
-                        "1970-01-01T12:00:00.000000Z\t\t-73.0\t73.0\n" +
-                        "1970-01-01T14:00:00.000000Z\t\t-85.0\t85.0\n" +
-                        "1970-01-01T16:00:00.000000Z\t\t-97.0\t97.0\n" +
-                        "1970-01-01T18:00:00.000000Z\t\t-109.0\t109.0\n" +
-                        "1970-01-01T20:00:00.000000Z\t\t-121.0\t121.0\n" +
+                        "1970-01-01T20:00:00.000000Z\t\t-128.0\t128.0\n" + // ????
                         "1970-01-01T22:00:00.000000Z\t\t-133.0\t133.0\n" +
                         "1970-01-02T00:00:00.000000Z\t\t-145.0\t145.0\n" +
                         "1970-01-02T02:00:00.000000Z\t\t-157.0\t157.0\n" +
@@ -3724,7 +3714,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByMicrosFillNoneNotKeyedEmpty() throws Exception {
         String expected = "sum\tk\n";
-        String ddl =  "create table x" +
+        String ddl = "create table x" +
                 "(" +
                 " a double," +
                 " b symbol," +

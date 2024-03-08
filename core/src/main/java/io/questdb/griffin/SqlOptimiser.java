@@ -1481,30 +1481,6 @@ public class SqlOptimiser implements Mutable {
             QueryModel outerModel,
             QueryModel distinctModel
     ) throws SqlException {
-        createSelectColumnsForWildcardFromColumnNames(
-                srcModel,
-                hasJoins,
-                wildcardPosition,
-                translatingModel,
-                innerModel,
-                windowModel,
-                groupByModel,
-                outerModel,
-                distinctModel
-        );
-    }
-
-    private void createSelectColumnsForWildcardFromColumnNames(
-            QueryModel srcModel,
-            boolean hasJoins,
-            int wildcardPosition,
-            QueryModel translatingModel,
-            QueryModel innerModel,
-            QueryModel windowModel,
-            QueryModel groupByModel,
-            QueryModel outerModel,
-            QueryModel distinctModel
-    ) throws SqlException {
         final ObjList<CharSequence> columnNames = srcModel.getBottomUpColumnAliases();
         for (int j = 0, z = columnNames.size(); j < z; j++) {
             CharSequence name = columnNames.getQuick(j);
@@ -4257,7 +4233,7 @@ public class SqlOptimiser implements Mutable {
      * a trick to add artificial timestamp to the original model and then wrap the original
      * model into a sub-query, to select all the intended columns but the artificial timestamp.
      */
-    private QueryModel rewriteSampleBy(@Nullable QueryModel model) {
+    private QueryModel rewriteSampleBy(@Nullable QueryModel model) throws SqlException {
 
         if (model == null) {
             return null;
@@ -4280,6 +4256,19 @@ public class SqlOptimiser implements Mutable {
                             && (sampleByFill.size() == 0 || (sampleByFill.size() == 1 && SqlKeywords.isNoneKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
             ) {
+                // Validate that the model does not have wildcard column names.
+                // Using wildcard in group-by expression makes SQL ambiguous and
+                // error-prone. For example, additive table metadata changes (adding a column)
+                // will change the outcome of existing queries, if those supported wildcards for
+                // as group-by keys.
+
+                for (int i = 0, n = model.getColumns().size(); i <n; i++) {
+                    QueryColumn column = model.getColumns().getQuick(i);
+                    if (Chars.endsWith(column.getAst().token, '*')) {
+                        throw SqlException.$(column.getAst().position, "wildcard column select is not allowed in sample-by queries");
+                    }
+                }
+
                 // When timestamp is not explicitly selected, we will
                 // need to add it artificially to enable group-by to
                 // have access to bucket key. If this happens, the artificial

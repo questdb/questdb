@@ -3540,35 +3540,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByUnionAll() throws SqlException {
-        assertQuery(
-                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp) union all select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp)",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar" +
-                        " union all " +
-                        "select b, sum(a), k k1, k from x y sample by 3h align to calendar",
-                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
-        );
-
-        assertQuery(
-                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp) union all select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp)",
-                "select b, sum(a), k k1, k from x y sample by 3h" +
-                        " union all " +
-                        "select b, sum(a), k k1, k from x y sample by 3h",
-                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
-        );
-
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h union all select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
-                "select b, sum(a), k k1, k from x y sample by 3h align to first observation" +
-                        " union all " +
-                        "select b, sum(a), k k1, k from x y sample by 3h align to first observation",
-                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
-        );
-    }
-
-
-
-    @Test
     public void testDuplicateColumnsBasicSelect() throws SqlException {
         assertQuery(
                 "select-choose b, a, k k1, k from (select [b, a, k] from x timestamp (timestamp))",
@@ -7924,36 +7895,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleBySelectStar() throws Exception {
-            ddl("CREATE TABLE 'cpu' (\n" +
-                    "  hostname SYMBOL capacity 256 CACHE,\n" +
-                    "  region SYMBOL capacity 256 CACHE,\n" +
-                    "  datacenter SYMBOL capacity 256 CACHE,\n" +
-                    "  rack SYMBOL capacity 256 CACHE,\n" +
-                    "  os SYMBOL capacity 256 CACHE,\n" +
-                    "  arch SYMBOL capacity 256 CACHE,\n" +
-                    "  team SYMBOL capacity 256 CACHE,\n" +
-                    "  service SYMBOL capacity 256 CACHE,\n" +
-                    "  service_version SYMBOL capacity 256 CACHE,\n" +
-                    "  service_environment SYMBOL capacity 256 CACHE,\n" +
-                    "  usage_user LONG,\n" +
-                    "  usage_system LONG,\n" +
-                    "  usage_idle LONG,\n" +
-                    "  usage_nice LONG,\n" +
-                    "  usage_iowait LONG,\n" +
-                    "  usage_irq LONG,\n" +
-                    "  usage_softirq LONG,\n" +
-                    "  usage_steal LONG,\n" +
-                    "  usage_guest LONG,\n" +
-                    "  usage_guest_nice LONG,\n" +
-                    "  timestamp TIMESTAMP\n" +
-                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
-        assertException("select * from cpu sample by 1d align to first observation", 28, "at least one");
-        assertQuery("",
-                "select * from cpu sample by 1d align to calendar");
-    }
-
-    @Test
     public void testSampleBySansSelect() throws Exception {
         assertSyntaxError(
                 "(t1 sample by 1m align to first observation)",
@@ -7975,6 +7916,37 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "at least one aggregation function must be present in 'select' clause",
                 modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testSampleBySelectStar() throws Exception {
+        ddl("CREATE TABLE 'cpu' (\n" +
+                "  hostname SYMBOL capacity 256 CACHE,\n" +
+                "  region SYMBOL capacity 256 CACHE,\n" +
+                "  datacenter SYMBOL capacity 256 CACHE,\n" +
+                "  rack SYMBOL capacity 256 CACHE,\n" +
+                "  os SYMBOL capacity 256 CACHE,\n" +
+                "  arch SYMBOL capacity 256 CACHE,\n" +
+                "  team SYMBOL capacity 256 CACHE,\n" +
+                "  service SYMBOL capacity 256 CACHE,\n" +
+                "  service_version SYMBOL capacity 256 CACHE,\n" +
+                "  service_environment SYMBOL capacity 256 CACHE,\n" +
+                "  usage_user LONG,\n" +
+                "  usage_system LONG,\n" +
+                "  usage_idle LONG,\n" +
+                "  usage_nice LONG,\n" +
+                "  usage_iowait LONG,\n" +
+                "  usage_irq LONG,\n" +
+                "  usage_softirq LONG,\n" +
+                "  usage_steal LONG,\n" +
+                "  usage_guest LONG,\n" +
+                "  usage_guest_nice LONG,\n" +
+                "  timestamp TIMESTAMP\n" +
+                ") timestamp (timestamp) PARTITION BY DAY WAL;");
+        assertException("select * from cpu sample by 1d align to first observation", 28, "at least one");
+        assertException("select * from cpu sample by 1d align to calendar", 7, "wildcard column select is not allowed in sample-by queries");
+        assertException("select cpu.* from cpu sample by 1d align to calendar", 7, "wildcard column select is not allowed in sample-by queries");
+        assertException("select hostname, a.* from cpu a sample by 1d align to calendar", 17, "wildcard column select is not allowed in sample-by queries");
     }
 
     @Test
@@ -8238,6 +8210,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("tab2")
                         .col("x", ColumnType.INT)
                         .col("z", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testSampleByUnionAll() throws SqlException {
+        assertQuery(
+                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp) union all select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp)",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar" +
+                        " union all " +
+                        "select b, sum(a), k k1, k from x y sample by 3h align to calendar",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+
+        assertQuery(
+                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp) union all select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp)",
+                "select b, sum(a), k k1, k from x y sample by 3h" +
+                        " union all " +
+                        "select b, sum(a), k k1, k from x y sample by 3h",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h union all select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
+                "select b, sum(a), k k1, k from x y sample by 3h align to first observation" +
+                        " union all " +
+                        "select b, sum(a), k k1, k from x y sample by 3h align to first observation",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
     }
 

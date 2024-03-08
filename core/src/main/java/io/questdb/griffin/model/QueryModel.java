@@ -432,6 +432,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         artificialStar = false;
         explicitTimestamp = false;
         showKind = -1;
+        sampleByOffset = ZERO_OFFSET;
     }
 
     public void clearColumnMapStructs() {
