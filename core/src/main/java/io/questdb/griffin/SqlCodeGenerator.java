@@ -117,6 +117,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
+    // a bitset of string/symbol columns forced to be serialised as varchar
+    private final BitSet writeStringAsVarcharA = new BitSet();
+    private final BitSet writeStringAsVarcharB = new BitSet();
     private final LongList prefixes = new LongList();
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
@@ -618,7 +621,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 asm,
                 masterMetadata,
                 listColumnFilterB,
-                true
+                true,
+                writeStringAsVarcharB
         );
 
         // This metadata allocates native memory, it has to be closed in case join
@@ -688,7 +692,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             asm,
                             slaveMetadata,
                             listColumnFilterA,
-                            true
+                            true,
+                            writeStringAsVarcharA
                     ),
                     masterMetadata.getColumnCount(),
                     RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB), // slaveValueSink
@@ -728,14 +733,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 asm,
                 masterMetadata,
                 listColumnFilterB,
-                true
+                true,
+                writeStringAsVarcharB
         );
 
         final RecordSink slaveKeySink = RecordSinkFactory.getInstance(
                 asm,
                 slaveMetadata,
                 listColumnFilterA,
-                true
+                true,
+                writeStringAsVarcharA
         );
 
         valueTypes.clear();
@@ -1845,14 +1852,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asm,
                                                         masterMetadata,
                                                         listColumnFilterB,
-                                                        true
+                                                        true,
+                                                        writeStringAsVarcharB
                                                 ),
                                                 slave,
                                                 RecordSinkFactory.getInstance(
                                                         asm,
                                                         slaveMetadata,
                                                         listColumnFilterA,
-                                                        true
+                                                        true,
+                                                        writeStringAsVarcharA
                                                 ),
                                                 masterMetadata.getColumnCount(),
                                                 slaveModel.getContext()
@@ -1906,14 +1915,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asm,
                                                         masterMetadata,
                                                         listColumnFilterB,
-                                                        true
+                                                        true,
+                                                        writeStringAsVarcharB
                                                 ),
                                                 slave,
                                                 RecordSinkFactory.getInstance(
                                                         asm,
                                                         slaveMetadata,
                                                         listColumnFilterA,
-                                                        true
+                                                        true,
+                                                        writeStringAsVarcharA
                                                 ),
                                                 masterMetadata.getColumnCount(),
                                                 slaveModel.getContext()
@@ -1967,14 +1978,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     asm,
                                                     masterMetadata,
                                                     listColumnFilterB,
-                                                    true
+                                                    true,
+                                                    writeStringAsVarcharB
                                             ),
                                             slave,
                                             RecordSinkFactory.getInstance(
                                                     asm,
                                                     slaveMetadata,
                                                     listColumnFilterA,
-                                                    true
+                                                    true,
+                                                    writeStringAsVarcharA
                                             ),
                                             masterMetadata.getColumnCount(),
                                             slaveModel.getContext()
@@ -5361,16 +5374,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         // compare types and populate keyTypes
         keyTypes.clear();
+        writeStringAsVarcharA.clear();
+        writeStringAsVarcharB.clear();
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
             // Don't use tagOf(columnType) to compare the types.
             // Key types have too much exactly except SYMBOL and STRING special case
-            int columnTypeA = slaveMetadata.getColumnType(listColumnFilterA.getColumnIndexFactored(k));
-            int columnTypeB = masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k));
+            final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
+            final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
+            int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
+            int columnTypeB = masterMetadata.getColumnType(columnIndexB);
             if (columnTypeB != columnTypeA && !(ColumnType.isSymbolOrString(columnTypeB) && ColumnType.isSymbolOrString(columnTypeA))) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
             }
-            keyTypes.add(columnTypeB == ColumnType.SYMBOL ? ColumnType.STRING : columnTypeB);
+            if (ColumnType.isVarchar(columnTypeA) || ColumnType.isVarchar(columnTypeB)) {
+                keyTypes.add(ColumnType.VARCHAR);
+                if (ColumnType.isVarchar(columnTypeA)) {
+                    writeStringAsVarcharB.set(columnIndexB);
+                } else {
+                    writeStringAsVarcharA.set(columnIndexA);
+                }
+            } else if (columnTypeB == ColumnType.SYMBOL) {
+                keyTypes.add(ColumnType.STRING);
+            } else {
+                keyTypes.add(columnTypeB);
+            }
         }
     }
 

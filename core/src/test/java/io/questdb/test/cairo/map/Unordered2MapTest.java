@@ -35,6 +35,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -818,7 +819,7 @@ public class Unordered2MapTest extends AbstractCairoTest {
 
     @Test
     public void testPutVarcharUnsupported() throws Exception {
-        assertUnsupported(key -> key.putVarchar(null));
+        assertUnsupported(key -> key.putVarchar((Utf8Sequence) null));
     }
 
     private static void assertUnsupported(Consumer<? super MapKey> putKeyFn) throws Exception {

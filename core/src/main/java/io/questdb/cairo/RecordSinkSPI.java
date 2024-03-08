@@ -27,7 +27,9 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 
 public interface RecordSinkSPI {
 
@@ -76,6 +78,16 @@ public interface RecordSinkSPI {
     void putTimestamp(long value);
 
     void putVarchar(Utf8Sequence value);
+
+    default void putVarchar(CharSequence value) {
+        if (value == null) {
+            putVarchar((Utf8Sequence) null);
+        } else {
+            Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+            sink.put(value);
+            putVarchar(sink);
+        }
+    }
 
     void skip(int bytes);
 }

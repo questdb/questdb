@@ -340,7 +340,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putDouble(rnd.nextDouble());
                     if ((rnd.nextPositiveInt() % 4) == 0) {
                         key.putStr(null);
-                        key.putVarchar(null);
+                        key.putVarchar((Utf8Sequence) null);
                     } else {
                         key.putStr(rnd.nextChars(rnd.nextPositiveInt() % 32));
                         utf8Sink.clear();
@@ -393,7 +393,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putDouble(rnd.nextDouble());
                     if ((rnd.nextPositiveInt() % 4) == 0) {
                         key.putStr(null);
-                        key.putVarchar(null);
+                        key.putVarchar((Utf8Sequence) null);
                     } else {
                         key.putStr(rnd.nextChars(rnd.nextPositiveInt() % 32));
                         utf8Sink.clear();

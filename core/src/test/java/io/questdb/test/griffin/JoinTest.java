@@ -4523,6 +4523,71 @@ public class JoinTest extends AbstractCairoTest {
         testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union select x from crj", false);
     }
 
+    @Test
+    public void testSymbolVarcharJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table xy2 as (select rnd_varchar(1,3,1) a from long_sequence(10000))");
+            compile("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
+            assertSql("a\tb\ta1\n" +
+                    "핕\t1978723740\t핕\n" +
+                    "K|\t-1755013015\tK|\n" +
+                    "J1\t-1542807447\tJ1\n" +
+                    "ӄǈ\t-311197613\tӄǈ\n" +
+                    "Lg\t864972949\tLg\n", "xy3 join xy2 on (a) limit 5");
+        });
+    }
+
+    @Test
+    public void testStringSymbolVarcharJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s string, b symbol)");
+            insert("insert into t1 values (1, 'a', 'a'), (2, 'b', 'b'), (3, 'c', 'c'), (4, 'd', 'd'), (5, 'e', 'e');");
+            compile("create table t2 (j int, v varchar)");
+            insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
+
+            final String expected = "i\ts\tb\tj\tv\n" +
+                    "1\ta\ta\t1\ta\n" +
+                    "2\tb\tb\t2\tb\n" +
+                    "3\tc\tc\t3\tc\n" +
+                    "4\td\td\t4\td\n" +
+                    "5\te\te\t5\te\n";
+
+            assertSql(expected, "select i, s, b, j, v from t1 inner join t2 on s = v");
+            assertSql(expected, "select i, s, b, j, v from t1 inner join t2 on b = v");
+            assertSql(expected, "select i, s, b, j, v from t1 left join t2 on s = v");
+            assertSql(expected, "select i, s, b, j, v from t1 left join t2 on b = v");
+
+            final String expected2 = "i\ts\tb\tj\tv\n" +
+                    "1\ta\ta\t5\te\n" +
+                    "1\ta\ta\t3\tc\n" +
+                    "1\ta\ta\t2\tb\n" +
+                    "1\ta\ta\t4\td\n" +
+                    "1\ta\ta\t1\ta\n" +
+                    "2\tb\tb\t5\te\n" +
+                    "2\tb\tb\t3\tc\n" +
+                    "2\tb\tb\t2\tb\n" +
+                    "2\tb\tb\t4\td\n" +
+                    "2\tb\tb\t1\ta\n" +
+                    "3\tc\tc\t5\te\n" +
+                    "3\tc\tc\t3\tc\n" +
+                    "3\tc\tc\t2\tb\n" +
+                    "3\tc\tc\t4\td\n" +
+                    "3\tc\tc\t1\ta\n" +
+                    "4\td\td\t5\te\n" +
+                    "4\td\td\t3\tc\n" +
+                    "4\td\td\t2\tb\n" +
+                    "4\td\td\t4\td\n" +
+                    "4\td\td\t1\ta\n" +
+                    "5\te\te\t5\te\n" +
+                    "5\te\te\t3\tc\n" +
+                    "5\te\te\t2\tb\n" +
+                    "5\te\te\t4\td\n" +
+                    "5\te\te\t1\ta\n";
+
+            assertSql(expected2, "select i, s, b, j, v from t1 cross join t2");
+        });
+    }
+
     private void assertFailure(String query, String expectedMessage, int position) {
         try {
             ddl(query, sqlExecutionContext);

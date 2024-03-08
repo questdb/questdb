@@ -31,10 +31,10 @@ import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.Unordered16Map;
-import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -363,7 +363,7 @@ public class Unordered16MapTest extends AbstractCairoTest {
 
     @Test
     public void testPutVarcharUnsupported() throws Exception {
-        assertUnsupported(key -> key.putVarchar(null));
+        assertUnsupported(key -> key.putVarchar((Utf8Sequence) null));
     }
 
     private static void assertUnsupported(Consumer<? super MapKey> putKeyFn) throws Exception {
