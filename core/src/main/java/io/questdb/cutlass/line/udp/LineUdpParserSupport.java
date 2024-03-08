@@ -136,7 +136,6 @@ public class LineUdpParserSupport {
                         break;
                     case ColumnType.VARCHAR:
                         Utf8StringSink utf8Sink = Misc.getThreadLocalUtf8Sink();
-                        utf8Sink.clear();
                         utf8Sink.put(value, 1, value.length() - 1);
                         row.putVarchar(columnIndex, utf8Sink);
                         break;
