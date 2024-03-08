@@ -4964,7 +4964,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private void guardAgainstDotsInOrderByAdvice(QueryModel model) throws SqlException {
         ObjList<ExpressionNode> advice = model.getOrderByAdvice();
         for (int i = 0, n = advice.size(); i < n; i++) {
-            if (Chars.contains(advice.getQuick(i).token, ".")) {
+            if (Chars.indexOf(advice.getQuick(i).token, '.') > -1) {
                 throw SqlException.$(advice.getQuick(i).position, "cannot use table-prefixed names in order by");
             }
         }
