@@ -32,8 +32,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.Utf16Sink;
 
 import java.io.Closeable;
 
@@ -86,6 +87,18 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     char getChar(Record rec);
 
     long getDate(Record rec);
+
+    /**
+     * Returns UTF-16 encoded off-heap string.
+     * <p>
+     * Must be called only if {@link #supportsDirectStr()} method returned true.
+     * The method is guaranteed to return off-heap strings with stable pointers,
+     * i.e. once a string is returned, its pointer remains actual until the end
+     * of query execution.
+     */
+    default DirectCharSequence getDirectStr(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     double getDouble(Record rec);
 
@@ -173,22 +186,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
-     * Returns true if the function supports parallel execution, e.g. parallel filter
-     * or GROUP BY. If the method returns false, single-threaded execution plan
-     * must be chosen for the query.
-     * <p>
-     * Examples of parallelizable, but thread-unsafe function are regexp_replace() or min(str).
-     * These functions need to maintain a char sink, so they can't be accessed concurrently.
-     * On the other hand, regexp_replace() can be used in parallel filter and min(str)
-     * supports parallel aggregation and subsequent merge.
-     *
-     * @return true if the function and all of its children functions support parallel execution
-     */
-    default boolean isParallelismSupported() {
-        return true;
-    }
-
-    /**
      * Returns true if the function and all of its children functions are thread-safe
      * and, thus, can be called concurrently, false - otherwise. Used as a hint for
      * parallel SQL filters runtime, thus this method makes sense only for functions
@@ -210,6 +207,32 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default boolean isUndefined() {
         return getType() == ColumnType.UNDEFINED;
+    }
+
+    /**
+     * Returns true if {@link #getDirectStr(Record)} method can be safely called.
+     * The method is guaranteed to return off-heap strings with stable pointers,
+     * i.e. once a string is returned, its pointer remains actual until the end
+     * of query execution.
+     */
+    default boolean supportsDirectStr() {
+        return false;
+    }
+
+    /**
+     * Returns true if the function supports parallel execution, e.g. parallel filter
+     * or GROUP BY. If the method returns false, single-threaded execution plan
+     * must be chosen for the query.
+     * <p>
+     * Examples of parallelizable, but thread-unsafe function are regexp_replace() or min(str).
+     * These functions need to maintain a char sink, so they can't be accessed concurrently.
+     * On the other hand, regexp_replace() can be used in parallel filter and min(str)
+     * supports parallel aggregation and subsequent merge.
+     *
+     * @return true if the function and all of its children functions support parallel execution
+     */
+    default boolean supportsParallelism() {
+        return true;
     }
 
     default boolean supportsRandomAccess() {

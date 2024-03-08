@@ -22,34 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.std.str;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-
-public class MinStrGroupByFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "min(S)";
-    }
-
-    @Override
-    public boolean isGroupBy() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return new MinStrGroupByFunction(args.getQuick(0));
-    }
+/**
+ * A sequence of UTF-16 chars stored in native memory.
+ */
+public interface DirectCharSequence extends CharSequence, DirectSequence {
 }
