@@ -194,6 +194,7 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "e\tедно\t1970-01-01T00:00:05.000000Z\n",
                 "select a, max(s), ts from x sample by 5s align to calendar",
                 "ts",
+                true,
                 true
         );
     }

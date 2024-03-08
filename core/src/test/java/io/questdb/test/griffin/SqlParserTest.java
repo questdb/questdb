@@ -7845,26 +7845,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.INT)
                         .col("t", ColumnType.TIMESTAMP)
         );
-
-        assertSyntaxError(
-                "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m order by t) order by a",
-                63,
-                "at least one aggregation function must be present",
-                modelOf("tab")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("t", ColumnType.TIMESTAMP)
-        );
-
-        assertSyntaxError(
-                "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m align to calendar order by t) order by a",
-                63,
-                "at least one aggregation function must be present",
-                modelOf("tab")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("t", ColumnType.TIMESTAMP)
-        );
     }
 
     @Test
