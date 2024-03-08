@@ -655,7 +655,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIndexSampleBy2() throws Exception {
+    public void testIndexSampleBy2a() throws Exception {
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -668,6 +668,7 @@ public class SampleByTest extends AbstractCairoTest {
                 false,
                 true
         );
+
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -676,6 +677,22 @@ public class SampleByTest extends AbstractCairoTest {
                         "sample by 2h align to calendar",
                 "k",
                 true,
+                true
+        );
+    }
+
+    @Test
+    public void testIndexSampleBy2b() throws Exception {
+        assertQuery(
+                "k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "sample by 2h align to first observation",
+                "create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY",
+                "k",
+                false,
                 true
         );
 
@@ -717,6 +734,22 @@ public class SampleByTest extends AbstractCairoTest {
                         "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
                         "from\n" +
                         "long_sequence(150)\n"
+        );
+    }
+
+    @Test
+    public void testIndexSampleBy2c() throws Exception {
+        assertQuery(
+                "k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "sample by 2h align to first observation",
+                "create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY",
+                "k",
+                false,
+                true
         );
 
         assertSampleByIndexQuery(
@@ -760,6 +793,63 @@ public class SampleByTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testIndexSampleBy2d() throws Exception {
+        assertQuery(
+                "k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "sample by 2h align to first observation",
+                "create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY",
+                "k",
+                false,
+                true
+        );
+
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:20:00.000000Z\tb\t-3.0\t7.0\n" +
+                        "1970-01-01T01:20:00.000000Z\tb\t-9.0\t13.0\n" +
+                        "1970-01-01T02:20:00.000000Z\tb\t-15.0\t19.0\n" +
+                        "1970-01-01T03:20:00.000000Z\tb\t-21.0\t25.0\n" +
+                        "1970-01-01T04:20:00.000000Z\tb\t-27.0\t31.0\n" +
+                        "1970-01-01T05:20:00.000000Z\tb\t-33.0\t37.0\n" +
+                        "1970-01-01T06:20:00.000000Z\tb\t-39.0\t43.0\n" +
+                        "1970-01-01T07:20:00.000000Z\tb\t-45.0\t49.0\n" +
+                        "1970-01-01T08:20:00.000000Z\tb\t-51.0\t55.0\n" +
+                        "1970-01-01T09:20:00.000000Z\tb\t-57.0\t61.0\n" +
+                        "1970-01-01T10:20:00.000000Z\tb\t-63.0\t67.0\n" +
+                        "1970-01-01T11:20:00.000000Z\tb\t-69.0\t73.0\n" +
+                        "1970-01-01T12:20:00.000000Z\tb\t-75.0\t79.0\n" +
+                        "1970-01-01T13:20:00.000000Z\tb\t-81.0\t85.0\n" +
+                        "1970-01-01T14:20:00.000000Z\tb\t-87.0\t91.0\n" +
+                        "1970-01-01T15:20:00.000000Z\tb\t-93.0\t97.0\n" +
+                        "1970-01-01T16:20:00.000000Z\tb\t-99.0\t103.0\n" +
+                        "1970-01-01T17:20:00.000000Z\tb\t-105.0\t109.0\n" +
+                        "1970-01-01T18:20:00.000000Z\tb\t-111.0\t115.0\n" +
+                        "1970-01-01T19:20:00.000000Z\tb\t-117.0\t121.0\n" +
+                        "1970-01-01T20:20:00.000000Z\tb\t-123.0\t127.0\n" +
+                        "1970-01-01T21:20:00.000000Z\tb\t-129.0\t133.0\n" +
+                        "1970-01-01T22:20:00.000000Z\tb\t-135.0\t139.0\n" +
+                        "1970-01-01T23:20:00.000000Z\tb\t-141.0\t145.0\n" +
+                        "1970-01-02T00:20:00.000000Z\tb\t-147.0\t149.0\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k > '1970-01-01' and s in ('b')" +
+                        "sample by 1h align to first observation",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
+                        "from\n" +
+                        "long_sequence(150)\n"
+        );
+
 
         assertWithSymbolColumnTop(
                 "k\ts\tlat\tlon\n" +
@@ -780,6 +870,64 @@ public class SampleByTest extends AbstractCairoTest {
                         "from xx \n" +
                         "where k > '1970-01-01' and s = null \n" +
                         "sample by 2h align to first observation"
+        );
+    }
+
+    @Test
+    public void testIndexSampleBy2e() throws Exception {
+        assertQuery(
+                "k\ts\tlat\tlon\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                        "sample by 2h align to calendar",
+                "create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY",
+                "k",
+                false,
+                true
+        );
+
+        assertSampleByIndexQuery(
+                "k\ts\tlat\tlon\n" +
+                        "1970-01-01T00:00:00.000000Z\tb\t-3.0\t5.0\n" +
+                        "1970-01-01T01:00:00.000000Z\tb\t-7.0\t11.0\n" +
+                        "1970-01-01T02:00:00.000000Z\tb\t-13.0\t17.0\n" +
+                        "1970-01-01T03:00:00.000000Z\tb\t-19.0\t23.0\n" +
+                        "1970-01-01T04:00:00.000000Z\tb\t-25.0\t29.0\n" +
+                        "1970-01-01T05:00:00.000000Z\tb\t-31.0\t35.0\n" +
+                        "1970-01-01T06:00:00.000000Z\tb\t-37.0\t41.0\n" +
+                        "1970-01-01T07:00:00.000000Z\tb\t-43.0\t47.0\n" +
+                        "1970-01-01T08:00:00.000000Z\tb\t-49.0\t53.0\n" +
+                        "1970-01-01T09:00:00.000000Z\tb\t-55.0\t59.0\n" +
+                        "1970-01-01T10:00:00.000000Z\tb\t-61.0\t65.0\n" +
+                        "1970-01-01T11:00:00.000000Z\tb\t-67.0\t71.0\n" +
+                        "1970-01-01T12:00:00.000000Z\tb\t-73.0\t77.0\n" +
+                        "1970-01-01T13:00:00.000000Z\tb\t-79.0\t83.0\n" +
+                        "1970-01-01T14:00:00.000000Z\tb\t-85.0\t89.0\n" +
+                        "1970-01-01T15:00:00.000000Z\tb\t-91.0\t95.0\n" +
+                        "1970-01-01T16:00:00.000000Z\tb\t-97.0\t101.0\n" +
+                        "1970-01-01T17:00:00.000000Z\tb\t-103.0\t107.0\n" +
+                        "1970-01-01T18:00:00.000000Z\tb\t-109.0\t113.0\n" +
+                        "1970-01-01T19:00:00.000000Z\tb\t-115.0\t119.0\n" +
+                        "1970-01-01T20:00:00.000000Z\tb\t-121.0\t125.0\n" +
+                        "1970-01-01T21:00:00.000000Z\tb\t-127.0\t131.0\n" +
+                        "1970-01-01T22:00:00.000000Z\tb\t-133.0\t137.0\n" +
+                        "1970-01-01T23:00:00.000000Z\tb\t-139.0\t143.0\n" +
+                        "1970-01-02T00:00:00.000000Z\tb\t-145.0\t149.0\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where k > '1970-01-01' and s in ('b')" +
+                        "sample by 1h align to calendar",
+                "insert into xx " +
+                        "select -x lat,\n" +
+                        "x lon,\n" +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
+                        "from\n" +
+                        "long_sequence(150)\n",
+                true,
+                true
         );
 
         assertWithSymbolColumnTop(
