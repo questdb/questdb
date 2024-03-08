@@ -5311,7 +5311,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testNonAggFunctionWithAggFunctionSampleBy() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
+        assertMemoryLeak(() ->  {
+            assertQuery(
                 "day\tisin\tlast\n" +
                         "1\tcc\t0.7544827361952741\n",
                 "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d align to first observation",
@@ -5324,26 +5325,47 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(ts)",
                 null,
                 false
-        ));
+           );
+
+            assertQuery(
+                    "day\tisin\tlast\n" +
+                            "1\tcc\t0.7544827361952741\n",
+                    "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d align to calendar",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testNonAggFunctionWithAggFunctionSampleBySubQuery() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                "day\tisin\tlast\n" +
-                        "1\tcc\t0.7544827361952741\n",
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "day\tisin\tlast\n" +
+                            "1\tcc\t0.7544827361952741\n",
 //                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
-                "select day(ts), isin, last from (select ts, isin, last(start_price) from xetra where isin='cc' sample by 1d align to first observation)",
-                "create table xetra as (" +
-                        "select" +
-                        " rnd_symbol('aa', 'bb', 'cc') isin," +
-                        " rnd_double() start_price," +
-                        " timestamp_sequence(0, 1000000) ts" +
-                        " from long_sequence(10000)" +
-                        ") timestamp(ts)",
-                null,
-                false
-        ));
+                    "select day(ts), isin, last from (select ts, isin, last(start_price) from xetra where isin='cc' sample by 1d align to first observation)",
+                    "create table xetra as (" +
+                            "select" +
+                            " rnd_symbol('aa', 'bb', 'cc') isin," +
+                            " rnd_double() start_price," +
+                            " timestamp_sequence(0, 1000000) ts" +
+                            " from long_sequence(10000)" +
+                            ") timestamp(ts)",
+                    null,
+                    false
+            );
+
+            assertQuery(
+                    "day\tisin\tlast\n" +
+                            "1\tcc\t0.7544827361952741\n",
+                    "select day(ts), isin, last from (select ts, isin, last(start_price) from xetra where isin='cc' sample by 1d align to calendar)",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
@@ -6463,7 +6485,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testSampleByFillLinearEmptyCursor() throws Exception {
         assertQuery(
                 "b\tsum\tk\n",
-                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(linear) order by k,b",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(linear) align to first observation order by k,b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -6477,13 +6499,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 true,
                 true
         );
+
+        assertQuery(
+                "b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(linear) align to calendar order by k,b",
+                "k",
+                true,
+                true
+        );
     }
 
     @Test
     public void testSampleByFillNoneEmptyCursor() throws Exception {
         assertQuery(
                 "b\tsum\tk\n",
-                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(none) order by k,b",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(none) align to first observation order by k,b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -6493,6 +6523,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
+                "k",
+                true
+        );
+
+        assertQuery(
+                "b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(none) align to calendar order by k,b",
                 "k",
                 true
         );
@@ -6502,7 +6539,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testSampleByFillNullEmptyCursor() throws Exception {
         assertQuery(
                 "b\tsum\tk\n",
-                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(null) order by k,b",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(null) align to first observation order by k,b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -6512,6 +6549,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
+                "k",
+                true
+        );
+
+        assertQuery(
+                "b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(null) align to calendar order by k,b",
                 "k",
                 true
         );
@@ -6521,7 +6565,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testSampleByFillPrevEmptyCursor() throws Exception {
         assertQuery(
                 "b\tsum\tk\n",
-                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(prev) order by k,b",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(prev) align to first observation order by k,b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -6534,13 +6578,20 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "k",
                 true
         );
+
+        assertQuery(
+                "b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(prev) align to calendar order by k,b",
+                "k",
+                true
+        );
     }
 
     @Test
     public void testSampleByFillValueEmptyCursor() throws Exception {
         assertQuery(
                 "b\tsum\tk\n",
-                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(10.0) order by k,b",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(10.0) align to first observation order by k,b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -6550,6 +6601,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
+                "k",
+                true
+        );
+
+        assertQuery(
+                "b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(10.0) align to calendar order by k,b",
                 "k",
                 true
         );
@@ -6573,7 +6631,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 false
         );
 
-        assertPlan("select min(x), sym timestamp  from test1 sample by 15s align to first observation",
+        assertQuery(
+                "min\ttimestamp\n" +
+                        "3\tB\n" +
+                        "1\tA\n" +
+                        "18\tB\n" +
+                        "16\tA\n",
+                "select min(x), sym timestamp from test1 sample by 15s align to calendar",
+                null,
+                true,
+                true
+        );
+
+        assertPlan("select min(x), sym timestamp from test1 sample by 15s align to first observation",
                 "SampleBy\n" +
                         "  keys: [timestamp]\n" +
                         "  values: [min(x)]\n" +
@@ -6581,6 +6651,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: test1\n");
+
+        assertPlan("select min(x), sym timestamp from test1 sample by 15s align to calendar",
+                "SelectedRecord\n" +
+                        "    Sort light\n" +
+                        "      keys: [timestamp1]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [timestamp,timestamp1]\n" +
+                        "          values: [min(x)]\n" +
+                        "          filter: null\n" +
+                        "            SelectedRecord\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: test1\n");
 
         assertQuery(
                 "min\ttimestamp\ttimestamp0\n" +
@@ -6599,6 +6682,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 null,
                 false,
                 false
+        );
+
+        assertQuery(
+                "min\ttimestamp\ttimestamp0\n" +
+                        "2\tA\tB\n" +
+                        "1\tB\tB\n" +
+                        "16\tA\tB\n" +
+                        "17\tB\tB\n",
+                "select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s align to calendar",
+                null,
+                true,
+                true
         );
     }
 

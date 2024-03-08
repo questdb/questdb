@@ -3542,10 +3542,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByUnionAll() throws SqlException {
         assertQuery(
-                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp) union all select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp)",
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h union all select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar" +
                         " union all " +
                         "select b, sum(a), k k1, k from x y sample by 3h align to calendar",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h union all select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
+                "select b, sum(a), k k1, k from x y sample by 3h" +
+                        " union all " +
+                        "select b, sum(a), k k1, k from x y sample by 3h",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+
+        assertQuery(
+                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp) union all select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp)) y order by timestamp)",
+                "select b, sum(a), k k1, k from x y sample by 3h align to first observation" +
+                        " union all " +
+                        "select b, sum(a), k k1, k from x y sample by 3h align to first observation",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
     }
@@ -6213,6 +6229,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("isin", ColumnType.SYMBOL)
                         .col("start_price", ColumnType.DOUBLE)
         );
+
+        assertQuery(
+                "select-group-by day, isin, last(start_price) last from (select-virtual [day(ts) day, isin, start_price] day(ts) day, isin, start_price, ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4')) sample by 1d",
+                "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d",
+                modelOf("xetra")
+                        .timestamp("ts")
+                        .col("isin", ColumnType.SYMBOL)
+                        .col("start_price", ColumnType.DOUBLE)
+        );
+
+        assertQuery(
+                "select-group-by day, isin, last(start_price) last from (select-virtual [day(ts) day, isin, start_price] day(ts) day, isin, start_price, ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4')) sample by 1d",
+                "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d align to calendar",
+                modelOf("xetra")
+                        .timestamp("ts")
+                        .col("isin", ColumnType.SYMBOL)
+                        .col("start_price", ColumnType.DOUBLE)
+        );
     }
 
     @Test
@@ -6952,6 +6986,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.INT)
                         .col("t", ColumnType.TIMESTAMP)
         );
+
+        assertQuery(
+                "select-group-by a, sum(b) sum from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) sample by 2m order by a",
+                "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m order by a",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertQuery(
+                "select-group-by a, sum(b) sum from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) sample by 2m order by a",
+                "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m align to calendar order by a",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -6964,6 +7016,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.INT)
                         .col("t", ColumnType.TIMESTAMP)
         );
+
+        assertQuery(
+                "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) sample by 10m) order by a",
+                "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m order by b) order by a",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertQuery(
+                "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) sample by 10m) order by a",
+                "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m align to calendar order by b) order by a",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -6971,6 +7041,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [a, b, t] a, b, t from (select [a, b, t] from tab timestamp (t)) order by t) sample by 10m) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m align to first observation order by b) order by a",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .timestamp("t")
+        );
+
+        assertQuery(
+                "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [a, b, t] a, b, t from (select [a, b, t] from tab timestamp (t)) order by t) sample by 10m align to calendar with offset '00:00') order by a",
+                "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m order by b) order by a",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .timestamp("t")
+        );
+
+        assertQuery(
+                "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [a, b, t] a, b, t from (select [a, b, t] from tab timestamp (t)) order by t) sample by 10m) order by a",
+                "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m align to calendar order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -7395,6 +7483,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("y", ColumnType.INT)
                         .timestamp()
         );
+
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (timestamp)) sample by 2m",
+                "select x,sum(y) from tab sample by 2m",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp()
+        );
+
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (timestamp)) sample by 2m",
+                "select x,sum(y) from tab sample by 2m align to calendar",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp()
+        );
     }
 
     @Test
@@ -7402,6 +7508,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (timestamp)) sample by 2U",
                 "select x,sum(y) from tab sample by 2U align to first observation",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp()
+        );
+
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (timestamp)) sample by 2U",
+                "select x,sum(y) from tab sample by 2U",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp()
+        );
+
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (timestamp)) sample by 2U",
+                "select x,sum(y) from tab sample by 2U align to calendar",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -7416,6 +7540,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select b, sum(a), k, k from x y sample by 3h align to first observation",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
+
+        assertQuery(
+                "select-group-by b, sum(a) sum, k, k k1 from (select [b, a, k] from x y timestamp (timestamp)) y sample by 3h",
+                "select b, sum(a), k, k from x y sample by 3h",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+
+        assertQuery(
+                "select-group-by b, sum(a) sum, k, k k1 from (select [b, a, k] from x y timestamp (timestamp)) y sample by 3h",
+                "select b, sum(a), k, k from x y sample by 3h align to calendar",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
     }
 
     @Test
@@ -7423,6 +7559,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (x)) sample by 2m",
                 "select x,sum(y) from tab timestamp(x) sample by 2m align to first observation",
+                modelOf("tab")
+                        .col("x", ColumnType.TIMESTAMP)
+                        .col("y", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-group-by timestamp_floor('2m',x) x, sum(y) sum from (select [x, y] from tab timestamp (x)) order by x",
+                "select x,sum(y) from tab timestamp(x) sample by 2m",
+                modelOf("tab")
+                        .col("x", ColumnType.TIMESTAMP)
+                        .col("y", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-group-by timestamp_floor('2m',x) x, sum(y) sum from (select [x, y] from tab timestamp (x)) order by x",
+                "select x,sum(y) from tab timestamp(x) sample by 2m align to calendar",
                 modelOf("tab")
                         .col("x", ColumnType.TIMESTAMP)
                         .col("y", ColumnType.INT)
@@ -7439,10 +7591,40 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("y", ColumnType.INT)
                         .col("t", ColumnType.TIMESTAMP)
         );
+
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (t)) sample by 2m",
+                "select x,sum(y) from tab timestamp(t) sample by 2m",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (t)) sample by 2m",
+                "select x,sum(y) from tab timestamp(t) sample by 2m align to calendar",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testSampleByEndingWithSemicolon() throws SqlException {
+        assertQuery(
+                "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
+                "SELECT first(ts) FROM t1 SAMPLE BY 15m ALIGN TO FIRST OBSERVATION;",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
+                "SELECT first(ts) FROM t1 SAMPLE BY 15m",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
+
         assertQuery(
                 "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
                 "SELECT first(ts) FROM t1 SAMPLE BY 15m ALIGN TO CALENDAR;",
@@ -7452,6 +7634,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByEndingWithWhitespace() throws SqlException {
+        assertQuery(
+                "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
+                "SELECT first(ts) FROM t1 SAMPLE BY 15m ALIGN TO FIRST OBSERVATION",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
+                "SELECT first(ts) FROM t1 SAMPLE BY 15m",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
+
         assertQuery(
                 "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
                 "SELECT first(ts) FROM t1 SAMPLE BY 15m ALIGN TO CALENDAR",
@@ -7469,6 +7663,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.INT)
                         .col("t", ColumnType.TIMESTAMP)
         );
+
+        assertQuery(
+                "select-group-by a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(21.1,22,null,98) align to calendar with offset '00:00'",
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(21.1,22,null,98)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertQuery(
+                "select-group-by a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(21.1,22,null,98) align to calendar with offset '00:00'",
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(21.1,22,null,98) align to calendar",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -7476,6 +7688,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-group-by a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(mid)",
                 "select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid) align to first observation",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertQuery(
+                "select-group-by a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(mid)",
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertQuery(
+                "select-group-by a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(mid)",
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid) align to calendar",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -7493,6 +7723,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.INT)
                         .col("t", ColumnType.TIMESTAMP)
         );
+
+        assertQuery(
+                "select-choose a, b from (select-group-by [a, sum(b) b] a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(mid))",
+                "select * from (select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid))",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+
+        assertQuery(
+                "select-choose a, b from (select-group-by [a, sum(b) b] a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(mid))",
+                "select * from (select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid) align to calendar)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
     }
 
     @Test
@@ -7524,7 +7774,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFillMissingValue() throws Exception {
         assertSyntaxError(
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill () align to first observation",
+                60,
+                "'none', 'prev', 'mid', 'null' or number expected",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertSyntaxError(
                 "select a,sum(b) b from tab timestamp(t) sample by 10m fill ()",
+                60,
+                "'none', 'prev', 'mid', 'null' or number expected",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertSyntaxError(
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill () align to calendar",
                 60,
                 "'none', 'prev', 'mid', 'null' or number expected",
                 modelOf("tab")
@@ -7544,6 +7814,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.INT)
                         .col("t", ColumnType.TIMESTAMP)
         );
+
+        assertQuery(
+                "select-group-by a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(21231.2344)",
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(21231.2344)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertQuery(
+                "select-group-by a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(21231.2344)",
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(21231.2344) align to calendar",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
@@ -7557,12 +7845,52 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.INT)
                         .col("t", ColumnType.TIMESTAMP)
         );
+
+        assertSyntaxError(
+                "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m order by t) order by a",
+                63,
+                "at least one aggregation function must be present",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertSyntaxError(
+                "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m align to calendar order by t) order by a",
+                63,
+                "at least one aggregation function must be present",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
     }
 
     @Test
     public void testSampleByInvalidColumn() throws Exception {
         assertSyntaxError(
+                "select x,sum(y) from tab timestamp(z) sample by 2m align to first observation",
+                35,
+                "Invalid column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp()
+        );
+
+        assertSyntaxError(
                 "select x,sum(y) from tab timestamp(z) sample by 2m",
+                35,
+                "Invalid column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp()
+        );
+
+        assertSyntaxError(
+                "select x,sum(y) from tab timestamp(z) sample by 2m align to calendar",
                 35,
                 "Invalid column",
                 modelOf("tab")
@@ -7575,7 +7903,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByInvalidType() throws Exception {
         assertSyntaxError(
+                "select x,sum(y) from tab timestamp(x) sample by 2m align to first observation",
+                35,
+                "not a TIMESTAMP",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp()
+        );
+
+        assertSyntaxError(
                 "select x,sum(y) from tab timestamp(x) sample by 2m",
+                35,
+                "not a TIMESTAMP",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp()
+        );
+
+        assertSyntaxError(
+                "select x,sum(y) from tab timestamp(x) sample by 2m align to calendar",
                 35,
                 "not a TIMESTAMP",
                 modelOf("tab")
@@ -7593,12 +7941,40 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("y", ColumnType.INT)
                         .timestamp()
         );
+
+        assertSyntaxError("select x,y from tab sample by 2m", 30, "at least one",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp()
+        );
+
+        assertSyntaxError("select x,y from tab sample by 2m align to calendar", 30, "at least one",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp()
+        );
     }
 
     @Test
     public void testSampleBySansSelect() throws Exception {
         assertSyntaxError(
+                "(t1 sample by 1m align to first observation)",
+                14,
+                "at least one aggregation function must be present in 'select' clause",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
+
+        assertSyntaxError(
                 "(t1 sample by 1m)",
+                14,
+                "at least one aggregation function must be present in 'select' clause",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
+
+        assertSyntaxError(
+                "(t1 sample by 1m align to calendar)",
                 14,
                 "at least one aggregation function must be present in 'select' clause",
                 modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
@@ -7610,6 +7986,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-group-by x, sum(y) sum from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) sample by 2m",
                 "select x,sum(y) from (tab order by ts asc) sample by 2m align to first observation",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) sample by 2m align to calendar with offset '00:00'",
+                "select x,sum(y) from (tab order by ts asc) sample by 2m",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) sample by 2m align to calendar with offset '00:00'",
+                "select x,sum(y) from (tab order by ts asc) sample by 2m align to calendar",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -7630,12 +8024,44 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("x", ColumnType.INT)
                         .col("z", ColumnType.DOUBLE)
         );
+
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select-choose [tab.x x, tab.y y] tab.x x, tab.y y from (select [x, y] from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) tab join select [x] from tab2 on tab2.x = tab.x) tab) tab sample by 2m",
+                "select tab.x,sum(y) from (tab order by ts asc) tab join tab2 on (x) sample by 2m align to calendar",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts"),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.DOUBLE)
+        );
     }
 
     @Test
     public void testSampleByTimestampDescOrder() throws Exception {
         assertSyntaxError(
+                "select x,sum(y) from (tab order by ts desc) sample by 2m align to first observation",
+                0,
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertSyntaxError(
                 "select x,sum(y) from (tab order by ts desc) sample by 2m",
+                0,
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertSyntaxError(
+                "select x,sum(y) from (tab order by ts desc) sample by 2m align to calendar",
                 0,
                 "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
@@ -7648,7 +8074,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByTimestampDescOrderVirtualColumn() throws Exception {
         assertSyntaxError(
+                "select sum(x) from (select x+1 as x, ts from (tab order by ts desc)) sample by 2m align to first observation",
+                0,
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertSyntaxError(
                 "select sum(x) from (select x+1 as x, ts from (tab order by ts desc)) sample by 2m",
+                0,
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertSyntaxError(
+                "select sum(x) from (select x+1 as x, ts from (tab order by ts desc)) sample by 2m align to calendar",
                 0,
                 "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
@@ -7661,7 +8107,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByTimestampDescOrderWithJoin() throws Exception {
         assertSyntaxError(
+                "select tab.x,sum(y) from (tab order by ts desc) tab join tab2 on (x) sample by 2m align to first observation",
+                0,
+                "ASC order over TIMESTAMP column is required but not provided",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts"),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.DOUBLE)
+        );
+
+        assertSyntaxError(
                 "select tab.x,sum(y) from (tab order by ts desc) tab join tab2 on (x) sample by 2m",
+                0,
+                "ASC order over TIMESTAMP column is required but not provided",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts"),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.DOUBLE)
+        );
+
+        assertSyntaxError(
+                "select tab.x,sum(y) from (tab order by ts desc) tab join tab2 on (x) sample by 2m align to calendar",
                 0,
                 "ASC order over TIMESTAMP column is required but not provided",
                 modelOf("tab")
@@ -7677,7 +8149,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByUndefinedTimestamp() throws Exception {
         assertSyntaxError(
+                "select x,sum(y) from tab sample by 2m align to first observation",
+                0,
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+
+        assertSyntaxError(
                 "select x,sum(y) from tab sample by 2m",
+                0,
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+
+        assertSyntaxError(
+                "select x,sum(y) from tab sample by 2m align to calendar",
                 0,
                 "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
@@ -7689,7 +8179,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByUndefinedTimestampWithDistinct() throws Exception {
         assertSyntaxError(
+                "select x,sum(y) from (select distinct x, y from tab) sample by 2m align to first observation",
+                0,
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+
+        assertSyntaxError(
                 "select x,sum(y) from (select distinct x, y from tab) sample by 2m",
+                0,
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+
+        assertSyntaxError(
+                "select x,sum(y) from (select distinct x, y from tab) sample by 2m align to calendar",
                 0,
                 "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
@@ -7701,7 +8209,31 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByUndefinedTimestampWithJoin() throws Exception {
         assertSyntaxError(
+                "select tab.x,sum(y) from tab join tab2 on (x) sample by 2m align to first observation",
+                0,
+                "ASC order over TIMESTAMP column is required but not provided",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.DOUBLE)
+        );
+
+        assertSyntaxError(
                 "select tab.x,sum(y) from tab join tab2 on (x) sample by 2m",
+                0,
+                "ASC order over TIMESTAMP column is required but not provided",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.DOUBLE)
+        );
+
+        assertSyntaxError(
+                "select tab.x,sum(y) from tab join tab2 on (x) sample by 2m align to calendar",
                 0,
                 "ASC order over TIMESTAMP column is required but not provided",
                 modelOf("tab")
@@ -9083,6 +9615,29 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "select * from b " +
                         "union all " +
                         "select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h align to first observation" +
+                        ") order by x",
+                modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
+                modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
+                modelOf("c").col("z", ColumnType.INT).col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertQuery(
+                "select-choose x from " +
+                        "(select-choose [x, t] x, t from (select [x, t] from a) " +
+                        "union " +
+                        "select-choose [y, t] y, t from (select [y, t] from b) " +
+                        "union all " +
+                        "select-virtual ['a' k, sum] 'a' k, sum from " +
+                        "(select-group-by [sum(z) sum] sum(z) sum from " +
+                        "(select-choose [t, z] z, t from (select [t, z] from c) order by t) " +
+                        "timestamp (t) sample by 6h)" +
+                        ") order by x",
+                "select x from " +
+                        "(select * from a " +
+                        "union " +
+                        "select * from b " +
+                        "union all " +
+                        "select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h align to calendar" +
                         ") order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
