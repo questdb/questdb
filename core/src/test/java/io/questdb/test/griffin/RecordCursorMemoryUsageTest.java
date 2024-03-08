@@ -100,7 +100,7 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)");
 
-            try (RegisteredRecordCursorFactory factory = (RegisteredRecordCursorFactory) select("select sym1, sum(d) from tab SAMPLE BY 1d " + fill)) {
+            try (RegisteredRecordCursorFactory factory = (RegisteredRecordCursorFactory) select("select sym1, sum(d) from tab SAMPLE BY 1d " + fill + " ALIGN TO FIRST OBSERVATION")) {
                 Assert.assertSame(factory.getBaseFactory().getClass(), expectedFactoryClass);
 
                 long freeDuring;

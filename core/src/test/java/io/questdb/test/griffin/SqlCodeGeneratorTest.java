@@ -725,7 +725,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "b\tk\n" +
                         "CC\t1970-01-21T20:00:00.000000Z\n" +
                         "BB\t1970-01-22T23:46:40.000000Z\n",
-                "(select b, max(k) k from x where b in ('BB','CC') sample by 1T) latest on k partition by b",
+                "(select b, max(k) k from x where b in ('BB','CC') sample by 1T ALIGN TO FIRST OBSERVATION) latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4515,7 +4515,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertSql(
                     "id\tname\tvalue\tts\n" +
                             "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\n" +
-                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n", "(select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id"
+                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n", "(select id, name, max(value) value, max(ts) ts from tab sample by 1T align to first observation) latest on ts partition by id"
             );
 
             // partition by multiple columns
@@ -4524,19 +4524,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\n" +
                             "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\n" +
                             "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\n" +
-                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n", "(select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id, name"
+                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n", "(select id, name, max(value) value, max(ts) ts from tab sample by 1T align to first observation) latest on ts partition by id, name"
             );
 
             // select subset of columns
             assertSql(
                     "value\tts\n" +
                             "123\t1970-01-01T00:00:00.000004Z\n" +
-                            "222\t1970-01-01T00:00:00.000006Z\n", "select value, ts from (select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id"
+                            "222\t1970-01-01T00:00:00.000006Z\n", "select value, ts from (select id, name, max(value) value, max(ts) ts from tab sample by 1T align to first observation) latest on ts partition by id"
             );
 
             // empty sub-query
             assertSql(
-                    "id\tname\tvalue\tts\n", "(select id, name, max(value) value, max(ts) ts from tab where id in('c3') sample by 1T) latest on ts partition by id"
+                    "id\tname\tvalue\tts\n", "(select id, name, max(value) value, max(ts) ts from tab where id in('c3') sample by 1T align to first observation) latest on ts partition by id"
             );
         });
     }
@@ -4923,7 +4923,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "ts\tmarket_type\tavg\n" +
                         "1970-01-01T00:00:09.999996Z\taaa\t0.02110922811597793\n" +
                         "1970-01-01T00:00:09.999996Z\tbbb\t0.344021345830156\n",
-                "select ts, market_type, avg(bid_price) FROM market_updates LATEST ON ts PARTITION BY market_type SAMPLE BY 1s",
+                "select ts, market_type, avg(bid_price) FROM market_updates LATEST ON ts PARTITION BY market_type SAMPLE BY 1s ALIGN TO FIRST OBSERVATION",
                 "create table market_updates as (" +
                         "select " +
                         "rnd_symbol('aaa','bbb') market_type, " +
@@ -5027,7 +5027,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "    WHERE city='Miami' AND make='Omron') a\n" +
                             "ON readings.sensorId = a.sensId\n" +
                             "WHERE ts in '2019-10-21;1d'\n" +
-                            "SAMPLE BY 1h;",
+                            "SAMPLE BY 1h ALIGN TO FIRST OBSERVATION;",
                     sink,
                     "ts\tcity\tmake\tavg\n" +
                             "2019-10-21T00:00:33.400000Z\tMiami\tOmron\t18.932566749129236\n" +
@@ -5314,7 +5314,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertQuery(
                 "day\tisin\tlast\n" +
                         "1\tcc\t0.7544827361952741\n",
-                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
+                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d align to first observation",
                 "create table xetra as (" +
                         "select" +
                         " rnd_symbol('aa', 'bb', 'cc') isin," +
@@ -5333,7 +5333,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "day\tisin\tlast\n" +
                         "1\tcc\t0.7544827361952741\n",
 //                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
-                "select day(ts), isin, last from (select ts, isin, last(start_price) from xetra where isin='cc' sample by 1d)",
+                "select day(ts), isin, last from (select ts, isin, last(start_price) from xetra where isin='cc' sample by 1d align to first observation)",
                 "create table xetra as (" +
                         "select" +
                         " rnd_symbol('aa', 'bb', 'cc') isin," +
@@ -5496,7 +5496,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "ZOU\t65.90341607692226\t1970-01-03T15:00:00.000000Z\n",
                 // we have 'sample by fill(none)' because it doesn't support
                 // random record access, which is what we intend on testing
-                "select b, sum(a), k from x sample by 3h fill(none) order by b",
+                "select b, sum(a), k from x sample by 3h fill(none) align to first observation order by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -5564,7 +5564,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "VTJW\t40.22810626779558\t1970-01-03T09:00:00.000000Z\n",
                 // we have 'sample by fill(none)' because it doesn't support
                 // random record access, which is what we intend on testing
-                "select b, sum(a), k from x sample by 3h fill(none) order by b",
+                "select b, sum(a), k from x sample by 3h fill(none) align to first observation order by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -5631,7 +5631,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "\t32.5403220015421\t1970-01-03T18:00:00.000000Z\n" +
                         "YCT\t57.78947915182423\t1970-01-03T18:00:00.000000Z\n",
                 // random record access, which is what we intend on testing
-                "select b, sum(a), k from x sample by 3h fill(none) order by k,b",
+                "select b, sum(a), k from x sample by 3h fill(none) align to first observation order by k,b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -6563,7 +6563,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "3\tB\n" +
                         "16\tA\n" +
                         "18\tB\n",
-                "select min(x), sym timestamp from test1 sample by 15s",
+                "select min(x), sym timestamp from test1 sample by 15s align to first observation",
                 "create table test1 as (" +
                         "select rnd_symbol('A', 'B') sym, x, timestamp_sequence('2023-07-20', 1000000) timestamp " +
                         "from long_sequence(20)) " +
@@ -6573,7 +6573,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 false
         );
 
-        assertPlan("select min(x), sym timestamp  from test1 sample by 15s",
+        assertPlan("select min(x), sym timestamp  from test1 sample by 15s align to first observation",
                 "SampleBy\n" +
                         "  keys: [timestamp]\n" +
                         "  values: [min(x)]\n" +
@@ -6588,7 +6588,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "2\tA\tB\n" +
                         "16\tA\tB\n" +
                         "17\tB\tB\n",
-                "select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s",
+                "select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s align to first observation",
                 "create table test2 as (" +
                         "select rnd_symbol('A', 'B') sym1, " +
                         "       rnd_symbol('B') sym2, " +
@@ -7214,7 +7214,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                 "1970-01-05T00:00:00.000000Z\tfoo\t4\n" +
                                 "1970-01-06T00:00:00.000000Z\tbar\t3\n" +
                                 "1970-01-06T00:00:00.000000Z\tfoo\t3\n",
-                        "select ts, s, count() from x sample by 1d",
+                        "select ts, s, count() from x sample by 1d align to first observation",
                         "ts",
                         false,
                         false

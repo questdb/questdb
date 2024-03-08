@@ -3534,7 +3534,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testDuplicateColumnGroupBy() throws SqlException {
         assertQuery(
                 "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
-                "select b, sum(a), k k1, k from x y sample by 3h",
+                "select b, sum(a), k k1, k from x y sample by 3h align to first observation",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
     }
@@ -3565,7 +3565,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testDuplicateColumnsVirtualAndGroupBySelect() throws SqlException {
         assertQuery(
                 "select-group-by sum(b + a) sum, column, k1, k1 k from (select-virtual [a, b, a + b column, k1] a, b, a + b column, k1, k1 k, timestamp from (select-choose [a, b, k k1] a, b, k k1, timestamp from (select [a, b, k] from x timestamp (timestamp)))) sample by 1m",
-                "select sum(b+a), a+b, k k1, k from x sample by 1m",
+                "select sum(b+a), a+b, k k1, k from x sample by 1m align to first observation",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
     }
@@ -5671,7 +5671,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testLatestByDeprecatedMultipleColumns() throws SqlException {
         assertQuery(
                 "select-group-by ts, market_type, avg(bid_price) avg from (select [ts, market_type, bid_price] from market_updates timestamp (ts) latest by ts,market_type) sample by 1s",
-                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY ts, market_type SAMPLE BY 1s",
+                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY ts, market_type SAMPLE BY 1s ALIGN TO FIRST OBSERVATION",
                 modelOf("market_updates").timestamp("ts").col("market_type", ColumnType.SYMBOL).col("bid_price", ColumnType.DOUBLE)
         );
     }
@@ -5726,7 +5726,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testLatestByMultipleColumns() throws SqlException {
         assertQuery(
                 "select-group-by ts, market_type, avg(bid_price) avg from (select [ts, market_type, bid_price, country] from market_updates latest on ts partition by market_type,country) sample by 1s",
-                "select ts, market_type, avg(bid_price) FROM market_updates latest on ts partition by market_type, country sample by 1s",
+                "select ts, market_type, avg(bid_price) FROM market_updates latest on ts partition by market_type, country sample by 1s align to first observation",
                 modelOf("market_updates").timestamp("ts").col("market_type", ColumnType.SYMBOL).col("country", ColumnType.SYMBOL).col("bid_price", ColumnType.DOUBLE)
         );
     }
@@ -6207,7 +6207,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testNonAggFunctionWithAggFunctionSampleBy() throws SqlException {
         assertQuery(
                 "select-group-by day, isin, last(start_price) last from (select-virtual [day(ts) day, isin, start_price] day(ts) day, isin, start_price, ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4')) sample by 1d",
-                "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d",
+                "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d align to first observation",
                 modelOf("xetra")
                         .timestamp("ts")
                         .col("isin", ColumnType.SYMBOL)
@@ -6946,7 +6946,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testOrderByWithSampleBy() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) sum from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) sample by 2m order by a",
-                "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m order by a",
+                "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m align to first observation order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -6958,7 +6958,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testOrderByWithSampleBy2() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) sample by 10m) order by a",
-                "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m order by b) order by a",
+                "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m align to first observation order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -6970,7 +6970,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testOrderByWithSampleBy3() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [a, b, t] a, b, t from (select [a, b, t] from tab timestamp (t)) order by t) sample by 10m) order by a",
-                "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m order by b) order by a",
+                "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m align to first observation order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -7389,7 +7389,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleBy() throws Exception {
         assertQuery(
                 "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (timestamp)) sample by 2m",
-                "select x,sum(y) from tab sample by 2m",
+                "select x,sum(y) from tab sample by 2m align to first observation",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -7401,7 +7401,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleBy2() throws Exception {
         assertQuery(
                 "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (timestamp)) sample by 2U",
-                "select x,sum(y) from tab sample by 2U",
+                "select x,sum(y) from tab sample by 2U align to first observation",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -7413,7 +7413,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByAliasedColumn() throws SqlException {
         assertQuery(
                 "select-group-by b, sum(a) sum, k, k k1 from (select [b, a, k] from x y timestamp (timestamp)) y sample by 3h",
-                "select b, sum(a), k, k from x y sample by 3h",
+                "select b, sum(a), k, k from x y sample by 3h align to first observation",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
     }
@@ -7422,7 +7422,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByAlreadySelected() throws Exception {
         assertQuery(
                 "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (x)) sample by 2m",
-                "select x,sum(y) from tab timestamp(x) sample by 2m",
+                "select x,sum(y) from tab timestamp(x) sample by 2m align to first observation",
                 modelOf("tab")
                         .col("x", ColumnType.TIMESTAMP)
                         .col("y", ColumnType.INT)
@@ -7433,7 +7433,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByAltTimestamp() throws Exception {
         assertQuery(
                 "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (t)) sample by 2m",
-                "select x,sum(y) from tab timestamp(t) sample by 2m",
+                "select x,sum(y) from tab timestamp(t) sample by 2m align to first observation",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -7463,7 +7463,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByFillList() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(21.1,22,null,98)",
-                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(21.1,22,null,98)",
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(21.1,22,null,98) align to first observation",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -7475,7 +7475,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByFillMin() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(mid)",
-                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid)",
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid) align to first observation",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -7487,7 +7487,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByFillMinAsSubQuery() throws SqlException {
         assertQuery(
                 "select-choose a, b from (select-group-by [a, sum(b) b] a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(mid))",
-                "select * from (select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid))",
+                "select * from (select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid) align to first observation)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -7538,7 +7538,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByFillValue() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) b from (select [a, b] from tab timestamp (t)) sample by 10m fill(21231.2344)",
-                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(21231.2344)",
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(21231.2344) align to first observation",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -7549,7 +7549,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByIncorrectPlacement() throws Exception {
         assertSyntaxError(
-                "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m order by t) order by a",
+                "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m align to first observation order by t) order by a",
                 63,
                 "at least one aggregation function must be present",
                 modelOf("tab")
@@ -7587,7 +7587,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByNoAggregate() throws Exception {
-        assertSyntaxError("select x,y from tab sample by 2m", 30, "at least one",
+        assertSyntaxError("select x,y from tab sample by 2m align to first observation", 30, "at least one",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -7609,7 +7609,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByTimestampAscOrder() throws Exception {
         assertQuery(
                 "select-group-by x, sum(y) sum from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) sample by 2m",
-                "select x,sum(y) from (tab order by ts asc) sample by 2m",
+                "select x,sum(y) from (tab order by ts asc) sample by 2m align to first observation",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -7621,7 +7621,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByTimestampAscOrderWithJoin() throws Exception {
         assertQuery(
                 "select-group-by x, sum(y) sum from (select-choose [tab.x x, tab.y y] tab.x x, tab.y y from (select [x, y] from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) tab join select [x] from tab2 on tab2.x = tab.x) tab) tab sample by 2m",
-                "select tab.x,sum(y) from (tab order by ts asc) tab join tab2 on (x) sample by 2m",
+                "select tab.x,sum(y) from (tab order by ts asc) tab join tab2 on (x) sample by 2m align to first observation",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -8984,7 +8984,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "    0.0 AS spot_price \n" +
                         "FROM market_updates \n" +
                         "WHERE market_type = 'futures' \n" +
-                        "SAMPLE BY 1m \n" +
+                        "SAMPLE BY 1m ALIGN TO FIRST OBSERVATION\n" +
                         "UNION ALL\n" +
                         "SELECT \n" +
                         "    ts, \n" +
@@ -8992,7 +8992,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "    avg(bid_price) AS spot_price\n" +
                         "FROM market_updates\n" +
                         "WHERE market_type = 'spot' \n" +
-                        "SAMPLE BY 1m",
+                        "SAMPLE BY 1m ALIGN TO FIRST OBSERVATION",
                 modelOf("market_updates")
                         .col("bid_price", ColumnType.DOUBLE)
                         .col("market_type", ColumnType.SYMBOL)
@@ -9003,7 +9003,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionDifferentColumnCount() throws Exception {
         assertSyntaxError(
-                "select x from (select * from a union select * from b union all select sum(z) from (c order by t) timestamp(t) sample by 6h) order by x",
+                "select x from (select * from a union select * from b union all select sum(z) from (c order by t) timestamp(t) sample by 6h align to first observation) order by x",
                 63,
                 "queries have different number of columns",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -9082,7 +9082,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "union " +
                         "select * from b " +
                         "union all " +
-                        "select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h" +
+                        "select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h align to first observation" +
                         ") order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -9131,7 +9131,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "union all select-virtual [1 1, sum] 1 1, sum from (select-group-by [sum(z) sum] sum(z) sum " +
                         "from (select-choose [t, z] z, t from (select [t, z] from c) order by t) timestamp (t) sample by 6h)) " +
                         "order by x",
-                "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h) order by x",
+                "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h align to first observation) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("c").col("z", ColumnType.INT).col("t", ColumnType.TIMESTAMP)

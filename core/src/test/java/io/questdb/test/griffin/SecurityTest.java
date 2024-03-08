@@ -824,7 +824,7 @@ public class SecurityTest extends AbstractCairoTest {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none)",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none) ALIGN TO FIRST OBSERVATION",
                         null,
                         false,
                         readOnlyExecutionContext

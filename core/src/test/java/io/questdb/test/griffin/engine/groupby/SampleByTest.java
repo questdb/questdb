@@ -2892,7 +2892,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery("ts\ts\tfirst\n" +
                             "2022-12-01T01:11:00.000000Z\tB\t3\n" +
                             "2022-12-01T01:41:00.000000Z\tB\t4\n",
-                    "select * from (select ts, s, first(v) from tab sample by 30m fill(prev)) where s = 'B' ",
+                    "select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B' ",
                     "ts", false
             );
         });
@@ -2917,7 +2917,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             assertQuery("ts\tfirst\n" +
                             "2022-12-01T01:40:00.000000Z\t4\n",
-                    "select * from (select ts, first(v) from tab sample by 30m fill(prev)) where ts > '2022-12-01T01:10:00.000000Z' ",
+                    "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z' ",
                     "ts", false
             );
         });
@@ -2936,7 +2936,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "FROM x " +
                         "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
                         "AND s2 = ('foo') " +
-                        "SAMPLE BY 5m " +
+                        "SAMPLE BY 5m ALIGN TO FIRST OBSERVATION " +
                         "GROUP BY s1;",
                 "create table x as " +
                         "(" +
@@ -2949,6 +2949,32 @@ public class SampleByTest extends AbstractCairoTest {
                         "), index(s1), index(s2) timestamp(ts) partition by DAY",
                 null,
                 false
+        );
+
+        assertQuery(
+                "time\ts1\tdd\n" +
+                        "2023-05-16T00:04:00.000000Z\ta\tNaN\n" +
+                        "2023-05-16T00:05:00.000000Z\ta\t0.5243722859289777\n" +
+                        "2023-05-16T00:08:00.000000Z\tc\t0.1985581797355932\n" +
+                        "2023-05-16T00:07:00.000000Z\tb\t0.6778564558839208\n" +
+                        "2023-05-16T00:10:00.000000Z\tb\t0.21583224269349388\n",
+                "SELECT last(ts) as time, s1, last(d1) as dd " +
+                        "FROM x " +
+                        "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
+                        "AND s2 = ('foo') " +
+                        "SAMPLE BY 5m ALIGN TO CALENDAR " +
+                        "GROUP BY s1;",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_symbol('a','b','c') s1," +
+                        "   rnd_symbol('foo','bar') s2," +
+                        "   rnd_double(1) d1," +
+                        "   timestamp_sequence('2023-05-16T00:00:00.00000Z', 60*1000000L) ts" +
+                        "   from long_sequence(100)" +
+                        "), index(s1), index(s2) timestamp(ts) partition by DAY",
+                null,
+                true
         );
     }
 
@@ -3251,24 +3277,28 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByMicrosFillNoneNotKeyedEmpty() throws Exception {
+        String expected = "sum\tk\n";
+        String ddl =  "create table x" +
+                "(" +
+                " a double," +
+                " b symbol," +
+                " k timestamp" +
+                ") timestamp(k) partition by NONE";
+        String ddl2 = "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(277200000000, 100) k" +
+                " from" +
+                " long_sequence(30)" +
+                ") timestamp(k)";
+
         assertQuery(
-                "sum\tk\n",
-                "select sum(a), k from x sample by 100U fill(none)",
-                "create table x" +
-                        "(" +
-                        " a double," +
-                        " b symbol," +
-                        " k timestamp" +
-                        ") timestamp(k) partition by NONE",
+                expected,
+                "select sum(a), k from x sample by 100U fill(none) align to first observation",
+                ddl,
                 "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 100) k" +
-                        " from" +
-                        " long_sequence(30)" +
-                        ") timestamp(k)",
+                ddl2,
                 "sum\tk\n" +
                         "11.427984775756228\t1970-01-04T05:00:00.000000Z\n" +
                         "42.17768841969397\t1970-01-04T05:00:00.000100Z\n" +
@@ -3302,31 +3332,74 @@ public class SampleByTest extends AbstractCairoTest {
                         "44.80468966861358\t1970-01-04T05:00:00.002900Z\n",
                 false
         );
+
+        assertQuery(
+                expected,
+                "select sum(a), k from x sample by 100U fill(none) align to calendar",
+                ddl,
+                "k",
+                ddl2,
+                "sum\tk\n" +
+                        "11.427984775756228\t1970-01-04T05:00:00.000000Z\n" +
+                        "42.17768841969397\t1970-01-04T05:00:00.000100Z\n" +
+                        "23.90529010846525\t1970-01-04T05:00:00.000200Z\n" +
+                        "70.94360487171201\t1970-01-04T05:00:00.000300Z\n" +
+                        "87.99634725391621\t1970-01-04T05:00:00.000400Z\n" +
+                        "32.881769076795045\t1970-01-04T05:00:00.000500Z\n" +
+                        "97.71103146051203\t1970-01-04T05:00:00.000600Z\n" +
+                        "81.46807944500559\t1970-01-04T05:00:00.000700Z\n" +
+                        "57.93466326862211\t1970-01-04T05:00:00.000800Z\n" +
+                        "12.026122412833129\t1970-01-04T05:00:00.000900Z\n" +
+                        "48.820511018586934\t1970-01-04T05:00:00.001000Z\n" +
+                        "26.922103479744898\t1970-01-04T05:00:00.001100Z\n" +
+                        "52.98405941762054\t1970-01-04T05:00:00.001200Z\n" +
+                        "84.45258177211063\t1970-01-04T05:00:00.001300Z\n" +
+                        "97.5019885372507\t1970-01-04T05:00:00.001400Z\n" +
+                        "49.00510449885239\t1970-01-04T05:00:00.001500Z\n" +
+                        "80.01121139739173\t1970-01-04T05:00:00.001600Z\n" +
+                        "92.050039469858\t1970-01-04T05:00:00.001700Z\n" +
+                        "45.6344569609078\t1970-01-04T05:00:00.001800Z\n" +
+                        "40.455469747939254\t1970-01-04T05:00:00.001900Z\n" +
+                        "56.594291398612405\t1970-01-04T05:00:00.002000Z\n" +
+                        "9.750574414434398\t1970-01-04T05:00:00.002100Z\n" +
+                        "12.105630273556178\t1970-01-04T05:00:00.002200Z\n" +
+                        "57.78947915182423\t1970-01-04T05:00:00.002300Z\n" +
+                        "86.85154305419587\t1970-01-04T05:00:00.002400Z\n" +
+                        "12.02416087573498\t1970-01-04T05:00:00.002500Z\n" +
+                        "49.42890511958454\t1970-01-04T05:00:00.002600Z\n" +
+                        "58.912164838797885\t1970-01-04T05:00:00.002700Z\n" +
+                        "67.52509547112409\t1970-01-04T05:00:00.002800Z\n" +
+                        "44.80468966861358\t1970-01-04T05:00:00.002900Z\n",
+                true
+        );
     }
 
     @Test
     public void testSampleByMillisFillNoneNotKeyedEmpty() throws Exception {
-        assertQuery(
-                "sum\tk\n",
+        String expected = "sum\tk\n";
+        String ddl = "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(172800000000, 100) k" +
+                " from" +
+                " long_sequence(0)" +
+                ") timestamp(k) partition by NONE";
+        String ddl2 = "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(277200000000, 100000) k" +
+                " from" +
+                " long_sequence(30)" +
+                ") timestamp(k)";
+
+        assertQuery(expected,
                 "select sum(a), k from x sample by 100T fill(none) align to first observation",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 100) k" +
-                        " from" +
-                        " long_sequence(0)" +
-                        ") timestamp(k) partition by NONE",
+                ddl,
                 "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 100000) k" +
-                        " from" +
-                        " long_sequence(30)" +
-                        ") timestamp(k)",
+                ddl2,
                 "sum\tk\n" +
                         "0.35983672154330515\t1970-01-04T05:00:00.000000Z\n" +
                         "76.75673070796104\t1970-01-04T05:00:00.100000Z\n" +
@@ -3359,6 +3432,45 @@ public class SampleByTest extends AbstractCairoTest {
                         "62.5966045857722\t1970-01-04T05:00:02.800000Z\n" +
                         "94.55893004802432\t1970-01-04T05:00:02.900000Z\n",
                 false
+        );
+
+        assertQuery(expected,
+                "select sum(a), k from x sample by 100T fill(none) align to calendar",
+                ddl,
+                "k",
+                ddl2,
+                "sum\tk\n" +
+                        "0.35983672154330515\t1970-01-04T05:00:00.000000Z\n" +
+                        "76.75673070796104\t1970-01-04T05:00:00.100000Z\n" +
+                        "62.173267078530984\t1970-01-04T05:00:00.200000Z\n" +
+                        "63.81607531178513\t1970-01-04T05:00:00.300000Z\n" +
+                        "57.93466326862211\t1970-01-04T05:00:00.400000Z\n" +
+                        "12.026122412833129\t1970-01-04T05:00:00.500000Z\n" +
+                        "48.820511018586934\t1970-01-04T05:00:00.600000Z\n" +
+                        "26.922103479744898\t1970-01-04T05:00:00.700000Z\n" +
+                        "52.98405941762054\t1970-01-04T05:00:00.800000Z\n" +
+                        "84.45258177211063\t1970-01-04T05:00:00.900000Z\n" +
+                        "97.5019885372507\t1970-01-04T05:00:01.000000Z\n" +
+                        "49.00510449885239\t1970-01-04T05:00:01.100000Z\n" +
+                        "80.01121139739173\t1970-01-04T05:00:01.200000Z\n" +
+                        "92.050039469858\t1970-01-04T05:00:01.300000Z\n" +
+                        "45.6344569609078\t1970-01-04T05:00:01.400000Z\n" +
+                        "40.455469747939254\t1970-01-04T05:00:01.500000Z\n" +
+                        "56.594291398612405\t1970-01-04T05:00:01.600000Z\n" +
+                        "9.750574414434398\t1970-01-04T05:00:01.700000Z\n" +
+                        "12.105630273556178\t1970-01-04T05:00:01.800000Z\n" +
+                        "57.78947915182423\t1970-01-04T05:00:01.900000Z\n" +
+                        "86.85154305419587\t1970-01-04T05:00:02.000000Z\n" +
+                        "12.02416087573498\t1970-01-04T05:00:02.100000Z\n" +
+                        "49.42890511958454\t1970-01-04T05:00:02.200000Z\n" +
+                        "58.912164838797885\t1970-01-04T05:00:02.300000Z\n" +
+                        "67.52509547112409\t1970-01-04T05:00:02.400000Z\n" +
+                        "44.80468966861358\t1970-01-04T05:00:02.500000Z\n" +
+                        "89.40917126581896\t1970-01-04T05:00:02.600000Z\n" +
+                        "94.41658975532606\t1970-01-04T05:00:02.700000Z\n" +
+                        "62.5966045857722\t1970-01-04T05:00:02.800000Z\n" +
+                        "94.55893004802432\t1970-01-04T05:00:02.900000Z\n",
+                true
         );
     }
 
@@ -10376,6 +10488,17 @@ public class SampleByTest extends AbstractCairoTest {
                             "SAMPLE BY 1h align to first observation\n",
                     "time"
             );
+
+            assertQuery(
+                    "time\tsum\tsum1\tsum2\n" +
+                            "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
+                            "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
+                    "SELECT a.ts as time, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h align to calendar\n",
+                    "time"
+            );
         });
     }
 
@@ -10392,7 +10515,18 @@ public class SampleByTest extends AbstractCairoTest {
                     "SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time\n" +
                             "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
                             "WHERE a.ts = b.ts\n" +
-                            "SAMPLE BY 1h\n",
+                            "SAMPLE BY 1h ALIGN TO FIRST OBSERVATION\n",
+                    "time"
+            );
+
+            assertQuery(
+                    "sum\tsum1\tsum2\ttime\n" +
+                            "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
+                            "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h ALIGN TO CALENDAR\n",
                     "time"
             );
         });
@@ -10411,7 +10545,18 @@ public class SampleByTest extends AbstractCairoTest {
                     "SELECT sum(a.to_grid), a.ts as time, sum(a.from_grid), sum(b.hourly_production)\n" +
                             "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
                             "WHERE a.ts = b.ts\n" +
-                            "SAMPLE BY 1h\n",
+                            "SAMPLE BY 1h ALIGN TO FIRST OBSERVATION\n",
+                    "time"
+            );
+
+            assertQuery(
+                    "sum\ttime\tsum1\tsum2\n" +
+                            "33.423793766512645\t1970-01-01T00:00:00.000000Z\t28.964416248629917\t32.11038924761886\n" +
+                            "20.686394200400652\t1970-01-01T01:00:00.000000Z\t18.863001213785466\t21.027598662521456\n",
+                    "SELECT sum(a.to_grid), a.ts as time, sum(a.from_grid), sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h ALIGN TO CALENDAR\n",
                     "time"
             );
         });
@@ -10430,7 +10575,18 @@ public class SampleByTest extends AbstractCairoTest {
                     "SELECT a.ts, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)\n" +
                             "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
                             "WHERE a.ts = b.ts\n" +
-                            "SAMPLE BY 1h\n",
+                            "SAMPLE BY 1h ALIGN TO FIRST OBSERVATION\n",
+                    "ts"
+            );
+
+            assertQuery(
+                    "ts\tsum\tsum1\tsum2\n" +
+                            "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
+                            "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
+                    "SELECT a.ts, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h ALIGN TO CALENDAR\n",
                     "ts"
             );
         });
@@ -10449,7 +10605,18 @@ public class SampleByTest extends AbstractCairoTest {
                     "SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts\n" +
                             "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
                             "WHERE a.ts = b.ts\n" +
-                            "SAMPLE BY 1h align to first observation\n",
+                            "SAMPLE BY 1h ALIGN TO FIRST OBSERVATION\n",
+                    "ts"
+            );
+
+            assertQuery(
+                    "sum\tsum1\tsum2\tts\n" +
+                            "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
+                            "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h ALIGN TO CALENDAR\n",
                     "ts"
             );
         });
@@ -10462,14 +10629,25 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery(
-                    "sum\tsum1\tts\tsum2\n" +
-                            "33.423793766512645\t28.964416248629917\t1970-01-01T00:00:00.000000Z\t32.11038924761886\n" +
-                            "20.686394200400652\t18.863001213785466\t1970-01-01T01:00:00.000000Z\t21.027598662521456\n",
-                    "SELECT sum(a.to_grid), sum(a.from_grid), a.ts, sum(b.hourly_production)\n" +
+                    "sum\tsum1\tsum2\ttime\n" +
+                            "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
+                            "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time\n" +
                             "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
                             "WHERE a.ts = b.ts\n" +
-                            "SAMPLE BY 1h\n",
-                    "ts"
+                            "SAMPLE BY 1h ALIGN TO FIRST OBSERVATION\n",
+                    "time"
+            );
+
+            assertQuery(
+                    "sum\tsum1\tsum2\ttime\n" +
+                            "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
+                            "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h ALIGN TO CALENDAR\n",
+                    "time"
             );
         });
     }

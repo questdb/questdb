@@ -110,7 +110,7 @@ public class AggregateTest extends AbstractCairoTest {
                 "2020-01-01T00:28:47.990000Z:TIMESTAMP\t51:LONG\n" +
                 "2020-01-02T00:28:47.990000Z:TIMESTAMP\t49:LONG\n";
 
-        String sql = "select ts, count() from tt1 SAMPLE BY d";
+        String sql = "select ts, count() from tt1 SAMPLE BY d ALIGN TO FIRST OBSERVATION";
 
         assertSqlWithTypes(sql, expected);
     }

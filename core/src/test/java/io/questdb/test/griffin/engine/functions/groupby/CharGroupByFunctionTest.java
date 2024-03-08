@@ -64,7 +64,7 @@ public class CharGroupByFunctionTest extends AbstractCairoTest {
 
         assertSql("ts\tmin\tmax\tfirst\tlast\tcount\n" +
                 "2020-01-01T00:28:47.990000Z\t\u0001\t3\t\u0001\t3\t51\n" +
-                "2020-01-02T00:28:47.990000Z\t4\td\t4\td\t49\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d"
+                "2020-01-02T00:28:47.990000Z\t4\td\t4\td\t49\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to first observation"
         );
     }
 }

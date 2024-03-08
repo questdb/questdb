@@ -5022,7 +5022,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "241.248.184.75\t1970-01-01T00:00:00.000001Z\t334\n" +
                         "254.93.251.9\t1970-01-01T00:00:00.000001Z\t810\n" +
                         "255.95.177.227\t1970-01-01T00:00:00.000001Z\t44\n",
-                "select ip, ts, sum(bytes) from test sample by 1y order by 2,1",
+                "select ip, ts, sum(bytes) from test sample by 1y align to first observation order by 2,1",
                 "create table test as " +
                         "(" +
                         "  select" +

@@ -3558,7 +3558,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "   from long_sequence(100)" +
                     ") timestamp(ts) partition by hour");
 
-            String sql = "with yy as (select ts, max(s) s from tab sample by 1h) " +
+            String sql = "with yy as (select ts, max(s) s from tab sample by 1h ALIGN TO FIRST OBSERVATION) " +
                     "select * from yy latest on ts partition by s limit 10";
             assertPlan(
                     sql,
@@ -6268,7 +6268,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleBy() throws Exception {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select first(i) from a sample by 1h",
+                "select first(i) from a sample by 1h ALIGN TO FIRST OBSERVATION",
                 "SampleBy\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
@@ -6370,7 +6370,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "from a " +
                         "where sym in ('S') " +
                         "and   ts > 0::timestamp and ts < 100::timestamp " +
-                        "sample by 1h",
+                        "sample by 1h ALIGN TO FIRST OBSERVATION",
                 "SampleByFirstLast\n" +
                         "  keys: [sym]\n" +
                         "  values: [first(i), last(s), first(l)]\n" +
@@ -6386,7 +6386,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByKeyed0() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, i, first(i) from a sample by 1h",
+                "select l, i, first(i) from a sample by 1h ALIGN TO FIRST OBSERVATION",
                 "SampleBy\n" +
                         "  keys: [l,i]\n" +
                         "  values: [first(i)]\n" +
@@ -6400,7 +6400,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByKeyed1() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, i, first(i) from a sample by 1h",
+                "select l, i, first(i) from a sample by 1h ALIGN TO FIRST OBSERVATION",
                 "SampleBy\n" +
                         "  keys: [l,i]\n" +
                         "  values: [first(i)]\n" +
@@ -7779,7 +7779,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         compile("insert into a select x,x::timestamp from long_sequence(10)");
 
         assertPlan(
-                "select ts, count(*)  from a sample by 1s limit -5",
+                "select ts, count(*)  from a sample by 1s ALIGN TO FIRST OBSERVATION limit -5",
                 "Limit lo: -5\n" +
                         "    SampleBy\n" +
                         "      values: [count(*)]\n" +
