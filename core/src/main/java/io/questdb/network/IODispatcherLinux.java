@@ -282,6 +282,11 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                     pendingHeartbeats.deleteRow(heartbeatRow);
                 }
             } else {
+                if (requestedOperation == IOOperation.READ && suspendEvent == null && context.getSocket().isMorePlaintextBuffered()) {
+                    publishOperation(IOOperation.READ, context);
+                    continue;
+                }
+
                 LOG.debug().$("processing registration [fd=").$(fd)
                         .$(", op=").$(operation)
                         .$(", id=").$(opId).I$();

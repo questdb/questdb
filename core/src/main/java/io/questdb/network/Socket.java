@@ -35,6 +35,7 @@ import org.jetbrains.annotations.Nullable;
  * {@link #close()}: see {@link #of(int)}.
  */
 public interface Socket extends QuietCloseable {
+    int HAS_MORE_PLAINTEXT_FLAG = 1 << 2;
     int READ_FLAG = 1 << 1;
     int WRITE_FLAG = 1;
 
@@ -44,6 +45,16 @@ public interface Socket extends QuietCloseable {
     int getFd();
 
     boolean isClosed();
+
+    /**
+     * Some sockets, like encrypted ones, may have more plaintext in an internal
+     * buffer after a {@link #recv(long, int)} call. This method returns true
+     * if there is more plaintext to read from the buffer.
+     *
+     * @return true if there is more plaintext to read from internal buffer.
+     * @see #recv(long, int)
+     */
+    boolean isMorePlaintextBuffered();
 
     /**
      * @return true if TLS session was already started.
@@ -62,6 +73,10 @@ public interface Socket extends QuietCloseable {
      * Receives plain data into the given buffer from the socket. On encrypted
      * sockets this call includes {@link #tlsIO(int)}, so an extra tlsIO()
      * call is not required.
+     * <p>
+     * If data from the socket won't fit into the provided buffer then the data stay in the
+     * internal buffer and can be read with a subsequent call to this method. Use {@link #isMorePlaintextBuffered()}
+     * to check if there is more data to read.
      *
      * @param bufferPtr pointer to the buffer
      * @param bufferLen buffer length
