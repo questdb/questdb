@@ -411,7 +411,7 @@ public class RecordSinkFactory {
         //   w.putInt(f1.getInt(r));
         //   w.putStr(f2.getStr(r));
         //   ...
-        boolean fnStrAsVarchar = true; // TODO: pass as bitflag
+        boolean fnStrAsVarchar = false; // TODO: pass as bitflag
         for (int i = 0; i < functionSize; i++) {
             final Function func = keyFunctions.getQuick(i);
             final int type = func.getType();
@@ -438,11 +438,10 @@ public class RecordSinkFactory {
                     asm.aload(0);
                     asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
                     asm.aload(1);
+                    asm.invokeInterface(fGetSym, 1);
                     if (fnStrAsVarchar) {
-                        asm.invokeInterface(rGetStr, 1);
                         asm.invokeInterface(wPutStrAsVarchar, 1);
                     } else {
-                        asm.invokeInterface(fGetSym, 1);
                         asm.invokeInterface(wPutStr, 1);
                     }
                     break;
@@ -523,11 +522,10 @@ public class RecordSinkFactory {
                     asm.aload(0);
                     asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
                     asm.aload(1);
+                    asm.invokeInterface(fGetStr, 1);
                     if (fnStrAsVarchar) {
-                        asm.invokeInterface(rGetStr, 1);
                         asm.invokeInterface(wPutStrAsVarchar, 1);
                     } else {
-                        asm.invokeInterface(rGetStr, 1);
                         asm.invokeInterface(wPutStr, 1);
                     }
                     break;
