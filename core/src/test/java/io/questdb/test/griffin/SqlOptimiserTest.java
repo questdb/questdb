@@ -477,6 +477,58 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testOrderingOfSortsInSingleTimestampCase() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
+            insert("insert into a select x::int as i, x::timestamp as ts from long_sequence(10000)");
+
+            assertPlan(
+                    "select * from " +
+                            "(select * from " +
+                            "   (select * from a) " +
+                            "    cross join " +
+                            "   (select * from a) " +
+                            " order by ts desc " +
+                            " limit 10" +
+                            ") " +
+                            "order by ts desc",
+                    "Limit lo: 10\n" +
+                            "    SelectedRecord\n" +
+                            "        Cross Join\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: a\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n"
+            );
+
+            assertQuery("i\tts\ti1\tts1\n" +
+                            "10000\t1970-01-01T00:00:00.010000Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "10000\t1970-01-01T00:00:00.010000Z\t2\t1970-01-01T00:00:00.000002Z\n" +
+                            "10000\t1970-01-01T00:00:00.010000Z\t3\t1970-01-01T00:00:00.000003Z\n" +
+                            "10000\t1970-01-01T00:00:00.010000Z\t4\t1970-01-01T00:00:00.000004Z\n" +
+                            "10000\t1970-01-01T00:00:00.010000Z\t5\t1970-01-01T00:00:00.000005Z\n" +
+                            "10000\t1970-01-01T00:00:00.010000Z\t6\t1970-01-01T00:00:00.000006Z\n" +
+                            "10000\t1970-01-01T00:00:00.010000Z\t7\t1970-01-01T00:00:00.000007Z\n" +
+                            "10000\t1970-01-01T00:00:00.010000Z\t8\t1970-01-01T00:00:00.000008Z\n" +
+                            "10000\t1970-01-01T00:00:00.010000Z\t9\t1970-01-01T00:00:00.000009Z\n" +
+                            "10000\t1970-01-01T00:00:00.010000Z\t10\t1970-01-01T00:00:00.000010Z\n",
+                    "select * from " +
+                            "(select * from " +
+                            "   (select * from a) " +
+                            "    cross join " +
+                            "   (select * from a) " +
+                            " order by ts desc " +
+                            " limit 10" +
+                            ") " +
+                            "order by ts desc",
+                    "ts"
+            );
+        });
+    }
+
     protected QueryModel compileModel(String query, int modelType) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
