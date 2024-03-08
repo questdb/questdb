@@ -4303,7 +4303,36 @@ public class SqlOptimiser implements Mutable {
                 // 3. wrap the result into an order by to maintain the timestamp order, but this can be optional
 
                 // the timestamp could be selected but also aliased
-                CharSequence timestampAlias = model.getColumnNameToAliasMap().get(timestamp.token);
+                CharSequence timestampColumn = timestamp.token;
+                CharSequence timestampAlias = model.getColumnNameToAliasMap().get(timestampColumn);
+
+                if (timestampAlias == null) {
+                    // Let's not give up yet, the timestamp column might be prefixed
+                    // with either table name or table alias
+                    if (nested.getAlias() != null) {
+                        // table is indeed aliased
+                        CharacterStoreEntry e = characterStore.newEntry();
+                        e.put(nested.getAlias().token).putAscii('.').put(timestamp.token);
+                        CharSequence tableAliasPrefixedTimestampColumn = e.toImmutable();
+                        timestampAlias = model.getColumnNameToAliasMap().get(tableAliasPrefixedTimestampColumn);
+                        if (timestampAlias != null) {
+                            timestampColumn = tableAliasPrefixedTimestampColumn;
+                        }
+                    }
+
+                    // still nothing? Let's try table prefix very last time.
+                    if (timestampAlias == null && nested.getTableName() != null) {
+                        CharacterStoreEntry e = characterStore.newEntry();
+                        e.put(nested.getTimestamp()).putAscii('.').put(timestamp.token);
+                        CharSequence tableNamePrefixedTimestampColumn = e.toImmutable();
+                        timestampAlias = model.getColumnNameToAliasMap().get(tableNamePrefixedTimestampColumn);
+
+                        if (timestampAlias != null) {
+                            timestampColumn = tableNamePrefixedTimestampColumn;
+
+                        }
+                    }
+                }
 
                 // These lists collect timestamp copies that we remove from the group-by model.
                 // The goal is to re-populate the wrapper model with the copies in the correct positions.
@@ -4321,7 +4350,7 @@ public class SqlOptimiser implements Mutable {
                     // selected column list. While doing that we also
                     // need to avoid alias conflicts1
 
-                    timestampAlias = createColumnAlias(timestamp.token, model);
+                    timestampAlias = createColumnAlias(timestampColumn, model);
                     model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias));
 
                     timestampOnly = false;
@@ -4340,7 +4369,7 @@ public class SqlOptimiser implements Mutable {
                             // check all literals that refer timestamp column, except the one
                             // with our chosen timestamp alias.
                                 qc.getAst().type == ExpressionNode.LITERAL
-                                        && Chars.equalsIgnoreCase(qc.getAst().token, timestamp.token)
+                                        && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)
                                         && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias)
                         ) {
                             model.removeColumn(i);
@@ -4352,7 +4381,7 @@ public class SqlOptimiser implements Mutable {
                             n--;
                             wrapAction = SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES;
                         } else {
-                            if (!Chars.equalsIgnoreCase(qc.getAst().token, timestamp.token)) {
+                            if (!Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)) {
                                 timestampOnly = false;
                             }
                             i++;
@@ -4381,15 +4410,21 @@ public class SqlOptimiser implements Mutable {
                 lhs.paramCount = 0;
                 lhs.type = CONSTANT;
 
+                final ExpressionNode rhs = expressionNodePool.next();
+                rhs.token = timestampColumn;
+                rhs.position = timestamp.position;
+                rhs.paramCount = 0;
+                rhs.type = LITERAL;
+
                 top.lhs = lhs;
-                top.rhs = timestamp;
+                top.rhs = rhs;
 
                 model.getBottomUpColumns().setQuick(
                         timestampPos,
                         queryColumnPool.next().of(timestampAlias, top)
                 );
 
-                if (timestampOnly) {
+                if (timestampOnly || nested.getGroupBy().size() > 0) {
                     nested.addGroupBy(top);
                 }
 

@@ -2668,7 +2668,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(1000)" +
                         ") timestamp(LastUpdate) partition by NONE",
-                713,
+                740, // this is the correct position of the "timestamp(CountryRegion)" column reference
                 "not a TIMESTAMP"
         );
     }
@@ -2964,16 +2964,8 @@ public class SampleByTest extends AbstractCairoTest {
                         "AND s2 = ('foo') " +
                         "SAMPLE BY 5m ALIGN TO CALENDAR " +
                         "GROUP BY s1;",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        "   rnd_symbol('a','b','c') s1," +
-                        "   rnd_symbol('foo','bar') s2," +
-                        "   rnd_double(1) d1," +
-                        "   timestamp_sequence('2023-05-16T00:00:00.00000Z', 60*1000000L) ts" +
-                        "   from long_sequence(100)" +
-                        "), index(s1), index(s2) timestamp(ts) partition by DAY",
                 null,
+                true,
                 true
         );
     }
@@ -3334,11 +3326,6 @@ public class SampleByTest extends AbstractCairoTest {
         );
 
         assertQuery(
-                expected,
-                "select sum(a), k from x sample by 100U fill(none) align to calendar",
-                ddl,
-                "k",
-                ddl2,
                 "sum\tk\n" +
                         "11.427984775756228\t1970-01-04T05:00:00.000000Z\n" +
                         "42.17768841969397\t1970-01-04T05:00:00.000100Z\n" +
@@ -3370,13 +3357,18 @@ public class SampleByTest extends AbstractCairoTest {
                         "58.912164838797885\t1970-01-04T05:00:00.002700Z\n" +
                         "67.52509547112409\t1970-01-04T05:00:00.002800Z\n" +
                         "44.80468966861358\t1970-01-04T05:00:00.002900Z\n",
+                "select sum(a), k from x sample by 100U fill(none) align to calendar",
+                "k",
+                true,
                 true
         );
     }
 
     @Test
     public void testSampleByMillisFillNoneNotKeyedEmpty() throws Exception {
+
         String expected = "sum\tk\n";
+
         String ddl = "create table x as " +
                 "(" +
                 "select" +
@@ -3395,7 +3387,8 @@ public class SampleByTest extends AbstractCairoTest {
                 " long_sequence(30)" +
                 ") timestamp(k)";
 
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 "select sum(a), k from x sample by 100T fill(none) align to first observation",
                 ddl,
                 "k",
@@ -3434,11 +3427,7 @@ public class SampleByTest extends AbstractCairoTest {
                 false
         );
 
-        assertQuery(expected,
-                "select sum(a), k from x sample by 100T fill(none) align to calendar",
-                ddl,
-                "k",
-                ddl2,
+        assertQuery(
                 "sum\tk\n" +
                         "0.35983672154330515\t1970-01-04T05:00:00.000000Z\n" +
                         "76.75673070796104\t1970-01-04T05:00:00.100000Z\n" +
@@ -3470,6 +3459,10 @@ public class SampleByTest extends AbstractCairoTest {
                         "94.41658975532606\t1970-01-04T05:00:02.700000Z\n" +
                         "62.5966045857722\t1970-01-04T05:00:02.800000Z\n" +
                         "94.55893004802432\t1970-01-04T05:00:02.900000Z\n",
+                "select sum(a), k from x sample by 100T fill(none) align to calendar",
+                null,
+                "k",
+                true,
                 true
         );
     }
@@ -10497,7 +10490,9 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
                             "WHERE a.ts = b.ts\n" +
                             "SAMPLE BY 1h align to calendar\n",
-                    "time"
+                    "time",
+                    true,
+                    true
             );
         });
     }
@@ -10527,7 +10522,9 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
                             "WHERE a.ts = b.ts\n" +
                             "SAMPLE BY 1h ALIGN TO CALENDAR\n",
-                    "time"
+                    "time",
+                    true,
+                    true
             );
         });
     }
@@ -10557,7 +10554,9 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
                             "WHERE a.ts = b.ts\n" +
                             "SAMPLE BY 1h ALIGN TO CALENDAR\n",
-                    "time"
+                    "time",
+                    true,
+                    true
             );
         });
     }
@@ -10587,7 +10586,9 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
                             "WHERE a.ts = b.ts\n" +
                             "SAMPLE BY 1h ALIGN TO CALENDAR\n",
-                    "ts"
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -10617,7 +10618,9 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
                             "WHERE a.ts = b.ts\n" +
                             "SAMPLE BY 1h ALIGN TO CALENDAR\n",
-                    "ts"
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -10647,7 +10650,9 @@ public class SampleByTest extends AbstractCairoTest {
                             "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
                             "WHERE a.ts = b.ts\n" +
                             "SAMPLE BY 1h ALIGN TO CALENDAR\n",
-                    "time"
+                    "time",
+                    true,
+                    true
             );
         });
     }
