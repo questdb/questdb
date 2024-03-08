@@ -247,6 +247,20 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                         .col("y", ColumnType.INT)
                         .timestamp("ts")
         );
+
+        assertUpdate(
+                "update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join select [y] from (select-group-by [first(y) y, ts] ts, first(y) y from (select [y, ts] from tbly timestamp (ts)) sample by 1h) y on y = x))",
+                "update tblx set tt = 1 from (select ts, first(y) as y from tbly SAMPLE BY 1h ALIGN TO CALENDAR) y where x = y",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
     }
 
     @Test
