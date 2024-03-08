@@ -277,7 +277,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         if (value != null) {
             mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
             recordOffset += 8;
-            final long appendAddress = mem.addressOf(varAppendOffset);
+            // appendAddressFor grows the memory if necessary
+            final long appendAddress = mem.appendAddressFor(varAppendOffset, 4 + value.size());
             varAppendOffset += VarcharTypeDriver.varcharAppend(appendAddress, value);
         } else {
             putNull();
