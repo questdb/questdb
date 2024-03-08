@@ -124,8 +124,9 @@ public class RecordSinkFactory {
         final int fGetBin = asm.poolInterfaceMethod(Function.class, "getBin", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/BinarySequence;");
         final int fGetRecord = asm.poolInterfaceMethod(Function.class, "getRecord", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/sql/Record;");
 
-        final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
         final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
+        final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
+        final int wPutIPv4 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putIPv4", "(I)V");
         final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
         final int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong256", "(Lio/questdb/std/Long256;)V");
         final int wPutLong128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong128", "(JJ)V");
@@ -208,7 +209,7 @@ public class RecordSinkFactory {
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetIPv4, 1);
-                    asm.invokeInterface(wPutInt, 1);
+                    asm.invokeInterface(wPutIPv4, 1);
                     break;
                 case ColumnType.SYMBOL:
                     asm.aload(2);
@@ -392,7 +393,7 @@ public class RecordSinkFactory {
                     asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
                     asm.aload(1);
                     asm.invokeInterface(fGetIPv4, 1);
-                    asm.invokeInterface(wPutInt, 1);
+                    asm.invokeInterface(wPutIPv4, 1);
                     break;
                 case ColumnType.SYMBOL:
                     asm.aload(2);

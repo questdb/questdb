@@ -35,7 +35,7 @@ import io.questdb.std.ObjList;
 public class EqIPv4StrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "=(Xs)";
+        return "=(XS)";
     }
 
     @Override
@@ -51,9 +51,9 @@ public class EqIPv4StrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function a = args.getQuick(0);
-        final Function b = args.getQuick(1);
-
-        return EqIPv4FunctionFactory.createHalfConstantFunc(b, a);
+        Function ipv4Func = args.getQuick(0);
+        int strFuncPosition = argPositions.getQuick(1);
+        Function strFunc = args.getQuick(1);
+        return IPv4EqUtils.eqStrIPv4(strFuncPosition, strFunc, ipv4Func);
     }
 }

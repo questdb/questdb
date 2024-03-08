@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.FunctionFactoryDescriptor.replaceSignatureNameAndSwapArgs;
 
@@ -42,6 +43,11 @@ public class SwappingArgsFunctionFactory implements FunctionFactory {
     public SwappingArgsFunctionFactory(String name, FunctionFactory delegate) throws SqlException {
         this.signature = replaceSignatureNameAndSwapArgs(name, delegate.getSignature());
         this.delegate = delegate;
+    }
+
+    @TestOnly
+    public FunctionFactory getDelegate() {
+        return delegate;
     }
 
     @Override
@@ -57,9 +63,12 @@ public class SwappingArgsFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function tmp = args.getQuick(0);
+        Function tmpArg = args.getQuick(0);
         args.setQuick(0, args.getQuick(1));
-        args.setQuick(1, tmp);
+        args.setQuick(1, tmpArg);
+        int tmpPosition = argPositions.getQuick(0);
+        argPositions.setQuick(0, argPositions.getQuick(1));
+        argPositions.setQuick(1, tmpPosition);
         return delegate.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
     }
 }
