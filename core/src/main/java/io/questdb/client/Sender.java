@@ -77,7 +77,7 @@ import java.util.concurrent.TimeUnit;
  * Sender implements the <code>java.io.Closeable</code> interface. Thus, you must call the {@link #close()} method
  * when you no longer need it.
  * <br>
- * Thread-safety: Sender is not thread-safe. Each thread-safe needs its own instance or you have to implement
+ * Thread-safety: Sender is not thread-safe. Each thread-safe needs its own instance, or you have to implement
  * a mechanism for passing Sender instances among thread. An object pool could have this role.
  * <br>
  * Error-handling: Most errors throw an instance of {@link LineSenderException}.
@@ -250,7 +250,7 @@ public interface Sender extends Closeable {
     Sender symbol(CharSequence name, CharSequence value);
 
     /**
-     * Select the table for a new row. This is always the first method to start a error. It's an error to call other
+     * Select the table for a new row. This is always the first method to start an error. It's an error to call other
      * methods without calling this method first.
      *
      * @param table name of the table
@@ -337,29 +337,28 @@ public interface Sender extends Closeable {
      */
     final class LineSenderBuilder {
         private static final int AUTO_FLUSH_DISABLED = 0;
+        private static final int DEFAULT_AUTO_FLUSH_INTERVAL_MILLIS = 10_000;
         private static final int DEFAULT_AUTO_FLUSH_ROWS = 75_000;
-        private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
-        private static final int DEFAULT_AUTO_FLUSH_INTERVAL_MILLIS = 10_000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
+        private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
         private static final int MIN_BUFFER_SIZE = 512 + 1; // challenge size + 1;
         // The PARAMETER_NOT_SET_EXPLICITLY constant is used to detect if a parameter was set explicitly in configuration parameters
         // where it matters. This is needed to detect invalid combinations of parameters. Why?
         // We want to fail-fast even when an explicitly configured options happens to be same value as the default value,
-        // because this still indicates a user error and silently ignoring it could lead to hard to debug issues.
+        // because this still indicates a user error and silently ignoring it could lead to hard-to-debug issues.
         private static final int PARAMETER_NOT_SET_EXPLICITLY = -1;
         private static final int PROTOCOL_HTTP = 1;
         private static final int PROTOCOL_TCP = 0;
-        private int autoFlushRows = PARAMETER_NOT_SET_EXPLICITLY;
         private int autoFlushIntervalMillis = PARAMETER_NOT_SET_EXPLICITLY;
+        private int autoFlushRows = PARAMETER_NOT_SET_EXPLICITLY;
         private int bufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
         private String host;
         private int httpTimeout = PARAMETER_NOT_SET_EXPLICITLY;
-        private long minRequestThroughput = PARAMETER_NOT_SET_EXPLICITLY;
         private String httpToken;
         private String keyId;
         private int maximumBufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
@@ -379,6 +378,7 @@ public interface Sender extends Closeable {
                 return httpTimeout == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_HTTP_TIMEOUT : httpTimeout;
             }
         };
+        private long minRequestThroughput = PARAMETER_NOT_SET_EXPLICITLY;
         private String password;
         private int port = PARAMETER_NOT_SET_EXPLICITLY;
         private PrivateKey privateKey;
@@ -456,12 +456,47 @@ public interface Sender extends Closeable {
         }
 
         /**
+         * Set the interval in milliseconds at which the Sender automatically flushes its buffer.
+         * <br>
+         * It flushes the buffer even when the number of buffered rows is less than the value set by {@link #autoFlushRows(int)}.
+         * This prevents rows from being locally buffered for too long when the rate of incoming data is low.
+         * <p>
+         * <strong>Important:</strong>This option does not cause the Sender to flush the buffer at regular intervals.
+         * Auto-flushing is only triggered when calling {@link #atNow()}, {@link #at(Instant)} or {@link #at(long, ChronoUnit)}.
+         * The Sender will not flush the buffer if no new rows are added even if the auto-flush interval has elapsed.
+         * <p>
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+         * communicating over TCP transport.
+         * <br>
+         * You cannot set this value when auto-flush is disabled. See {@link #disableAutoFlush()}.
+         * <br>
+         * Default value is 10000 milliseconds.
+         *
+         * @param autoFlushIntervalMillis interval at which the Sender automatically flushes it's buffer in milliseconds.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder autoFlushIntervalMillis(int autoFlushIntervalMillis) {
+            if (this.autoFlushIntervalMillis != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("auto flush interval was already configured ")
+                        .put("[autoFlushIntervalMillis=").put(this.autoFlushIntervalMillis).put("]");
+            } else if (this.autoFlushRows == AUTO_FLUSH_DISABLED) {
+                throw new LineSenderException("cannot set auto flush interval when auto-flush is disabled");
+            }
+            if (autoFlushIntervalMillis <= 0) {
+                throw new LineSenderException("auto flush interval cannot be negative ")
+                        .put("[autoFlushIntervalMillis=").put(autoFlushIntervalMillis).put("]");
+            }
+            this.autoFlushIntervalMillis = autoFlushIntervalMillis;
+            return this;
+        }
+
+        /**
          * Set the maximum number of rows that are buffered locally before they are automatically sent to a server.
          * <br>
          * This is only used when communicating over HTTP transport, and it's illegal to call this method when
          * communicating over TCP transport.
          * <br>
-         * The Sender automatically flushes its buffer when the number of accumulated rows reaches the configured value.
+         * The Sender automatically flushes it's buffer when the number of accumulated rows reaches the configured value.
          * You must make sure that the buffer has sufficient capacity to accommodate all locally buffered data.
          * Otherwise, the Sender will throw an exception.
          * <br>
@@ -489,42 +524,6 @@ public interface Sender extends Closeable {
                         .put("[autoFlushRows=").put(autoFlushRows).put("]");
             }
             this.autoFlushRows = autoFlushRows;
-            return this;
-        }
-
-
-        /**
-         * Set the interval in milliseconds at which the Sender automatically flushes its buffer.
-         * <br>
-         * It flushes the buffer even when the number of buffered rows is less than the value set by {@link #autoFlushRows(int)}.
-         * This prevents rows from being locally buffered for too long when the rate of incoming data is low.
-         * <p>
-         * <strong>Important:</strong>This option does not cause the Sender to flush the buffer at regular intervals.
-         * Auto-flushing is only triggered when calling {@link #atNow()}, {@link #at(Instant)} or {@link #at(long, ChronoUnit)}.
-         * The Sender will not flush the buffer if no new rows are added even if the auto-flush interval has elapsed.
-         * <p>
-         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
-         * communicating over TCP transport.
-         * <br>
-         * You cannot set this value when auto-flush is disabled. See {@link #disableAutoFlush()}.
-         * <br>
-         * Default value is 10000 milliseconds.
-         *
-         * @param autoFlushIntervalMillis interval at which the Sender automatically flushes its buffer in milliseconds.
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder autoFlushIntervalMillis(int autoFlushIntervalMillis) {
-            if (this.autoFlushIntervalMillis != PARAMETER_NOT_SET_EXPLICITLY) {
-                throw new LineSenderException("auto flush interval was already configured ")
-                        .put("[autoFlushIntervalMillis=").put(this.autoFlushIntervalMillis).put("]");
-            } else if (this.autoFlushRows == AUTO_FLUSH_DISABLED) {
-                throw new LineSenderException("cannot set auto flush interval when auto-flush is disabled");
-            }
-            if (autoFlushIntervalMillis <= 0) {
-                throw new LineSenderException("auto flush interval cannot be negative ")
-                        .put("[autoFlushIntervalMillis=").put(autoFlushIntervalMillis).put("]");
-            }
-            this.autoFlushIntervalMillis = autoFlushIntervalMillis;
             return this;
         }
 
@@ -903,36 +902,9 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Minimum expected throughput in bytes per second for HTTP requests.
-         * <br>
-         * If the throughput is lower than this value, the connection will time out.
-         * The value is expressed as a number of bytes per second. This is used to calculate additional request timeout,
-         * on top of {@link #httpTimeoutMillis(int)}
-         * <br>
-         * This is useful when you are sending large batches of data, and you want to ensure that the connection
-         * does not time out while sending the batch. Setting this to 0 disables the throughput calculation and the
-         * connection will only time out based on the {@link #httpTimeoutMillis(int)} value.
-         * <p>
-         * The default is 100 KiB/s.
-         * This is only used when communicating over HTTP transport and it's illegal to call this method when
-         * communicating over TCP transport.
-         *
-         * @param minRequestThroughput minimum expected throughput in bytes per second for HTTP requests.
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder minRequestThroughput(int minRequestThroughput) {
-            if (minRequestThroughput < 1) {
-                throw new LineSenderException("minimum request throughput must not be negative ")
-                        .put("[minRequestThroughput=").put(minRequestThroughput).put("]");
-            }
-            this.minRequestThroughput = minRequestThroughput;
-            return this;
-        }
-
-        /**
          * Set timeout is milliseconds for HTTP requests.
          * <br>
-         * This is only used when communicating over HTTP transport and it's illegal to call this method when
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
          * communicating over TCP transport.
          *
          * @param httpTimeoutMillis timeout is milliseconds for HTTP requests.
@@ -1029,6 +1001,33 @@ public interface Sender extends Closeable {
                         .put("]");
             }
             this.maximumBufferCapacity = maximumBufferCapacity;
+            return this;
+        }
+
+        /**
+         * Minimum expected throughput in bytes per second for HTTP requests.
+         * <br>
+         * If the throughput is lower than this value, the connection will time out.
+         * The value is expressed as a number of bytes per second. This is used to calculate additional request timeout,
+         * on top of {@link #httpTimeoutMillis(int)}
+         * <br>
+         * This is useful when you are sending large batches of data, and you want to ensure that the connection
+         * does not time out while sending the batch. Setting this to 0 disables the throughput calculation and the
+         * connection will only time out based on the {@link #httpTimeoutMillis(int)} value.
+         * <p>
+         * The default is 100 KiB/s.
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+         * communicating over TCP transport.
+         *
+         * @param minRequestThroughput minimum expected throughput in bytes per second for HTTP requests.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder minRequestThroughput(int minRequestThroughput) {
+            if (minRequestThroughput < 1) {
+                throw new LineSenderException("minimum request throughput must not be negative ")
+                        .put("[minRequestThroughput=").put(minRequestThroughput).put("]");
+            }
+            this.minRequestThroughput = minRequestThroughput;
             return this;
         }
 

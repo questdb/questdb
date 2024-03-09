@@ -56,22 +56,22 @@ public final class LineHttpSender implements Sender {
     private final String authToken;
     private final int autoFlushRows;
     private final int baseTimeoutMillis;
+    private final long flushIntervalNanos;
     private final String host;
     private final long maxRetriesNanos;
     private final long minRequestThroughput;
     private final String password;
     private final int port;
     private final CharSequence questdbVersion;
-    private final long flushIntervalNanos;
     private final Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
     private final StringSink sink = new StringSink();
     private final String url;
     private final String username;
     private HttpClient client;
     private boolean closed;
+    private long flushAfterNanos = Long.MAX_VALUE;
     private JsonErrorParser jsonErrorParser;
     private long pendingRows;
-    private long flushAfterNanos = Long.MAX_VALUE;
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
 
@@ -140,20 +140,6 @@ public final class LineHttpSender implements Sender {
         }
     }
 
-    /**
-     * @return true if flush is required
-     */
-    private boolean rowAdded() {
-        long nowNanos = System.nanoTime();
-        if (flushAfterNanos == Long.MAX_VALUE) {
-            flushAfterNanos = nowNanos + flushIntervalNanos;
-        } else if (flushAfterNanos - nowNanos < 0) {
-            return true;
-        }
-        pendingRows++;
-        return pendingRows == autoFlushRows;
-    }
-
     @Override
     public Sender boolColumn(CharSequence name, boolean value) {
         writeFieldName(name);
@@ -199,13 +185,12 @@ public final class LineHttpSender implements Sender {
     }
 
     @TestOnly
-    public Sender putRawMessage(CharSequence msg) {
+    public void putRawMessage(CharSequence msg) {
         request.put(msg); // message must include trailing \n
         state = RequestState.EMPTY;
         if (rowAdded()) {
             flush();
         }
-        return this;
     }
 
     @Override
@@ -470,6 +455,20 @@ public final class LineHttpSender implements Sender {
         }
         r.withContent();
         return r;
+    }
+
+    /**
+     * @return true if flush is required
+     */
+    private boolean rowAdded() {
+        long nowNanos = System.nanoTime();
+        if (flushAfterNanos == Long.MAX_VALUE) {
+            flushAfterNanos = nowNanos + flushIntervalNanos;
+        } else if (flushAfterNanos - nowNanos < 0) {
+            return true;
+        }
+        pendingRows++;
+        return pendingRows == autoFlushRows;
     }
 
     private void throwOnHttpErrorResponse(DirectUtf8Sequence statusCode, HttpClient.ResponseHeaders response) {

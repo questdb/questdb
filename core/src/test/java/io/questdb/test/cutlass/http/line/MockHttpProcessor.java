@@ -75,9 +75,11 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         return this;
     }
 
-    public MockHttpProcessor keepReplyingWithStatus(int statusCode) {
+    public MockHttpProcessor keepReplyingWithContent(int statusCode, String responseContent, String contentType) {
         Response response = new Response();
         response.responseStatusCode = statusCode;
+        response.responseContent = responseContent;
+        response.contentType = contentType;
         lastResortResponse = response;
 
         expectedRequests.add(expectedRequest);
@@ -86,11 +88,9 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
         return this;
     }
 
-    public MockHttpProcessor keepReplyingWithContent(int statusCode, String responseContent, String contentType) {
+    public MockHttpProcessor keepReplyingWithStatus(int statusCode) {
         Response response = new Response();
         response.responseStatusCode = statusCode;
-        response.responseContent = responseContent;
-        response.contentType = contentType;
         lastResortResponse = response;
 
         expectedRequests.add(expectedRequest);

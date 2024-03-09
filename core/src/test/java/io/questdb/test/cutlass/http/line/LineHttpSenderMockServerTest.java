@@ -55,6 +55,21 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     private static final Metrics metrics = Metrics.enabled();
 
     @Test
+    public void testAutoFlushInterval() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor().keepReplyingWithStatus(204);
+
+        testWithMock(mockHttpProcessor, sender -> {
+            for (int i = 0; i < 20; i++) {
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .doubleColumn("x", 1.0)
+                        .atNow();
+                Os.sleep(1);
+            }
+        }, DEFAULT_FACTORY.andThen(b -> b.autoFlushRows(Integer.MAX_VALUE).autoFlushIntervalMillis(1)), true);
+    }
+
+    @Test
     public void testAutoFlushRows() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test x=1.0\n")
@@ -87,21 +102,6 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
-    public void testAutoFlushInterval() throws Exception {
-        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor().keepReplyingWithStatus(204);
-
-        testWithMock(mockHttpProcessor, sender -> {
-            for (int i = 0; i < 20; i++) {
-                sender.table("test")
-                        .symbol("sym", "bol")
-                        .doubleColumn("x", 1.0)
-                        .atNow();
-                Os.sleep(1);
-            }
-        }, DEFAULT_FACTORY.andThen(b -> b.autoFlushRows(Integer.MAX_VALUE).autoFlushIntervalMillis(1)), true);
-    }
-
-    @Test
     public void testBadJsonError() throws Exception {
         String badJsonResponse = "{\"foo\": \"bar\"}";
 
@@ -120,12 +120,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .withExpectedHeader("Authorization", "Basic QWxhZGRpbjpPcGVuU2VzYW1l")
                 .replyWithStatus(204);
-        testWithMock(mockHttpProcessor, sender -> {
-            sender.table("test")
-                    .symbol("sym", "bol")
-                    .doubleColumn("x", 1.0)
-                    .atNow();
-        }, DEFAULT_FACTORY.andThen(b -> b.httpUsernamePassword("Aladdin", "OpenSesame")));
+        testWithMock(mockHttpProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow(), DEFAULT_FACTORY.andThen(b -> b.httpUsernamePassword("Aladdin", "OpenSesame")));
     }
 
     @Test
@@ -134,12 +132,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("Authorization", "Basic QWxhZGRpbjo7T3BlbjtTZXNhbWU7Ow==")
                 .replyWithStatus(204);
-        testWithMock(mockHttpProcessor, sender -> {
-            sender.table("test")
-                    .symbol("sym", "bol")
-                    .doubleColumn("x", 1.0)
-                    .atNow();
-        }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";username=Aladdin;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+        testWithMock(mockHttpProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow(), port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";username=Aladdin;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
@@ -148,12 +144,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("Authorization", "Basic QWxhZGRpbjo7T3BlbjtTZXNhbWU7Ow==")
                 .replyWithStatus(204);
-        testWithMock(mockHttpProcessor, sender -> {
-            sender.table("test")
-                    .symbol("sym", "bol")
-                    .doubleColumn("x", 1.0)
-                    .atNow();
-        }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+        testWithMock(mockHttpProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow(), port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
@@ -204,6 +198,38 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
+    public void testMinRequestThroughput() throws Exception {
+        MockHttpProcessor mock = new MockHttpProcessor()
+                .delayedReplyWithStatus(204, 1000);
+
+        testWithMock(mock, sender -> {
+                    sender.table("test")
+                            .symbol("sym", "bol")
+                            .doubleColumn("x", 1.0)
+                            .atNow();
+
+                    sender.flush();
+                }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(1).minRequestThroughput(1).retryTimeoutMillis(0)) // 1ms base timeout and 1 byte per second to extend the timeout
+        );
+    }
+
+    @Test
+    public void testMinRequestThroughputWithConfigString() throws Exception {
+        MockHttpProcessor mock = new MockHttpProcessor()
+                .delayedReplyWithStatus(204, 1000);
+
+        testWithMock(mock, sender -> {
+                    sender.table("test")
+                            .symbol("sym", "bol")
+                            .doubleColumn("x", 1.0)
+                            .atNow();
+
+                    sender.flush();
+                }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;") // 1ms base timeout and 1 byte per second to extend the timeout
+        );
+    }
+
+    @Test
     public void testNoConnection() {
         try (Sender sender = Sender.builder()
                 .address("127.0.0.1:1")
@@ -238,12 +264,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("Host", "localhost:9001")
                 .replyWithStatus(204);
 
-        testWithMock(mockHttpProcessor, sender -> {
-            sender.table("test")
-                    .symbol("sym", "bol")
-                    .doubleColumn("x", 1.0)
-                    .atNow();
-        });
+        testWithMock(mockHttpProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow());
     }
 
     @Test
@@ -356,38 +380,6 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
-    public void testMinRequestThroughputWithConfigString() throws Exception {
-        MockHttpProcessor mock = new MockHttpProcessor()
-                .delayedReplyWithStatus(204, 1000);
-
-        testWithMock(mock, sender -> {
-                    sender.table("test")
-                            .symbol("sym", "bol")
-                            .doubleColumn("x", 1.0)
-                            .atNow();
-
-                    sender.flush();
-                }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;") // 1ms base timeout and 1 byte per second to extend the timeout
-        );
-    }
-
-    @Test
-    public void testMinRequestThroughput() throws Exception {
-        MockHttpProcessor mock = new MockHttpProcessor()
-                .delayedReplyWithStatus(204, 1000);
-
-        testWithMock(mock, sender -> {
-                    sender.table("test")
-                            .symbol("sym", "bol")
-                            .doubleColumn("x", 1.0)
-                            .atNow();
-
-                    sender.flush();
-                }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(1).minRequestThroughput(1).retryTimeoutMillis(0)) // 1ms base timeout and 1 byte per second to extend the timeout
-        );
-    }
-
-    @Test
     public void testTokenAuth() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test,sym=bol x=1.0\n")
@@ -395,12 +387,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("Authorization", "Bearer 0123456789")
                 .replyWithStatus(204);
 
-        testWithMock(mockHttpProcessor, sender -> {
-            sender.table("test")
-                    .symbol("sym", "bol")
-                    .doubleColumn("x", 1.0)
-                    .atNow();
-        }, DEFAULT_FACTORY.andThen(b -> b.httpToken("0123456789")));
+        testWithMock(mockHttpProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow(), DEFAULT_FACTORY.andThen(b -> b.httpToken("0123456789")));
     }
 
     @Test
