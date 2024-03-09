@@ -74,19 +74,14 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFillNoneRecordCursorReleasesMemoryOnCloseFirstObservation() throws Exception {
-        testSampleByCursorReleasesMemoryOnClose("", SampleByFillNoneRecordCursorFactory.class, "FIRST OBSERVATION");
-
-    }
-
-    @Test
     public void testSampleByFillNoneRecordCursorReleasesMemoryOnCloseCalendar() throws Exception {
         testSampleByCursorReleasesMemoryOnClose("", SelectedRecordCursorFactory.class, "CALENDAR");
     }
 
     @Test
-    public void testSampleByFillNullRecordCursorReleasesMemoryOnCloseFirstObservation() throws Exception { //prev / value
-        testSampleByCursorReleasesMemoryOnClose("FILL(null)", SampleByFillNullRecordCursorFactory.class, "FIRST OBSERVATION");
+    public void testSampleByFillNoneRecordCursorReleasesMemoryOnCloseFirstObservation() throws Exception {
+        testSampleByCursorReleasesMemoryOnClose("", SampleByFillNoneRecordCursorFactory.class, "FIRST OBSERVATION");
+
     }
 
     @Test
@@ -95,8 +90,8 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFillPrevRecordCursorReleasesMemoryOnFirstObservation() throws Exception {
-        testSampleByCursorReleasesMemoryOnClose("FILL(prev)", SampleByFillPrevRecordCursorFactory.class, "FIRST OBSERVATION");
+    public void testSampleByFillNullRecordCursorReleasesMemoryOnCloseFirstObservation() throws Exception { //prev / value
+        testSampleByCursorReleasesMemoryOnClose("FILL(null)", SampleByFillNullRecordCursorFactory.class, "FIRST OBSERVATION");
     }
 
     @Test
@@ -105,13 +100,18 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFillValueRecordCursorReleasesMemoryOnCloseFirstObservtion() throws Exception { //prev / value
-        testSampleByCursorReleasesMemoryOnClose("FILL(10)", SampleByFillValueRecordCursorFactory.class, "FIRST OBSERVATION");
+    public void testSampleByFillPrevRecordCursorReleasesMemoryOnFirstObservation() throws Exception {
+        testSampleByCursorReleasesMemoryOnClose("FILL(prev)", SampleByFillPrevRecordCursorFactory.class, "FIRST OBSERVATION");
     }
 
     @Test
     public void testSampleByFillValueRecordCursorReleasesMemoryOnCloseCalendar() throws Exception { //prev / value
         testSampleByCursorReleasesMemoryOnClose("FILL(10)", SampleByFillValueRecordCursorFactory.class, "CALENDAR");
+    }
+
+    @Test
+    public void testSampleByFillValueRecordCursorReleasesMemoryOnCloseFirstObservtion() throws Exception { //prev / value
+        testSampleByCursorReleasesMemoryOnClose("FILL(10)", SampleByFillValueRecordCursorFactory.class, "FIRST OBSERVATION");
     }
 
     private void testSampleByCursorReleasesMemoryOnClose(String fill, Class<?> expectedFactoryClass, String alignment) throws Exception {
@@ -123,7 +123,7 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
                     " from long_sequence(10000)) timestamp(ts)");
 
             try (RegisteredRecordCursorFactory factory = (RegisteredRecordCursorFactory) select("select sym1, sum(d) from tab SAMPLE BY 1d " + fill + " ALIGN TO " + alignment)) {
-                Assert.assertSame( expectedFactoryClass, factory.getBaseFactory().getClass());
+                Assert.assertSame(expectedFactoryClass, factory.getBaseFactory().getClass());
 
                 long freeDuring;
                 long memDuring;
