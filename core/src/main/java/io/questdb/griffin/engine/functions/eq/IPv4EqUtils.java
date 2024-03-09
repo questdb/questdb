@@ -22,108 +22,86 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.lt;
+package io.questdb.griffin.engine.functions.eq;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
-public class LtStrIPv4FunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "<(SX)";
+/**
+ * Specialized functions for comparing IPv4s with Strings.
+ */
+final class IPv4EqUtils {
+
+    private IPv4EqUtils() {
     }
 
-    @Override
-    public boolean isBoolean() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        final int strFuncPosition = argPositions.getQuick(0);
-        final Function strFunc = args.getQuick(0);
-        final Function ipv4Func = args.getQuick(1);
+    static @NotNull BooleanFunction eqStrIPv4(int strFuncPosition, Function strFunc, Function ipv4Func) throws SqlException {
         if (strFunc.isConstant()) {
-            int constIPv4 = strFunc.getIPv4(null);
-            return new ConstStrFunc(constIPv4, ipv4Func);
+            int ipv4 = strFunc.getIPv4(null);
+            return new ConstStrFunc(ipv4, ipv4Func);
         } else if (strFunc.isRuntimeConstant()) {
             return new RuntimeConstStrFunc(strFunc, ipv4Func);
         }
         throw SqlException.$(strFuncPosition, "STRING constant expected");
     }
 
+    /**
+     * The string function is constant and the IPv4 function is not constant.
+     */
     private static class ConstStrFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
         private final int constIPv4;
+        private final Function ipv4Func;
 
-        public ConstStrFunc(int constIPv4, Function arg) {
+        private ConstStrFunc(int constIPv4, Function ipv4Func) {
             this.constIPv4 = constIPv4;
-            this.arg = arg;
+            this.ipv4Func = ipv4Func;
         }
 
         @Override
         public Function getArg() {
-            return arg;
+            return ipv4Func;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            int ipv4 = arg.getIPv4(rec);
-            if (ipv4 != Numbers.IPv4_NULL) {
-                return negated == (Numbers.ipv4ToLong(constIPv4) >= Numbers.ipv4ToLong(ipv4));
-            }
-            return false;
+            return negated != (constIPv4 == ipv4Func.getIPv4(rec));
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.valIPv4(constIPv4);
+            sink.val(ipv4Func);
             if (negated) {
-                sink.val(">=");
-            } else {
-                sink.val('<');
+                sink.val('!');
             }
-            sink.val(arg);
+            sink.val("='").valIPv4(constIPv4).val('\'');
         }
     }
 
+    /**
+     * The string function is runtime constant and the IPv4 function is not constant.
+     */
     private static class RuntimeConstStrFunc extends NegatableBooleanFunction implements BinaryFunction {
         private final Function ipv4Func;
         private final Function strFunc;
         private int constIPv4;
 
-        public RuntimeConstStrFunc(Function strFunc, Function ipv4Func) {
+        private RuntimeConstStrFunc(Function strFunc, Function ipv4Func) {
             this.strFunc = strFunc;
             this.ipv4Func = ipv4Func;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            if (constIPv4 != Numbers.IPv4_NULL) {
-                int ipv4 = ipv4Func.getIPv4(rec);
-                if (ipv4 != Numbers.IPv4_NULL) {
-                    return negated == (Numbers.ipv4ToLong(constIPv4) >= Numbers.ipv4ToLong(ipv4));
-                }
-            }
-            return false;
+            return negated != (constIPv4 == ipv4Func.getIPv4(rec));
         }
 
         @Override
@@ -144,13 +122,11 @@ public class LtStrIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(strFunc);
-            if (negated) {
-                sink.val(">=");
-            } else {
-                sink.val('<');
-            }
             sink.val(ipv4Func);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val("='").val(strFunc).val('\'');
         }
     }
 }

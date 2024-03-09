@@ -33,6 +33,8 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
+import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
@@ -47,6 +49,8 @@ import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.date.*;
 import io.questdb.griffin.engine.functions.eq.*;
+import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
+import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
@@ -2303,7 +2307,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 args.add(new CharConstant('s'));
                             } else if (factory instanceof EqIntStrCFunctionFactory && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("1"));
-                            } else if (factory instanceof EqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                            } else if (isIPv4StrFactory(factory) && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("10.8.6.5"));
                             } else if (factory instanceof ContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("12.6.5.10/24"));
@@ -2334,7 +2338,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                         argPositions.setAll(args.size(), 0);
 
-                        //TODO: test with partition by, order by and various frame modes
+                        // TODO: test with partition by, order by and various frame modes
                         if (factory.isWindow()) {
                             sqlExecutionContext.configureWindowContext(null, null, null, false, DataFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
                         }
@@ -10060,6 +10064,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 sqlExecutionContext.setJitMode(jitMode);
             }
         });
+    }
+
+    private static boolean isIPv4StrFactory(FunctionFactory factory) {
+        if (factory instanceof SwappingArgsFunctionFactory) {
+            return isIPv4StrFactory(((SwappingArgsFunctionFactory) factory).getDelegate());
+        }
+        if (factory instanceof NegatingFunctionFactory) {
+            return isIPv4StrFactory(((NegatingFunctionFactory) factory).getDelegate());
+        }
+        return factory instanceof EqIPv4FunctionFactory
+                || factory instanceof EqStrIPv4FunctionFactory
+                || factory instanceof EqIPv4StrFunctionFactory
+                || factory instanceof LtIPv4StrFunctionFactory
+                || factory instanceof LtStrIPv4FunctionFactory;
     }
 
     private void assertBindVarPlan(String type) throws SqlException {

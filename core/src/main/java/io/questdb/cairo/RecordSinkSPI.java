@@ -29,6 +29,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 
 public interface RecordSinkSPI {
+
     void putBin(BinarySequence value);
 
     void putBool(boolean value);
@@ -42,6 +43,8 @@ public interface RecordSinkSPI {
     void putDouble(double value);
 
     void putFloat(float value);
+
+    void putIPv4(int value);
 
     void putInt(int value);
 

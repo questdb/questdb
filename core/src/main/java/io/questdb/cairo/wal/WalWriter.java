@@ -1093,6 +1093,10 @@ public class WalWriter implements TableWriterAPI {
         return metadata.getMetadataVersion();
     }
 
+    private long getDataAppendPageSize() {
+        return tableToken.isSystem() ? configuration.getSystemWalDataAppendPageSize() : configuration.getWalDataAppendPageSize();
+    }
+
     private MemoryMA getPrimaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getPrimaryColumnIndex(column));
@@ -1164,10 +1168,6 @@ public class WalWriter implements TableWriterAPI {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL directory: ").put(path);
         }
         path.trimTo(walDirLength);
-    }
-
-    private long getDataAppendPageSize() {
-        return tableToken.isSystem() ? configuration.getSystemWalDataAppendPageSize() : configuration.getWalDataAppendPageSize();
     }
 
     private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
@@ -1940,6 +1940,11 @@ public class WalWriter implements TableWriterAPI {
         public void putGeoStr(int columnIndex, CharSequence hash) {
             final int type = metadata.getColumnType(columnIndex);
             WriterRowUtils.putGeoStr(columnIndex, hash, type, this);
+        }
+
+        @Override
+        public void putIPv4(int columnIndex, int value) {
+            putInt(columnIndex, value);
         }
 
         @Override
