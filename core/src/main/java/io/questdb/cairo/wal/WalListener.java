@@ -39,4 +39,6 @@ public interface WalListener {
     void tableDropped(TableToken tableToken, long txn, long timestamp);
 
     void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken);
+
+    long getLastProcessedTxn(TableToken tableToken);
 }

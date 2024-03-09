@@ -39,7 +39,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
@@ -51,7 +50,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 
-import java.net.URISyntaxException;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -146,7 +144,7 @@ public class O3Test extends AbstractO3Test {
                         e.printStackTrace();
                         errorCount.incrementAndGet();
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                         LOG.info().$("write is done").$();
                     }
                 });
@@ -2250,7 +2248,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
 
         // merge in the middle, however data prefix is such
         // that we can deal with by reducing column top rather than copying columns
@@ -2446,7 +2444,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
 
         //
         // ----- last partition
@@ -2602,7 +2600,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
 
         //
         // ----- last partition
@@ -2757,7 +2755,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -2897,7 +2895,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -3282,7 +3280,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
 
         compiler.compile(
                 "create table x as (" +
@@ -3725,7 +3723,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table 'привет от штиблет' as (" +
                         "select" +
@@ -5238,7 +5236,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
