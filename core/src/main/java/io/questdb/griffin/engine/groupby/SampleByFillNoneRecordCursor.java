@@ -43,6 +43,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     private boolean isHasNextPending;
     private boolean isMapBuildPending;
     private boolean isOpen;
+    private long rowId;
 
     public SampleByFillNoneRecordCursor(
             CairoConfiguration configuration,
@@ -110,6 +111,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
             map.reopen();
             isOpen = true;
         }
+        rowId = 0;
         isHasNextPending = false;
         isMapBuildPending = true;
     }
@@ -117,6 +119,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     @Override
     public void toTop() {
         super.toTop();
+        rowId = 0;
         isHasNextPending = false;
         isMapBuildPending = true;
     }
@@ -141,9 +144,9 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                     keyMapSink.copy(baseRecord, key);
                     MapValue value = key.createValue();
                     if (value.isNew()) {
-                        groupByFunctionsUpdater.updateNew(value, baseRecord);
+                        groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
                     } else {
-                        groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                     }
                 } else {
                     // map value is conditional and only required when clock goes back

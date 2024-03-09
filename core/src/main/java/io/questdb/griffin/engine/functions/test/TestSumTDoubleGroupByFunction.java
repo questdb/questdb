@@ -52,12 +52,12 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putDouble(valueIndex, arg.getDouble(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + arg.getDouble(record));
     }
 
@@ -82,11 +82,6 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
@@ -105,5 +100,10 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 }

@@ -97,6 +97,13 @@ public class GroupByCharSinkTest extends AbstractCairoTest {
             try (GroupByAllocator allocator = new GroupByAllocator(config)) {
                 GroupByCharSink sink = new GroupByCharSink();
                 sink.setAllocator(allocator);
+                Assert.assertEquals(0, sink.length());
+
+                for (int i = 0; i < 3; i++) {
+                    sink.put("");
+                    Assert.assertEquals(0, sink.length());
+                }
+
                 int len = 0;
                 for (int i = 0; i < N; i++) {
                     sink.put(Chars.repeat("a", i));

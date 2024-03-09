@@ -28,6 +28,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
+import io.questdb.std.Uuid;
 import io.questdb.std.str.Sinkable;
 
 /**
@@ -113,7 +114,7 @@ public class TextPlanSink extends BasePlanSink {
             this.childIndent = "&nbsp;&nbsp;&nbsp;&nbsp;";
             this.attrIndent = "&nbsp;&nbsp;";
             this.sink = htmlSink;
-        } else {//pg wire
+        } else { // pg wire
             this.childIndent = "    ";
             this.attrIndent = "  ";
             this.sink = textSink;
@@ -192,8 +193,22 @@ public class TextPlanSink extends BasePlanSink {
         return this;
     }
 
+    @Override
+    public PlanSink valIPv4(int ip) {
+        if (ip == Numbers.IPv4_NULL) {
+            sink.put("null");
+        } else {
+            Numbers.intToIPv4Sink(sink, ip);
+        }
+        return this;
+    }
+
     public PlanSink valUuid(long lo, long hi) {
-        Numbers.appendUuid(lo, hi, sink);
+        if (Uuid.isNull(lo, hi)) {
+            sink.put("null");
+        } else {
+            Numbers.appendUuid(lo, hi, sink);
+        }
         return this;
     }
 

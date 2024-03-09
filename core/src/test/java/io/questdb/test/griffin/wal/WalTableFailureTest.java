@@ -996,6 +996,18 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTableDropPartitionFailedDoesNotSuspendTable3() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "alter table " + tableName + " drop partition list '2022'";
+        try {
+            runCheckTableNonSuspended(tableName, query);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-dd' expected, found [ts=2022]");
+        }
+    }
+
+    @Test
     public void testWalTableEmptyUpdateDoesNotSuspendTable() throws Exception {
         String tableName = testName.getMethodName();
         String query = "update " + tableName + " set x = 1 where x < 0";

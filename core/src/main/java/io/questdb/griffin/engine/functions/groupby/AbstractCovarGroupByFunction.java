@@ -54,7 +54,7 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double x = xFunction.getDouble(record);
         final double y = yFunction.getDouble(record);
         mapValue.putDouble(valueIndex, 0);
@@ -68,7 +68,7 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double x = xFunction.getDouble(record);
         final double y = yFunction.getDouble(record);
         if (Numbers.isFinite(x) && Numbers.isFinite(y)) {
@@ -93,11 +93,6 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
 
     @Override
     public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
         return false;
     }
 
@@ -127,6 +122,11 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 
     protected void aggregate(MapValue mapValue, double x, double y) {

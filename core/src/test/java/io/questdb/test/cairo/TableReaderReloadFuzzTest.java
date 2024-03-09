@@ -78,9 +78,8 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     @Test
     public void testExplosion() throws SqlException {
         final String tableName = "exploding";
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).timestamp()) {
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).timestamp();
+        AbstractCairoTest.create(model);
 
         try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
             TableWriter.Row row = writer.newRow(0L);
@@ -157,10 +156,9 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     }
 
     private void createTable() {
-        try (TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.DAY)) {
-            model.timestamp();
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.DAY);
+        model.timestamp();
+        AbstractCairoTest.create(model);
     }
 
     private ObjList<Column> extractLiveColumns(TableRecordMetadata metadata) {

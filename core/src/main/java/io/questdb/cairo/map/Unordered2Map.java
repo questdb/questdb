@@ -215,7 +215,7 @@ public class Unordered2Map implements Map, Reopenable {
     }
 
     @Override
-    public void reopen(int keyCapacity, int pageSize) {
+    public void reopen(int keyCapacity, int heapSize) {
         reopen();
     }
 
@@ -381,6 +381,11 @@ public class Unordered2Map implements Map, Reopenable {
         @Override
         public void putFloat(float value) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putIPv4(int value) {
+            putInt(value);
         }
 
         @Override

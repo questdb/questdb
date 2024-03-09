@@ -133,11 +133,17 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         }
 
         private int compareAsc(SymbolTableEntry e1, SymbolTableEntry e2) {
-            return (e1.value == null && e2.value == null) ? 0 : e1.value == null ? -1 : e1.value.compareTo(e2.value);
+            return (e1.value == null && e2.value == null) ? 0
+                    : e1.value == null ? -1
+                    : e2.value == null ? 1
+                    : e1.value.compareTo(e2.value);
         }
 
         private int compareDesc(SymbolTableEntry e1, SymbolTableEntry e2) {
-            return (e1.value == null && e2.value == null) ? 0 : e1.value == null ? 1 : e2.value.compareTo(e1.value);
+            return (e1.value == null && e2.value == null) ? 0
+                    : e1.value == null ? 1
+                    : e2.value == null ? -1
+                    : e2.value.compareTo(e1.value);
         }
     }
 

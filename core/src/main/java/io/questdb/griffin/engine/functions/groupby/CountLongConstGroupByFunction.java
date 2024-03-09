@@ -37,12 +37,12 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     private int valueIndex;
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, 1);
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.addLong(valueIndex, 1);
     }
 
@@ -54,11 +54,6 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public int getValueIndex() {
         return valueIndex;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return true;
     }
 
     @Override
@@ -96,6 +91,11 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return true;
     }
 
     @Override

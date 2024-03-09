@@ -33,7 +33,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -552,22 +552,19 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testColumnConversion1() throws Exception {
         runInContext(() -> {
-            try (
-                    TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.DAY)
-                            .col("event", ColumnType.SHORT)
-                            .col("id", ColumnType.LONG256)
-                            .col("ts", ColumnType.TIMESTAMP)
-                            .col("float1", ColumnType.FLOAT)
-                            .col("int1", ColumnType.INT)
-                            .col("date1", ColumnType.DATE)
-                            .col("byte1", ColumnType.BYTE)
-                            .timestamp()
-            ) {
-                if (walEnabled) {
-                    model.wal();
-                }
-                CreateTableTestUtils.create(model);
+            TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.DAY)
+                    .col("event", ColumnType.SHORT)
+                    .col("id", ColumnType.LONG256)
+                    .col("ts", ColumnType.TIMESTAMP)
+                    .col("float1", ColumnType.FLOAT)
+                    .col("int1", ColumnType.INT)
+                    .col("date1", ColumnType.DATE)
+                    .col("byte1", ColumnType.BYTE)
+                    .timestamp();
+            if (walEnabled) {
+                model.wal();
             }
+            AbstractCairoTest.create(model);
             microSecondTicks = 1465839830102800L;
             recvBuffer = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i\n" +
                     "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i\n";
@@ -585,11 +582,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testColumnConversion2() throws Exception {
         assumeFalse(walEnabled); // Wal needs partitioning
         runInContext(() -> {
-            try (
-                    TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.NONE).col("l", ColumnType.LONG)
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+            TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.NONE).col("l", ColumnType.LONG);
+            AbstractCairoTest.create(model);
             microSecondTicks = 1465839830102800L;
             recvBuffer = "t_ilp21 l=843530699759026177i\n" +
                     "t_ilp21 l=\"843530699759026178\"\n" +
@@ -1916,17 +1910,14 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     private void addTable(String table) {
-        try (
-                TableModel model = new TableModel(configuration, table, walEnabled ? PartitionBy.DAY : PartitionBy.NONE)
-                        .col("location", ColumnType.SYMBOL)
-                        .col("temperature", ColumnType.DOUBLE)
-                        .timestamp()
-        ) {
-            if (walEnabled) {
-                model.wal();
-            }
-            CreateTableTestUtils.create(model);
+        TableModel model = new TableModel(configuration, table, walEnabled ? PartitionBy.DAY : PartitionBy.NONE)
+                .col("location", ColumnType.SYMBOL)
+                .col("temperature", ColumnType.DOUBLE)
+                .timestamp();
+        if (walEnabled) {
+            model.wal();
         }
+        AbstractCairoTest.create(model);
         engine.releaseInactive();
     }
 

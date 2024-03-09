@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Utf16Sink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
@@ -46,6 +47,11 @@ public class StrColumn extends StrFunction implements ScalarFunction {
             return COLUMNS.getQuick(columnIndex);
         }
         return new StrColumn(columnIndex);
+    }
+
+    @Override
+    public DirectCharSequence getDirectStr(Record rec) {
+        return rec.getDirectStr(columnIndex);
     }
 
     @Override
@@ -70,6 +76,11 @@ public class StrColumn extends StrFunction implements ScalarFunction {
 
     @Override
     public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsDirectStr() {
         return true;
     }
 

@@ -45,7 +45,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
             sum(mapValue, value, 0, 0);
@@ -58,7 +58,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
             sum(mapValue, value, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
@@ -87,11 +87,6 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE); // sum
@@ -114,6 +109,11 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 
     @Override

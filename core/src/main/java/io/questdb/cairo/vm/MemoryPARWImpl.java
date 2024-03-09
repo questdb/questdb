@@ -36,7 +36,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
 
-//paged appendable readable writable
+// paged appendable readable writable
 public class MemoryPARWImpl implements MemoryARW {
     private static final Log LOG = LogFactory.getLog(MemoryPARWImpl.class);
     protected final LongList pages = new LongList(4, 0);
@@ -168,6 +168,12 @@ public class MemoryPARWImpl implements MemoryARW {
             return Unsafe.getUnsafe().getChar(absolutePointer + offset);
         }
         return getChar0(offset);
+    }
+
+    @Override
+    public DirectCharSequence getDirectStr(long offset) {
+        // Paged memory doesn't support stable pointers.
+        throw new UnsupportedOperationException();
     }
 
     public final double getDouble(long offset) {
@@ -344,11 +350,9 @@ public class MemoryPARWImpl implements MemoryARW {
         if (len == TableUtils.NULL_LEN) {
             return null;
         }
-
         if (len == 0) {
             return "";
         }
-
         return view.of(offset + STRING_LENGTH_BYTES, len);
     }
 

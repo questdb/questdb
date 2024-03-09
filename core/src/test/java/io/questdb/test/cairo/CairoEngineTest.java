@@ -42,7 +42,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -165,14 +164,16 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testDuplicateTableCreation() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT)) {
-                CreateTableTestUtils.create(model);
-                try {
-                    createTable(model);
-                    fail("duplicated tables should not be permitted!");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
-                }
+            TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT);
+            AbstractCairoTest.create(model);
+            try (
+                    Path path = new Path();
+                    MemoryMARW mem = Vm.getMARWInstance()
+            ) {
+                engine.createTable(securityContext, mem, path, false, model, false);
+                fail("duplicated tables should not be permitted!");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
             }
         });
     }
@@ -231,40 +232,39 @@ public class CairoEngineTest extends AbstractCairoTest {
             final String tableName = "x";
             final SOCountDownLatch latch = new SOCountDownLatch(1);
             final AtomicReference<Throwable> ref = new AtomicReference<>();
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE) {
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE) {
                 @Override
                 public int getColumnCount() {
                     latch.await();
                     return super.getColumnCount();
                 }
-            }) {
-                final Thread createTableThread = new Thread(() -> {
-                    model.col("a", ColumnType.INT);
-                    try {
-                        createTable(model);
-                    } catch (Throwable th) {
-                        LOG.error().$("Error in thread").$(th).$();
-                        ref.set(th);
-                    } finally {
-                        Path.clearThreadLocals();
-                    }
-                });
-                createTableThread.start();
-
-                waitForTableStatus(TABLE_RESERVED);
-                final TableToken token1 = engine.getTableTokenIfExists(tableName);
-                assertNull(token1);
-
-                latch.countDown();
-
-                waitForTableStatus(TABLE_EXISTS);
-                final TableToken token2 = engine.getTableTokenIfExists(tableName);
-                assertEquals(tableName, token2.getTableName());
-
-                createTableThread.join();
-                if (ref.get() != null) {
-                    fail("Error " + ref.get().getMessage());
+            };
+            final Thread createTableThread = new Thread(() -> {
+                model.col("a", ColumnType.INT);
+                try {
+                    createTable(model);
+                } catch (Throwable th) {
+                    LOG.error().$("Error in thread").$(th).$();
+                    ref.set(th);
+                } finally {
+                    Path.clearThreadLocals();
                 }
+            });
+            createTableThread.start();
+
+            waitForTableStatus(TABLE_RESERVED);
+            final TableToken token1 = engine.getTableTokenIfExists(tableName);
+            assertNull(token1);
+
+            latch.countDown();
+
+            waitForTableStatus(TABLE_EXISTS);
+            final TableToken token2 = engine.getTableTokenIfExists(tableName);
+            assertEquals(tableName, token2.getTableName());
+
+            createTableThread.join();
+            if (ref.get() != null) {
+                fail("Error " + ref.get().getMessage());
             }
         });
     }
@@ -474,9 +474,8 @@ public class CairoEngineTest extends AbstractCairoTest {
     public void testRenameNonExisting() throws Exception {
         assertMemoryLeak(() -> {
 
-            try (TableModel model = new TableModel(configuration, "z", PartitionBy.NONE).col("a", ColumnType.INT)) {
-                CreateTableTestUtils.create(model);
-            }
+            TableModel model = new TableModel(configuration, "z", PartitionBy.NONE).col("a", ColumnType.INT);
+            AbstractCairoTest.create(model);
 
             try (CairoEngine engine = new CairoEngine(configuration); MemoryMARW mem = Vm.getMARWInstance()) {
                 engine.rename(securityContext, path, mem, "x", otherPath, "y");
@@ -519,11 +518,11 @@ public class CairoEngineTest extends AbstractCairoTest {
             // the test relies on negative inactive writer TTL - we want the maintenance job to always close idle writers
             assert engine.getConfiguration().getInactiveWriterTTL() < 0;
 
-            try (WorkerPool workerPool = new TestWorkerPool(1, metrics);
-                 TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                         .col("a", ColumnType.BYTE)
-                         .col("b", ColumnType.STRING)
-                         .timestamp("ts")) {
+            try (WorkerPool workerPool = new TestWorkerPool(1, metrics)) {
+                TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                        .col("a", ColumnType.BYTE)
+                        .col("b", ColumnType.STRING)
+                        .timestamp("ts");
                 Job job = engine.getEngineMaintenanceJob();
                 workerPool.assign(job);
                 workerPool.start();
@@ -575,14 +574,12 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     private TableToken createX(CairoEngine engine) {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT)) {
-            return TestUtils.create(model, engine);
-        }
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT);
+        return TestUtils.create(model, engine);
     }
 
     private TableToken createY(CairoEngine engine) {
-        try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE).col("b", ColumnType.INT)) {
-            return TestUtils.create(model, engine);
-        }
+        TableModel model = new TableModel(configuration, "y", PartitionBy.NONE).col("b", ColumnType.INT);
+        return TestUtils.create(model, engine);
     }
 }

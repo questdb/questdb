@@ -156,11 +156,11 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         try (OperationFuture op = compiler.compile(sink.toString(), context).execute(null)) {
             op.await();
         }
+        TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                .col("l", ColumnType.LONG)
+                .col("s", ColumnType.SYMBOL)
+                .timestamp("ts");
         try (
-                TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                        .col("l", ColumnType.LONG)
-                        .col("s", ColumnType.SYMBOL)
-                        .timestamp("ts");
                 OperationFuture op = compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 10000, "2020-01-01", 100), context).execute(null)
         ) {
             op.await();

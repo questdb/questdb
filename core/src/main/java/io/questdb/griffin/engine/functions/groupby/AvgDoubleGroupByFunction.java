@@ -44,7 +44,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
         if (Numbers.isFinite(d)) {
             mapValue.putDouble(valueIndex, d);
@@ -56,7 +56,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
         if (Numbers.isFinite(d)) {
             mapValue.addDouble(valueIndex, d);
@@ -87,11 +87,6 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public boolean isConstant() {
         return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
@@ -131,5 +126,10 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

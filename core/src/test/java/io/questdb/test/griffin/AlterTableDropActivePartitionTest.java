@@ -35,7 +35,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -182,7 +181,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                     dropPartition(tableName, LastPartitionTs);
                     assertTableX(tableName, TableHeader, EmptyTableMinMaxCount);
                     insert("insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')");
-                    insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')"); // spureous row from the future
+                    insert("insert into " + tableName + " values(1, '2023-10-16T00:00:00.000000Z')"); // spurious row from the future
                     assertSql(TableHeader +
                             "5\t2023-10-15T00:00:00.000000Z\n" +
                             "1\t2023-10-16T00:00:00.000000Z\n", tableName); // new active partition
@@ -747,7 +746,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                             "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
                             "insert into " + tableName + " values(111, '2023-10-15T11:11:11.111111Z')");
 
-                    final String expectedTableInTracsaction = TableHeader +
+                    final String expectedTableInTransaction = TableHeader +
                             "777\t2023-10-13T00:10:00.000000Z\n" +
                             "5\t2023-10-15T00:00:00.000000Z\n" +
                             "888\t2023-10-15T00:00:00.000000Z\n" +
@@ -762,7 +761,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
 
                             Assert.assertEquals(2, reader0.size());
                             Assert.assertEquals(3, reader1.size());
-                            assertSql(expectedTableInTracsaction, tableName);
+                            assertSql(expectedTableInTransaction, tableName);
 
                             dropPartition(tableName, LastPartitionTs);
 
@@ -889,9 +888,8 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
     }
 
     private void createTableX(String tableName, String expected, String... insertStmt) throws SqlException {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp()) {
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp();
+        AbstractCairoTest.create(model);
         txn = 0;
         //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = insertStmt.length; i < n; i++) {

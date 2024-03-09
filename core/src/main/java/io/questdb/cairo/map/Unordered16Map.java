@@ -279,7 +279,7 @@ public class Unordered16Map implements Map, Reopenable {
     }
 
     @Override
-    public void reopen(int keyCapacity, int pageSize) {
+    public void reopen(int keyCapacity, int heapSize) {
         if (memStart == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
             initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);
@@ -574,6 +574,11 @@ public class Unordered16Map implements Map, Reopenable {
         public void putFloat(float value) {
             Unsafe.getUnsafe().putFloat(appendAddress, value);
             appendAddress += 4L;
+        }
+
+        @Override
+        public void putIPv4(int value) {
+            putInt(value);
         }
 
         @Override

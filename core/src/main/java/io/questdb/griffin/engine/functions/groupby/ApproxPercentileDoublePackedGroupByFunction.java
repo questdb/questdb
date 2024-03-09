@@ -63,7 +63,7 @@ public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction 
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final PackedDoubleHistogram histogram;
         if (histograms.size() <= histogramIndex) {
             // We pre-size the histogram for 1000x ratio to avoid resizes in some basic use cases
@@ -83,7 +83,7 @@ public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction 
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final PackedDoubleHistogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
         final double val = exprFunc.getDouble(record);
         if (Numbers.isFinite(val)) {
@@ -140,11 +140,6 @@ public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction 
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return false;
     }
@@ -168,5 +163,10 @@ public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction 
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 }
