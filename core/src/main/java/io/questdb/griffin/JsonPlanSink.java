@@ -252,6 +252,18 @@ public class JsonPlanSink extends BasePlanSink {
     }
 
     @Override
+    public PlanSink valIPv4(int ip) {
+        quoteValue = true;
+        checkType(NODE_VALUE);
+        if (ip == Numbers.IPv4_NULL) {
+            sink.put("null");
+        } else {
+            Numbers.intToIPv4Sink(sink, ip);
+        }
+        return this;
+    }
+
+    @Override
     public PlanSink valUuid(long lo, long hi) {
         quoteValue = true;
         checkType(NODE_VALUE);
