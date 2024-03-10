@@ -578,6 +578,11 @@ public class Unordered16Map implements Map, Reopenable {
         }
 
         @Override
+        public void putIPv4(int value) {
+            putInt(value);
+        }
+
+        @Override
         public void putInt(int value) {
             Unsafe.getUnsafe().putInt(appendAddress, value);
             appendAddress += 4L;

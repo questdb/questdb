@@ -212,6 +212,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
+    public void putIPv4(int value) {
+        putInt(value);
+    }
+
+    @Override
     public void putInt(int value) {
         mem.putInt(value);
     }
@@ -238,7 +243,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
     @Override
     public void putRecord(Record value) {
-        // noop
+        // no-op
     }
 
     @Override

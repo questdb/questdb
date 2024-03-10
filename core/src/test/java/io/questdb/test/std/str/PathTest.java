@@ -25,6 +25,7 @@
 package io.questdb.test.std.str;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
@@ -358,13 +359,6 @@ public class PathTest {
     }
 
     @Test
-    public void testPathThreadLocalDoesNotAllocateOnRelease() {
-        final long count = Unsafe.getMallocCount();
-        Path.clearThreadLocals();
-        Assert.assertEquals(count, Unsafe.getMallocCount());
-    }
-
-    @Test
     public void testPrefix() {
         try (Path p0 = new Path(4).putAscii("foobar").$()) {
             path.of("baz").prefix(p0, p0.size()).$();
@@ -528,7 +522,7 @@ public class PathTest {
                     Assert.fail(err.getMessage());
                 } finally {
                     completed.countDown();
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                 }
             });
         }

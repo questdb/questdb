@@ -1096,6 +1096,10 @@ public class WalWriter implements TableWriterAPI {
         return tableToken.isSystem() ? configuration.getSystemWalDataAppendPageSize() : configuration.getWalDataAppendPageSize();
     }
 
+    private long getDataAppendPageSize() {
+        return tableToken.isSystem() ? configuration.getSystemWalDataAppendPageSize() : configuration.getWalDataAppendPageSize();
+    }
+
     private MemoryMA getDataColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getDataColumnOffset(column));
@@ -1104,7 +1108,7 @@ public class WalWriter implements TableWriterAPI {
     private long getSequencerTxn() {
         long seqTxn;
         do {
-            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn);
+            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
             if (seqTxn == NO_TXN) {
                 applyMetadataChangeLog(Long.MAX_VALUE);
             }
@@ -1921,6 +1925,11 @@ public class WalWriter implements TableWriterAPI {
         public void putGeoStr(int columnIndex, CharSequence hash) {
             final int type = metadata.getColumnType(columnIndex);
             WriterRowUtils.putGeoStr(columnIndex, hash, type, this);
+        }
+
+        @Override
+        public void putIPv4(int columnIndex, int value) {
+            putInt(columnIndex, value);
         }
 
         @Override

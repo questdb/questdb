@@ -60,8 +60,8 @@ public class RecordToRowCopierUtils {
         // C                char        Unicode character code point in the Basic Multilingual Plane, encoded with UTF-16
         // D                double      double-precision floating-point value
         // F                float       single-precision floating-point value
-        // I                int         integer
-        // J                long        long integer
+        // I                int         32-bit integer
+        // J                long        64-bit integer
         // L ClassName ;    reference   an instance of class ClassName
         // S                short       signed short
         // Z                boolean     true or false
@@ -93,6 +93,7 @@ public class RecordToRowCopierUtils {
         int rGetVarchar = asm.poolInterfaceMethod(Record.class, "getVarcharA", "(I)Lio/questdb/std/str/Utf8Sequence;");
         //
         int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
+        int wPutIPv4 = asm.poolInterfaceMethod(TableWriter.Row.class, "putIPv4", "(II)V");
         int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
         int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128", "(IJJ)V");
@@ -260,7 +261,7 @@ public class RecordToRowCopierUtils {
                 case ColumnType.IPv4:
                     assert toColumnTypeTag == ColumnType.IPv4;
                     asm.invokeInterface(rGetIPv4);
-                    asm.invokeInterface(wPutInt, 2);
+                    asm.invokeInterface(wPutIPv4, 2);
                     break;
                 case ColumnType.LONG:
                     asm.invokeInterface(rGetLong);
@@ -720,7 +721,7 @@ public class RecordToRowCopierUtils {
                         case ColumnType.IPv4:
                             asm.invokeInterface(rGetStr);
                             asm.invokeStatic(implicitCastStrAsIPv4);
-                            asm.invokeInterface(wPutInt, 2);
+                            asm.invokeInterface(wPutIPv4, 2);
                             break;
                         case ColumnType.LONG:
                             asm.invokeInterface(rGetStr);

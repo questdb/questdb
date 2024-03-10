@@ -32,6 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -50,7 +51,16 @@ public class IPv4StrNetmaskFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new IPv4StrNetmaskFunctionFactory.IPv4StrNetmaskFunction(args.getQuick(0));
+        final Function strFunc = args.getQuick(0);
+        if (strFunc.isConstant()) {
+            final CharSequence str = strFunc.getStr(null);
+            if (str == null) {
+                return IPv4Constant.NULL;
+            }
+            final int val = Numbers.getIPv4Netmask(str);
+            return val == Numbers.BAD_NETMASK ? IPv4Constant.NULL : IPv4Constant.newInstance(val);
+        }
+        return new IPv4StrNetmaskFunction(strFunc);
     }
 
     public static final class IPv4StrNetmaskFunction extends IPv4Function implements UnaryFunction {
@@ -67,10 +77,11 @@ public class IPv4StrNetmaskFunctionFactory implements FunctionFactory {
 
         @Override
         public int getIPv4(Record rec) {
-            if (arg.getStr(rec) == null) {
+            final CharSequence str = arg.getStr(null);
+            if (str == null) {
                 return Numbers.IPv4_NULL;
             }
-            final int val = Numbers.getIPv4Netmask(arg.getStr(rec));
+            final int val = Numbers.getIPv4Netmask(str);
             return val == Numbers.BAD_NETMASK ? Numbers.IPv4_NULL : val;
         }
 
@@ -80,4 +91,3 @@ public class IPv4StrNetmaskFunctionFactory implements FunctionFactory {
         }
     }
 }
-

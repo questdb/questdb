@@ -309,7 +309,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                     throw err;
                 } finally {
                     sharedWorkerPool.halt();
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                 }
             } catch (Throwable err) {
                 LOG.error().$("Stopping ILP receiver because of an error").$(err).$();

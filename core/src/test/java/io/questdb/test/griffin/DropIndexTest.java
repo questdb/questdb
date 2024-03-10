@@ -394,7 +394,7 @@ public class DropIndexTest extends AbstractCairoTest {
                     concurrentDropIndexFailure.set(e);
                 } finally {
                     engine.releaseAllWriters();
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                     endLatch.countDown();
                 }
             }).start();

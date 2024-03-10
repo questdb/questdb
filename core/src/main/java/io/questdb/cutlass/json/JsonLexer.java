@@ -84,6 +84,7 @@ public class JsonLexer implements Mutable, Closeable {
     public void close() {
         if (cacheCapacity > 0 && cache != 0) {
             Unsafe.free(cache, cacheCapacity, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+            cache = 0;
         }
     }
 

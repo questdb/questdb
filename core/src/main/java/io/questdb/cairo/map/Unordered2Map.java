@@ -385,6 +385,11 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
+        public void putIPv4(int value) {
+            putInt(value);
+        }
+
+        @Override
         public void putInt(int value) {
             throw new UnsupportedOperationException();
         }

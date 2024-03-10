@@ -47,6 +47,8 @@ public interface RecordSinkSPI {
 
     void putFloat(float value);
 
+    void putIPv4(int value);
+
     void putInt(int value);
 
     void putLong(long value);

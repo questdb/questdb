@@ -56,12 +56,12 @@ public class TableSequencerImpl implements TableSequencer {
     private final int rootLen;
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
     private final SeqTxnTracker seqTxnTracker;
-    private final TableTransactionLog tableTransactionLog;
     private final WalDirectoryPolicy walDirectoryPolicy;
     private final IDGenerator walIdGenerator;
     private volatile boolean closed = false;
     private boolean distressed = false;
     private TableToken tableToken;
+    private final TableTransactionLog tableTransactionLog;
 
     TableSequencerImpl(CairoEngine engine, TableToken tableToken, SeqTxnTracker txnTracker) {
         this.engine = engine;
@@ -82,8 +82,12 @@ public class TableSequencerImpl implements TableSequencer {
             metadata = new SequencerMetadata(ff);
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
-            tableTransactionLog = new TableTransactionLog(ff);
-            microClock = engine.getConfiguration().getMicrosecondClock();
+            tableTransactionLog = new TableTransactionLog(
+                    ff,
+                    configuration.getMkDirMode(),
+                    configuration.getDefaultSeqPartTxnCount()
+            );
+            microClock = configuration.getMicrosecondClock();
         } catch (Throwable th) {
             LOG.critical().$("could not create sequencer [name=").utf8(tableToken.getDirName())
                     .$(", error=").$(th.getMessage())
@@ -114,7 +118,7 @@ public class TableSequencerImpl implements TableSequencer {
     public void dropTable() {
         checkDropped();
         final long timestamp = microClock.getTicks();
-        final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, timestamp);
+        final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, timestamp, 0, 0, 0);
         metadata.dropTable();
         notifyTxnCommitted(Long.MAX_VALUE);
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
@@ -276,7 +280,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn) {
+    public long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
         assert !closed;
         checkDropped();
@@ -285,7 +289,7 @@ public class TableSequencerImpl implements TableSequencer {
         try {
             // From sequencer perspective metadata version is the same as column structure version
             if (metadata.getMetadataVersion() == expectedStructureVersion) {
-                txn = nextTxn(walId, segmentId, segmentTxn, timestamp);
+                txn = nextTxn(walId, segmentId, segmentTxn, timestamp, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
             } else {
                 return NO_TXN;
             }
@@ -383,8 +387,8 @@ public class TableSequencerImpl implements TableSequencer {
         path.trimTo(rootLen);
     }
 
-    private long nextTxn(int walId, int segmentId, int segmentTxn, long timestamp) {
-        return tableTransactionLog.addEntry(getStructureVersion(), walId, segmentId, segmentTxn, timestamp);
+    private long nextTxn(int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
+        return tableTransactionLog.addEntry(getStructureVersion(), walId, segmentId, segmentTxn, timestamp, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
     }
 
     private void notifyTxnCommitted(long txn) {

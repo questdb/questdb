@@ -3223,12 +3223,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         // NATIVE_SQL_COMPILER is excluded from TestUtils#assertMemoryLeak(),
         // so here we make sure that SQL compiler releases its memory on close.
 
-        Path.clearThreadLocals();
+        TableUtils.clearThreadLocals();
         long mem = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SQL_COMPILER);
 
         new SqlCompilerImpl(engine).close();
 
-        Path.clearThreadLocals();
+        TableUtils.clearThreadLocals();
         long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SQL_COMPILER);
 
         Assert.assertEquals(mem, memAfter);
