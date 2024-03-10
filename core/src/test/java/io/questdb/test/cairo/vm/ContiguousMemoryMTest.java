@@ -1000,7 +1000,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             ) {
                 code.run(rwMem, roMem);
             } finally {
-                Path.clearThreadLocals();
+                TableUtils.clearThreadLocals();
             }
         });
 

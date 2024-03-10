@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -34,7 +35,6 @@ import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
-import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -127,7 +127,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                     runSerially();
                 }
                 LOG.info().$("shutdown").$();
-                Path.clearThreadLocals();
+                TableUtils.clearThreadLocals();
                 halted.countDown();
             }).start();
         }

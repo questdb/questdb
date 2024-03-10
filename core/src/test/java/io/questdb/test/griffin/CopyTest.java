@@ -27,7 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.SqlWalMode;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
@@ -1116,7 +1116,7 @@ public class CopyTest extends AbstractCairoTest {
                     Os.sleep(1);
                 }
             } finally {
-                Path.clearThreadLocals();
+                TableUtils.clearThreadLocals();
             }
         });
     }

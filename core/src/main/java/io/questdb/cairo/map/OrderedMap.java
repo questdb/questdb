@@ -653,6 +653,11 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public void putIPv4(int value) {
+            putInt(value);
+        }
+
+        @Override
         public void putInt(int value) {
             Unsafe.getUnsafe().putInt(appendAddress, value);
             appendAddress += 4L;
@@ -905,6 +910,11 @@ public class OrderedMap implements Map, Reopenable {
             checkCapacity(4L);
             Unsafe.getUnsafe().putFloat(appendAddress, value);
             appendAddress += 4L;
+        }
+
+        @Override
+        public void putIPv4(int value) {
+            putInt(value);
         }
 
         @Override
