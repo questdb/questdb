@@ -369,15 +369,6 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         return this;
     }
 
-    @Override
-    public Path putUtf8(long lo, long hi) {
-        final int size = Bytes.checkedLoHiSize(lo, hi, this.size());
-        checkExtend(size);
-        Vect.memcpy(tailPtr, lo, size);
-        tailPtr += size;
-        return this;
-    }
-
     public Path seekZ() {
         int count = 0;
         while (count < capacity) {
