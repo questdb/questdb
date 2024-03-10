@@ -92,11 +92,10 @@ public class DropIndexTest extends AbstractCairoTest {
 
     @Test
     public void dropIndexColumnTop() throws SqlException, NumericException {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
-            model.col("a", ColumnType.INT);
-            model.timestamp("ts");
-            createPopulateTable(model, 5, "2022-02-24", 2);
-        }
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
+        model.col("a", ColumnType.INT);
+        model.timestamp("ts");
+        createPopulateTable(model, 5, "2022-02-24", 2);
         compile("alter table " + tableName + " add column sym symbol index");
         compile("insert into " + tableName +
                 " select x, timestamp_sequence('2022-02-24T01:30', 1000000000), rnd_symbol('A', 'B', 'C') from long_sequence(5)");
@@ -149,11 +148,10 @@ public class DropIndexTest extends AbstractCairoTest {
 
     @Test
     public void dropIndexColumnTopLastPartition() throws SqlException, NumericException {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
-            model.col("a", ColumnType.INT);
-            model.timestamp("ts");
-            createPopulateTable(model, 5, "2022-02-24", 2);
-        }
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
+        model.col("a", ColumnType.INT);
+        model.timestamp("ts");
+        createPopulateTable(model, 5, "2022-02-24", 2);
         compile("alter table " + tableName + " add column sym symbol index");
 
         assertSql("a\tts\tsym\n" +
@@ -396,7 +394,7 @@ public class DropIndexTest extends AbstractCairoTest {
                     concurrentDropIndexFailure.set(e);
                 } finally {
                     engine.releaseAllWriters();
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                     endLatch.countDown();
                 }
             }).start();

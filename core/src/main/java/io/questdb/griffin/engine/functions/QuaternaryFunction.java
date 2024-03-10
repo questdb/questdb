@@ -73,14 +73,6 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
-    default boolean isParallelismSupported() {
-        return getFunc0().isParallelismSupported()
-                && getFunc1().isParallelismSupported()
-                && getFunc2().isParallelismSupported()
-                && getFunc3().isParallelismSupported();
-    }
-
-    @Override
     default boolean isReadThreadSafe() {
         return getFunc0().isReadThreadSafe()
                 && getFunc1().isReadThreadSafe()
@@ -101,6 +93,14 @@ public interface QuaternaryFunction extends Function {
         boolean dc = getFunc3().isConstant();
 
         return (ac || arc) && (bc || brc) && (cc || crc) && (dc || drc) && (arc || brc || crc || drc);
+    }
+
+    @Override
+    default boolean supportsParallelism() {
+        return getFunc0().supportsParallelism()
+                && getFunc1().supportsParallelism()
+                && getFunc2().supportsParallelism()
+                && getFunc3().supportsParallelism();
     }
 
     @Override

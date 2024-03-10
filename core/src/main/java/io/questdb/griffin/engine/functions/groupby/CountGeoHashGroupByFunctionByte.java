@@ -36,7 +36,7 @@ public class CountGeoHashGroupByFunctionByte extends AbstractCountGroupByFunctio
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final byte value = arg.getGeoByte(record);
         if (value != GeoHashes.BYTE_NULL) {
             mapValue.putLong(valueIndex, 1);
@@ -46,7 +46,7 @@ public class CountGeoHashGroupByFunctionByte extends AbstractCountGroupByFunctio
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final byte value = arg.getGeoByte(record);
         if (value != GeoHashes.BYTE_NULL) {
             mapValue.addLong(valueIndex, 1);

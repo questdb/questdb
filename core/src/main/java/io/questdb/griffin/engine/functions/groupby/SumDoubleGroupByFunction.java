@@ -44,7 +44,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
             mapValue.putDouble(valueIndex, value);
@@ -56,7 +56,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
             mapValue.addDouble(valueIndex, value);
@@ -94,11 +94,6 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return UnaryFunction.super.isReadThreadSafe();
     }
@@ -133,5 +128,10 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

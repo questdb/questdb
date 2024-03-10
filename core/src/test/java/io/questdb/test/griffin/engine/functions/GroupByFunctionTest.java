@@ -31,18 +31,18 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import org.junit.Test;
 
 public class GroupByFunctionTest {
     private static final GroupByFunction function = new GroupByFunction() {
         @Override
-        public void computeFirst(MapValue mapValue, Record record) {
+        public void computeFirst(MapValue mapValue, Record record, long rowId) {
         }
 
         @Override
-        public void computeNext(MapValue mapValue, Record record) {
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
         }
 
         @Override

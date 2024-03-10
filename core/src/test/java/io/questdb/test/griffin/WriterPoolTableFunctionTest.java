@@ -97,6 +97,55 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRandomAccessUnsupported() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    RecordCursorFactory readerPoolFactory = new WriterPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+                    RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)
+            ) {
+                Record record = readerPoolCursor.getRecord();
+                readerPoolCursor.recordAt(record, 0);
+                Assert.fail("Random access is not expected to be implemented");
+            } catch (UnsupportedOperationException ignored) {
+            }
+        });
+    }
+
+    @Test
+    public void testRecordBNotImplemented() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    RecordCursorFactory readerPoolFactory = new WriterPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+                    RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)
+            ) {
+                readerPoolCursor.getRecordB();
+                Assert.fail("RecordB is not expected to be implemented");
+            } catch (UnsupportedOperationException ignored) {
+            }
+        });
+    }
+
+    @Test
+    public void testToTop() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
+
+            try (TableReader ignored = getReader("tab1");
+                 RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+                 RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
+                // scroll cursor ignoring its contents
+                //noinspection StatementWithEmptyBody
+                while (readerPoolCursor.hasNext()) {
+                }
+                readerPoolCursor.toTop();
+                assertTrue(readerPoolCursor.hasNext());
+            }
+        });
+    }
+
+    @Test
     public void testWriterList() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table a(u int)");
@@ -148,56 +197,6 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
                             "a\t\n",
                     "select table_name,ownership_reason from writer_pool order by 1 desc"
             );
-        });
-    }
-
-    @Test
-    public void testRandomAccessUnsupported() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    RecordCursorFactory readerPoolFactory = new WriterPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
-                    RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)
-            ) {
-                Record record = readerPoolCursor.getRecord();
-                readerPoolCursor.recordAt(record, 0);
-                Assert.fail("Random access is not expected to be implemented");
-            } catch (UnsupportedOperationException ignored) {
-            }
-        });
-    }
-
-    @Test
-    public void testRecordBNotImplemented() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    RecordCursorFactory readerPoolFactory = new WriterPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
-                    RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)
-            ) {
-                readerPoolCursor.getRecordB();
-                Assert.fail("RecordB is not expected to be implemented");
-            } catch (UnsupportedOperationException ignored) {
-            }
-        });
-    }
-
-    @Test
-    public void testToTop() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 20, "2020-01-01", 1);
-            }
-
-            try (TableReader ignored = getReader("tab1");
-                 RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
-                 RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
-                // scroll cursor ignoring its contents
-                //noinspection StatementWithEmptyBody
-                while (readerPoolCursor.hasNext()) {
-                }
-                readerPoolCursor.toTop();
-                assertTrue(readerPoolCursor.hasNext());
-            }
         });
     }
 }

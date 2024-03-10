@@ -126,7 +126,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                                     "select 1, '1970-01-09T09'  from long_sequence(1)");
                         }
                     }
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                     done.incrementAndGet();
                 } catch (Throwable ex) {
                     LOG.error().$(ex).$();
@@ -143,7 +143,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                             readers.get(i).reload();
                         }
                         Os.pause();
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                     }
                 } catch (Throwable ex) {
                     LOG.error().$(ex).$();
@@ -403,10 +403,9 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 100);
 
             TableToken token;
-            try (TableModel tm = new TableModel(configuration, "tbl", PartitionBy.DAY)
-                    .col("x", ColumnType.INT).timestamp()) {
-                token = createPopulateTable(1, tm, 2000, "2022-02-24T04", 2);
-            }
+            TableModel tm = new TableModel(configuration, "tbl", PartitionBy.DAY)
+                    .col("x", ColumnType.INT).timestamp();
+            token = createPopulateTable(1, tm, 2000, "2022-02-24T04", 2);
 
             Path path = Path.getThreadLocal("");
 

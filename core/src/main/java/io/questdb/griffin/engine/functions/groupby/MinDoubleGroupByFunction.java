@@ -43,12 +43,12 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putDouble(valueIndex, arg.getDouble(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         double min = mapValue.getDouble(valueIndex);
         double next = arg.getDouble(record);
         if (next < min || Double.isNaN(min)) {
@@ -79,11 +79,6 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public boolean isConstant() {
         return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
@@ -119,5 +114,10 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

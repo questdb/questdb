@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -222,6 +223,11 @@ public final class TableUtils {
         return memSize;
     }
 
+    public static void clearThreadLocals() {
+        Path.clearThreadLocals();
+        TableTransactionLogV2.clearThreadLocals();
+    }
+
     public static int compressColumnCount(RecordMetadata metadata) {
         int count = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -311,6 +317,17 @@ public final class TableUtils {
 
     public static void createTable(
             CairoConfiguration configuration,
+            TableStructure structure,
+            int tableId,
+            CharSequence dirName
+    ) {
+        try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
+            createTable(configuration, mem, path, structure, ColumnType.VERSION, tableId, dirName);
+        }
+    }
+
+    public static void createTable(
+            CairoConfiguration configuration,
             MemoryMARW memory,
             Path path,
             TableStructure structure,
@@ -336,6 +353,23 @@ public final class TableUtils {
             CharSequence dirName
     ) {
         createTable(ff, root, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
+    }
+
+    public static void createTable(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            TableStructure structure,
+            int tableVersion,
+            int tableId,
+            CharSequence dirName
+    ) {
+        try (
+                Path path = new Path();
+                MemoryMARW mem = Vm.getMARWInstance()
+        ) {
+            createTable(ff, root, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
+        }
     }
 
     public static void createTable(
@@ -375,6 +409,20 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
+        createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
+    }
+
+    public static void createTableFiles(
+            FilesFacade ff,
+            MemoryMARW memory,
+            Path path,
+            int rootLen,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId,
+            CharSequence txnFileName
+    ) {
         final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.trimTo(rootLen).$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
             mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
@@ -400,9 +448,6 @@ public final class TableUtils {
                     symbolMapCount++;
                 }
             }
-            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
-            mem.sync(false);
             mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             createColumnVersionFile(mem);
             mem.sync(false);
@@ -414,6 +459,11 @@ public final class TableUtils {
 
             mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
             createTableNameFile(mem, getTableNameFromDirName(tableDir));
+
+            // Create TXN file last, it's used to determine if table exists
+            mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);
+            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
+            mem.sync(false);
         } finally {
             if (dirFd > 0) {
                 ff.fsyncAndClose(dirFd);

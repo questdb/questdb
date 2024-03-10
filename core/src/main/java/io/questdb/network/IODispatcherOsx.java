@@ -85,11 +85,14 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             final long id = pending.get(i, OPM_ID);
             final int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
             pending.set(i, OPM_OPERATION, operation);
-            if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
-                keventWriter.readFD(context.getFd(), id);
-            }
+
+            // Important: We must register for writing *before* registering for reading
+            // see #processRegistrations() for details.
             if (operation == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
                 keventWriter.writeFD(context.getFd(), id);
+            }
+            if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
+                keventWriter.readFD(context.getFd(), id);
             }
         }
         keventWriter.done();
@@ -322,11 +325,19 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 keventWriter.readFD(suspendEvent.getFd(), eventId);
             }
 
-            if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
-                keventWriter.readFD(fd, opId);
-            }
+            // Important: We have to prioritize write registration over read registration!
+            // In other words: Register for writing before registering for reading.
+            // Why? If a TLS socket wants to write then it means it has encrypted data available
+            // in its internal buffer and we must write it out as soon as possible.
+            // If we register for reading first, then kqueue may trigger a read event before write event,
+            // and while processing the read event we have to deregister from write events.
+            // This can create a loop where we keep deregistering and registering for write events without ever
+            // writing out the encrypted data.
             if (operation == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
                 keventWriter.writeFD(fd, opId);
+            }
+            if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
+                keventWriter.readFD(fd, opId);
             }
         }
 
@@ -362,11 +373,14 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
     private void rearmKqueue(C context, long id, int operation) {
         keventWriter.prepare();
-        if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
-            keventWriter.readFD(context.getFd(), id);
-        }
+
+        // Important: We must register for writing *before* registering for reading
+        // see #processRegistrations() for details.
         if (operation == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
             keventWriter.writeFD(context.getFd(), id);
+        }
+        if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
+            keventWriter.readFD(context.getFd(), id);
         }
         keventWriter.done();
     }

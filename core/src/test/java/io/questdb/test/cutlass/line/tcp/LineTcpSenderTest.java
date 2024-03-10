@@ -39,7 +39,7 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -302,12 +302,11 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         // this is to check that a non-ASCII string will not prevent
         // parsing a subsequent UUID
         runInContext(r -> {
-            try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
+            TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
                     .col("s", ColumnType.STRING)
                     .col("u", ColumnType.UUID)
-                    .timestamp()) {
-                CreateTableTestUtils.create(model);
-            }
+                    .timestamp();
+            AbstractCairoTest.create(model);
 
             try (Sender sender = Sender.builder()
                     .address("127.0.0.1")
@@ -340,13 +339,12 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testInsertStringIntoUuidColumn() throws Exception {
         runInContext(r -> {
             // create table with UUID column
-            try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
+            TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
                     .col("u1", ColumnType.UUID)
                     .col("u2", ColumnType.UUID)
                     .col("u3", ColumnType.UUID)
-                    .timestamp()) {
-                CreateTableTestUtils.create(model);
-            }
+                    .timestamp();
+            AbstractCairoTest.create(model);
 
             try (Sender sender = Sender.builder()
                     .address("127.0.0.1")
@@ -373,11 +371,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testInsertTimestampAsInstant() throws Exception {
         runInContext(r -> {
-            try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.YEAR)
+            TableModel model = new TableModel(configuration, "mytable", PartitionBy.YEAR)
                     .col("ts_col", ColumnType.TIMESTAMP)
-                    .timestamp()) {
-                CreateTableTestUtils.create(model);
-            }
+                    .timestamp();
+            AbstractCairoTest.create(model);
 
             try (Sender sender = Sender.builder()
                     .address("127.0.0.1")
@@ -401,12 +398,11 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testInsertTimestampMiscUnits() throws Exception {
         runInContext(r -> {
-            try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.YEAR)
+            TableModel model = new TableModel(configuration, "mytable", PartitionBy.YEAR)
                     .col("unit", ColumnType.STRING)
                     .col("ts", ColumnType.TIMESTAMP)
-                    .timestamp()) {
-                CreateTableTestUtils.create(model);
-            }
+                    .timestamp();
+            AbstractCairoTest.create(model);
 
             try (Sender sender = Sender.builder()
                     .address("127.0.0.1")
@@ -696,11 +692,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     private void testValueCannotBeInsertedToUuidColumn(String value) throws Exception {
         runInContext(r -> {
             // create table with UUID column
-            try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
+            TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
                     .col("u1", ColumnType.UUID)
-                    .timestamp()) {
-                CreateTableTestUtils.create(model);
-            }
+                    .timestamp();
+            AbstractCairoTest.create(model);
 
             // this sender fails as the string is not UUID
             try (Sender sender = Sender.builder()

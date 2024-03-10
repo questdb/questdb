@@ -224,16 +224,13 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
             createTable += " WAL";
         }
         compiler.compile(createTable, context);
-        try (
-                TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                        .col("investmentMill", ColumnType.LONG)
-                        .col("ticketThous", ColumnType.INT)
-                        .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
-                        .timestamp("ts")
-        ) {
-            CharSequence insert = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
-            compiler.compile(insert, context);
-        }
+        TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                .col("investmentMill", ColumnType.LONG)
+                .col("ticketThous", ColumnType.INT)
+                .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
+                .timestamp("ts");
+        CharSequence insert = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
+        compiler.compile(insert, context);
         return engine.verifyTableName(tableName);
     }
 

@@ -54,7 +54,6 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
@@ -1120,13 +1119,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
+            final int partitionBy;
             if (reader != null) {
-                try {
-                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy(), 0, -1);
-                    alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
-                } catch (CairoException e) {
-                    throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
+                partitionBy = reader.getPartitionedBy();
+            } else {
+                try(TableMetadata meta = engine.getTableMetadata(tableToken)) {
+                    partitionBy = meta.getPartitionBy();
                 }
+            }
+            try {
+                long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy, 0, -1);
+                alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
+            } catch (CairoException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
             }
 
             tok = SqlUtil.fetchNext(lexer);
@@ -3242,11 +3247,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             mem.putLong(0L);
                             mem.close(true, Vm.TRUNCATE_TO_POINTER);
                             // _txnlog
-                            mem.smallFile(ff, auxPath.trimTo(len).concat(WalUtils.TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                            mem.putInt(WAL_FORMAT_VERSION);
-                            mem.putLong(0L);
-                            mem.putLong(0L);
-                            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                            WalUtils.createTxnLogFile(
+                                    ff,
+                                    mem,
+                                    auxPath.trimTo(len),
+                                    configuration.getMicrosecondClock().getTicks(),
+                                    configuration.getDefaultSeqPartTxnCount(),
+                                    configuration.getMkDirMode()
+                            );
                             // _txnlog.meta.i
                             mem.smallFile(ff, auxPath.trimTo(len).concat(WalUtils.TXNLOG_FILE_NAME_META_INX).$(), MemoryTag.MMAP_DEFAULT);
                             mem.putLong(0L);

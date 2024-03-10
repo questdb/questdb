@@ -37,7 +37,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -123,7 +122,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     }
                 } finally {
                     LOG.info().$("sender finished").$();
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                     ilpProducerHalted.countDown();
                 }
             }, "ilp-producer");
@@ -141,7 +140,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 } catch (SqlException e) {
                     partitionDropperProblem.set(e);
                 } finally {
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                     // a few rows may have made it into the active partition,
                     // as dropping it is concurrent with inserting
                     keepSending.set(false);
@@ -164,13 +163,12 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         runInContext((server) -> {
             long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
 
-            try (TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY)) {
-                tm.col("room", ColumnType.SYMBOL);
-                tm.col("watts", ColumnType.LONG);
-                tm.timestamp();
-                tm.wal();
-                TableToken ignored = TestUtils.create(tm, engine);
-            }
+            TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY);
+            tm.col("room", ColumnType.SYMBOL);
+            tm.col("watts", ColumnType.LONG);
+            tm.timestamp();
+            tm.wal();
+            TableToken ignored = TestUtils.create(tm, engine);
 
             try (TableWriterAPI writer = getTableWriterAPI("plug")) {
                 TableWriter.Row row = writer.newRow(day1 / 1000);
@@ -414,7 +412,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                         }
                     } finally {
                         LOG.info().$("sender finished").$();
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                         ilpProducerHalted.countDown();
                     }
                 }, "ilp-producer");
@@ -432,7 +430,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     } catch (SqlException e) {
                         partitionDropperProblem.set(e);
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                         // a few rows may have made it into the active partition,
                         // as dropping it is concurrent with inserting
                         keepSending.set(false);
@@ -786,7 +784,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     }
                 } finally {
                     LOG.info().$("Stopped waiting for txn notification event").$();
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                     // If subscribed to global writer event queue, unsubscribe here
                     // exit this method if alter executed
                     releaseAllLatch.countDown();

@@ -40,7 +40,7 @@ import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import org.junit.*;
@@ -78,32 +78,31 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Before
     public void setUp2() throws SqlException {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-            model.col("aboolean", ColumnType.BOOLEAN)
-                    .col("abyte", ColumnType.BYTE)
-                    .col("ageobyte", ColumnType.GEOBYTE)
-                    .col("ashort", ColumnType.SHORT)
-                    .col("ageoshort", ColumnType.GEOSHORT)
-                    .col("achar", ColumnType.CHAR)
-                    .col("anint", ColumnType.INT)
-                    .col("ageoint", ColumnType.GEOINT)
-                    .col("asymbol", ColumnType.SYMBOL)
-                    .col("anothersymbol", ColumnType.SYMBOL)
-                    .col("afloat", ColumnType.FLOAT)
-                    .col("along", ColumnType.LONG)
-                    .col("ageolong", ColumnType.GEOLONG)
-                    .col("adate", ColumnType.DATE)
-                    .col("atimestamp", ColumnType.TIMESTAMP)
-                    .col("adouble", ColumnType.DOUBLE)
-                    .col("astring", ColumnType.STRING)
-                    .col("astring2", ColumnType.STRING)
-                    .col("abinary", ColumnType.BINARY)
-                    .col("abinary2", ColumnType.BINARY)
-                    .col("auuid", ColumnType.UUID)
-                    .col("along128", ColumnType.LONG128)
-                    .timestamp();
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE);
+        model.col("aboolean", ColumnType.BOOLEAN)
+                .col("abyte", ColumnType.BYTE)
+                .col("ageobyte", ColumnType.GEOBYTE)
+                .col("ashort", ColumnType.SHORT)
+                .col("ageoshort", ColumnType.GEOSHORT)
+                .col("achar", ColumnType.CHAR)
+                .col("anint", ColumnType.INT)
+                .col("ageoint", ColumnType.GEOINT)
+                .col("asymbol", ColumnType.SYMBOL)
+                .col("anothersymbol", ColumnType.SYMBOL)
+                .col("afloat", ColumnType.FLOAT)
+                .col("along", ColumnType.LONG)
+                .col("ageolong", ColumnType.GEOLONG)
+                .col("adate", ColumnType.DATE)
+                .col("atimestamp", ColumnType.TIMESTAMP)
+                .col("adouble", ColumnType.DOUBLE)
+                .col("astring", ColumnType.STRING)
+                .col("astring2", ColumnType.STRING)
+                .col("abinary", ColumnType.BINARY)
+                .col("abinary2", ColumnType.BINARY)
+                .col("auuid", ColumnType.UUID)
+                .col("along128", ColumnType.LONG128)
+                .timestamp();
+        AbstractCairoTest.create(model);
 
         try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
             TableWriter.Row row = writer.newRow();
@@ -129,6 +128,14 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             serialize("along " + op + " 42 != -1");
             assertIR("(i64 -1L)(i64 42L)(i64 along)(" + op + ")(<>)(ret)");
         }
+    }
+
+    @Test
+    public void testBinaryNullConstant() throws Exception {
+        serialize("abinary <> null");
+        assertIR("(i64 -1L)(binary_header abinary)(<>)(ret)");
+        serialize("abinary = null");
+        assertIR("(i64 -1L)(binary_header abinary)(=)(ret)");
     }
 
     @Test
@@ -358,42 +365,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testStringNullConstant() throws Exception {
-        serialize("astring <> null");
-        assertIR("(i32 -1L)(string_header astring)(<>)(ret)");
-        serialize("astring = null");
-        assertIR("(i32 -1L)(string_header astring)(=)(ret)");
-    }
-
-    @Test
-    public void testBinaryNullConstant() throws Exception {
-        serialize("abinary <> null");
-        assertIR("(i64 -1L)(binary_header abinary)(<>)(ret)");
-        serialize("abinary = null");
-        assertIR("(i64 -1L)(binary_header abinary)(=)(ret)");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedStringEquality() throws Exception {
-        serialize("astring = astring2");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedStringInequality() throws Exception {
-        serialize("astring <> astring2");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedBinaryEquality() throws Exception {
-        serialize("abinary = abinary2");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedBinaryInequality() throws Exception {
-        serialize("abinary <> abinary2");
-    }
-
-    @Test
     public void testNullConstantValues() throws Exception {
         String[][] columns = new String[][]{
                 {"anint", "i32", Numbers.INT_NaN + "L"},
@@ -528,6 +499,14 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testStringNullConstant() throws Exception {
+        serialize("astring <> null");
+        assertIR("(i32 -1L)(string_header astring)(<>)(ret)");
+        serialize("astring = null");
+        assertIR("(i32 -1L)(string_header astring)(=)(ret)");
+    }
+
+    @Test
     public void testUnknownSymbolConstant() throws Exception {
         serialize("asymbol = '" + UNKNOWN_SYMBOL + "'");
         assertIR("(i32 :0)(i32 asymbol)(=)(ret)");
@@ -535,6 +514,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(1, bindVarFunctions.size());
         Assert.assertEquals(ColumnType.SYMBOL, bindVarFunctions.get(0).getType());
         Assert.assertEquals(UNKNOWN_SYMBOL, bindVarFunctions.get(0).getStr(null));
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedBinaryEquality() throws Exception {
+        serialize("abinary = abinary2");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedBinaryInequality() throws Exception {
+        serialize("abinary <> abinary2");
     }
 
     @Test(expected = SqlException.class)
@@ -682,6 +671,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedStringConstant() throws Exception {
         serialize("achar = 'abc'");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedStringEquality() throws Exception {
+        serialize("astring = astring2");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedStringInequality() throws Exception {
+        serialize("astring <> astring2");
     }
 
     @Test(expected = SqlException.class)

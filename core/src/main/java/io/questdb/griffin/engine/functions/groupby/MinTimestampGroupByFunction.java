@@ -44,12 +44,12 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, arg.getLong(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.minLong(valueIndex, arg.getTimestamp(record));
     }
 
@@ -76,11 +76,6 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public boolean isConstant() {
         return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
@@ -111,5 +106,10 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

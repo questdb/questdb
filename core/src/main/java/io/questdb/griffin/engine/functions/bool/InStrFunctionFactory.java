@@ -68,7 +68,7 @@ public class InStrFunctionFactory implements FunctionFactory {
                 case ColumnType.NULL:
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
-                    if (func.isRuntimeConstant()) {//bind variables
+                    if (func.isRuntimeConstant()) { // bind variables
                         if (deferredValues == null) {
                             deferredValues = new ObjList<>();
                         }

@@ -34,7 +34,9 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLong256HashSet;
-import io.questdb.std.*;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
 
 public class CountDistinctLong256GroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
@@ -56,7 +58,7 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final Long256 l256 = arg.getLong256A(record);
 
         if (isNotNull(l256)) {
@@ -76,12 +78,13 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
             mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
             mapValue.putLong(valueIndex, 0);
-            mapValue.putLong(valueIndex + 1, 0);;
+            mapValue.putLong(valueIndex + 1, 0);
+            ;
         }
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final Long256 l256 = arg.getLong256A(record);
 
         if (isNotNull(l256)) {
@@ -129,11 +132,6 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public boolean isConstant() {
         return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
@@ -206,6 +204,11 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override

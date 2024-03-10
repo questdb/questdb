@@ -26,7 +26,6 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -159,11 +158,10 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
     }
 
     private static TableToken createTable() {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-            model
-                    .col("a", ColumnType.BYTE)
-                    .col("b", ColumnType.SHORT);
-            return CreateTableTestUtils.create(model);
-        }
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE);
+        model
+                .col("a", ColumnType.BYTE)
+                .col("b", ColumnType.SHORT);
+        return AbstractCairoTest.create(model);
     }
 }

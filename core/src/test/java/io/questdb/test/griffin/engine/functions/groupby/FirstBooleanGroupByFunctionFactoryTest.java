@@ -36,7 +36,7 @@ import org.junit.Test;
 public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testAllNull() throws SqlException {
+    public void testAllFalse() throws SqlException {
         ddl("create table tab (f boolean)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -71,7 +71,7 @@ public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLastBoolean2() throws Exception {
+    public void testFirstBoolean2() throws Exception {
         assertQuery(
                 "a\n" +
                         "true\n",

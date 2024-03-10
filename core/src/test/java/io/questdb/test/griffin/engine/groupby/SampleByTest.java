@@ -519,24 +519,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             engine.clear();
 
-            final FilesFacade ff = new TestFilesFacadeImpl() {
-                int count = 10;
-
-                @Override
-                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                    if (count-- > 0) {
-                        return super.mmap(fd, len, offset, flags, memoryTag);
-                    }
-                    return -1;
-                }
-            };
-
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
+            final CairoConfiguration configuration = createMmapFailingConfiguration(10);
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -773,16 +756,23 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByAlignToCalendar() throws Exception {
-        assertSampleByIndexQuery(
-                "k\ts\tlat\tlon\n" +
-                        "2021-03-27T23:00:00.000000Z\ta\t142.30215575416736\t165.69007104574442\n" +
-                        "2021-03-28T00:00:00.000000Z\ta\t106.0418967098362\tNaN\n" +
-                        "2021-03-28T01:00:00.000000Z\ta\t79.9245166429184\t168.04971262491318\n" +
-                        "2021-03-28T02:00:00.000000Z\ta\t6.612327943200507\t128.42101395467057\n",
-                "select k, s, first(lat) lat, last(lon) lon " +
-                        "from x " +
-                        "where s in ('a') " +
-                        "sample by 1h align to calendar",
+        String query = "select k, s, first(lat) lat, last(lon) lon " +
+                "from x " +
+                "where s in ('a') " +
+                "sample by 1h align to calendar";
+
+        String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
+                .replace("in ('a')", "in ('a', 'none')");
+
+        String expected = "k\ts\tlat\tlon\n" +
+                "2021-03-27T23:00:00.000000Z\ta\t142.30215575416736\t165.69007104574442\n" +
+                "2021-03-28T00:00:00.000000Z\ta\t106.0418967098362\tNaN\n" +
+                "2021-03-28T01:00:00.000000Z\ta\t79.9245166429184\t168.04971262491318\n" +
+                "2021-03-28T02:00:00.000000Z\ta\t6.612327943200507\t128.42101395467057\n";
+
+        assertQuery(
+                expected,
+                forceNoIndexQuery,
                 "create table x as " +
                         "(" +
                         "select" +
@@ -792,7 +782,19 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2021-03-27T23:30:00.00000Z', 100000000) k" +
                         "   from" +
                         "   long_sequence(100)" +
-                        "),index(s) timestamp(k) partition by DAY"
+                        "),index(s) timestamp(k) partition by DAY",
+                "k",
+                true,
+                true
+        );
+
+        assertQuery(
+                expected,
+                query,
+                null,
+                "k",
+                true,
+                true
         );
     }
 
@@ -2492,7 +2494,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000001, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, false
+                        ") timestamp(k) partition by NONE", "k", true, true
         );
     }
 
@@ -2550,7 +2552,10 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, false
+                        ") timestamp(k) partition by NONE",
+                "k",
+                true,
+                true
         );
     }
 
@@ -2570,7 +2575,9 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false
+                        ") timestamp(k) partition by NONE", "k",
+                true,
+                true
         );
     }
 
@@ -2667,24 +2674,24 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByAllowsPredicatePushdown() throws Exception {
-        String plan = "Filter filter: (tstmp>=1669852800000000 and 0<length(sym)*tstmp::long)\n" +
-                "    SampleBy\n" +
-                "      keys: [tstmp,sym]\n" +
-                "      values: [first(val),avg(val),last(val),max(val)]\n" +
-                "        SelectedRecord\n" +
-                "            Async JIT Filter workers: 1\n" +
-                "              filter: sym='B'\n" +
-                "                DataFrame\n" +
-                "                    Row forward scan\n" +
-                "                    Frame forward scan on: #TABLE#\n";
+    public void testSampleByAllowsPredicatePushDown() throws Exception {
+        String plan = "Sort light\n" +
+                "  keys: [tstmp]\n" +
+                "    Filter filter: (tstmp>=1669852800000000 and 0<length(sym)*tstmp::long)\n" +
+                "        Async JIT Group By workers: 1\n" +
+                "          keys: [tstmp,sym]\n" +
+                "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                "          filter: sym='B'\n" +
+                "            DataFrame\n" +
+                "                Row forward scan\n" +
+                "                Frame forward scan on: #TABLE#\n";
 
         testSampleByPushdown("", "align to calendar", plan);
         testSampleByPushdown("none", "align to calendar", plan);
     }
 
     @Test
-    public void testSampleByAllowsPredicatePushdownWhenTsIsNotIncludedInColumnList() throws Exception {
+    public void testSampleByAllowsPredicatePushDownWhenTsIsNotIncludedInColumnList() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlan(
@@ -2693,11 +2700,12 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ) " +
                             "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0",
-                    "SampleBy\n" +
-                            "  keys: [tstmp,sym]\n" +
-                            "  values: [first(val),avg(val),last(val),max(val)]\n" +
-                            "    SelectedRecord\n" +
-                            "        Async Filter workers: 1\n" +
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [ts1]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [tstmp,sym,ts1]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
                             "          filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
@@ -2960,13 +2968,15 @@ public class SampleByTest extends AbstractCairoTest {
                     "select time, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "SampleByFirstLast\n" +
+                    "Sort light\n" +
                             "  keys: [time]\n" +
-                            "  values: [last(lat), last(lon)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id deferred: true\n" +
-                            "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n"
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [time]\n" +
+                            "      values: [last(lat),last(lon)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id deferred: true\n" +
+                            "              filter: id='A'\n" +
+                            "            Frame forward scan on: pos\n"
             );
 
         });
@@ -2988,13 +2998,15 @@ public class SampleByTest extends AbstractCairoTest {
                     "select   id, time, ts, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "SampleBy\n" +
-                            "  keys: [id,time,ts]\n" +
-                            "  values: [last(lat),last(lon)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id deferred: true\n" +
-                            "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n"
+                    "Sort light\n" +
+                            "  keys: [time]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [id,time,ts]\n" +
+                            "      values: [last(lat),last(lon)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id deferred: true\n" +
+                            "              filter: id='A'\n" +
+                            "            Frame forward scan on: pos\n"
             );
 
         });
@@ -3016,26 +3028,30 @@ public class SampleByTest extends AbstractCairoTest {
                     "select time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "SampleBy\n" +
-                            "  keys: [time,type]\n" +
-                            "  values: [last(lat),last(lon)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id deferred: true\n" +
-                            "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n"
+                    "Sort light\n" +
+                            "  keys: [time]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [time,type]\n" +
+                            "      values: [last(lat),last(lon)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id deferred: true\n" +
+                            "              filter: id='A'\n" +
+                            "            Frame forward scan on: pos\n"
             );
 
             assertPlan(
                     "select   id, time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "SampleBy\n" +
-                            "  keys: [id,time,type]\n" +
-                            "  values: [last(lat),last(lon)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id deferred: true\n" +
-                            "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n"
+                    "Sort light\n" +
+                            "  keys: [time]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [id,time,type]\n" +
+                            "      values: [last(lat),last(lon)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id deferred: true\n" +
+                            "              filter: id='A'\n" +
+                            "            Frame forward scan on: pos\n"
             );
 
         });
@@ -3056,26 +3072,30 @@ public class SampleByTest extends AbstractCairoTest {
                     "select   id, time, geo6, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "SampleBy\n" +
-                            "  keys: [id,time,geo6]\n" +
-                            "  values: [last(lat),last(lon)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id deferred: true\n" +
-                            "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n"
+                    "Sort light\n" +
+                            "  keys: [time]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [id,time,geo6]\n" +
+                            "      values: [last(lat),last(lon)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id deferred: true\n" +
+                            "              filter: id='A'\n" +
+                            "            Frame forward scan on: pos\n"
             );
 
             assertPlan(
                     "select   id, time, lat, last(lat) lastlat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "SampleBy\n" +
-                            "  keys: [id,time,lat]\n" +
-                            "  values: [last(lat),last(lon)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id deferred: true\n" +
-                            "          filter: id='A'\n" +
-                            "        Frame forward scan on: pos\n"
+                    "Sort light\n" +
+                            "  keys: [time]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [id,time,lat]\n" +
+                            "      values: [last(lat),last(lon)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id deferred: true\n" +
+                            "              filter: id='A'\n" +
+                            "            Frame forward scan on: pos\n"
             );
         });
     }
@@ -3178,7 +3198,8 @@ public class SampleByTest extends AbstractCairoTest {
         assertQuery("id\ttime\tgeo6\tlat\tlon\n",
                 "select   id, time, geo6, last(lat) lat, last(lon) lon " +
                         "from pos " +
-                        "where id = 'A' sample by 15m ALIGN to CALENDAR",
+                        "where id = 'A' sample by 15m ALIGN to CALENDAR " +
+                        "order by time, id",
                 "CREATE TABLE pos (" +
                         "  time TIMESTAMP," +
                         "  id SYMBOL INDEX," +
@@ -3200,7 +3221,9 @@ public class SampleByTest extends AbstractCairoTest {
                         "A\t1970-01-01T00:30:00.000000Z\tyyyyyy\t40.0\t40.0\n" +
                         "A\t1970-01-01T00:30:00.000000Z\tzzzzzz\t39.0\t39.0\n" +
                         "A\t1970-01-01T01:00:00.000000Z\tzzzzzz\t101.0\t101.0\n",
-                false, false, false
+                true,
+                true,
+                false
         );
     }
 
@@ -3666,8 +3689,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false,
-                false
+                true,
+                true
         );
     }
 
@@ -3696,6 +3719,301 @@ public class SampleByTest extends AbstractCairoTest {
                 false,
                 false
         );
+    }
+
+    @Test
+    public void testSampleByRewriteJoinNoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select * from " +
+                            "(select sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar) a " +
+                            " left join " +
+                            "(select sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar) b on(sym) ",
+                    "SelectedRecord\n" +
+                            "    Hash Outer Join Light\n" +
+                            "      condition: b.sym=a.sym\n" +
+                            "        SelectedRecord\n" +
+                            "            Sort light\n" +
+                            "              keys: [ts1]\n" +
+                            "                Async Group By workers: 1\n" +
+                            "                  keys: [sym,ts1]\n" +
+                            "                  values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "                  filter: null\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n" +
+                            "        Hash\n" +
+                            "            SelectedRecord\n" +
+                            "                Sort light\n" +
+                            "                  keys: [ts1]\n" +
+                            "                    Async Group By workers: 1\n" +
+                            "                      keys: [sym,ts1]\n" +
+                            "                      values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "                      filter: null\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteJoinTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select * from " +
+                            "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar) a " +
+                            " asof join " +
+                            "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar) b ",
+                    "SelectedRecord\n" +
+                            "    AsOf Join\n" +
+                            "        Sort light\n" +
+                            "          keys: [ts1]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts1,sym]\n" +
+                            "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "              filter: null\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n" +
+                            "        Sort light\n" +
+                            "          keys: [ts1]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts1,sym]\n" +
+                            "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "              filter: null\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteMaintainTimestamp() throws Exception {
+        assertQuery("k\tsum\n" +
+                        "2021-03-25T18:00:00.000000Z\t144.77803379943109\n" +
+                        "2021-03-26T00:00:00.000000Z\t698.7189685053112\n" +
+                        "2021-03-26T06:00:00.000000Z\t421.5252426971489\n" +
+                        "2021-03-26T12:00:00.000000Z\t857.8810676038881\n" +
+                        "2021-03-26T18:00:00.000000Z\t524.368651615222\n" +
+                        "2021-03-27T00:00:00.000000Z\t288.92342312668086\n" +
+                        "2021-03-27T06:00:00.000000Z\t678.7325602767398\n" +
+                        "2021-03-27T12:00:00.000000Z\t58.67828100564961\n" +
+                        "2021-03-27T18:00:00.000000Z\t762.6041348070386\n" +
+                        "2021-03-28T00:00:00.000000Z\t573.4016951272048\n" +
+                        "2021-03-28T06:00:00.000000Z\t410.12198091384363\n" +
+                        "2021-03-28T12:00:00.000000Z\t271.0334715592426\n" +
+                        "2021-03-28T18:00:00.000000Z\t315.30154566415314\n" +
+                        "2021-03-29T00:00:00.000000Z\t344.7845399344325\n" +
+                        "2021-03-29T06:00:00.000000Z\t736.152959556984\n" +
+                        "2021-03-29T12:00:00.000000Z\t620.835997838767\n" +
+                        "2021-03-29T18:00:00.000000Z\t464.7487719927086\n" +
+                        "2021-03-30T00:00:00.000000Z\t200.4147829883567\n",
+                "select k, sum(lat) from x sample by 6h  align to calendar order by k",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(120)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByRewriteMultipleTimestamps1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select ts1 a, ts1 b, sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar ",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [b]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [b,sym]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "          filter: null\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteMultipleTimestamps1NotKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select ts1 a, ts1 b, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar ",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [b]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [b]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "          filter: null\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteMultipleTimestamps2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
+                            "from x " +
+                            "sample by 1m align to calendar ",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [d]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [d,sym]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "          filter: null\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteUTCOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select ts1, sym, min(val), avg(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar time zone 'UTC'",
+                    "Sort light\n" +
+                            "  keys: [ts1]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts1,sym]\n" +
+                            "      values: [min(val),avg(val),max(val)]\n" +
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteUnionNoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar " +
+                            " union all " +
+                            "select sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar ",
+                    "Union All\n" +
+                            "    SelectedRecord\n" +
+                            "        Sort light\n" +
+                            "          keys: [ts1]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [sym,ts1]\n" +
+                            "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "              filter: null\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n" +
+                            "    SelectedRecord\n" +
+                            "        Sort light\n" +
+                            "          keys: [ts1]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [sym,ts1]\n" +
+                            "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "              filter: null\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteUnionTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar " +
+                            " union all " +
+                            "select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar ",
+                    "Union All\n" +
+                            "    Sort light\n" +
+                            "      keys: [tstmp]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [tstmp,sym]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "          filter: null\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [tstmp,sym]\n" +
+                            "      values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByRewriteWith() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan(
+                    "with y as (select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
+                            "from x " +
+                            "sample by 1m align to calendar) select * from y ",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [d]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [d,sym]\n" +
+                            "          values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "          filter: null\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+        });
     }
 
     @Test
@@ -4490,24 +4808,7 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE"
             );
 
-            FilesFacade ff = new TestFilesFacadeImpl() {
-                int count = 4;
-
-                @Override
-                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                    if (count-- > 0) {
-                        return super.mmap(fd, len, offset, flags, memoryTag);
-                    }
-                    return -1;
-                }
-            };
-
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
+            CairoConfiguration configuration = createMmapFailingConfiguration(4);
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -4538,24 +4839,7 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE"
             );
 
-            FilesFacade ff = new TestFilesFacadeImpl() {
-                int count = 10;
-
-                @Override
-                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                    if (count-- > 0) {
-                        return super.mmap(fd, len, offset, flags, memoryTag);
-                    }
-                    return -1;
-                }
-            };
-
-            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
+            CairoConfiguration configuration = createMmapFailingConfiguration(10);
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -4967,6 +5251,8 @@ public class SampleByTest extends AbstractCairoTest {
                         "UVSD\t49.42890511958454\t1970-01-04T06:30:00.000000Z\n" +
                         "\t58.912164838797885\t1970-01-04T07:30:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T08:30:00.000000Z\n",
+                true,
+                true,
                 false
         );
     }
@@ -10492,6 +10778,28 @@ public class SampleByTest extends AbstractCairoTest {
         );
     }
 
+    @NotNull
+    private static CairoConfiguration createMmapFailingConfiguration(int x) {
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            int count = x;
+
+            @Override
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+                if (count-- > 0) {
+                    return super.mmap(fd, len, offset, flags, memoryTag);
+                }
+                return -1;
+            }
+        };
+
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+    }
+
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
         String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
                 .replace("in ('a')", "in ('a', 'none')");
@@ -10590,9 +10898,7 @@ public class SampleByTest extends AbstractCairoTest {
                             final RecordCursorFactory factory = factories[finalI];
                             while (!writerDone.get()) {
                                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                    while (cursor.hasNext()) {
-                                        // no-op
-                                    }
+                                    TestUtils.drainCursor(cursor);
                                 } catch (Throwable e) {
                                     e.printStackTrace();
                                     errors.incrementAndGet();

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -33,7 +34,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -124,7 +124,7 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
                 failureCounter.incrementAndGet();
                 Assert.fail("Drop table failed [e=" + e + ", sql=" + sql + "]");
             } finally {
-                Path.clearThreadLocals();
+                TableUtils.clearThreadLocals();
                 dropsDone.countDown();
             }
         }).start();

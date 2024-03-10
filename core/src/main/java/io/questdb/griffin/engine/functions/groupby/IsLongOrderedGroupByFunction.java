@@ -43,13 +43,13 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putBool(valueIndex, true);
         mapValue.putLong(valueIndex + 1, arg.getLong(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (mapValue.getBool(valueIndex)) {
             long prev = mapValue.getLong(valueIndex + 1);
             long curr = arg.getLong(record);
@@ -82,11 +82,6 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.BOOLEAN);
@@ -101,5 +96,10 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 }

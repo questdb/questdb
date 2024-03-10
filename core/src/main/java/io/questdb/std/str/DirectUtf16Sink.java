@@ -32,7 +32,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectUtf16Sink implements MutableUtf16Sink, CharSequence, DirectSequence, Closeable, Utf16Sink {
+public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Closeable, Utf16Sink {
     private final long initialCapacity;
     private long capacity;
     private long hi;
