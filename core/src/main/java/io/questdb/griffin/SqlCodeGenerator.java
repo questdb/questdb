@@ -4614,6 +4614,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                     final int orderByAdviceSize = orderByAdvice.size();
                     if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
+                        guardAgainstDotsInOrderByAdvice(model);
                         // todo: when order by coincides with keyColumn and there is index we can incorporate
                         //    ordering in the code that returns rows from index rather than having an
                         //    "overhead" order by implementation, which would be trying to oder already ordered symbols

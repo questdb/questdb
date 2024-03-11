@@ -3022,8 +3022,8 @@ public class SqlOptimiser implements Mutable {
      * Cases:
      *     ASOF JOIN
      *         Propagate if the ordering is for the primary table only, and timestamp-first
-     *     INNER JOIN
-     *         Propagate to primary table and secondary table.
+     *     OTHER JOINs
+     *         Propagate down primary table only.
      *
      * @param model The current query model
      * @param jm The join model list for the current query model
@@ -3067,9 +3067,8 @@ public class SqlOptimiser implements Mutable {
             // if the orderByAdvice prefixes do not match the primary table name, don't propagate it
             final CharSequence adviceToken = orderByAdvice.getQuick(0).token;
             final int dotLoc = Chars.indexOf(adviceToken, '.');
-
-            if (!Chars.equalsNc(jm1.getTableName(), adviceToken, 0, dotLoc)
-                    || (jm1.getAlias() != null && !Chars.equals(jm1.getAlias().token, adviceToken, 0, dotLoc))) {
+            if (!(Chars.equalsNc(jm1.getTableName(), adviceToken, 0, dotLoc)
+                    || (jm1.getAlias() != null && Chars.equals(jm1.getAlias().token, adviceToken, 0, dotLoc)))) {
                 optimiseOrderBy(jm1, orderByMnemonic);
                 return;
             }
@@ -3091,11 +3090,6 @@ public class SqlOptimiser implements Mutable {
                                 && Chars.equalsIgnoreCase(jm1.getTimestamp().token, qc.getAst().token)) {
                             setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
                         }
-                        break;
-                    case QueryModel.JOIN_INNER:
-                        // for inner, we propagate on both sides
-                        setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
-                        setAndCopyAdvice(jm2, advice, orderByMnemonic, orderByDirectionAdvice);
                         break;
                     default:
                         setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
@@ -3186,7 +3180,7 @@ public class SqlOptimiser implements Mutable {
                 if (prefix.length() == 0) {
                     prefix = token.subSequence(0, loc);
                 }
-                else if (!Chars.equalsIgnoreCase(prefix, token, loc, token.length())) {
+                else if (!Chars.equalsIgnoreCase(prefix, token, 0, loc)) {
                     return false;
                 }
             }
