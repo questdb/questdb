@@ -62,14 +62,15 @@ public class O3Test extends AbstractO3Test {
     private final StringBuilder tstData = new StringBuilder();
 
     @Before
-    public void setUp4() {
+    public void setUp() {
+        super.setUp();
         Vect.resetPerformanceCounters();
         partitionO3SplitThreshold = 512 * (1L << 10);
         LOG.info().$("partitionO3SplitThreshold = ").$(partitionO3SplitThreshold).$();
     }
 
     @After
-    public void tearDown4() {
+    public void tearDown() throws Exception {
         int count = Vect.getPerformanceCountersCount();
         if (count > 0) {
             tstData.setLength(0);
@@ -88,6 +89,7 @@ public class O3Test extends AbstractO3Test {
             System.err.flush();
         }
         partitionO3SplitThreshold = -1;
+        super.tearDown();
     }
 
     @Test

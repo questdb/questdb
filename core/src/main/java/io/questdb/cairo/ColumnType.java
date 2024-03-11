@@ -184,6 +184,33 @@ public final class ColumnType {
         return columnType == DOUBLE;
     }
 
+    public static boolean isFixedSize(int columnType) {
+        // specified explicitly
+        switch (columnType) {
+            case INT:
+            case LONG:
+            case BOOLEAN:
+            case BYTE:
+            case TIMESTAMP:
+            case DATE:
+            case DOUBLE:
+            case CHAR:
+            case SHORT:
+            case FLOAT:
+            case LONG128:
+            case LONG256:
+            case GEOBYTE:
+            case GEOSHORT:
+            case GEOINT:
+            case GEOLONG:
+            case UUID:
+            case IPv4:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     public static boolean isGeoHash(int columnType) {
         return (columnType & TYPE_FLAG_GEO_HASH) != 0;
     }
@@ -228,33 +255,6 @@ public final class ColumnType {
 
     public static boolean isVarSize(int columnType) {
         return columnType == STRING || columnType == BINARY || columnType == VARCHAR;
-    }
-
-    public static boolean isFixedSize(int columnType) {
-        // specified explicitly
-        switch (columnType) {
-            case INT:
-            case LONG:
-            case BOOLEAN:
-            case BYTE:
-            case TIMESTAMP:
-            case DATE:
-            case DOUBLE:
-            case CHAR:
-            case SHORT:
-            case FLOAT:
-            case LONG128:
-            case LONG256:
-            case GEOBYTE:
-            case GEOSHORT:
-            case GEOINT:
-            case GEOLONG:
-            case UUID:
-            case IPv4:
-                return true;
-            default:
-                return false;
-        }
     }
 
     public static boolean isVarchar(int columnType) {
