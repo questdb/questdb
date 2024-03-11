@@ -28,8 +28,10 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.AbstractLineSender;
@@ -48,8 +50,11 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.*;
-import io.questdb.test.CreateTableTestUtils;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -177,11 +182,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         final String tableName = "weather";
         final int numOfRows = 2000;
 
-        try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-            m.col("abcdef", ColumnType.SYMBOL).timestamp("ts");
-            CreateTableTestUtils.create(m);
-            engine.releaseInactive();
-        }
+        TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY);
+        m.col("abcdef", ColumnType.SYMBOL).timestamp("ts");
+        AbstractCairoTest.create(m);
+        engine.releaseInactive();
 
         final SOCountDownLatch dataSent = new SOCountDownLatch(1);
         final SOCountDownLatch dataConsumed = new SOCountDownLatch(1);
@@ -248,10 +252,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         runInContext((receiver) -> {
             // Pre-create a partitioned table, so we can wait until it's created.
-            try (TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY)) {
-                m.timestamp("ts").wal();
-                TestUtils.create(m, engine);
-            }
+            TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY);
+            m.timestamp("ts").wal();
+            TestUtils.create(m, engine);
 
             // Send non-partitioned table rows before the partitioned table ones.
             final String lineData = tableNonPartitioned + " windspeed=2.0 631150000000000000\n" +
@@ -316,10 +319,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         runInContext((receiver) -> {
             // Pre-create a partitioned table, so we can wait until it's created.
-            try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                m.timestamp("ts").col("dt", ColumnType.DATE).noWal();
-                CreateTableTestUtils.create(m);
-            }
+            TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY);
+            m.timestamp("ts").col("dt", ColumnType.DATE).noWal();
+            AbstractCairoTest.create(m);
 
             final String lineData = tableName + " dt=631150000000000t 631150000000000000\n" +
                     tableName + " dt=631160000000000t 631160000000000000\n";
@@ -409,10 +411,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         // WAL is not supported on non-partitioned tables
         Assume.assumeFalse(walEnabled);
 
-        try (TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE)) {
-            m.col("windspeed", ColumnType.DOUBLE).timestamp();
-            CreateTableTestUtils.create(m);
-        }
+        TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE);
+        m.col("windspeed", ColumnType.DOUBLE).timestamp();
+        AbstractCairoTest.create(m);
 
         String lineData =
                 "weather windspeed=2.0 631150000000000000\n" +
@@ -637,13 +638,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         autoCreateNewColumns = false;
         runInContext((receiver) -> {
             // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
-            try (TableModel m = new TableModel(configuration, "up", PartitionBy.MONTH)) {
-                m.timestamp("ts").col("sym", ColumnType.SYMBOL);
-                if (walEnabled) {
-                    m.wal();
-                }
-                createTable(m);
+            TableModel m = new TableModel(configuration, "up", PartitionBy.MONTH);
+            m.timestamp("ts").col("sym", ColumnType.SYMBOL);
+            if (walEnabled) {
+                m.wal();
             }
+            createTable(m);
 
             String lineData =
                     "up out=1.0 631150000000000000\n" +
@@ -1348,15 +1348,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         byte[] utf8Bytes = "ल".getBytes(Files.UTF_8);
         Assert.assertEquals(3, utf8Bytes.length);
 
-        try (TableModel m = new TableModel(configuration, "लаблअца", PartitionBy.DAY)) {
-            m.col("символ", ColumnType.SYMBOL).indexed(true, 256)
-                    .col("поле", ColumnType.STRING)
-                    .timestamp("время");
-            if (walEnabled) {
-                m.wal();
-            }
-            TestUtils.create(m, engine);
+        TableModel m = new TableModel(configuration, "लаблअца", PartitionBy.DAY);
+        m.col("символ", ColumnType.SYMBOL).indexed(true, 256)
+                .col("поле", ColumnType.STRING)
+                .timestamp("время");
+        if (walEnabled) {
+            m.wal();
         }
+        TestUtils.create(m, engine);
 
         engine.releaseInactive();
         runInContext((receiver) -> {
@@ -1401,16 +1400,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
 
         runInContext((receiver) -> {
-            try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
-                m.timestamp("ReceiveTime")
-                        .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
-                        .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
-                        .col("Length", ColumnType.INT);
-                if (walEnabled) {
-                    m.wal();
-                }
-                TestUtils.create(m, engine);
+            TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY);
+            m.timestamp("ReceiveTime")
+                    .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("Length", ColumnType.INT);
+            if (walEnabled) {
+                m.wal();
             }
+            TestUtils.create(m, engine);
 
             sendLinger(lineData, "table_a");
 
@@ -1527,18 +1525,17 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         currentMicros = 1;
         String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
         runInContext((receiver) -> {
-            try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
-                m.timestamp("ts")
-                        .col("id", ColumnType.LONG)
-                        .col("author", ColumnType.LONG)
-                        .col("guild", ColumnType.LONG)
-                        .col("channel", ColumnType.LONG)
-                        .col("flags", ColumnType.BYTE);
-                if (walEnabled) {
-                    m.wal();
-                }
-                TestUtils.create(m, engine);
+            TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH);
+            m.timestamp("ts")
+                    .col("id", ColumnType.LONG)
+                    .col("author", ColumnType.LONG)
+                    .col("guild", ColumnType.LONG)
+                    .col("channel", ColumnType.LONG)
+                    .col("flags", ColumnType.BYTE);
+            if (walEnabled) {
+                m.wal();
             }
+            TestUtils.create(m, engine);
 
             send(lineData, "messages");
             String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
@@ -1565,13 +1562,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             };
 
-            try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
-                m.timestamp("ReceiveTime")
-                        .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
-                        .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
-                        .col("Length", ColumnType.INT);
-                CreateTableTestUtils.create(m);
-            }
+            TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY);
+            m.timestamp("ReceiveTime")
+                    .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("Length", ColumnType.INT);
+            AbstractCairoTest.create(m);
 
             String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
             sendLinger(lineData, "table_a");
@@ -1592,10 +1588,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         runInContext((receiver) -> {
             // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
-            try (TableModel m = new TableModel(configuration, tableName, PartitionBy.MONTH)) {
-                m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
-                CreateTableTestUtils.create(m);
-            }
+            TableModel m = new TableModel(configuration, tableName, PartitionBy.MONTH);
+            m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
+            AbstractCairoTest.create(m);
 
             // Next, start inserting symbols on a background thread.
             final CountDownLatch halfDoneLatch = new CountDownLatch(1);
@@ -1615,7 +1610,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         }
                     }
                 }
-                Path.clearThreadLocals();
+                TableUtils.clearThreadLocals();
                 doneLatch.countDown();
             }).start();
 
@@ -1925,7 +1920,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             //expected
         } finally {
             finished.await();
-            Path.clearThreadLocals();
+            TableUtils.clearThreadLocals();
         }
     }
 

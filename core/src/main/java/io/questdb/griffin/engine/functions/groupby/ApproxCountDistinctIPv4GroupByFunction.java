@@ -64,7 +64,7 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int val = arg.getIPv4(record);
         if (val != Numbers.IPv4_NULL) {
             final long hash = Hash.murmur3ToLong(val);
@@ -79,7 +79,7 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int val = arg.getIPv4(record);
         if (val != Numbers.IPv4_NULL) {
             final long hash = Hash.murmur3ToLong(val);
@@ -126,11 +126,6 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     @Override
     public boolean isConstant() {
         return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return true;
     }
 
     @Override
@@ -220,6 +215,11 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
         this.valueIndex = valueIndex;
         this.hllPtrIndex = valueIndex + 1;
         this.overwrittenFlagIndex = valueIndex + 2;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return true;
     }
 
     private void overwrite(MapValue mapValue, long value) {

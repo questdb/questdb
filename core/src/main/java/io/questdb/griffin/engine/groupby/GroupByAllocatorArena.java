@@ -115,8 +115,10 @@ public class GroupByAllocatorArena implements GroupByAllocator {
         if (newSize > maxChunkSize) {
             throw CairoException.nonCritical().put("too large allocation requested: ").put(newSize);
         }
+        if (newSize <= oldSize) {
+            return ptr;
+        }
 
-        assert oldSize < newSize;
         if (this.ptr == Bytes.align8b(ptr + oldSize)) {
             // Potential fast path:
             // we've just allocated this memory, so maybe we don't need to do anything?

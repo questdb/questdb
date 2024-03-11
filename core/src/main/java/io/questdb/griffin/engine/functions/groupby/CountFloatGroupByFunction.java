@@ -35,7 +35,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
         if (!Float.isNaN(value)) {
             mapValue.putLong(valueIndex, 1);
@@ -45,7 +45,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
         if (!Float.isNaN(value)) {
             mapValue.addLong(valueIndex, 1);

@@ -26,11 +26,11 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.TableModel;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TableModel;
 import org.junit.Test;
 
 public class CharGroupByFunctionTest extends AbstractCairoTest {
@@ -58,10 +58,9 @@ public class CharGroupByFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testSampleBy() throws SqlException, NumericException {
-        try (TableModel tm = new TableModel(configuration, "tab", PartitionBy.DAY)) {
-            tm.timestamp("ts").col("ch", ColumnType.CHAR);
-            createPopulateTable(tm, 100, "2020-01-01", 2);
-        }
+        TableModel tm = new TableModel(configuration, "tab", PartitionBy.DAY);
+        tm.timestamp("ts").col("ch", ColumnType.CHAR);
+        createPopulateTable(tm, 100, "2020-01-01", 2);
 
         assertSql("ts\tmin\tmax\tfirst\tlast\tcount\n" +
                 "2020-01-01T00:28:47.990000Z\t\u0001\t3\t\u0001\t3\t51\n" +

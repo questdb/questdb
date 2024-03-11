@@ -230,6 +230,8 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
                 }
                 break;
             case ColumnType.IPv4:
+                expectedPutTypes.add(ColumnType.IPv4);
+                break;
             case ColumnType.GEOINT:
                 expectedPutTypes.add(ColumnType.INT);
                 break;
@@ -698,6 +700,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         @Override
         public void putFloat(float value) {
             recordedTypes.add(ColumnType.FLOAT);
+        }
+
+        @Override
+        public void putIPv4(int value) {
+            recordedTypes.add(ColumnType.IPv4);
         }
 
         @Override

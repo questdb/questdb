@@ -24,7 +24,10 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.*;
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
+import io.questdb.Metrics;
+import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -50,8 +53,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.*;
 import io.questdb.test.QuestDBTestNode;
-import io.questdb.cairo.LogRecordSinkAdapter;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -593,7 +594,7 @@ public final class TestUtils {
     }
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
-        Path.clearThreadLocals();
+        clearThreadLocals();
         long mem = Unsafe.getMemUsed();
         long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
@@ -612,7 +613,7 @@ public final class TestUtils {
         Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
 
         runnable.run();
-        Path.clearThreadLocals();
+        clearThreadLocals();
         if (fileCount != Files.getOpenFileCount()) {
             Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
         }
@@ -849,15 +850,7 @@ public final class TestUtils {
         if (tableToken == null) {
             throw new RuntimeException("table already exists: " + model.getTableName());
         }
-        TableUtils.createTable(
-                engine.getConfiguration(),
-                model.getMem(),
-                model.getPath(),
-                model,
-                ColumnType.VERSION,
-                tableId,
-                tableToken.getDirName()
-        );
+        createTable(model, engine.getConfiguration(), ColumnType.VERSION, tableId, tableToken);
         engine.registerTableToken(tableToken);
         if (model.isWalEnabled()) {
             engine.getTableSequencerAPI().registerTable(tableId, model, tableToken);
@@ -1487,7 +1480,7 @@ public final class TestUtils {
         final Path path = Path.getThreadLocal(root);
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         path.slash$();
-        Assert.assertTrue("Test dir cleanup error", !ff.exists(path) || ff.rmdir(path.slash$()));
+        Assert.assertTrue("Test dir cleanup error: " + ff.errno(), !ff.exists(path) || ff.rmdir(path.slash$()));
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
@@ -1669,6 +1662,23 @@ public final class TestUtils {
                 || expected.getLong2() != actual.getLong2()
                 || expected.getLong3() != actual.getLong3()) {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
+        }
+    }
+
+    public static void createTable(TableModel model, CairoConfiguration configuration, int tableVersion, int tableId, TableToken tableToken) {
+        try (
+                Path path = new Path();
+                MemoryMARW mem = Vm.getMARWInstance()
+        ) {
+            TableUtils.createTable(
+                    configuration,
+                    mem,
+                    path,
+                    model,
+                    tableVersion,
+                    tableId,
+                    tableToken.getDirName()
+            );
         }
     }
 

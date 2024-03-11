@@ -27,24 +27,20 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableStructure;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.std.*;
-import io.questdb.std.str.Path;
+import io.questdb.std.Chars;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 
-import java.io.Closeable;
-
-public class TableModel implements TableStructure, Closeable {
+public class TableModel implements TableStructure {
     private static final long COLUMN_FLAG_CACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
     private static final long COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CairoConfiguration configuration;
-    private final MemoryMARW mem = Vm.getMARWInstance();
     private final String name;
     private final int partitionBy;
-    private final Path path = new Path();
     private int timestampIndex = -1;
     private int walEnabled = -1;
 
@@ -67,24 +63,10 @@ public class TableModel implements TableStructure, Closeable {
         return this;
     }
 
-    @Override
-    public void close() {
-        Misc.free(mem);
-        Misc.free(path);
-    }
-
     public TableModel col(CharSequence name, int type) {
         columnNames.add(Chars.toString(name));
         // set default symbol capacity
         columnBits.add((128L << 32) | type, COLUMN_FLAG_CACHED);
-        return this;
-    }
-
-    public TableModel dedupKey() {
-        int pos = columnBits.size() - 1;
-        assert pos > 0;
-        long bits = columnBits.getQuick(pos);
-        columnBits.setQuick(pos, bits | COLUMN_FLAG_DEDUP_KEY);
         return this;
     }
 
@@ -117,10 +99,6 @@ public class TableModel implements TableStructure, Closeable {
         return configuration.getMaxUncommittedRows();
     }
 
-    public MemoryMARW getMem() {
-        return mem;
-    }
-
     public String getName() {
         return name;
     }
@@ -133,10 +111,6 @@ public class TableModel implements TableStructure, Closeable {
     @Override
     public int getPartitionBy() {
         return partitionBy;
-    }
-
-    public Path getPath() {
-        return path;
     }
 
     @Override

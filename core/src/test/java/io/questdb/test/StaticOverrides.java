@@ -25,10 +25,8 @@
 package io.questdb.test;
 
 import io.questdb.FactoryProvider;
-import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.test.cairo.Overrides;
 
@@ -95,5 +93,4 @@ public class StaticOverrides extends Overrides {
     public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
         AbstractCairoTest.testMicrosClock = testMicrosClock;
     }
-
 }

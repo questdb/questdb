@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -222,6 +223,11 @@ public final class TableUtils {
         return memSize;
     }
 
+    public static void clearThreadLocals() {
+        Path.clearThreadLocals();
+        TableTransactionLogV2.clearThreadLocals();
+    }
+
     public static int compressColumnCount(RecordMetadata metadata) {
         int count = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -311,6 +317,17 @@ public final class TableUtils {
 
     public static void createTable(
             CairoConfiguration configuration,
+            TableStructure structure,
+            int tableId,
+            CharSequence dirName
+    ) {
+        try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
+            createTable(configuration, mem, path, structure, ColumnType.VERSION, tableId, dirName);
+        }
+    }
+
+    public static void createTable(
+            CairoConfiguration configuration,
             MemoryMARW memory,
             Path path,
             TableStructure structure,
@@ -336,6 +353,23 @@ public final class TableUtils {
             CharSequence dirName
     ) {
         createTable(ff, root, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
+    }
+
+    public static void createTable(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            TableStructure structure,
+            int tableVersion,
+            int tableId,
+            CharSequence dirName
+    ) {
+        try (
+                Path path = new Path();
+                MemoryMARW mem = Vm.getMARWInstance()
+        ) {
+            createTable(ff, root, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
+        }
     }
 
     public static void createTable(

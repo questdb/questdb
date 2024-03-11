@@ -54,4 +54,27 @@ public class SymbolTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testNullSymbolOrderByRegression() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE x (" +
+                    " sym SYMBOL capacity 256 CACHE index capacity 256," +
+                    " timestamp TIMESTAMP" +
+                    ") timestamp (timestamp)");
+            compile("insert into x select" +
+                    " rnd_symbol(100, 2, 4, 2) sym," +
+                    " '2024-03-05T12:13'::timestamp timestamp" +
+                    " from long_sequence(51)");
+            engine.releaseAllWriters();
+            assertQuery(
+                    "sym\nZVDZ\nYR\nYPH\nXWC\nXG\nVLTO\nUWD\nUQSR\nULOF\nTMH\nSXU\nSXU\nSXU\nSDOT\nRFB\nPH\n" +
+                            "PH\nOWLP\nOWLP\nLU\nKWZ\nJSHR\nIBBT\nHYHB\nHWVD\nGLHM\nGLHM\nGLHM\nFZ\nFZ\nFMQN\nFLOP\n" +
+                            "FF\nFDT\nEHBH\nEDYY\nEDYY\nEDRQ\nCPSW\n\n\n\n\n\n\n\n\n\n\n\n\n",
+                    "select sym from x" +
+                    " where timestamp in '2024-03-05T12:13'" +
+                    " order by sym desc",
+                    null, true, true, false);
+        });
+    }
 }

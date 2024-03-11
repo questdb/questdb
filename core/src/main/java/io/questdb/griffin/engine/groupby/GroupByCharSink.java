@@ -149,7 +149,7 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
         int capacity = capacity();
         int len = length();
         int requiredCapacity = len + nChars;
-        if (requiredCapacity > 0 && requiredCapacity <= capacity) {
+        if (capacity > 0 && requiredCapacity <= capacity) {
             return;
         }
         int newCapacity = Math.max(capacity, MIN_CAPACITY);

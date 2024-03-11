@@ -36,12 +36,22 @@ public class LastDoubleGroupByFunction extends FirstDoubleGroupByFunction {
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        super.computeFirst(mapValue, record);
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        computeFirst(mapValue, record, rowId);
     }
 
     @Override
     public String getName() {
         return "last";
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId > destRowId) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
+        }
     }
 }

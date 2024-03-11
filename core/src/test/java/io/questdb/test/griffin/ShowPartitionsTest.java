@@ -109,9 +109,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         String tabName = testTableName(testName.getMethodName());
         String tab2Name = tabName + "_fubar";
         assertMemoryLeak(() -> {
+            TableModel tab = new TableModel(configuration, tabName, PartitionBy.DAY);
+            TableModel tab2 = new TableModel(configuration, tab2Name, PartitionBy.MONTH);
             try (
-                    TableModel tab = new TableModel(configuration, tabName, PartitionBy.DAY);
-                    TableModel tab2 = new TableModel(configuration, tab2Name, PartitionBy.MONTH);
                     Path dstPath = new Path();
                     Path srcPath = new Path()
             ) {
@@ -165,9 +165,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         String tabName = testTableName(testName.getMethodName());
         String tab2Name = tabName + "_fubar";
         assertMemoryLeak(() -> {
+            TableModel tab = new TableModel(configuration, tabName, PartitionBy.DAY);
+            TableModel tab2 = new TableModel(configuration, tab2Name, PartitionBy.DAY);
             try (
-                    TableModel tab = new TableModel(configuration, tabName, PartitionBy.DAY);
-                    TableModel tab2 = new TableModel(configuration, tab2Name, PartitionBy.DAY);
                     Path dstPath = new Path();
                     Path srcPath = new Path()
             ) {

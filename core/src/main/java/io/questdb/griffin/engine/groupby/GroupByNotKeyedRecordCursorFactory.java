@@ -158,6 +158,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int initState;
         private int recordsRemaining = 1;
+        private long rowId;
 
         public GroupByNotKeyedRecordCursor(
                 CairoConfiguration configuration,
@@ -204,7 +205,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 final Record baseRecord = baseCursor.getRecord();
                 if (initState != INIT_FIRST_RECORD_DONE) {
                     if (baseCursor.hasNext()) {
-                        groupByFunctionsUpdater.updateNew(simpleMapValue, baseRecord);
+                        groupByFunctionsUpdater.updateNew(simpleMapValue, baseRecord, rowId++);
                     } else {
                         groupByFunctionsUpdater.updateEmpty(simpleMapValue);
                     }
@@ -212,7 +213,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 }
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    groupByFunctionsUpdater.updateExisting(simpleMapValue, baseRecord);
+                    groupByFunctionsUpdater.updateExisting(simpleMapValue, baseRecord, rowId++);
                     if (earlyExit()) {
                         break;
                     }
@@ -244,6 +245,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public void toTop() {
+            rowId = 0;
             recordsRemaining = 1;
             GroupByUtils.toTop(groupByFunctions);
         }

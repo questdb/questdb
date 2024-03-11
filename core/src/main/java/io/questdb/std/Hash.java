@@ -29,7 +29,8 @@ import io.questdb.std.str.Utf8String;
 
 public final class Hash {
 
-    private static final long M2 = 0x7a646e4d;
+    // Constant from Rust compiler's FxHasher.
+    private static final long M2 = 0x517cc1b727220a95L;
     private static final int MURMUR3_SEED = 95967;
     private static final long MURMUR3_X64_128_C1 = 0x87c37b91114253d5L;
     private static final long MURMUR3_X64_128_C2 = 0x4cf5ad432745937fL;

@@ -30,19 +30,20 @@ import io.questdb.std.Unsafe;
 /**
  * An immutable flyweight for a UTF-16 string stored in native memory.
  */
-public class DirectString extends AbstractCharSequence implements DirectSequence, Mutable {
+public class DirectString extends AbstractCharSequence implements DirectCharSequence, Mutable {
     private long hi;
     private int len;
     private long lo;
 
     @Override
     public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(lo + ((long) index * 2L));
+        return Unsafe.getUnsafe().getChar(lo + ((long) index << 1));
     }
 
     @Override
     public void clear() {
         hi = lo = 0;
+        len = 0;
     }
 
     @Override
@@ -76,7 +77,14 @@ public class DirectString extends AbstractCharSequence implements DirectSequence
     public DirectString of(long lo, long hi) {
         this.lo = lo;
         this.hi = hi;
-        this.len = (int) ((hi - lo) / 2);
+        this.len = (int) ((hi - lo) >>> 1);
+        return this;
+    }
+
+    public DirectString of(long address, int len) {
+        this.lo = address;
+        this.hi = address + ((long) len << 1);
+        this.len = len;
         return this;
     }
 

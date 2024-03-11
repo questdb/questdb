@@ -24,7 +24,9 @@
 
 package io.questdb.test.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
@@ -315,13 +317,12 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                     }
                 });
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
-                    try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                        TestUtils.create(model
-                                        .col(targetColumnName, columnType)
-                                        .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
-                                        .timestamp(),
-                                engine);
-                    }
+                    TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE);
+                    TestUtils.create(model
+                                    .col(targetColumnName, columnType)
+                                    .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
+                                    .timestamp(),
+                            engine);
                     receiver.start();
                     try (AbstractLineSender sender = createLineProtoSender()) {
                         senderConsumer.accept(sender);

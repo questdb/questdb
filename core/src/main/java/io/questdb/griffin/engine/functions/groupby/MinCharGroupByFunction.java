@@ -43,12 +43,12 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putChar(valueIndex, arg.getChar(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         char min = mapValue.getChar(valueIndex);
         char next = arg.getChar(record);
         if (next > 0 && next < min) {
@@ -82,11 +82,6 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return UnaryFunction.super.isReadThreadSafe();
     }
@@ -114,5 +109,10 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

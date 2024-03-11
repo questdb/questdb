@@ -246,6 +246,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         activeExtraStrInfo = directExtraStrInfo;
     }
 
+    public short getCommand() {
+        return command;
+    }
+
     @Override
     public boolean isStructural() {
         switch (command) {

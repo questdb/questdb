@@ -44,12 +44,12 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, arg.getLong(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.minLong(valueIndex, arg.getLong(record));
     }
 
@@ -76,11 +76,6 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public boolean isConstant() {
         return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
@@ -116,5 +111,10 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

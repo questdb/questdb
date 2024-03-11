@@ -4043,9 +4043,9 @@ public class JoinTest extends AbstractCairoTest {
                     "  SELECT ts, SUM(price * qty) / SUM(qty) vwap\n" +
                     "  FROM trade\n" +
                     "  WHERE instrument = 'A'\n" +
-                    "  SAMPLE by 5m ALIGN TO CALENDAR\n" +
+                    "  SAMPLE by 5m ALIGN TO FIRST OBSERVATION\n" +
                     ") \n" +
-                    "SPLICE JOIN trade ", "left side of splice join doesn't support random access", 137);
+                    "SPLICE JOIN trade ", "left side of splice join doesn't support random access", 146);
 
             assertFailure("SELECT *\n" +
                     "FROM trade " +
@@ -4054,7 +4054,7 @@ public class JoinTest extends AbstractCairoTest {
                     "  SELECT ts, SUM(price * qty) / SUM(qty) vwap\n" +
                     "  FROM trade\n" +
                     "  WHERE instrument = 'A'\n" +
-                    "  SAMPLE BY 5m ALIGN TO CALENDAR\n" +
+                    "  SAMPLE BY 5m ALIGN TO FIRST OBSERVATION\n" +
                     ") \n", "right side of splice join doesn't support random access", 20);
         });
     }

@@ -55,7 +55,7 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final CharSequence val = arg.getStr(record);
         if (val == null) {
             mapValue.putLong(valueIndex, 0);
@@ -66,7 +66,7 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final CharSequence val = arg.getStr(record);
         if (val != null) {
             final long ptr = mapValue.getLong(valueIndex);
@@ -112,11 +112,6 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return false;
     }
@@ -158,6 +153,11 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override

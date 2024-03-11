@@ -38,7 +38,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -53,17 +52,18 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
         try {
             assertMemoryLeak(() -> {
                 for (int i = 0, n = tableModels.length; i < n; i++) {
-                    CreateTableTestUtils.create(tableModels[i]);
+                    AbstractCairoTest.create(tableModels[i]);
                 }
                 assertException(query, position, contains, false);
             });
         } finally {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                TableModel tableModel = tableModels[i];
-                TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
-                configuration.getFilesFacade().rmdir(path);
-                tableModel.close();
+            try (Path path = new Path()) {
+                for (int i = 0, n = tableModels.length; i < n; i++) {
+                    TableModel tableModel = tableModels[i];
+                    TableToken tableToken = engine.verifyTableName(tableModel.getName());
+                    path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                    configuration.getFilesFacade().rmdir(path);
+                }
             }
         }
     }
@@ -167,18 +167,19 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
     protected void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
         try {
             for (int i = 0, n = tableModels.length; i < n; i++) {
-                CreateTableTestUtils.create(tableModels[i]);
+                AbstractCairoTest.create(tableModels[i]);
             }
             runnable.run();
         } finally {
             Assert.assertTrue(engine.releaseAllReaders());
             FilesFacade filesFacade = configuration.getFilesFacade();
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                TableModel tableModel = tableModels[i];
-                TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
-                Assert.assertTrue(filesFacade.rmdir(path));
-                tableModel.close();
+            try (Path path = new Path()) {
+                for (int i = 0, n = tableModels.length; i < n; i++) {
+                    TableModel tableModel = tableModels[i];
+                    TableToken tableToken = engine.verifyTableName(tableModel.getName());
+                    path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                    Assert.assertTrue(filesFacade.rmdir(path));
+                }
             }
             engine.reloadTableNames();
         }
@@ -195,10 +196,10 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
             for (int i = 0, n = nested.getJoinModels().size(); i < n; i++) {
                 LowerCaseCharSequenceHashSet set = new LowerCaseCharSequenceHashSet();
                 final QueryModel m = nested.getJoinModels().getQuick(i);
+                // validate uniqueness of top-down column names.
                 final ObjList<QueryColumn> cols = m.getTopDownColumns();
                 for (int j = 0, k = cols.size(); j < k; j++) {
-                    QueryColumn qc = cols.getQuick(j);
-                    Assert.assertTrue(set.add(qc.getName()));
+                    Assert.assertTrue(set.add(cols.getQuick(j).getName()));
                 }
                 nameSets.add(set);
             }

@@ -234,6 +234,9 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putByte(ptr, (byte) 42);
                 Assert.assertEquals(minChunkSize, allocator.allocated());
 
+                // This should be no-op.
+                Assert.assertEquals(ptr, allocator.realloc(ptr, size, size));
+
                 // This call should lead to slow path (malloc + memcpy).
                 ptr = allocator.realloc(ptr, size, size + minChunkSize);
                 Unsafe.getUnsafe().putByte(ptr, (byte) 42);
