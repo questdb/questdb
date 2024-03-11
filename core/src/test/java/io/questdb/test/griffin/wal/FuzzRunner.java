@@ -42,7 +42,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
@@ -394,6 +393,10 @@ public class FuzzRunner {
         }
     }
 
+    public int getTransactionCount() {
+        return transactionCount;
+    }
+
     public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
         setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1);
     }
@@ -582,7 +585,7 @@ public class FuzzRunner {
             } catch (Throwable e) {
                 errors.add(e);
             } finally {
-                Path.clearThreadLocals();
+                TableUtils.clearThreadLocals();
             }
         });
     }
@@ -660,7 +663,7 @@ public class FuzzRunner {
         } catch (Throwable e) {
             errors.add(e);
         } finally {
-            Path.clearThreadLocals();
+            TableUtils.clearThreadLocals();
         }
     }
 
@@ -693,7 +696,7 @@ public class FuzzRunner {
             errors.add(e);
         } finally {
             Misc.freeObjList(readers);
-            Path.clearThreadLocals();
+            TableUtils.clearThreadLocals();
         }
     }
 
@@ -708,7 +711,7 @@ public class FuzzRunner {
         } catch (Throwable e) {
             errors.add(e);
         } finally {
-            Path.clearThreadLocals();
+            TableUtils.clearThreadLocals();
         }
     }
 

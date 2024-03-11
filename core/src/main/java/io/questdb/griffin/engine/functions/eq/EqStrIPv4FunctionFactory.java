@@ -32,10 +32,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public final class EqUuidStrFunctionFactory implements FunctionFactory {
+public class EqStrIPv4FunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "=(ZS)";
+        return "=(SX)";
     }
 
     @Override
@@ -51,8 +51,9 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function uuidFunc = args.getQuick(0);
-        Function strFunc = args.getQuick(1);
-        return UuidEqUtils.eqStrUuid(strFunc, uuidFunc);
+        int strFuncPosition = argPositions.getQuick(0);
+        Function strFunc = args.getQuick(0);
+        Function ipv4Func = args.getQuick(1);
+        return IPv4EqUtils.eqStrIPv4(strFuncPosition, strFunc, ipv4Func);
     }
 }

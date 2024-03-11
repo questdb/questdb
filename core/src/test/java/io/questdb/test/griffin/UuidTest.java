@@ -54,6 +54,43 @@ public class UuidTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableInFilterInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b uuid)");
+            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
+            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
+            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
+            assertSql(
+                    "b\n",
+                    "x where b = $1"
+            );
+        });
+    }
+
+    @Test
+    public void testBindVariableInFilterInvalidNegated() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b uuid)");
+            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
+            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
+            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
+            assertSql(
+                    "b\n" +
+                            "11111111-1111-1111-1111-111111111111\n" +
+                            "22222222-2222-2222-2222-222222222222\n" +
+                            "33333333-3333-3333-3333-333333333333\n",
+                    "x where b != $1"
+            );
+        });
+    }
+
+    @Test
     public void testCastingConstNullUUIDtoString() throws Exception {
         assertSql(
                 "column\n" +
@@ -136,6 +173,21 @@ public class UuidTest extends AbstractCairoTest {
                         "false\n",
                 "select '11111111-1111-1111-1111-111111111111' = cast ('22222222-2222-2222-2222-222222222222' as uuid) from long_sequence(1)"
         );
+    }
+
+    @Test
+    public void testConstantInFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b uuid)");
+            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
+            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
+            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+            assertSql(
+                    "b\n" +
+                            "22222222-2222-2222-2222-222222222222\n",
+                    "x where b = '22222222-2222-2222-2222-222222222222'"
+            );
+        });
     }
 
     @Test
@@ -260,7 +312,8 @@ public class UuidTest extends AbstractCairoTest {
         insert("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
         assertSql(
                 "u\n" +
-                        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n", "select * from x where u = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'"
+                        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
+                "select * from x where u = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'"
         );
     }
 
@@ -270,7 +323,8 @@ public class UuidTest extends AbstractCairoTest {
         insert("insert into x values (cast('' as uuid))");
         assertSql(
                 "u\n" +
-                        "\n", "select * from x"
+                        "\n",
+                "select * from x"
         );
     }
 
@@ -278,8 +332,10 @@ public class UuidTest extends AbstractCairoTest {
     public void testExplicitCastWithNullStringConstant() throws Exception {
         ddl("create table x (u UUID)");
         insert("insert into x values (cast(null as string))");
-        assertSql("u\n" +
-                "\n", "x"
+        assertSql(
+                "u\n" +
+                        "\n",
+                "x"
         );
     }
 
@@ -294,7 +350,8 @@ public class UuidTest extends AbstractCairoTest {
         assertSql(
                 "u\tsum\n" +
                         "11111111-1111-1111-1111-111111111111\t1\n" +
-                        "22222222-2222-2222-2222-222222222222\t5\n", "select u, sum(i) from x group by u"
+                        "22222222-2222-2222-2222-222222222222\t5\n",
+                "select u, sum(i) from x group by u"
         );
     }
 
@@ -311,7 +368,8 @@ public class UuidTest extends AbstractCairoTest {
                 "u\n" +
                         "11111111-1111-1111-1111-111111111111\n" +
                         "22222222-2222-2222-2222-222222222222\n" +
-                        "33333333-3333-3333-3333-333333333333\n", "select * from x where u in ('11111111-1111-1111-1111-111111111111', 'not uuid', '55555555-5555-5555-5555-555555555555', cast ('22222222-2222-2222-2222-222222222222' as UUID), cast ('33333333-3333-3333-3333-333333333333' as symbol))"
+                        "33333333-3333-3333-3333-333333333333\n",
+                "select * from x where u in ('11111111-1111-1111-1111-111111111111', 'not uuid', '55555555-5555-5555-5555-555555555555', cast ('22222222-2222-2222-2222-222222222222' as UUID), cast ('33333333-3333-3333-3333-333333333333' as symbol))"
         );
     }
 
@@ -323,7 +381,9 @@ public class UuidTest extends AbstractCairoTest {
                 "select * from long_sequence(1) where cast ('11111111-1111-1111-1111-111111111111' as uuid) in ('11111111-1111-1111-1111-111111111111')"
         );
 
-        assertSql("x\n", "select * from long_sequence(1) where cast (null as uuid) in ('11111111-1111-1111-1111-111111111111')"
+        assertSql(
+                "x\n",
+                "select * from long_sequence(1) where cast (null as uuid) in ('11111111-1111-1111-1111-111111111111')"
         );
     }
 
@@ -346,6 +406,24 @@ public class UuidTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexedBindVariableInFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b uuid)");
+            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
+            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
+            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "22222222-2222-2222-2222-222222222222");
+            assertSql(
+                    "b\n" +
+                            "22222222-2222-2222-2222-222222222222\n",
+                    "x where b = $1"
+            );
+        });
+    }
+
+    @Test
     public void testInsertAddUuidColumnAndThenO3Insert() throws Exception {
         // testing O3 insert when uuid columnTop > 0
         ddl("create table x (ts timestamp, i int) timestamp(ts) partition by MONTH");
@@ -357,7 +435,8 @@ public class UuidTest extends AbstractCairoTest {
                 "ts\ti\tu\n" +
                         "2018-01-01T00:00:00.000000Z\t1\t\n" +
                         "2018-01-02T00:00:00.000000Z\t1\t00000000-0000-0000-0000-000000000000\n" +
-                        "2018-01-03T00:00:00.000000Z\t1\t\n", "select * from x"
+                        "2018-01-03T00:00:00.000000Z\t1\t\n",
+                "select * from x"
         );
     }
 
@@ -530,6 +609,24 @@ public class UuidTest extends AbstractCairoTest {
                         "\n",
                 "select to_uuid(lo, hi) as uuid from x"
         );
+    }
+
+    @Test
+    public void testNamedBindVariableInFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b uuid)");
+            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
+            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
+            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr("uuid", "22222222-2222-2222-2222-222222222222");
+            assertSql(
+                    "b\n" +
+                            "22222222-2222-2222-2222-222222222222\n",
+                    "x where b = :uuid"
+            );
+        });
     }
 
     @Test
@@ -779,6 +876,21 @@ public class UuidTest extends AbstractCairoTest {
                         "4b0f595f-143e-4d72-af1a-8266e7921e3b\n",
                 "select * from x"
         );
+    }
+
+    @Test
+    public void testStrColumnInFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b uuid, a string)");
+            insert("insert into x values('11111111-1111-1111-1111-111111111111','foobar')");
+            insert("insert into x values('22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222')");
+            insert("insert into x values('33333333-3333-3333-3333-333333333333','barbaz')");
+            assertSql(
+                    "b\ta\n" +
+                            "22222222-2222-2222-2222-222222222222\t22222222-2222-2222-2222-222222222222\n",
+                    "x where b = a"
+            );
+        });
     }
 
     @Test

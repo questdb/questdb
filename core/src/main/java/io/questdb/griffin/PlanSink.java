@@ -114,6 +114,8 @@ public interface PlanSink {
 
     PlanSink val(long hash, int geoHashBits);
 
+    PlanSink valIPv4(int ip);
+
     PlanSink valISODate(long l);
 
     PlanSink valUuid(long lo, long hi);

@@ -138,14 +138,63 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testAutoFlushMustBePositive() {
-        try (Sender s = Sender.builder().autoFlushRows(0).build()) {
+    public void testAutoFlushInteralNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).autoFlushIntervalMillis(1).build();
+                fail("auto flush interval should not be supported for TCP");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "auto flush interval is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
+    public void testAutoFlushIntervalMustBePositive() {
+        try (Sender ignored = Sender.builder().autoFlushIntervalMillis(0).build()) {
+            fail("auto-flush must be positive");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "auto flush interval cannot be negative [autoFlushIntervalMillis=0]");
+        }
+
+        try (Sender ignored = Sender.builder().autoFlushIntervalMillis(-1).build()) {
+            fail("auto-flush must be positive");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "auto flush interval cannot be negative [autoFlushIntervalMillis=-1]");
+        }
+    }
+
+    @Test
+    public void testAutoFlushInterval_afterAutoFlushDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().disableAutoFlush().autoFlushIntervalMillis(1);
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "cannot set auto flush interval when auto-flush is disabled");
+            }
+        });
+    }
+
+    @Test
+    public void testAutoFlushInterval_doubleConfiguration() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().autoFlushIntervalMillis(1).autoFlushIntervalMillis(1);
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "auto flush interval was already configured [autoFlushIntervalMillis=1]");
+            }
+        });
+    }
+
+    @Test
+    public void testAutoFlushRowsMustBePositive() {
+        try (Sender ignored = Sender.builder().autoFlushRows(0).build()) {
             fail("auto-flush must be positive");
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), "auto flush rows has to be positive [autoFlushRows=0]");
         }
 
-        try (Sender s = Sender.builder().autoFlushRows(-1).build()) {
+        try (Sender ignored = Sender.builder().autoFlushRows(-1).build()) {
             fail("auto-flush must be positive");
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), "auto flush rows has to be positive [autoFlushRows=-1]");
@@ -199,10 +248,14 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost;tls_roots=/some/path;", "tls_roots was configured, but tls_roots_password is missing");
             assertConfStrError("http::addr=localhost;tls_roots_password=hunter123;", "tls_roots_password was configured, but tls_roots is missing");
             assertConfStrError("tcp::addr=localhost;user=foo;", "token cannot be empty nor null");
+            assertConfStrError("tcp::addr=localhost;username=foo;", "token cannot be empty nor null");
             assertConfStrError("tcp::addr=localhost;token=foo;", "TCP token is configured, but user is missing");
             assertConfStrError("http::addr=localhost;user=foo;", "password cannot be empty nor null");
+            assertConfStrError("http::addr=localhost;username=foo;", "password cannot be empty nor null");
             assertConfStrError("http::addr=localhost;pass=foo;", "HTTP password is configured, but username is missing");
+            assertConfStrError("http::addr=localhost;password=foo;", "HTTP password is configured, but username is missing");
             assertConfStrError("tcp::addr=localhost;pass=foo;", "password is not supported for TCP protocol");
+            assertConfStrError("tcp::addr=localhost;password=foo;", "password is not supported for TCP protocol");
             assertConfStrError("tcp::addr=localhost;retry_timeout=;", "retry_timeout cannot be empty");
             assertConfStrError("tcp::addr=localhost;max_buf_size=;", "max_buf_size cannot be empty");
             assertConfStrError("tcp::addr=localhost;init_buf_size=;", "init_buf_size cannot be empty");
@@ -211,6 +264,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost:8080;tls_verify=unsafe_off;", "TSL validation disabled, but TLS was not enabled");
             assertConfStrError("http::addr=localhost:8080;tls_verify=bad;", "invalid tls_verify [value=bad, allowed-values=[on, unsafe_off]]");
             assertConfStrError("tcps::addr=localhost;pass=unsafe_off;", "password is not supported for TCP protocol");
+            assertConfStrError("tcps::addr=localhost;password=unsafe_off;", "password is not supported for TCP protocol");
             assertConfStrError("http::addr=localhost:8080;max_buf_size=-32;", "maximum buffer capacity cannot be less than initial buffer capacity [maximumBufferCapacity=-32, initialBufferCapacity=65536]");
             assertConfStrError("http::addr=localhost:8080;max_buf_size=notanumber;", "invalid max_buf_size [value=notanumber]");
             assertConfStrError("http::addr=localhost:8080;init_buf_size=notanumber;", "invalid init_buf_size [value=notanumber]");
@@ -230,17 +284,17 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError(Sender.builder().enableTls(), "tcp::addr=localhost:8080;", "cannot use tcp protocol when TLS is enabled. use tcps instead");
 
             assertConfStrOk(Sender.builder().enableTls(), "https::addr=localhost:8080;");
-            assertConfStrOk("http", "addr=localhost:8080", "auto_flush_rows=100");
-            assertConfStrOk("http", "addr=localhost:8080", "auto_flush=on", "auto_flush_rows=100");
-            assertConfStrOk("http", "addr=localhost:8080", "auto_flush_rows=100", "auto_flush=on");
-            assertConfStrOk("http", "addr=localhost", "auto_flush=on");
+            assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100");
+            assertConfStrOk("addr=localhost:8080", "auto_flush=on", "auto_flush_rows=100");
+            assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "auto_flush=on");
+            assertConfStrOk("addr=localhost", "auto_flush=on");
             assertConfStrOk("http::addr=localhost;auto_flush=off;");
             assertConfStrOk("http::addr=localhost;");
             assertConfStrOk("http::addr=localhost:8080;");
             assertConfStrOk("http::addr=localhost:8080;token=foo;");
             assertConfStrOk("http::addr=localhost:8080;token=foo=bar;");
-            assertConfStrOk("http", "addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000");
-            assertConfStrOk("http", "addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000");
+            assertConfStrOk("addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000");
+            assertConfStrOk("addr=localhost:8080", "token=foo", "retry_timeout=1000", "max_buf_size=1000000");
             assertConfStrOk("http::addr=localhost:8080;token=foo;max_buf_size=1000000;retry_timeout=1000;");
             assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;");
             assertConfStrOk("https::addr=localhost:8080;tls_verify=on;");
@@ -498,7 +552,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testDisableAutoFlushNotSupportedForTcp() throws Exception {
         assertMemoryLeak(() -> {
-            try (Sender s = Sender.builder().address(LOCALHOST).tcp().disableAutoFlush().build();) {
+            try (Sender ignored = Sender.builder().address(LOCALHOST).tcp().disableAutoFlush().build()) {
                 fail("TCP does not support disabling auto-flush");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "auto-flush is not supported for TCP protocol");
@@ -509,7 +563,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testDnsResolutionFail() throws Exception {
         assertMemoryLeak(() -> {
-            try (Sender s = Sender.builder().address("this-domain-does-not-exist-i-hope-better-to-use-a-silly-tld.silly-tld").build()) {
+            try (Sender ignored = Sender.builder().address("this-domain-does-not-exist-i-hope-better-to-use-a-silly-tld.silly-tld").build()) {
                 fail("dns resolution errors should fail fast");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "could not resolve");
@@ -518,7 +572,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testFailFastWhenSetCustomTrustoreTwice() {
+    public void testFailFastWhenSetCustomTrustStoreTwice() {
         Sender.LineSenderBuilder builder = Sender.builder().advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
         try {
             builder.advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
@@ -646,7 +700,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testMaxRequestBufferSizeCannotBeLessThanDefault() throws Exception {
         assertMemoryLeak(() -> {
-            try (Sender sender = Sender.builder()
+            try (Sender ignored = Sender.builder()
                     .address("localhost:1")
                     .http()
                     .maxBufferCapacity(65535)
@@ -662,7 +716,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testMaxRequestBufferSizeCannotBeLessThanInitialBufferSize() throws Exception {
         assertMemoryLeak(() -> {
-            try (Sender sender = Sender.builder()
+            try (Sender ignored = Sender.builder()
                     .address("localhost:1")
                     .http()
                     .maxBufferCapacity(100_000)
@@ -684,6 +738,30 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("max retries should not be supported for TCP");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "retrying is not supported for TCP protocol");
+            }
+        });
+    }
+
+    @Test
+    public void testMinRequestThroughputCannotBeNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).http().minRequestThroughput(-100).build();
+                fail("minimum request throughput must not be negative");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "minimum request throughput must not be negative [minRequestThroughput=-100]");
+            }
+        });
+    }
+
+    @Test
+    public void testMinRequestThroughputNotSupportedForTcp() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address(LOCALHOST).minRequestThroughput(1).build();
+                fail("min request throughput is not be supported for TCP and the builder should fail-fast");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "minimum request throughput is not supported for TCP protocol");
             }
         });
     }
@@ -839,7 +917,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     private static void assertConfStrError(Sender.LineSenderBuilder sb, String conf, String expectedError) {
         try {
-            try (Sender s = sb.fromConfig(conf).build()) {
+            try (Sender ignored = sb.fromConfig(conf).build()) {
                 fail("should fail with bad conf string");
             }
         } catch (LineSenderException e) {
@@ -847,9 +925,9 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         }
     }
 
-    private static void assertConfStrOk(String schema, String... params) {
+    private static void assertConfStrOk(String... params) {
         StringBuilder sb = new StringBuilder();
-        sb.append(schema).append("::");
+        sb.append("http").append("::");
         shuffle(params);
         for (int i = 0; i < params.length; i++) {
             sb.append(params[i]).append(";");
@@ -862,9 +940,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     private static void assertConfStrOk(Sender.LineSenderBuilder sb, String conf) {
-        try (Sender s = sb.fromConfig(conf).build()) {
-
-        }
+        sb.fromConfig(conf).build().close();
     }
 
     private static void shuffle(String[] input) {
