@@ -75,7 +75,6 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         PATH2.close();
     }
 
-
     public static Path getThreadLocal(CharSequence root) {
         return PATH.get().of(root);
     }
