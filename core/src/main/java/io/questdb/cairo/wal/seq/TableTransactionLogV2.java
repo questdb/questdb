@@ -89,6 +89,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
         if (cursor != null) {
             cursor.closePath();
+            tlTransactionLogCursor.remove();
         }
     }
 
