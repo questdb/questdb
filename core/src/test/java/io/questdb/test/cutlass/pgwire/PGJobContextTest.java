@@ -3090,7 +3090,7 @@ if __name__ == "__main__":
                                         }
                                     } finally {
                                         // release native path memory used by the job
-                                        Path.PATH.get().close();
+                                        Path.clearThreadLocals();
                                         stopped.countDown();
                                     }
                                 }, "wal_job");
