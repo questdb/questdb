@@ -53,8 +53,7 @@ public class FloatGroupByFunctionsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByWithNulls() throws SqlException {
-        // This test does not have a SampleBy?
+    public void testRndFloatsWithAggregates() throws SqlException {
         sqlExecutionContext.setRandom(new Rnd());
         ddl("create table tab as ( select rnd_float() ch from long_sequence(100) )");
 
