@@ -2307,6 +2307,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 args.add(new CharConstant('s'));
                             } else if (factory instanceof EqIntStrCFunctionFactory && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("1"));
+                            } else if (isLong256StrFactory(factory) && sigArgType == ColumnType.STRING) {
+                                args.add(new StrConstant("0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652"));
                             } else if (isIPv4StrFactory(factory) && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("10.8.6.5"));
                             } else if (factory instanceof ContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
@@ -10074,10 +10076,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
             return isIPv4StrFactory(((NegatingFunctionFactory) factory).getDelegate());
         }
         return factory instanceof EqIPv4FunctionFactory
-                || factory instanceof EqStrIPv4FunctionFactory
                 || factory instanceof EqIPv4StrFunctionFactory
                 || factory instanceof LtIPv4StrFunctionFactory
                 || factory instanceof LtStrIPv4FunctionFactory;
+    }
+
+    private static boolean isLong256StrFactory(FunctionFactory factory) {
+        if (factory instanceof SwappingArgsFunctionFactory) {
+            return isLong256StrFactory(((SwappingArgsFunctionFactory) factory).getDelegate());
+        }
+        if (factory instanceof NegatingFunctionFactory) {
+            return isLong256StrFactory(((NegatingFunctionFactory) factory).getDelegate());
+        }
+        return factory instanceof EqLong256StrFunctionFactory;
     }
 
     private void assertBindVarPlan(String type) throws SqlException {

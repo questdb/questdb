@@ -424,6 +424,24 @@ public class UuidTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexedBindVariableInFilter2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b uuid)");
+            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
+            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
+            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "22222222-2222-2222-2222-222222222222");
+            assertSql(
+                    "b\n" +
+                            "22222222-2222-2222-2222-222222222222\n",
+                    "x where $1 = b"
+            );
+        });
+    }
+
+    @Test
     public void testInsertAddUuidColumnAndThenO3Insert() throws Exception {
         // testing O3 insert when uuid columnTop > 0
         ddl("create table x (ts timestamp, i int) timestamp(ts) partition by MONTH");

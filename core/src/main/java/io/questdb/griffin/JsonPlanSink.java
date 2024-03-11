@@ -236,14 +236,6 @@ public class JsonPlanSink extends BasePlanSink {
     }
 
     @Override
-    public PlanSink val(long long0, long long1, long long2, long long3) {
-        quoteValue = true;
-        checkType(NODE_VALUE);
-        Numbers.appendLong256(long0, long1, long2, long3, sink);
-        return this;
-    }
-
-    @Override
     public PlanSink val(long hash, int geoHashBits) {
         quoteValue = true;
         checkType(NODE_VALUE);
@@ -260,6 +252,14 @@ public class JsonPlanSink extends BasePlanSink {
         } else {
             Numbers.intToIPv4Sink(sink, ip);
         }
+        return this;
+    }
+
+    @Override
+    public PlanSink valLong256(long long0, long long1, long long2, long long3) {
+        quoteValue = true;
+        checkType(NODE_VALUE);
+        Numbers.appendLong256(long0, long1, long2, long3, sink);
         return this;
     }
 
