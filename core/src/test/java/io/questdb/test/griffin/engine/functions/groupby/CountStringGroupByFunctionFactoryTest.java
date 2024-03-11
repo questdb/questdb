@@ -247,7 +247,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "e\t1\t1970-01-01T00:00:09.000000Z\n" +
                         "a\t1\t1970-01-01T00:00:09.000000Z\n" +
                         "f\t1\t1970-01-01T00:00:09.000000Z\n",
-                "select a, count_distinct(s), ts from x sample by 1s",
+                "select a, count_distinct(s), ts from x sample by 1s ALIGN TO FIRST OBSERVATION",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false

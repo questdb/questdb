@@ -1481,30 +1481,6 @@ public class SqlOptimiser implements Mutable {
             QueryModel outerModel,
             QueryModel distinctModel
     ) throws SqlException {
-        createSelectColumnsForWildcardFromColumnNames(
-                srcModel,
-                hasJoins,
-                wildcardPosition,
-                translatingModel,
-                innerModel,
-                windowModel,
-                groupByModel,
-                outerModel,
-                distinctModel
-        );
-    }
-
-    private void createSelectColumnsForWildcardFromColumnNames(
-            QueryModel srcModel,
-            boolean hasJoins,
-            int wildcardPosition,
-            QueryModel translatingModel,
-            QueryModel innerModel,
-            QueryModel windowModel,
-            QueryModel groupByModel,
-            QueryModel outerModel,
-            QueryModel distinctModel
-    ) throws SqlException {
         final ObjList<CharSequence> columnNames = srcModel.getBottomUpColumnAliases();
         for (int j = 0, z = columnNames.size(); j < z; j++) {
             CharSequence name = columnNames.getQuick(j);
@@ -4419,7 +4395,7 @@ public class SqlOptimiser implements Mutable {
      * a trick to add artificial timestamp to the original model and then wrap the original
      * model into a sub-query, to select all the intended columns but the artificial timestamp.
      */
-    private QueryModel rewriteSampleBy(@Nullable QueryModel model) {
+    private QueryModel rewriteSampleBy(@Nullable QueryModel model) throws SqlException {
 
         if (model == null) {
             return null;
@@ -4442,6 +4418,19 @@ public class SqlOptimiser implements Mutable {
                             && (sampleByFill.size() == 0 || (sampleByFill.size() == 1 && SqlKeywords.isNoneKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
             ) {
+                // Validate that the model does not have wildcard column names.
+                // Using wildcard in group-by expression makes SQL ambiguous and
+                // error-prone. For example, additive table metadata changes (adding a column)
+                // will change the outcome of existing queries, if those supported wildcards for
+                // as group-by keys.
+
+                for (int i = 0, n = model.getColumns().size(); i <n; i++) {
+                    QueryColumn column = model.getColumns().getQuick(i);
+                    if (Chars.endsWith(column.getAst().token, '*')) {
+                        throw SqlException.$(column.getAst().position, "wildcard column select is not allowed in sample-by queries");
+                    }
+                }
+
                 // When timestamp is not explicitly selected, we will
                 // need to add it artificially to enable group-by to
                 // have access to bucket key. If this happens, the artificial
@@ -4465,7 +4454,36 @@ public class SqlOptimiser implements Mutable {
                 // 3. wrap the result into an order by to maintain the timestamp order, but this can be optional
 
                 // the timestamp could be selected but also aliased
-                CharSequence timestampAlias = model.getColumnNameToAliasMap().get(timestamp.token);
+                CharSequence timestampColumn = timestamp.token;
+                CharSequence timestampAlias = model.getColumnNameToAliasMap().get(timestampColumn);
+
+                if (timestampAlias == null) {
+                    // Let's not give up yet, the timestamp column might be prefixed
+                    // with either table name or table alias
+                    if (nested.getAlias() != null) {
+                        // table is indeed aliased
+                        CharacterStoreEntry e = characterStore.newEntry();
+                        e.put(nested.getAlias().token).putAscii('.').put(timestamp.token);
+                        CharSequence tableAliasPrefixedTimestampColumn = e.toImmutable();
+                        timestampAlias = model.getColumnNameToAliasMap().get(tableAliasPrefixedTimestampColumn);
+                        if (timestampAlias != null) {
+                            timestampColumn = tableAliasPrefixedTimestampColumn;
+                        }
+                    }
+
+                    // still nothing? Let's try table prefix very last time.
+                    if (timestampAlias == null && nested.getTableName() != null) {
+                        CharacterStoreEntry e = characterStore.newEntry();
+                        e.put(nested.getTimestamp()).putAscii('.').put(timestamp.token);
+                        CharSequence tableNamePrefixedTimestampColumn = e.toImmutable();
+                        timestampAlias = model.getColumnNameToAliasMap().get(tableNamePrefixedTimestampColumn);
+
+                        if (timestampAlias != null) {
+                            timestampColumn = tableNamePrefixedTimestampColumn;
+
+                        }
+                    }
+                }
 
                 // These lists collect timestamp copies that we remove from the group-by model.
                 // The goal is to re-populate the wrapper model with the copies in the correct positions.
@@ -4483,7 +4501,7 @@ public class SqlOptimiser implements Mutable {
                     // selected column list. While doing that we also
                     // need to avoid alias conflicts1
 
-                    timestampAlias = createColumnAlias(timestamp.token, model);
+                    timestampAlias = createColumnAlias(timestampColumn, model);
                     model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias));
 
                     timestampOnly = false;
@@ -4502,7 +4520,7 @@ public class SqlOptimiser implements Mutable {
                             // check all literals that refer timestamp column, except the one
                             // with our chosen timestamp alias.
                                 qc.getAst().type == ExpressionNode.LITERAL
-                                        && Chars.equalsIgnoreCase(qc.getAst().token, timestamp.token)
+                                        && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)
                                         && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias)
                         ) {
                             model.removeColumn(i);
@@ -4514,7 +4532,7 @@ public class SqlOptimiser implements Mutable {
                             n--;
                             wrapAction = SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES;
                         } else {
-                            if (!Chars.equalsIgnoreCase(qc.getAst().token, timestamp.token)) {
+                            if (!Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)) {
                                 timestampOnly = false;
                             }
                             i++;
@@ -4543,15 +4561,21 @@ public class SqlOptimiser implements Mutable {
                 lhs.paramCount = 0;
                 lhs.type = CONSTANT;
 
+                final ExpressionNode rhs = expressionNodePool.next();
+                rhs.token = timestampColumn;
+                rhs.position = timestamp.position;
+                rhs.paramCount = 0;
+                rhs.type = LITERAL;
+
                 top.lhs = lhs;
-                top.rhs = timestamp;
+                top.rhs = rhs;
 
                 model.getBottomUpColumns().setQuick(
                         timestampPos,
                         queryColumnPool.next().of(timestampAlias, top)
                 );
 
-                if (timestampOnly) {
+                if (timestampOnly || nested.getGroupBy().size() > 0) {
                     nested.addGroupBy(top);
                 }
 

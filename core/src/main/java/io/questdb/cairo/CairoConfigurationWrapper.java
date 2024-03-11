@@ -531,6 +531,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getSampleByDefaultAlignmentCalendar() {
+        return true;
+    }
+
+    @Override
     public boolean getSimulateCrashEnabled() {
         return getDelegate().getSimulateCrashEnabled();
     }

@@ -3562,7 +3562,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "   from long_sequence(100)" +
                     ") timestamp(ts) partition by hour");
 
-            String sql = "with yy as (select ts, max(s) s from tab sample by 1h) " +
+            String sql = "with yy as (select ts, max(s) s from tab sample by 1h ALIGN TO FIRST OBSERVATION) " +
                     "select * from yy latest on ts partition by s limit 10";
             assertPlan(
                     sql,
@@ -6272,12 +6272,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleBy() throws Exception {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select first(i) from a sample by 1h",
+                "select first(i) from a sample by 1h align to first observation",
                 "SampleBy\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select first(i) from a sample by 1h align to calendar",
+                "SelectedRecord\n" +
+                        "    Sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [ts]\n" +
+                        "          values: [first(i)]\n" +
+                        "          filter: null\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n"
         );
     }
 
@@ -6285,7 +6299,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillLinear() throws Exception {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select first(i) from a sample by 1h fill(linear)",
+                "select first(i) from a sample by 1h fill(linear) align to first observation",
+                "SampleBy\n" +
+                        "  fill: linear\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select first(i) from a sample by 1h fill(linear) align to calendar",
                 "SampleBy\n" +
                         "  fill: linear\n" +
                         "  values: [first(i)]\n" +
@@ -6299,7 +6323,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillNull() throws Exception {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select first(i) from a sample by 1h fill(null)",
+                "select first(i) from a sample by 1h fill(null) align to first observation",
+                "SampleBy\n" +
+                        "  fill: null\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select first(i) from a sample by 1h fill(null) align to calendar",
                 "SampleBy\n" +
                         "  fill: null\n" +
                         "  values: [first(i)]\n" +
@@ -6313,7 +6347,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillPrevKeyed() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
-                "select s, first(i) from a sample by 1h fill(prev)",
+                "select s, first(i) from a sample by 1h fill(prev) align to first observation",
+                "SampleBy\n" +
+                        "  fill: prev\n" +
+                        "  keys: [s]\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select s, first(i) from a sample by 1h fill(prev) align to calendar",
                 "SampleBy\n" +
                         "  fill: prev\n" +
                         "  keys: [s]\n" +
@@ -6328,7 +6373,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillPrevNotKeyed() throws Exception {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select first(i) from a sample by 1h fill(prev)",
+                "select first(i) from a sample by 1h fill(prev) align to first observation",
+                "SampleByFillPrev\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select first(i) from a sample by 1h fill(prev) align to calendar",
                 "SampleByFillPrev\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
@@ -6341,7 +6395,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillValueKeyed() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
-                "select s, first(i) from a sample by 1h fill(1)",
+                "select s, first(i) from a sample by 1h fill(1) align to first observation",
+                "SampleBy\n" +
+                        "  fill: value\n" +
+                        "  keys: [s]\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select s, first(i) from a sample by 1h fill(1) align to calendar",
                 "SampleBy\n" +
                         "  fill: value\n" +
                         "  keys: [s]\n" +
@@ -6356,7 +6421,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillValueNotKeyed() throws Exception {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select first(i) from a sample by 1h fill(1)",
+                "select first(i) from a sample by 1h fill(1) align to first observation",
+                "SampleBy\n" +
+                        "  fill: value\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select first(i) from a sample by 1h fill(1) align to calendar",
                 "SampleBy\n" +
                         "  fill: value\n" +
                         "  values: [first(i)]\n" +
@@ -6374,7 +6449,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "from a " +
                         "where sym in ('S') " +
                         "and   ts > 0::timestamp and ts < 100::timestamp " +
-                        "sample by 1h",
+                        "sample by 1h align to first observation",
                 "SampleByFirstLast\n" +
                         "  keys: [sym]\n" +
                         "  values: [first(i), last(s), first(l)]\n" +
@@ -6384,19 +6459,52 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Interval forward scan on: a\n" +
                         "          intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000099Z\")]\n"
         );
+
+        assertPlan(
+                "select sym, first(i), last(s), first(l) " +
+                        "from a " +
+                        "where sym in ('S') " +
+                        "and   ts > 0::timestamp and ts < 100::timestamp " +
+                        "sample by 1h align to calendar",
+                "SelectedRecord\n" +
+                        "    Sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        GroupBy vectorized: false\n" +
+                        "          keys: [sym,ts]\n" +
+                        "          values: [first(i),last(s),first(l)]\n" +
+                        "            DeferredSingleSymbolFilterDataFrame\n" +
+                        "                Index forward scan on: sym deferred: true\n" +
+                        "                  filter: sym='S'\n" +
+                        "                Interval forward scan on: a\n" +
+                        "                  intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000099Z\")]\n"
+        );
     }
 
     @Test
     public void testSampleByKeyed0() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, i, first(i) from a sample by 1h",
+                "select l, i, first(i) from a sample by 1h align to first observation",
                 "SampleBy\n" +
                         "  keys: [l,i]\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select l, i, first(i) from a sample by 1h align to calendar",
+                "SelectedRecord\n" +
+                        "    Sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [l,i,ts]\n" +
+                        "          values: [first(i)]\n" +
+                        "          filter: null\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n"
         );
     }
 
@@ -6404,7 +6512,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByKeyed1() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, i, first(i) from a sample by 1h",
+                "select l, i, first(i) from a sample by 1h align to first observation",
                 "SampleBy\n" +
                         "  keys: [l,i]\n" +
                         "  values: [first(i)]\n" +
@@ -6412,13 +6520,38 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
+
+        assertPlan(
+                "select l, i, first(i) from a sample by 1h align to calendar",
+                "SelectedRecord\n" +
+                        "    Sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [l,i,ts]\n" +
+                        "          values: [first(i)]\n" +
+                        "          filter: null\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n"
+        );
     }
 
     @Test
     public void testSampleByKeyed2() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, first(i) from a sample by 1h fill(null)",
+                "select l, first(i) from a sample by 1h fill(null) align to first observation",
+                "SampleBy\n" +
+                        "  fill: null\n" +
+                        "  keys: [l]\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select l, first(i) from a sample by 1h fill(null) align to calendar",
                 "SampleBy\n" +
                         "  fill: null\n" +
                         "  keys: [l]\n" +
@@ -6433,7 +6566,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByKeyed3() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, first(i) from a sample by 1d fill(linear)",
+                "select l, first(i) from a sample by 1d fill(linear) align to first observation",
+                "SampleBy\n" +
+                        "  fill: linear\n" +
+                        "  keys: [l]\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select l, first(i) from a sample by 1d fill(linear) align to calendar",
                 "SampleBy\n" +
                         "  fill: linear\n" +
                         "  keys: [l]\n" +
@@ -6448,7 +6592,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByKeyed4() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, first(i), last(i) from a sample by 1d fill(1,2)",
+                "select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation",
+                "SampleBy\n" +
+                        "  fill: value\n" +
+                        "  keys: [l]\n" +
+                        "  values: [first(i),last(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select l, first(i), last(i) from a sample by 1d fill(1,2) align to calendar",
                 "SampleBy\n" +
                         "  fill: value\n" +
                         "  keys: [l]\n" +
@@ -6463,7 +6618,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByKeyed5() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, first(i), last(i) from a sample by 1d fill(prev,prev)",
+                "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to first observation",
+                "SampleBy\n" +
+                        "  fill: value\n" +
+                        "  keys: [l]\n" +
+                        "  values: [first(i),last(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to calendar",
                 "SampleBy\n" +
                         "  fill: value\n" +
                         "  keys: [l]\n" +
@@ -7783,7 +7949,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         compile("insert into a select x,x::timestamp from long_sequence(10)");
 
         assertPlan(
-                "select ts, count(*)  from a sample by 1s limit -5",
+                "select ts, count(*)  from a sample by 1s ALIGN TO FIRST OBSERVATION limit -5",
                 "Limit lo: -5\n" +
                         "    SampleBy\n" +
                         "      values: [count(*)]\n" +
