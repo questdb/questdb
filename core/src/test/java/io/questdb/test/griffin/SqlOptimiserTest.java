@@ -40,6 +40,26 @@ import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
 
+    final String orderByAdviceDdl =   "CREATE TABLE t (\n" +
+            "  s SYMBOL index,\n" +
+            "  ts TIMESTAMP\n" +
+            ") timestamp(ts) PARTITION BY DAY;";
+
+    final String orderByAdviceDml =
+         "INSERT INTO t (s, ts) VALUES" +
+                 " ('a', '2023-09-01T00:00:00.000Z')," +
+                 " ('a', '2023-09-01T00:10:00.000Z')," +
+                 " ('a', '2023-09-01T00:20:00.000Z')," +
+                 " ('b', '2023-09-01T00:05:00.000Z')," +
+                 " ('b', '2023-09-01T00:15:00.000Z')," +
+                 " ('b', '2023-09-01T00:25:00.000Z')," +
+                 " ('c', '2023-09-01T01:00:00.000Z')," +
+                 " ('c', '2023-09-01T02:00:00.000Z')," +
+                 " ('c', '2023-09-01T03:00:00.000Z')";
+
+
+
+    //2023-09-01T00:00:00.000Z
     @Test
     public void testAliasAppearsInFuncArgs1() throws Exception {
         assertMemoryLeak(() -> {
@@ -171,17 +191,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-    final String orderByAdviceDdl =   "CREATE TABLE t (\n" +
-            "  s SYMBOL index,\n" +
-            "  ts TIMESTAMP\n" +
-            ") timestamp(ts) PARTITION BY DAY;";
-
     @Test
     public void testOrderByAdviceWorksWithAsofJoin1() throws Exception {
         // Case when order by is one table and not timestamp first
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
             ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
 
             final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
                     "FROM t1\n" +
@@ -204,8 +221,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
-            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
-            }
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n", query);
         });
     }
 
@@ -215,6 +232,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
             ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
 
             final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
                     "FROM t1\n" +
@@ -237,8 +256,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
-            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
-            }
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n", query);
         });
     }
 
@@ -248,6 +267,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
             ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
 
             final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
                     "    FROM t1\n" +
@@ -270,9 +291,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
-
-            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
-            }
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n", query);
         });
     }
 
@@ -282,6 +302,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
             ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
 
             final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
                     "FROM t1\n" +
@@ -304,8 +326,49 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
-            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
-            }
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n", query);
+        });
+    }
+
+    @Test
+    public void testOrderByAdviceWorksWithAsofJoin5() throws Exception {
+        // Case when order by is one table and not timestamp first
+        assertMemoryLeak(() -> {
+            ddl(orderByAdviceDdl.replace(" t ", " t1 "));
+            ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
+
+            final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                    "FROM t1\n" +
+                    "ASOF JOIN t2 ON t1.s = t2.s\n" +
+                    "WHERE t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z'\n" +
+                    "ORDER BY t1.s, t1.ts\n" +
+                    "LIMIT 1000000;";
+
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
+            assertPlan(query, "Limit lo: 1000000\n" +
+                    "    Sort\n" +
+                    "      keys: [s, ts]\n" +
+                    "        SelectedRecord\n" +
+                    "            AsOf Join Light\n" +
+                    "              condition: t2.s=t1.s\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: t1\n" +
+                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: t2\n");
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n", query);
         });
     }
 
@@ -314,15 +377,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
             ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
 
             final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
                     "FROM t1\n" +
                     "JOIN t2 ON t1.s = t2.s\n" +
-                    "WHERE t1.ts in '2023-09-01T00:00:00.000Z' AND t1.ts <= '2023-09-01T01:00:00.000Z'\n" +
+                    "WHERE t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z'\n" +
                     "ORDER BY t1.s, t1.ts\n" +
                     "LIMIT 1000000;";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts limit 1000000", query);
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
             assertPlan(query, "Limit lo: 1000000\n" +
                     "    Sort\n" +
                     "      keys: [s, ts]\n" +
@@ -333,22 +398,44 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                    Index forward scan on: s\n" +
                     "                      symbolOrder: asc\n" +
                     "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
                     "                Hash\n" +
                     "                    DataFrame\n" +
                     "                        Row forward scan\n" +
                     "                        Frame forward scan on: t2\n");
-            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
-            }
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n", query);
         });
     }
 
     @Test
-    public void testOrderByAdviceWorksWithCrossJoin() throws Exception {
+    public void testOrderByAdviceWorksWithCrossJoin1a() throws Exception {
         // case when ordering by symbol, then timestamp - we expect to use the symbol index
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
             ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
 
             final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
                     "FROM t1\n" +
@@ -369,8 +456,207 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "            DataFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: t2\n");
-            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
-            }
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n", query);
+        });
+    }
+
+    @Test
+    public void testOrderByAdviceWorksWithCrossJoin1b() throws Exception {
+        // case when ordering by symbol, then timestamp - we expect to use the symbol index
+        assertMemoryLeak(() -> {
+            ddl(orderByAdviceDdl.replace(" t ", " t1 "));
+            ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
+
+            final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                    "FROM t1\n" +
+                    "CROSS JOIN t2\n" +
+                    "WHERE t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z'\n" +
+                    "ORDER BY t1.s, t1.ts\n" +
+                    "LIMIT 1000000;";
+
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
+            assertPlan(query, "Limit lo: 1000000\n" +
+                    "    SelectedRecord\n" +
+                    "        Cross Join\n" +
+                    "            SortedSymbolIndex\n" +
+                    "                Index forward scan on: s\n" +
+                    "                  symbolOrder: asc\n" +
+                    "                Interval forward scan on: t1\n" +
+                    "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: t2\n");
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n", query);
+        });
+    }
+
+    @Test
+    public void testOrderByAdviceWorksWithCrossJoin1c() throws Exception {
+        // case when by columns from both tables - expect it to use the sort
+        assertMemoryLeak(() -> {
+            ddl(orderByAdviceDdl.replace(" t ", " t1 "));
+            ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
+
+            final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                    "FROM t1\n" +
+                    "CROSS JOIN t2\n" +
+                    "WHERE t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z'\n" +
+                    "ORDER BY t1.s, t1.ts, t2.ts, t2.s\n" +
+                    "LIMIT 1000000;";
+
+           assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts, ts1, s1 limit 1000000", query);
+            assertPlan(query, "Limit lo: 1000000\n" +
+                    "    Sort\n" +
+                    "      keys: [s, ts, ts1, s1]\n" +
+                    "        SelectedRecord\n" +
+                    "            Cross Join\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: t1\n" +
+                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: t2\n");
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n", query);
         });
     }
 
@@ -380,15 +666,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
             ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
 
             final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
                     "FROM t1\n" +
                     "CROSS JOIN t2\n" +
-                    "WHERE t1.ts in '2023-09-01T00:00:00.000Z' AND t1.ts <= '2023-09-01T01:00:00.000Z'\n" +
+                    "WHERE t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z'\n" +
                     "ORDER BY t1.s\n" +
                     "LIMIT 1000000;";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s limit 1000000", query);
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s limit 1000000", query);
             assertPlan(query, "Limit lo: 1000000\n" +
                     "    SelectedRecord\n" +
                     "        Cross Join\n" +
@@ -396,12 +684,74 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                Index forward scan on: s\n" +
                     "                  symbolOrder: asc\n" +
                     "                Interval forward scan on: t1\n" +
-                    "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                    "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
                     "            DataFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: t2\n");
-            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
-            }
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n", query);
         });
     }
 
@@ -411,15 +761,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
             ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
 
             final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
                     "FROM t1\n" +
                     "CROSS JOIN t2\n" +
-                    "WHERE t1.ts in '2023-09-01T00:00:00.000Z' AND t1.ts <= '2023-09-01T01:00:00.000Z'\n" +
+                    "WHERE t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z'\n" +
                     "ORDER BY t1.ts, t1.s\n" +
                     "LIMIT 1000000;";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by ts, s limit 1000000", query);
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by ts, s limit 1000000", query);
             assertPlan(query, "Limit lo: 1000000\n" +
                     "    Sort\n" +
                     "      keys: [ts, s]\n" +
@@ -428,12 +780,170 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
-            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
-            }
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n", query);
+        });
+    }
+
+    @Test
+    public void testOrderByAdviceWorksWithCrossJoin4() throws Exception {
+        // case when ordering by timestamp, then symbol - we expect to not use the symbol index
+        assertMemoryLeak(() -> {
+            ddl(orderByAdviceDdl.replace(" t ", " t1 "));
+            ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
+
+            final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                    "FROM t1\n" +
+                    "CROSS JOIN t2\n" +
+                    "WHERE t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z'\n" +
+                    "ORDER BY t1.ts, t2.s, t1.s, t2.ts\n" +
+                    "LIMIT 1000000;";
+
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by ts, s1, s, ts1 limit 1000000", query);
+            assertPlan(query, "Limit lo: 1000000\n" +
+                    "    Sort\n" +
+                    "      keys: [ts, s1, s, ts1]\n" +
+                    "        SelectedRecord\n" +
+                    "            Cross Join\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Interval forward scan on: t1\n" +
+                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: t2\n");
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n", query);
         });
     }
 
@@ -443,15 +953,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
             ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+            insert(orderByAdviceDml.replace(" t ", " t1 "));
+            insert(orderByAdviceDml.replace(" t ", " t2 "));
 
             final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
                     "    FROM t1\n" +
                     "    LT JOIN t2 ON t1.s = t2.s\n" +
-                    "    WHERE t1.ts in '2023-09-01T00:00:00.000Z' AND t1.ts <= '2023-09-01T01:00:00.000Z'\n" +
+                    "    WHERE t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z'\n" +
                     "    ORDER BY t1.s, t2.ts\n" +
                     "    LIMIT 1000000;";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) lt join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts1 limit 1000000", query);
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) lt join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts1 limit 1000000", query);
             assertPlan(query, "Limit lo: 1000000\n" +
                     "    Sort\n" +
                     "      keys: [s, ts1]\n" +
@@ -461,13 +973,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
-
-            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
-            }
+            assertSql("s\tts\ts1\tts1\n" +
+                    "a\t2023-09-01T00:00:00.000000Z\t\t\n" +
+                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                    "b\t2023-09-01T00:05:00.000000Z\t\t\n" +
+                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                    "c\t2023-09-01T01:00:00.000000Z\t\t\n", query);
         });
     }
     @Test
