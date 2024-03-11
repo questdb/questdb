@@ -276,6 +276,17 @@ public final class Timestamps {
         return micros - micros % (stride * HOUR_MICROS);
     }
 
+    /**
+     * Floors timestamp value to the nearest microsecond.
+     *
+     * @param micros the input value to floor
+     * @param stride the number of microseconds to floor to.
+     * @return floored value.
+     */
+    public static long floorMC(long micros, int stride) {
+        return micros - micros % stride;
+    }
+
     public static long floorMI(long micros) {
         return floorMI(micros, 1);
     }
@@ -728,7 +739,7 @@ public final class Timestamps {
     /**
      * Calculates if year is leap year using following algorithm:
      * <p>
-     * http://en.wikipedia.org/wiki/Leap_year
+     * <a href="http://en.wikipedia.org/wiki/Leap_year">...</a>
      *
      * @param year the year
      * @return true if year is leap

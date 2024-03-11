@@ -7789,7 +7789,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             } finally {
                                 // release native path memory used by the job
-                                Path.PATH.get().close();
+                                Path.clearThreadLocals();
                                 stopped.countDown();
                             }
                         }, "wal_job");
@@ -7956,7 +7956,7 @@ public class IODispatcherTest extends AbstractTest {
                             }
                         } finally {
                             // release native path memory used by the job
-                            Path.PATH.get().close();
+                            Path.clearThreadLocals();
                             stopped.countDown();
                         }
                     }, "wal_job");

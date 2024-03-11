@@ -73,8 +73,12 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     public static void clearThreadLocals() {
-        PATH.get().close();
-        PATH2.get().close();
+        // It could be PATH.get.close(); but this would generated JDK failures on MacOS (SIGABRT)
+        // when running tests. Despite all the effort to find the exact cause, it was not possible
+        // and this is the best solution so far. This approach will remove the thread local
+        // on close and the next time a new object is created.
+        PATH.close();
+        PATH2.close();
     }
 
     public static Path getThreadLocal(CharSequence root) {

@@ -797,7 +797,21 @@ public class SecurityTest extends AbstractCairoTest {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
-                        "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear)",
+                        "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear) ALIGN TO FIRST OBSERVATION",
+                        "ts",
+                        true,
+                        readOnlyExecutionContext
+                );
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+            }
+
+            try {
+                assertQuery(
+                        memoryRestrictedCompiler,
+                        "TOO MUCH",
+                        "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear) ALIGN TO CALENDAR",
                         "ts",
                         true,
                         readOnlyExecutionContext
@@ -824,9 +838,23 @@ public class SecurityTest extends AbstractCairoTest {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none)",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none) ALIGN TO FIRST OBSERVATION",
                         null,
                         false,
+                        readOnlyExecutionContext
+                );
+                Assert.fail();
+            } catch (Exception ex) {
+                TestUtils.assertContains(ex.getMessage(), "limit of 2 resizes exceeded");
+            }
+
+            try {
+                assertQuery(
+                        memoryRestrictedCompiler,
+                        "TOO MUCH",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none) ALIGN TO CALENDAR",
+                        null,
+                        true,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
@@ -851,7 +879,21 @@ public class SecurityTest extends AbstractCairoTest {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null)",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null) ALIGN TO FIRST OBSERVATION",
+                        null,
+                        false,
+                        readOnlyExecutionContext
+                );
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+            }
+
+            try {
+                assertQuery(
+                        memoryRestrictedCompiler,
+                        "TOO MUCH",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null) ALIGN TO CALENDAR",
                         null,
                         false,
                         readOnlyExecutionContext
@@ -878,7 +920,21 @@ public class SecurityTest extends AbstractCairoTest {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev)",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev) ALIGN TO FIRST OBSERVATION",
+                        null,
+                        false,
+                        readOnlyExecutionContext
+                );
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+            }
+
+            try {
+                assertQuery(
+                        memoryRestrictedCompiler,
+                        "TOO MUCH",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev) ALIGN TO CALENDAR",
                         null,
                         false,
                         readOnlyExecutionContext
@@ -905,7 +961,21 @@ public class SecurityTest extends AbstractCairoTest {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
-                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0)",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0) ALIGN TO FIRST OBSERVATION",
+                        null,
+                        false,
+                        readOnlyExecutionContext
+                );
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+            }
+
+            try {
+                assertQuery(
+                        memoryRestrictedCompiler,
+                        "TOO MUCH",
+                        "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0) ALIGN TO CALENDAR",
                         null,
                         false,
                         readOnlyExecutionContext

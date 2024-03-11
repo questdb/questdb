@@ -139,7 +139,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
                 assertSql(
                         "first\tts\n" +
-                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d"
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
                 );
 
             assertFailure(
@@ -188,7 +188,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
                 assertSql(
                         "first\tts\n" +
-                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d"
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
                 );
 
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
@@ -200,7 +200,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     "first\tts\n" +
                             "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
                             "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                            "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d"
+                            "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -242,7 +242,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
                 assertSql(
                         "first\tts\n" +
-                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d"
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
                 );
 
             assertFailure(
@@ -259,7 +259,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     "first\tts\n" +
                             "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
                             "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                            "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d"
+                            "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -283,7 +283,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "2020-01-01T07:59:59.666666Z\tCPSW\n" +
                             "2020-01-01T15:59:59.333332Z\tHYRX\n" +
                             "2020-01-01T23:59:58.999998Z\t\n" +
-                            "2020-01-02T23:59:59.000000Z\tfoobar\n", "select first(ts), sym from " + tableName + " sample by 1d"
+                            "2020-01-02T23:59:59.000000Z\tfoobar\n", "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             compile("alter table " + tableName + " detach partition list '2020-01-01'");
@@ -298,7 +298,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     "first\tsym\n" +
                             "2020-01-01T07:59:59.666666Z\t\n" +
                             "2020-01-01T15:59:59.333332Z\t\n" +
-                            "2020-01-01T23:59:58.999998Z\t\n", "select first(ts), sym from " + tableName + " sample by 1d"
+                            "2020-01-01T23:59:58.999998Z\t\n", "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -324,7 +324,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "2020-01-01T07:59:59.666666Z\tCPSW\n" +
                             "2020-01-01T15:59:59.333332Z\tHYRX\n" +
                             "2020-01-01T23:59:58.999998Z\t\n" +
-                            "2020-01-02T23:59:59.000000Z\tfoobar\n", "select first(ts), sym from " + tableName + " sample by 1d"
+                            "2020-01-02T23:59:59.000000Z\tfoobar\n", "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             compile("alter table " + tableName + " detach partition list '2020-01-01'");
@@ -339,7 +339,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     "first\tsym\n" +
                             "2020-01-01T07:59:59.666666Z\tCPSW\n" +
                             "2020-01-01T15:59:59.333332Z\tHYRX\n" +
-                            "2020-01-01T23:59:58.999998Z\t\n", "select first(ts), sym from " + tableName + " sample by 1d"
+                            "2020-01-01T23:59:58.999998Z\t\n", "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -466,7 +466,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "2020-01-04T00:39:59.000000Z\ta\n" +
                             "2020-01-04T00:59:59.000000Z\tb\n" +
                             "2020-01-04T01:39:59.000000Z\t\n" +
-                            "2020-01-04T05:19:59.000000Z\tc\n", "select first(ts), str from " + tableName + " sample by 1d"
+                            "2020-01-04T05:19:59.000000Z\tc\n", "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             renameDetachedToAttachable(tableName, "2020-01-02", "2020-01-03");
@@ -485,7 +485,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "2020-01-04T00:39:59.000000Z\ta\n" +
                             "2020-01-04T00:59:59.000000Z\tb\n" +
                             "2020-01-04T01:39:59.000000Z\t\n" +
-                            "2020-01-04T05:19:59.000000Z\tc\n", "select first(ts), str from " + tableName + " sample by 1d"
+                            "2020-01-04T05:19:59.000000Z\tc\n", "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -716,7 +716,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
                     assertSql(
                             "first\tts\n" +
-                                    "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d"
+                                    "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
                     );
 
                     for (int i = 0; i < 2; i++) {
@@ -725,7 +725,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 "first\tts\n" +
                                         "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
                                         "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                                        "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d"
+                                        "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
                         );
                         compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
 
@@ -1168,7 +1168,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertSql(
                     "first\tts\n" +
-                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d"
+                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             for (int i = 0; i < 2; i++) {
@@ -1177,7 +1177,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         "first\tts\n" +
                                 "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
                                 "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                                "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d"
+                                "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
                 );
                 compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
 
