@@ -3061,13 +3061,15 @@ public class SqlOptimiser implements Mutable {
                 return;
             }
             // if the order by advice is for more than one table, don't propagate it, as a sort will be needed anyway
-            if (i ==0 && !checkForConsistentPrefix(orderByAdvice)) {
+            if (i == 0 && !checkForConsistentPrefix(orderByAdvice)) {
                 return;
             }
             // if the orderByAdvice prefixes do not match the primary table name, don't propagate it
-            final CharSequence prefix = getTablePrefix(orderByAdvice.getQuick(0).token);
-            if (!(Chars.equalsNc(prefix, jm1.getTableName())
-                    || (jm1.getAlias() != null && Chars.equalsNc(prefix, jm1.getAlias().token)))) {
+            final CharSequence adviceToken = orderByAdvice.getQuick(0).token;
+            final int dotLoc = Chars.indexOf(adviceToken, '.');
+
+            if (!Chars.equalsNc(jm1.getTableName(), adviceToken, 0, dotLoc)
+                    || (jm1.getAlias() != null && !Chars.equals(jm1.getAlias().token, adviceToken, 0, dotLoc))) {
                 optimiseOrderBy(jm1, orderByMnemonic);
                 return;
             }
@@ -3161,7 +3163,7 @@ public class SqlOptimiser implements Mutable {
      * @return whether dot is present or not
      */
     private boolean checkForDot(ObjList<ExpressionNode> orderByAdvice) {
-        for (int j = 0, n = orderByAdvice.size(); j < n; j++) {
+        for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
             if (Chars.indexOf(orderByAdvice.getQuick(i).token, '.') > -1) {
                 return true;
             }
@@ -3177,14 +3179,14 @@ public class SqlOptimiser implements Mutable {
      */
     private boolean checkForConsistentPrefix(ObjList<ExpressionNode> orderByAdvice) {
         CharSequence prefix = "";
-        for (int j = 0, n = orderByAdvice.size(); j < n; j++) {
-            CharSequence advice = orderByAdvice.getQuick(j).token;
-            int loc = Chars.indexOf(advice, '.');
+        for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
+            CharSequence token = orderByAdvice.getQuick(i).token;
+            int loc = Chars.indexOf(token, '.');
             if (loc > -1) {
                 if (prefix.length() == 0) {
-                    prefix = advice.subSequence(0, loc);
+                    prefix = token.subSequence(0, loc);
                 }
-                else if (!Chars.equalsIgnoreCase(prefix, advice, loc))) {
+                else if (!Chars.equalsIgnoreCase(prefix, token, loc, token.length())) {
                     return false;
                 }
             }

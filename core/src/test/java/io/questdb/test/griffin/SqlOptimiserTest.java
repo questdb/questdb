@@ -376,6 +376,38 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testOrderByAdviceWorksWithCrossJoin2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(orderByAdviceDdl.replace(" t ", " t1 "));
+            ddl(orderByAdviceDdl.replace(" t ", " t2 "));
+
+            final String query = "SELECT t1.s, t1.ts, t2.s, t2.ts\n" +
+                    "FROM t1\n" +
+                    "CROSS JOIN t2\n" +
+                    "WHERE t1.ts in '2023-09-01T00:00:00.000Z' AND t1.ts <= '2023-09-01T01:00:00.000Z'\n" +
+                    "ORDER BY t1.s\n" +
+                    "LIMIT 1000000;";
+
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s limit 1000000", query);
+            assertPlan(query, "Limit lo: 1000000\n" +
+                    "    Sort\n" +
+                    "      keys: [s, ts]\n" +
+                    "        SelectedRecord\n" +
+                    "            Cross Join\n" +
+                    "                SortedSymbolIndex\n" +
+                    "                    Index forward scan on: s\n" +
+                    "                      symbolOrder: asc\n" +
+                    "                    Interval forward scan on: t1\n" +
+                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: t2\n");
+            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            }
+        });
+    }
+
+    @Test
     public void testOrderByAdviceWorksWithLtJoin() throws Exception {
         // Case when order by is for more than one table prefix
         assertMemoryLeak(() -> {
