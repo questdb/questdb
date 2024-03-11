@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -73,26 +74,47 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFillNoneRecordCursorReleasesMemoryOnClose() throws Exception {
-        testSampleByCursorReleasesMemoryOnClose("", SampleByFillNoneRecordCursorFactory.class);
+    public void testSampleByFillNoneRecordCursorReleasesMemoryOnCloseCalendar() throws Exception {
+        testSampleByCursorReleasesMemoryOnClose("", SelectedRecordCursorFactory.class, "CALENDAR");
     }
 
     @Test
-    public void testSampleByFillNullRecordCursorReleasesMemoryOnClose() throws Exception { //prev / value
-        testSampleByCursorReleasesMemoryOnClose("FILL(null)", SampleByFillNullRecordCursorFactory.class);
+    public void testSampleByFillNoneRecordCursorReleasesMemoryOnCloseFirstObservation() throws Exception {
+        testSampleByCursorReleasesMemoryOnClose("", SampleByFillNoneRecordCursorFactory.class, "FIRST OBSERVATION");
+
     }
 
     @Test
-    public void testSampleByFillPrevRecordCursorReleasesMemoryOnClose() throws Exception {
-        testSampleByCursorReleasesMemoryOnClose("FILL(prev)", SampleByFillPrevRecordCursorFactory.class);
+    public void testSampleByFillNullRecordCursorReleasesMemoryOnCloseCalendar() throws Exception { //prev / value
+        testSampleByCursorReleasesMemoryOnClose("FILL(null)", SampleByFillNullRecordCursorFactory.class, "CALENDAR");
     }
 
     @Test
-    public void testSampleByFillValueRecordCursorReleasesMemoryOnClose() throws Exception { //prev / value
-        testSampleByCursorReleasesMemoryOnClose("FILL(10)", SampleByFillValueRecordCursorFactory.class);
+    public void testSampleByFillNullRecordCursorReleasesMemoryOnCloseFirstObservation() throws Exception { //prev / value
+        testSampleByCursorReleasesMemoryOnClose("FILL(null)", SampleByFillNullRecordCursorFactory.class, "FIRST OBSERVATION");
     }
 
-    private void testSampleByCursorReleasesMemoryOnClose(String fill, Class<?> expectedFactoryClass) throws Exception {
+    @Test
+    public void testSampleByFillPrevRecordCursorReleasesMemoryOnCloseCalendar() throws Exception {
+        testSampleByCursorReleasesMemoryOnClose("FILL(prev)", SampleByFillPrevRecordCursorFactory.class, "CALENDAR");
+    }
+
+    @Test
+    public void testSampleByFillPrevRecordCursorReleasesMemoryOnFirstObservation() throws Exception {
+        testSampleByCursorReleasesMemoryOnClose("FILL(prev)", SampleByFillPrevRecordCursorFactory.class, "FIRST OBSERVATION");
+    }
+
+    @Test
+    public void testSampleByFillValueRecordCursorReleasesMemoryOnCloseCalendar() throws Exception { //prev / value
+        testSampleByCursorReleasesMemoryOnClose("FILL(10)", SampleByFillValueRecordCursorFactory.class, "CALENDAR");
+    }
+
+    @Test
+    public void testSampleByFillValueRecordCursorReleasesMemoryOnCloseFirstObservtion() throws Exception { //prev / value
+        testSampleByCursorReleasesMemoryOnClose("FILL(10)", SampleByFillValueRecordCursorFactory.class, "FIRST OBSERVATION");
+    }
+
+    private void testSampleByCursorReleasesMemoryOnClose(String fill, Class<?> expectedFactoryClass, String alignment) throws Exception {
         assertMemoryLeak(() -> {
             compile("create table tab as (select" +
                     " rnd_symbol(20,4,4,20000) sym1," +
@@ -100,8 +122,8 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)");
 
-            try (RegisteredRecordCursorFactory factory = (RegisteredRecordCursorFactory) select("select sym1, sum(d) from tab SAMPLE BY 1d " + fill)) {
-                Assert.assertSame(factory.getBaseFactory().getClass(), expectedFactoryClass);
+            try (RegisteredRecordCursorFactory factory = (RegisteredRecordCursorFactory) select("select sym1, sum(d) from tab SAMPLE BY 1d " + fill + " ALIGN TO " + alignment)) {
+                Assert.assertSame(expectedFactoryClass, factory.getBaseFactory().getClass());
 
                 long freeDuring;
                 long memDuring;

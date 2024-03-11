@@ -46,7 +46,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
         super.setUp();
         unchecked(() -> createDummyConfiguration(
                 // Force enable parallel GROUP BY and filter for smoke tests.
-                PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED + "=true",
+                PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED + "=true",
                 PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED.getPropertyPath() + "=true"
         ));
         dbPath.parent().$();

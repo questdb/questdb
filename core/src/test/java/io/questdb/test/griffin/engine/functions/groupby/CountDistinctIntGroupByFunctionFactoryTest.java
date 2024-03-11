@@ -168,7 +168,7 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                 "ts\tcount_distinct\n" +
                         "1970-01-01T00:00:00.050000Z\t8\n" +
                         "1970-01-01T00:00:02.050000Z\t8\n", "with x as (select * from (select rnd_int(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
-                        "select ts, count_distinct(s) from x sample by 2s"
+                        "select ts, count_distinct(s) from x sample by 2s align to first observation"
         ));
     }
 
@@ -209,7 +209,7 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                         "e\t8\t1970-01-01T00:00:05.000000Z\n" +
                         "d\t7\t1970-01-01T00:00:05.000000Z\n" +
                         "a\t4\t1970-01-01T00:00:05.000000Z\n",
-                "select a, count_distinct(s), ts from x sample by 5s",
+                "select a, count_distinct(s), ts from x sample by 5s align to first observation",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 12, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false

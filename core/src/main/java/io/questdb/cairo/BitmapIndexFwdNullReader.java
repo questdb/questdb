@@ -38,7 +38,7 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
         final NullCursor cursor = getCursor(cachedInstance);
         // Cursor only returns records when key is for the NULL value
         cursor.max = key == 0 ? maxValue + 1 : 0;
-        cursor.value = 0;
+        cursor.value = minValue;
         return cursor;
     }
 

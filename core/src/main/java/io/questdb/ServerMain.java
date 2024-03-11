@@ -110,6 +110,23 @@ public class ServerMain implements Closeable {
         return new ServerMain(new Bootstrap(bootstrapConfiguration, Bootstrap.getServerMainArgs(root)));
     }
 
+    public static ServerMain createWithoutWalApplyJob(String root, Map<String, String> env) {
+        final Map<String, String> newEnv = new HashMap<>(System.getenv());
+        newEnv.putAll(env);
+        PropBootstrapConfiguration bootstrapConfiguration = new PropBootstrapConfiguration() {
+            @Override
+            public Map<String, String> getEnv() {
+                return newEnv;
+            }
+        };
+
+        return new ServerMain(new Bootstrap(bootstrapConfiguration, Bootstrap.getServerMainArgs(root))) {
+            @Override
+            protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
+            }
+        };
+    }
+
     public static ServerMain create(String root) {
         return new ServerMain(Bootstrap.getServerMainArgs(root));
     }
