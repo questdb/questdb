@@ -63,6 +63,11 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
+    }
+
+    @Override
     public int getScanDirection() {
         return masterFactory.getScanDirection();
     }

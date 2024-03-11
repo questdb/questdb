@@ -204,7 +204,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
-            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -237,7 +237,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
-            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -271,7 +271,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
 
-            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -304,7 +304,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
-            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -338,7 +338,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                    DataFrame\n" +
                     "                        Row forward scan\n" +
                     "                        Frame forward scan on: t2\n");
-            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -370,7 +370,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
-            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -402,7 +402,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
-            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -436,7 +436,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
 
-            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -458,7 +458,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        Row forward scan\n" +
                     "        Frame forward scan on: t1\n");
 
-            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -481,7 +481,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        Row forward scan\n" +
                     "        Frame forward scan on: t1\n");
 
-            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -504,7 +504,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        Row forward scan\n" +
                     "        Frame forward scan on: t1\n");
 
-            try (RecordCursorFactory factory =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
             }
         });
     }
