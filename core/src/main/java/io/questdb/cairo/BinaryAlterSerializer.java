@@ -38,4 +38,9 @@ public class BinaryAlterSerializer implements MemorySerializer {
     public void toSink(Object obj, MemoryA sink) {
         ((AlterOperation) obj).serializeBody(sink);
     }
+
+    @Override
+    public short getCommandType(Object obj) {
+        return ((AlterOperation) obj).getCommand();
+    }
 }

@@ -148,6 +148,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    int getDefaultSeqPartTxnCount();
+
     int getDetachedMkDirMode();
 
     int getDoubleToStrCastScale();
