@@ -117,13 +117,13 @@ public class PerformanceTest extends AbstractCairoTest {
                     Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         record.getDate(0);
-                        record.getSym(1);
+                        record.getSymA(1);
                         record.getDouble(2);
                         record.getDouble(3);
                         record.getInt(4);
                         record.getInt(5);
-                        record.getSym(6);
-                        record.getSym(7);
+                        record.getSymA(6);
+                        record.getSymA(7);
                     }
                 }
                 result = (System.nanoTime() - t) / count;

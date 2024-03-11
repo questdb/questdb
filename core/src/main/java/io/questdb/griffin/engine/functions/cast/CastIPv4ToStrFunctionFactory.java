@@ -62,7 +62,7 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             final int value = arg.getIPv4(rec);
             return toSink(value, sinkA);
         }

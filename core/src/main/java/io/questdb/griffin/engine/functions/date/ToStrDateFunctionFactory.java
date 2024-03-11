@@ -63,7 +63,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         Function fmt = args.getQuick(1);
-        CharSequence format = fmt.getStr(null);
+        CharSequence format = fmt.getStrA(null);
         if (format == null) {
             throw SqlException.$(argPositions.getQuick(1), "format must not be null");
         }
@@ -108,7 +108,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return toSink(rec, sink1);
         }
 

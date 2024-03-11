@@ -40,7 +40,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.wal.WalUtils.*;
 
-class WalWriterEvents implements Closeable {
+class WalEventWriter implements Closeable {
     private final MemoryMARW eventMem = Vm.getMARWInstance();
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
@@ -53,7 +53,7 @@ class WalWriterEvents implements Closeable {
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
     private final CairoConfiguration configuration;
 
-    WalWriterEvents(CairoConfiguration configuration) {
+    WalEventWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
     }
@@ -129,10 +129,10 @@ class WalWriterEvents implements Closeable {
                 eventMem.putDouble(function.getDouble(null));
                 break;
             case ColumnType.STRING:
-                eventMem.putStr(function.getStr(null));
+                eventMem.putStr(function.getStrA(null));
                 break;
             case ColumnType.VARCHAR:
-                VarcharTypeDriver.varcharAppend(eventMem, function.getVarcharA(null));
+                VarcharTypeDriver.appendValue(eventMem, function.getVarcharA(null));
                 break;
             case ColumnType.BINARY:
                 eventMem.putBin(function.getBin(null));

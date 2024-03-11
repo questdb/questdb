@@ -85,7 +85,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             return planSink.getLine(cursor.row);
         }
 
@@ -96,7 +96,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
 
         @Override
         public CharSequence getStrB(int col) {
-            return getStr(col);
+            return getStrA(col);
         }
 
         @Override

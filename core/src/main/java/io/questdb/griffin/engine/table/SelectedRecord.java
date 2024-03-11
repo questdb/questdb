@@ -157,8 +157,8 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return base.getStr(getColumnIndex(col));
+    public CharSequence getStrA(int col) {
+        return base.getStrA(getColumnIndex(col));
     }
 
     @Override
@@ -177,8 +177,8 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public CharSequence getSym(int col) {
-        return base.getSym(getColumnIndex(col));
+    public CharSequence getSymA(int col) {
+        return base.getSymA(getColumnIndex(col));
     }
 
     @Override

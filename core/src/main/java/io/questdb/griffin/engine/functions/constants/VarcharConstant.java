@@ -81,7 +81,7 @@ public class VarcharConstant extends VarcharFunction implements ConstantFunction
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         return utf16Value;
     }
 

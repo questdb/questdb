@@ -106,9 +106,9 @@ public interface MemoryR extends Closeable {
 
     short getShort(long offset);
 
-    CharSequence getStr(long offset);
+    CharSequence getStrA(long offset);
 
-    CharSequence getStr2(long offset);
+    CharSequence getStrB(long offset);
 
     int getStrLen(long offset);
 

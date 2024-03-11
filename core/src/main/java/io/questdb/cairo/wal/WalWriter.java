@@ -64,7 +64,7 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<MemoryMA> columns;
     private final CairoConfiguration configuration;
     private final DdlListener ddlListener;
-    private final WalWriterEvents events;
+    private final WalEventWriter events;
     private final FilesFacade ff;
     private final AtomicIntList initialSymbolCounts;
     private final IntList localSymbolIds;
@@ -149,7 +149,7 @@ public class WalWriter implements TableWriterAPI {
             initialSymbolCounts = new AtomicIntList(columnCount);
             localSymbolIds = new IntList(columnCount);
 
-            events = new WalWriterEvents(configuration);
+            events = new WalEventWriter(configuration);
             events.of(symbolMaps, initialSymbolCounts, symbolMapNullFlags);
 
             configureColumns();
@@ -2078,7 +2078,7 @@ public class WalWriter implements TableWriterAPI {
         public void putVarchar(int columnIndex, char value) {
             tempUtf8Sink.clear();
             tempUtf8Sink.put(value);
-            VarcharTypeDriver.varcharAppend(
+            VarcharTypeDriver.appendValue(
                     getPrimaryColumn(columnIndex),
                     getSecondaryColumn(columnIndex),
                     tempUtf8Sink
@@ -2088,7 +2088,7 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void putVarchar(int columnIndex, Utf8Sequence value) {
-            VarcharTypeDriver.varcharAppend(
+            VarcharTypeDriver.appendValue(
                     getPrimaryColumn(columnIndex),
                     getSecondaryColumn(columnIndex),
                     value

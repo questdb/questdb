@@ -251,8 +251,8 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public CharSequence getStr(int columnIndex) {
-            return baseRecord.getStr(columnIndex);
+        public CharSequence getStrA(int columnIndex) {
+            return baseRecord.getStrA(columnIndex);
         }
 
         @Override
@@ -271,8 +271,8 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public CharSequence getSym(int columnIndex) {
-            return baseRecord.getSym(columnIndex);
+        public CharSequence getSymA(int columnIndex) {
+            return baseRecord.getSymA(columnIndex);
         }
 
         @Override

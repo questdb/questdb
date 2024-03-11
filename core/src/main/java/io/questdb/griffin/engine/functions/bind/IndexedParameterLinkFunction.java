@@ -172,8 +172,8 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return getBase().getStr(rec);
+    public CharSequence getStrA(Record rec) {
+        return getBase().getStrA(rec);
     }
 
     @Override

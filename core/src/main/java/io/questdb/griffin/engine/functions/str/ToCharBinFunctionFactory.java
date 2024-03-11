@@ -75,7 +75,7 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return toSink(rec, sink1);
         }
 

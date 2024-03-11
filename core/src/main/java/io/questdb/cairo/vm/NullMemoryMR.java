@@ -167,12 +167,12 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
-    public CharSequence getStr(long offset) {
+    public CharSequence getStrA(long offset) {
         return null;
     }
 
     @Override
-    public CharSequence getStr2(long offset) {
+    public CharSequence getStrB(long offset) {
         return null;
     }
 

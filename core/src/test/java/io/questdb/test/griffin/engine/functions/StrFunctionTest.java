@@ -32,9 +32,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -44,7 +45,7 @@ public class StrFunctionTest {
 
     private static final StrFunction function = new StrFunction() {
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return "a";
         }
 
@@ -503,11 +504,15 @@ public class StrFunctionTest {
 
     @Test
     public void testGetVarcharA() {
-        TestUtils.assertEquals("a", function.getVarcharA(null).toString());
+        Utf8Sequence value = function.getVarcharA(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("a", value.toString());
     }
 
     @Test
     public void testGetVarcharB() {
-        TestUtils.assertEquals("a", function.getVarcharB(null).toString());
+        Utf8Sequence value = function.getVarcharB(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("a", value.toString());
     }
 }

@@ -146,7 +146,7 @@ public abstract class CharFunction implements ScalarFunction {
     }
 
     @Override
-    public final CharSequence getStr(Record rec) {
+    public final CharSequence getStrA(Record rec) {
         final char value = getChar(rec);
         if (value == 0) {
             return null;

@@ -365,7 +365,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
         Assert.assertTrue(function.getBool(new Record() {
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 return "yk";
             }
         }));
@@ -543,11 +543,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         Function function = parseFunction("to_str(a, 'EE, dd-MMM-yyyy hh:mm:ss')", metadata, functionParser);
         Assert.assertEquals(ColumnType.STRING, function.getType());
-        TestUtils.assertEquals("Thursday, 03-Apr-150577 03:54:03", function.getStr(record));
+        TestUtils.assertEquals("Thursday, 03-Apr-150577 03:54:03", function.getStrA(record));
 
         Function function2 = parseFunction("to_str(b, 'EE, dd-MMM-yyyy hh:mm:ss')", metadata, functionParser);
         Assert.assertEquals(ColumnType.STRING, function2.getType());
-        TestUtils.assertEquals("Tuesday, 21-Nov-2119 08:50:58", function2.getStr(record));
+        TestUtils.assertEquals("Tuesday, 21-Nov-2119 08:50:58", function2.getStrA(record));
 
         Function function3 = parseFunction("to_char(c)", metadata, functionParser);
 
@@ -616,7 +616,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 "000003e0 12 61 3a 9a ad 98 2e 75 52 ad 62 87 88 45 b9 9d\n" +
                 "000003f0 20 13 51 c0 e0 b7 a4 24 40 4d 50 b1 8c 4d 66 e8";
 
-        TestUtils.assertEquals(expectedBin, function3.getStr(record));
+        TestUtils.assertEquals(expectedBin, function3.getStrA(record));
     }
 
     @Test
@@ -927,7 +927,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new StrFunction() {
                     @Override
-                    public CharSequence getStr(Record rec) {
+                    public CharSequence getStrA(Record rec) {
                         return null;
                     }
 
@@ -1013,7 +1013,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     private final String x = "abc";
 
                     @Override
-                    public CharSequence getStr(Record rec) {
+                    public CharSequence getStrA(Record rec) {
                         return x;
                     }
 
@@ -1155,7 +1155,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 new GenericRecordMetadata(),
                 functionParser
         );
-        TestUtils.assertEquals("Sunday, 04-Mar-2018 21:40:00", function.getStr(null));
+        TestUtils.assertEquals("Sunday, 04-Mar-2018 21:40:00", function.getStrA(null));
     }
 
     @Test
@@ -1325,17 +1325,17 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 return "ABC";
             }
 
             @Override
             public int getStrLen(int col) {
-                return getStr(col).length();
+                return getStrA(col).length();
             }
 
             @Override
-            public CharSequence getSym(int col) {
+            public CharSequence getSymA(int col) {
                 return symbolValue;
             }
         };
@@ -1556,7 +1556,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Record record = new Record() {
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 return "YZ";
             }
         };

@@ -112,8 +112,8 @@ public class TableReaderReloadTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextDouble(), record.getDouble(3), 0.00001);
             Assert.assertEquals(rnd.nextFloat(), record.getFloat(4), 0.00001);
             Assert.assertEquals(rnd.nextLong(), record.getLong(5));
-            TestUtils.assertEquals(rnd.nextChars(3), record.getStr(6));
-            TestUtils.assertEquals(rnd.nextChars(2), record.getSym(7));
+            TestUtils.assertEquals(rnd.nextChars(3), record.getStrA(6));
+            TestUtils.assertEquals(rnd.nextChars(2), record.getSymA(7));
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(8));
 
             rnd.nextChars(buffer, 1024 / 2);

@@ -224,11 +224,11 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
+    public CharSequence getStrA(int col) {
         if (col < split) {
-            return master.getStr(col);
+            return master.getStrA(col);
         }
-        return slave.getStr(col - split);
+        return slave.getStrA(col - split);
     }
 
     @Override
@@ -257,11 +257,11 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public CharSequence getSym(int col) {
+    public CharSequence getSymA(int col) {
         if (col < split) {
-            return master.getSym(col);
+            return master.getSymA(col);
         }
-        return slave.getSym(col - split);
+        return slave.getSymA(col - split);
     }
 
     @Override

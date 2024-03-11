@@ -56,7 +56,7 @@ public class CastStrToCharFunctionFactory implements FunctionFactory {
 
         @Override
         public char getChar(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             return value == null || value.length() == 0 ? 0 : value.charAt(0);
         }
     }

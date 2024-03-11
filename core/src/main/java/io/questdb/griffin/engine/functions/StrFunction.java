@@ -57,27 +57,27 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final byte getByte(Record rec) {
-        return SqlUtil.implicitCastStrAsByte(getStr(rec));
+        return SqlUtil.implicitCastStrAsByte(getStrA(rec));
     }
 
     @Override
     public final char getChar(Record rec) {
-        return SqlUtil.implicitCastStrAsChar(getStr(rec));
+        return SqlUtil.implicitCastStrAsChar(getStrA(rec));
     }
 
     @Override
     public final long getDate(Record rec) {
-        return SqlUtil.implicitCastStrAsDate(getStr(rec));
+        return SqlUtil.implicitCastStrAsDate(getStrA(rec));
     }
 
     @Override
     public final double getDouble(Record rec) {
-        return SqlUtil.implicitCastStrAsDouble(getStr(rec));
+        return SqlUtil.implicitCastStrAsDouble(getStrA(rec));
     }
 
     @Override
     public final float getFloat(Record rec) {
-        return SqlUtil.implicitCastStrAsFloat(getStr(rec));
+        return SqlUtil.implicitCastStrAsFloat(getStrA(rec));
     }
 
     @Override
@@ -102,17 +102,17 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final int getIPv4(Record rec) {
-        return SqlUtil.implicitCastStrAsIPv4(getStr(rec));
+        return SqlUtil.implicitCastStrAsIPv4(getStrA(rec));
     }
 
     @Override
     public final int getInt(Record rec) {
-        return SqlUtil.implicitCastStrAsInt(getStr(rec));
+        return SqlUtil.implicitCastStrAsInt(getStrA(rec));
     }
 
     @Override
     public final long getLong(Record rec) {
-        return SqlUtil.implicitCastStrAsLong(getStr(rec));
+        return SqlUtil.implicitCastStrAsLong(getStrA(rec));
     }
 
     @Override
@@ -147,23 +147,23 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final short getShort(Record rec) {
-        return SqlUtil.implicitCastStrAsShort(getStr(rec));
+        return SqlUtil.implicitCastStrAsShort(getStrA(rec));
     }
 
     @Override
     public void getStr(Record rec, Utf16Sink utf16Sink) {
-        utf16Sink.put(getStr(rec));
+        utf16Sink.put(getStrA(rec));
     }
 
     @Override
     public int getStrLen(Record rec) {
-        final CharSequence str = getStr(rec);
+        final CharSequence str = getStrA(rec);
         return str == null ? TableUtils.NULL_LEN : str.length();
     }
 
     @Override
     public final CharSequence getSymbol(Record rec) {
-        return getStr(rec);
+        return getStrA(rec);
     }
 
     @Override
@@ -173,7 +173,7 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
-        return SqlUtil.implicitCastStrAsTimestamp(getStr(rec));
+        return SqlUtil.implicitCastStrAsTimestamp(getStrA(rec));
     }
 
     @Override
@@ -183,13 +183,13 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        utf8Sink.put(getStr(rec));
+        utf8Sink.put(getStrA(rec));
     }
 
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
         utf8SinkA.clear();
-        utf8SinkA.put(getStr(rec));
+        utf8SinkA.put(getStrA(rec));
         return utf8SinkA;
     }
 

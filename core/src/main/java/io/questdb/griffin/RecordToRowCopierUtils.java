@@ -87,8 +87,8 @@ public class RecordToRowCopierUtils {
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
-        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
-        int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
+        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSymA", "(I)Ljava/lang/CharSequence;");
+        int rGetStrA = asm.poolInterfaceMethod(Record.class, "getStrA", "(I)Ljava/lang/CharSequence;");
         int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         int rGetVarchar = asm.poolInterfaceMethod(Record.class, "getVarcharA", "(I)Lio/questdb/std/str/Utf8Sequence;");
         //
@@ -699,56 +699,56 @@ public class RecordToRowCopierUtils {
                     // would have to do expensive checks to decide which conversion would be required
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsByte);
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.SHORT:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsShort);
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.CHAR:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsChar);
                             asm.invokeInterface(wPutChar, 2);
                             break;
                         case ColumnType.INT:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsInt);
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.IPv4:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsIPv4);
                             asm.invokeInterface(wPutIPv4, 2);
                             break;
                         case ColumnType.LONG:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsLong);
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.FLOAT:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         case ColumnType.SYMBOL:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeInterface(wPutSym, 2);
                             break;
                         case ColumnType.DATE:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsDate);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsTimestamp);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
@@ -756,23 +756,23 @@ public class RecordToRowCopierUtils {
                         case ColumnType.GEOSHORT:
                         case ColumnType.GEOINT:
                         case ColumnType.GEOLONG:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeInterface(wPutGeoStr, 2);
                             break;
                         case ColumnType.STRING:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeInterface(wPutStr, 2);
                             break;
                         case ColumnType.VARCHAR:
-                            asm.invokeInterface(rGetVarchar);
-                            asm.invokeInterface(wPutVarchar, 2);
+                            asm.invokeInterface(rGetStrA);
+                            asm.invokeStatic(transferStrToVarcharCol);
                             break;
                         case ColumnType.UUID:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeInterface(wPutUuidStr, 2);
                             break;
                         case ColumnType.LONG256:
-                            asm.invokeInterface(rGetStr);
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsLong256);
                             asm.invokeInterface(wPutLong256, 2);
                             break;

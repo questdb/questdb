@@ -77,7 +77,7 @@ public class InsertRowImpl {
     private TableWriter.Row getRowWithStringTimestamp(TableWriterAPI tableWriter) {
         return tableWriter.newRow(
                 SqlUtil.parseFloorPartialTimestamp(
-                        timestampFunction.getStr(null),
+                        timestampFunction.getStrA(null),
                         tupleIndex,
                         ColumnType.TIMESTAMP
                 )

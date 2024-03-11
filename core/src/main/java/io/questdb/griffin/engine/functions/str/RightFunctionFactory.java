@@ -85,13 +85,13 @@ public class RightFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return getStr0(rec, sink);
         }
 
         @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
-            CharSequence str = strFunc.getStr(rec);
+            CharSequence str = strFunc.getStrA(rec);
             if (str != null) {
                 final int len = str.length();
                 final int pos = getPos(len);
@@ -122,7 +122,7 @@ public class RightFunctionFactory implements FunctionFactory {
 
         @Nullable
         private StringSink getStr0(Record rec, StringSink sink) {
-            CharSequence str = strFunc.getStr(rec);
+            CharSequence str = strFunc.getStrA(rec);
             if (str != null) {
                 final int len = str.length();
                 final int pos = getPos(len);
@@ -163,7 +163,7 @@ public class RightFunctionFactory implements FunctionFactory {
 
         @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
-            final CharSequence str = strFunc.getStr(rec);
+            final CharSequence str = strFunc.getStrA(rec);
             final int count = this.countFunc.getInt(rec);
             if (str != null && count != Numbers.INT_NaN) {
                 final int len = str.length();
@@ -173,7 +173,7 @@ public class RightFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return getStr0(rec, sink);
         }
 
@@ -194,7 +194,7 @@ public class RightFunctionFactory implements FunctionFactory {
 
         @Nullable
         private StringSink getStr0(Record rec, StringSink sink) {
-            final CharSequence str = strFunc.getStr(rec);
+            final CharSequence str = strFunc.getStrA(rec);
             final int count = this.countFunc.getInt(rec);
             if (str != null && count != Numbers.INT_NaN) {
                 final int len = str.length();

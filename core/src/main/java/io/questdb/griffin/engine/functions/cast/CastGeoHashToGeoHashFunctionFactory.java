@@ -239,7 +239,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public final CharSequence getStr(Record rec) {
+        public final CharSequence getStrA(Record rec) {
             return toSink(getValue(rec), sinkA);
         }
 

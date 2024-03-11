@@ -48,42 +48,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     // the length is encoded into 28 bits
     private static final int UTF8_MAX_LENGTH_BYTES = 1 << 28; // exclusive
 
-    public static long varcharGetDataOffset(MemoryR auxMem, long offset) {
-        return auxMem.getLong(offset + 8L) >>> 16;
-    }
-
-    public static long varcharGetDataOffset(long auxEntry) {
-        return Unsafe.getUnsafe().getLong(auxEntry + 8L) >>> 16;
-    }
-
-    public static long varcharGetDataVectorSize(long auxEntry) {
-        final int raw = Unsafe.getUnsafe().getInt(auxEntry);
-        final int flags = raw & 0x0f; // 4 bit flags
-        final long dataOffset = varcharGetDataOffset(auxEntry);
-
-        if ((flags & 4) == 4 || (flags & 1) == 1) {
-            // null flag is set or fully inlined value
-            return dataOffset;
-        }
-        // size of the string at this offset
-        final int size = (raw >> 4) & 0xffffff;
-        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
-    }
-
-    public static long varcharGetDataVectorSize(MemoryR auxMem, long offset) {
-        final int raw = auxMem.getInt(offset);
-        final int flags = raw & 0x0f; // 4 bit flags
-        final long dataOffset = varcharGetDataOffset(auxMem, offset);
-
-        if ((flags & 4) == 4 || (flags & 1) == 1) {
-            // null flag is set or fully inlined value
-            return dataOffset;
-        }
-        // size of the string at this offset
-        final int size = (raw >> 4) & 0xffffff;
-        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
-    }
-
     /**
      * Appends UTF8 varchar type to the data and aux vectors.
      *
@@ -91,7 +55,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param auxMem  aux vector, contains pointer to data vector, size, flags and statistics about UTF8 string
      * @param value   the UTF8 string to be stored
      */
-    public static void varcharAppend(MemoryA dataMem, MemoryA auxMem, @Nullable Utf8Sequence value) {
+    public static void appendValue(MemoryA dataMem, MemoryA auxMem, @Nullable Utf8Sequence value) {
         final long offset;
         if (value != null) {
             int size = value.size();
@@ -135,7 +99,99 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         auxMem.putInt((int) (offset >> 16));
     }
 
-    public static Utf8Sequence varcharRead(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
+    /**
+     * Appends varchar to single data vector. The storage in this data vector is
+     * length prefixed. The ascii flag is encoded to the highest bit of the length.
+     *
+     * @param dataMem the target append memory
+     * @param value   the nullable varchar value, UTF8 encoded
+     */
+    public static void appendValue(MemoryA dataMem, @Nullable Utf8Sequence value) {
+        if (value == null) {
+            dataMem.putInt(TableUtils.NULL_LEN); // NULL
+            return;
+        }
+        final int size = value.size();
+        dataMem.putInt(value.isAscii() ? size | Integer.MIN_VALUE : size);
+        dataMem.putVarchar(value, 0, size);
+    }
+
+    /**
+     * Appends UTF8 varchar type to the memory address with a header.
+     * This is unsafe method, and it is assumed that the memory address is valid and has enough space to store the header and UTF8 bytes.
+     * The number of bytes to be written can be obtained from {@link #getSingleMemValueByteCount(Utf8Sequence)}
+     *
+     * @param dataMemAddr memory address to store header and UTF8 bytes in
+     * @param value       the UTF8 string to be stored
+     */
+    public static void appendValue(long dataMemAddr, @Nullable Utf8Sequence value) {
+        if (value == null) {
+            Unsafe.getUnsafe().putInt(dataMemAddr, TableUtils.NULL_LEN); // NULL
+            return;
+        }
+        final int hi = value.size();
+        final boolean ascii = value.isAscii();
+        value.writeTo(dataMemAddr + Integer.BYTES, 0, hi);
+        // ASCII flag is signaled with the highest bit
+        Unsafe.getUnsafe().putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
+    }
+
+    public static long getDataOffset(long auxEntry) {
+        return Unsafe.getUnsafe().getLong(auxEntry + 8L) >>> 16;
+    }
+
+    public static long getDataVectorSize(MemoryR auxMem, long offset) {
+        final int raw = auxMem.getInt(offset);
+        final int flags = raw & 0x0f; // 4 bit flags
+        final long dataOffset = getDataOffset(auxMem, offset);
+
+        if ((flags & 4) == 4 || (flags & 1) == 1) {
+            // null flag is set or fully inlined value
+            return dataOffset;
+        }
+        // size of the string at this offset
+        final int size = (raw >> 4) & 0xffffff;
+        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
+    }
+
+    public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
+        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
+    }
+
+    /*
+     * Reads UTF8 varchar type from the memory with a header.
+     *
+     * @param dataMem memory contains UTF8 bytes
+     * @param offset in the memory
+     * @param ab 1 for A memory
+     */
+    public static Utf8Sequence getValue(@NotNull MemoryR dataMem, long offset, int ab) {
+        long address = dataMem.addressOf(offset);
+        int header = Unsafe.getUnsafe().getInt(address);
+        if (isNull(header)) {
+            return null;
+        }
+        return (ab == 1) ?
+                dataMem.getVarcharA(offset + Integer.BYTES, size(header), isAscii(header)) :
+                dataMem.getVarcharB(offset + Integer.BYTES, size(header), isAscii(header));
+    }
+
+    /**
+     * Reads UTF8 varchar type from the memory with a header.
+     *
+     * @param dataMemAddr memory address contains UTF8 bytes
+     * @param sequence    to wrap UTF8 bytes with
+     * @return the provided UTF8 wrapper or null.
+     */
+    public static DirectUtf8Sequence getValue(long dataMemAddr, @NotNull DirectUtf8String sequence) {
+        int header = Unsafe.getUnsafe().getInt(dataMemAddr);
+        if (isNull(header)) {
+            return null;
+        }
+        return sequence.of(dataMemAddr + Integer.BYTES, dataMemAddr + Integer.BYTES + size(header), isAscii(header));
+    }
+
+    public static Utf8Sequence getValue(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
         final long auxOffset = rowNum << 4;
         int raw = auxMem.getInt(auxOffset);
         int flags = raw & 0x0f; // 4 bit flags
@@ -158,7 +214,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         if (utf8SplitString != null) {
             return utf8SplitString.of(
                     auxMem.addressOf(auxOffset + 4),
-                    dataMem.addressOf(varcharGetDataOffset(auxMem, auxOffset)),
+                    dataMem.addressOf(getDataOffset(auxMem, auxOffset)),
                     (raw >> 4) & 0xffffff,
                     ascii
             );
@@ -166,7 +222,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return null;
     }
 
-    public static Utf8Sequence varcharRead(
+    public static Utf8Sequence getValue(
             long auxAddr,
             long dataAddr,
             long row,
@@ -192,131 +248,15 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         // string is split, prefix is in aux mem and the suffix is in data mem
         return utf8SplitView.of(
                 auxEntry + 4,
-                dataAddr + varcharGetDataOffset(auxEntry),
+                dataAddr + getDataOffset(auxEntry),
                 (raw >> 4) & 0xffffff,
                 ascii
         );
     }
 
-    /**
-     * Appends UTF8 varchar type to the memory address with a header.
-     * This is unsafe method and it is assumed that the memory address is valid and has enough space to store the header and UTF8 bytes.
-     *
-     * @param address memory address to store header and UTF8 bytes in
-     * @param value the UTF8 string to be stored
-     * @param lo start position in the string (inclusive)
-     * @param hi end position in the string (exclusive)
-     * @param trustAscii if true, it is assumed that the string is ASCII and no check is performed
-     * @return number of bytes written
-     */
-    public static int varcharAppend(long address, @NotNull Utf8Sequence value, int lo, int hi, boolean trustAscii) {
-        long dataAddress = address + Integer.BYTES;
-
-        boolean ascii = value.isAscii();
-        if (trustAscii) {
-            value.writeTo(dataAddress, lo, hi);
-        } else {
-            ascii = true;
-            for (int i = lo; i < hi; i++) {
-                byte b = value.byteAt(i);
-                ascii &= (b >= 0);
-                Unsafe.getUnsafe().putByte(dataAddress++, b);
-            }
-        }
-
-        // ASCII flag is signaled with the highest bit
-        final int size = hi - lo;
-        Unsafe.getUnsafe().putInt(address, ascii ? size | Integer.MIN_VALUE : size);
-        return Integer.BYTES + size;
-    }
-
-    public static int varcharAppend(long address, @Nullable Utf8Sequence value, boolean trustAscii) {
-        if (value == null) {
-            Unsafe.getUnsafe().putInt(address, TableUtils.NULL_LEN); // NULL
-            return Integer.BYTES;
-        }
-       return varcharAppend(address, value, 0, value.size(), trustAscii);
-    }
-
-    public static int varcharAppend(long address, @Nullable Utf8Sequence value) {
-        if (value == null) {
-            Unsafe.getUnsafe().putInt(address, TableUtils.NULL_LEN); // NULL
-            return Integer.BYTES;
-        }
-        return varcharAppend(address, value, 0, value.size(), true);
-    }
-
-    /**
-     * Appends UTF8 varchar type to the memory address with a header.
-     *
-     * @param mem memory to store header and UTF8 bytes in
-     * @param value the UTF8 string to be stored
-     * @param lo start position in the string (inclusive)
-     * @param hi end position in the string (exclusive)
-     * @return number of bytes written
-     */
-    public static int varcharAppend(MemoryA mem, @NotNull Utf8Sequence value, int lo, int hi) {
-        final int size = hi - lo;
-        mem.putInt(value.isAscii() ? size | Integer.MIN_VALUE : size);
-        mem.putVarchar(value, lo, hi);
-        return Integer.BYTES + size;
-    }
-
-    public static int varcharAppend(MemoryA mem, @Nullable Utf8Sequence value) {
-        if (value == null) {
-            mem.putInt(TableUtils.NULL_LEN); // NULL
-            return Integer.BYTES;
-        }
-        return varcharAppend(mem, value, 0, value.size());
-    }
-
-    /*
-    * Reads UTF8 varchar type from the memory with a header.
-    *
-    * @param address memory address contains UTF8 bytes
-    * @param sequence to wrap UTF8 bytes with
-    */
-    public static Utf8Sequence varcharRead(long address, @NotNull DirectUtf8String sequence) {
-        int header = Unsafe.getUnsafe().getInt(address);
-        if (isNull(header)) {
-            return null;
-        }
-        return sequence.of(address + Integer.BYTES, address + Integer.BYTES + size(header), isAscii(header));
-    }
-
-    /*
-     * Reads UTF8 varchar type from the memory with a header.
-     *
-     * @param mem memory contains UTF8 bytes
-     * @param offset offset in the memory
-     * @param ab 1 for A memory
-     */
-    public static Utf8Sequence varcharRead(@NotNull MemoryR mem, long offset, int ab) {
-        long address = mem.addressOf(offset);
-        int header = Unsafe.getUnsafe().getInt(address);
-        if (isNull(header)) {
-            return null;
-        }
-        return (ab == 1) ?
-                mem.getVarcharA(offset + Integer.BYTES, size(header), isAscii(header)) :
-                mem.getVarcharB(offset + Integer.BYTES, size(header), isAscii(header));
-    }
-
-    public static Utf8Sequence varcharRead(@NotNull MemoryR mem, long offset) {
-        return varcharRead(mem, offset, 1);
-    }
-
-    private static boolean isAscii(int header) {
-        // ASCII flag is signaled with the highest bit
-        return (header & Integer.MIN_VALUE) != 0;
-    }
-
-    private static boolean isNull(int header) {
-        return header == TableUtils.NULL_LEN;
-    }
-
-    private static int size(int header) {
-        return header & Integer.MAX_VALUE;
+    @Override
+    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
+        appendValue(dataMem, auxMem, null);
     }
 
     @Override
@@ -374,11 +314,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     ) {
         long lo;
         if (rowLo > 0) {
-            lo = varcharGetDataOffset(auxMem, rowLo << VARCHAR_AUX_SHL);
+            lo = getDataOffset(auxMem, rowLo << VARCHAR_AUX_SHL);
         } else {
             lo = 0;
         }
-        long hi = varcharGetDataVectorSize(auxMem, (rowHi - 1) << VARCHAR_AUX_SHL);
+        long hi = getDataVectorSize(auxMem, (rowHi - 1) << VARCHAR_AUX_SHL);
         dataMem.ofOffset(
                 ff,
                 dataFd,
@@ -406,7 +346,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     public long getDataVectorOffset(long auxMemAddr, long row) {
-        return varcharGetDataOffset(auxMemAddr + (row << VARCHAR_AUX_SHL));
+        return getDataOffset(auxMemAddr + (row << VARCHAR_AUX_SHL));
     }
 
     @Override
@@ -419,7 +359,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorSizeAt(long auxMemAddr, long row) {
-        return varcharGetDataVectorSize(auxMemAddr + (row << VARCHAR_AUX_SHL));
+        return getDataVectorSize(auxMemAddr + (row << VARCHAR_AUX_SHL));
     }
 
     @Override
@@ -515,7 +455,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount) {
         if (rowCount > 0) {
             auxMem.jumpTo((rowCount - 1) << VARCHAR_AUX_SHL);
-            final long dataMemOffset = varcharGetDataVectorSize(auxMem.getAppendAddress());
+            final long dataMemOffset = getDataVectorSize(auxMem.getAppendAddress());
             // Jump to the end of file to correctly trim the file
             auxMem.jumpTo(rowCount << VARCHAR_AUX_SHL);
             return dataMemOffset;
@@ -532,7 +472,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             auxMem.jumpTo(auxVectorOffset);
             long auxEntryPtr = auxMem.getAppendAddress();
 
-            long dataVectorSize = varcharGetDataVectorSize(auxEntryPtr);
+            long dataVectorSize = getDataVectorSize(auxEntryPtr);
             long auxVectorSize = getAuxVectorSize(pos);
             long totalDataSizeBytes = dataVectorSize + auxVectorSize;
 
@@ -573,9 +513,31 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         );
     }
 
-    @Override
-    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
-        varcharAppend(dataMem, auxMem, null);
+    private static long getDataOffset(MemoryR auxMem, long offset) {
+        return auxMem.getLong(offset + 8L) >>> 16;
+    }
+
+    private static long getDataVectorSize(long auxEntry) {
+        final int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        final int flags = raw & 0x0f; // 4 bit flags
+        final long dataOffset = getDataOffset(auxEntry);
+
+        if ((flags & 4) == 4 || (flags & 1) == 1) {
+            // null flag is set or fully inlined value
+            return dataOffset;
+        }
+        // size of the string at this offset
+        final int size = (raw >> 4) & 0xffffff;
+        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
+    }
+
+    private static boolean isAscii(int header) {
+        // ASCII flag is signaled with the highest bit
+        return (header & Integer.MIN_VALUE) != 0;
+    }
+
+    private static boolean isNull(int header) {
+        return header == TableUtils.NULL_LEN;
     }
 
     private static int readInt(FilesFacade ff, int fd, long offset) {
@@ -589,5 +551,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                     .put(']');
         }
         return Numbers.decodeLowInt(res);
+    }
+
+    private static int size(int header) {
+        return header & Integer.MAX_VALUE;
     }
 }

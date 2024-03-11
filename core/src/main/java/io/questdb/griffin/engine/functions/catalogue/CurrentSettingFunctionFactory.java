@@ -51,7 +51,7 @@ public class CurrentSettingFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function arg = args.get(0);
-        CharSequence argValue = arg.getStr(null);
+        CharSequence argValue = arg.getStrA(null);
 
         if (Chars.equalsNc(SERVER_VERSION_NUM, argValue)) {
             return Constants.PG_COMPATIBLE_VERSION_NUM_CONSTANT;

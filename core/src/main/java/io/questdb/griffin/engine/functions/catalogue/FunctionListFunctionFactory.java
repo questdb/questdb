@@ -33,6 +33,7 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 public class FunctionListFunctionFactory implements FunctionFactory {
 
@@ -206,7 +207,8 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                 }
 
                 @Override
-                public CharSequence getStr(int col) {
+                @NotNull
+                public CharSequence getStrA(int col) {
                     if (col == NAME_COLUMN) {
                         return funcName;
                     }
@@ -225,12 +227,12 @@ public class FunctionListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrB(int col) {
-                    return getStr(col);
+                    return getStrA(col);
                 }
 
                 @Override
                 public int getStrLen(int col) {
-                    return getStr(col).length();
+                    return getStrA(col).length();
                 }
 
                 private void init(CharSequence funcName, FunctionFactory factory) {

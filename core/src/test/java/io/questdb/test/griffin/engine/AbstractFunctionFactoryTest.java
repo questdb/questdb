@@ -541,14 +541,14 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         private void assertString(Function func, CharSequence expected) {
             if (expected == null) {
-                Assert.assertNull(func.getStr(record));
+                Assert.assertNull(func.getStrA(record));
                 Assert.assertNull(func.getStrB(record));
                 Assert.assertEquals(-1, func.getStrLen(record));
                 sink.clear();
                 func.getStr(record, sink);
                 Assert.assertEquals(0, sink.length());
             } else {
-                CharSequence a = func.getStr(record);
+                CharSequence a = func.getStrA(record);
                 CharSequence b = func.getStrB(record);
                 if (!func.isConstant() && (!(a instanceof String) || !(b instanceof String))) {
                     Assert.assertNotSame(a, b);
@@ -557,7 +557,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 TestUtils.assertEquals(expected, b);
 
                 // repeat call to make sure there is correct object reuse
-                TestUtils.assertEquals(expected, func.getStr(record));
+                TestUtils.assertEquals(expected, func.getStrA(record));
                 TestUtils.assertEquals(expected, func.getStrB(record));
 
                 sink.clear();
@@ -658,7 +658,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             return (CharSequence) args[col];
         }
 
@@ -674,7 +674,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
-        public CharSequence getSym(int col) {
+        public CharSequence getSymA(int col) {
             return (CharSequence) args[col];
         }
 

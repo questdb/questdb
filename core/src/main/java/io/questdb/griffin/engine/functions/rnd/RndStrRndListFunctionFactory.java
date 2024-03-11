@@ -90,7 +90,7 @@ public class RndStrRndListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             if (nullRate > 0 && (rnd.nextPositiveInt() % nullRate) == 0) {
                 return null;
             }

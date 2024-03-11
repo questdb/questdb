@@ -1006,7 +1006,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 CharSequence expected = symbolTable.valueOf(i - 1);
                 while (ic.hasNext()) {
                     record.setRecordIndex(ic.next());
-                    TestUtils.assertEquals(expected, record.getSym(columnIndex));
+                    TestUtils.assertEquals(expected, record.getSymA(columnIndex));
                     rowCount++;
                 }
             }
@@ -1025,9 +1025,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             final long limit = frame.getRowHi();
             long recordIndex;
             while ((recordIndex = record.getRecordIndex()) < limit) {
-                TestUtils.assertEquals(sg.symA[rnd.nextPositiveInt() % sg.S], record.getSym(0));
-                TestUtils.assertEquals(sg.symB[rnd.nextPositiveInt() % sg.S], record.getSym(1));
-                TestUtils.assertEquals(sg.symC[rnd.nextPositiveInt() % sg.S], record.getSym(2));
+                TestUtils.assertEquals(sg.symA[rnd.nextPositiveInt() % sg.S], record.getSymA(0));
+                TestUtils.assertEquals(sg.symB[rnd.nextPositiveInt() % sg.S], record.getSymA(1));
+                TestUtils.assertEquals(sg.symC[rnd.nextPositiveInt() % sg.S], record.getSymA(2));
                 Assert.assertEquals(rnd.nextDouble(), record.getDouble(3), 0.0000001d);
                 record.setRecordIndex(recordIndex + 1);
                 rowCount++;
@@ -1049,7 +1049,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         // Iterate data frame and advance record by incrementing "recordIndex"
         long recordIndex;
         while ((recordIndex = record.getRecordIndex()) < hi) {
-            CharSequence sym = record.getSym(columnIndex);
+            CharSequence sym = record.getSymA(columnIndex);
 
             // Assert that index cursor contains offset of current row
             boolean offsetFound = false;

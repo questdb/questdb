@@ -65,17 +65,17 @@ public final class SymbolWrapOverJoinRecord extends OuterJoinRecord {
     }
 
     @Override
-    public CharSequence getSym(int col) {
+    public CharSequence getSymA(int col) {
         if (col < split) {
-            return master.getSym(col);
+            return master.getSymA(col);
         }
         int slaveCol = col - split;
         if (isSlaveKeyColumn(slaveCol)) {
             // key symbols are converted to strings before inserting into map.
             // so we can read them as strings directly from the map.
-            return slave.getStr(slaveCol);
+            return slave.getStrA(slaveCol);
         }
-        return slave.getSym(slaveCol);
+        return slave.getSymA(slaveCol);
     }
 
     @Override

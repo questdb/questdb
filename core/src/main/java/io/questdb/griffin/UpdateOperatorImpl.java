@@ -422,14 +422,14 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     // so that if update fails and rolled back ILP will not use "dirty" symbol indexes
                     // pre-looked up during update run to insert rows
                     dstFixMem.putInt(
-                            tableWriter.getSymbolIndexNoTransientCountUpdate(updateColumnIndexes.get(i), masterRecord.getSym(i))
+                            tableWriter.getSymbolIndexNoTransientCountUpdate(updateColumnIndexes.get(i), masterRecord.getSymA(i))
                     );
                     break;
                 case ColumnType.STRING:
-                    dstFixMem.putLong(dstVarMem.putStr(masterRecord.getStr(i)));
+                    dstFixMem.putLong(dstVarMem.putStr(masterRecord.getStrA(i)));
                     break;
                 case ColumnType.VARCHAR:
-                    VarcharTypeDriver.varcharAppend(dstVarMem, dstFixMem, masterRecord.getVarcharA(i));
+                    VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, masterRecord.getVarcharA(i));
                     break;
                 case ColumnType.BINARY:
                     dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));

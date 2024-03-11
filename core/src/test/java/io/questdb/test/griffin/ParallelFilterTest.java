@@ -241,7 +241,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                 int rowCount = 0;
                                 while (cursor.hasNext()) {
                                     rowCount++;
-                                    TestUtils.assertEquals("0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", record.getSym(0));
+                                    TestUtils.assertEquals("0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", record.getSymA(0));
                                 }
                                 Assert.assertEquals(numOfRows, rowCount);
                             } catch (Throwable e) {

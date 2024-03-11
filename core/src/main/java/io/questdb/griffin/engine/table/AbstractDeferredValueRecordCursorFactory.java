@@ -65,7 +65,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
     }
 
     private boolean lookupDeferredSymbol(DataFrameCursor dataFrameCursor) {
-        final CharSequence symbol = symbolFunc.getStr(null);
+        final CharSequence symbol = symbolFunc.getStrA(null);
         int newSymbolKey = dataFrameCursor.getSymbolTable(columnIndexes.get(columnIndex)).keyOf(symbol);
         if (newSymbolKey == SymbolTable.VALUE_NOT_FOUND) {
             dataFrameCursor.close();

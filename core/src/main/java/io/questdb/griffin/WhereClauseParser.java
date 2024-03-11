@@ -218,7 +218,7 @@ public final class WhereClauseParser implements Mutable {
         if (!ColumnType.isSymbolOrString(function.getType())) {
             return function.getTimestamp(null);
         }
-        CharSequence str = function.getStr(null);
+        CharSequence str = function.getStrA(null);
         return parseStringAsTimestamp(str, functionPosition);
     }
 
@@ -623,7 +623,7 @@ public final class WhereClauseParser implements Mutable {
                 Function f1 = functionParser.parseFunction(inArg, metadata, executionContext);
                 if (checkFunctionCanBeTimestampInterval(executionContext, f1)) {
                     if (f1.isConstant()) {
-                        CharSequence funcVal = f1.getStr(null);
+                        CharSequence funcVal = f1.getStrA(null);
                         if (!isNegated) {
                             model.intersectIntervals(funcVal, 0, funcVal.length(), inArg.position);
                         } else {
@@ -1652,7 +1652,7 @@ public final class WhereClauseParser implements Mutable {
         isConstFunction = true;
         int type = function.getType();
         if (type == ColumnType.SYMBOL || type == ColumnType.STRING || type == ColumnType.CHAR || type == ColumnType.UNDEFINED || type == ColumnType.NULL || type == ColumnType.VARCHAR) {
-            return function.getStr(null);
+            return function.getStrA(null);
         } else {
             throw SqlException.$(node.position, "Unexpected function type [").put(ColumnType.nameOf(type)).put("]");
         }

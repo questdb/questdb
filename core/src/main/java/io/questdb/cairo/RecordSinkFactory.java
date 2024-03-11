@@ -115,9 +115,9 @@ public class RecordSinkFactory {
         final int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         final int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         final int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
-        final int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
+        final int rGetStr = asm.poolInterfaceMethod(Record.class, "getStrA", "(I)Ljava/lang/CharSequence;");
         final int rGetVarchar = asm.poolInterfaceMethod(Record.class, "getVarcharA", "(I)Lio/questdb/std/str/Utf8Sequence;");
-        final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
+        final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSymA", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
 
@@ -139,7 +139,7 @@ public class RecordSinkFactory {
         final int fGetBool = asm.poolInterfaceMethod(Function.class, "getBool", "(Lio/questdb/cairo/sql/Record;)Z");
         final int fGetFloat = asm.poolInterfaceMethod(Function.class, "getFloat", "(Lio/questdb/cairo/sql/Record;)F");
         final int fGetDouble = asm.poolInterfaceMethod(Function.class, "getDouble", "(Lio/questdb/cairo/sql/Record;)D");
-        final int fGetStr = asm.poolInterfaceMethod(Function.class, "getStr", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
+        final int fGetStr = asm.poolInterfaceMethod(Function.class, "getStrA", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
         final int fGetVarchar = asm.poolInterfaceMethod(Function.class, "getVarchar", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/str/Utf8Sequence;");
         final int fGetSym = asm.poolInterfaceMethod(Function.class, "getSymbol", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
         final int fGetBin = asm.poolInterfaceMethod(Function.class, "getBin", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/BinarySequence;");

@@ -102,7 +102,7 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
-                    CharSequence tsValue = func.getStr(null);
+                    CharSequence tsValue = func.getStrA(null);
                     val = (tsValue != null) ? tryParseDouble(tsValue, argPositions.getQuick(i)) : Double.NaN;
                     break;
             }
@@ -173,7 +173,7 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                         break;
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
-                        val = Numbers.parseDoubleQuiet(func.getStr(rec));
+                        val = Numbers.parseDoubleQuiet(func.getStrA(rec));
                         break;
                 }
                 if (Numbers.equals(val, argVal)) {

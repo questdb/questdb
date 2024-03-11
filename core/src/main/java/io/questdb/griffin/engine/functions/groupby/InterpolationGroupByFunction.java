@@ -37,7 +37,6 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
-import io.questdb.std.str.Utf16Sink;
 
 public class InterpolationGroupByFunction implements GroupByFunction {
     private final GroupByFunction wrappedFunction;
@@ -215,13 +214,13 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return wrappedFunction.getStr(rec);
+    public CharSequence getStrA(Record rec) {
+        return wrappedFunction.getStrA(rec);
     }
 
     @Override
-    public CharSequence getStr(Record rec, int arrayIndex) {
-        return wrappedFunction.getStr(rec, arrayIndex);
+    public CharSequence getStrA(Record rec, int arrayIndex) {
+        return wrappedFunction.getStrA(rec, arrayIndex);
     }
 
     @Override

@@ -73,11 +73,11 @@ public class CursorPrinter {
                 break;
             case ColumnType.STRING:
                 if (!symbolAsString | metadata.getColumnType(columnIndex) != ColumnType.SYMBOL) {
-                    sink.put(record.getStr(columnIndex));
+                    sink.put(record.getStrA(columnIndex));
                     break;
                 } // Fall down to SYMBOL
             case ColumnType.SYMBOL:
-                CharSequence sym = record.getSym(columnIndex);
+                CharSequence sym = record.getSymA(columnIndex);
                 sink.put(sym != null ? sym : nullStringValue);
                 break;
             case ColumnType.SHORT:

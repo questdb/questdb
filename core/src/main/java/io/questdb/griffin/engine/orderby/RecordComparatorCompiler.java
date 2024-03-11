@@ -325,7 +325,7 @@ public class RecordComparatorCompiler {
                     comparatorClass = Character.class;
                     break;
                 case ColumnType.STRING:
-                    getterNameA = "getStr";
+                    getterNameA = "getStrA";
                     getterNameB = "getStrB";
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;
@@ -352,7 +352,7 @@ public class RecordComparatorCompiler {
                     break;
                 default:
                     // SYMBOL
-                    getterNameA = "getSym";
+                    getterNameA = "getSymA";
                     getterNameB = "getSymB";
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;

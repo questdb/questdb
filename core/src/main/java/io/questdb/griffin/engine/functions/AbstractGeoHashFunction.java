@@ -133,7 +133,7 @@ public abstract class AbstractGeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final String getStr(Record rec) {
+    public final String getStrA(Record rec) {
         throw new UnsupportedOperationException();
     }
 

@@ -138,7 +138,7 @@ public abstract class UuidFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         throw new UnsupportedOperationException();
     }
 

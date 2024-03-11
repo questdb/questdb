@@ -1354,7 +1354,7 @@ public class LatestByTest extends AbstractCairoTest {
                     if (i++ > 0) {
                         sink.put(',');
                     }
-                    sink.put('\'').put(record.getSym(0)).put('\'');
+                    sink.put('\'').put(record.getSymA(0)).put('\'');
                 }
             }
         }
@@ -1377,8 +1377,8 @@ public class LatestByTest extends AbstractCairoTest {
 
         String query = "select when, version, temperature from forecasts latest on version partition by when";
         String expected = "when\tversion\ttemperature\n" +
-                valueA.replaceAll("'|#", "") + "\t2020-05-04T00:00:00.000000Z\t42.0\n" +
-                valueB.replaceAll("'|#", "") + "\t2020-05-05T00:00:00.000000Z\t142.0\n";
+                valueA.replaceAll("['#]", "") + "\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                valueB.replaceAll("['#]", "") + "\t2020-05-05T00:00:00.000000Z\t142.0\n";
 
         assertQuery(expected, query, "version", true, true);
     }

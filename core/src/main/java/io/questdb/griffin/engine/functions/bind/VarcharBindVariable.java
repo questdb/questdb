@@ -62,8 +62,8 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return isNull ? null : super.getStr(rec);
+    public CharSequence getStrA(Record rec) {
+        return isNull ? null : super.getStrA(rec);
     }
 
     @Override

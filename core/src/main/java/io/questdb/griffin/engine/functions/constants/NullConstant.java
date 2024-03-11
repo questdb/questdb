@@ -170,8 +170,8 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return StrConstant.NULL.getStr(null);
+    public CharSequence getStrA(Record rec) {
+        return StrConstant.NULL.getStrA(null);
     }
 
     @Override
@@ -180,7 +180,7 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec, int arrayIndex) {
+    public CharSequence getStrA(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 

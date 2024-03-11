@@ -70,7 +70,7 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             sinkA.clear();
             return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkA) ? sinkA : null;
         }

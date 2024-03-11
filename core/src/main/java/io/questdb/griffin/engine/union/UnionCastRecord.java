@@ -227,11 +227,11 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public CharSequence getStr(int col) {
+    public CharSequence getStrA(int col) {
         if (useA) {
-            return castFunctionsA.getQuick(col).getStr(recordA);
+            return castFunctionsA.getQuick(col).getStrA(recordA);
         }
-        return castFunctionsB.getQuick(col).getStr(recordB);
+        return castFunctionsB.getQuick(col).getStrA(recordB);
     }
 
     @Override

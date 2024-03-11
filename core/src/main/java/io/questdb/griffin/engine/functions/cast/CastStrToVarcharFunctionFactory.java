@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
@@ -54,7 +53,7 @@ public class CastStrToVarcharFunctionFactory implements FunctionFactory {
     ) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            return VarcharConstant.newInstance(arg.getStr(null));
+            return VarcharConstant.newInstance(arg.getStrA(null));
         }
         return new Func(arg);
     }

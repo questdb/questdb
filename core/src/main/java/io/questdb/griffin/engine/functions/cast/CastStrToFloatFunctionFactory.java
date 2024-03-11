@@ -52,7 +52,7 @@ public class CastStrToFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             try {
                 return value == null ? Float.NaN : Numbers.parseFloat(value);
             } catch (NumericException e) {

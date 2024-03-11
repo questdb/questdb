@@ -115,12 +115,12 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public CharSequence getStr(long offset) {
+    public CharSequence getStrA(long offset) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStr2(long offset) {
+    public CharSequence getStrB(long offset) {
         throw new UnsupportedOperationException();
     }
 

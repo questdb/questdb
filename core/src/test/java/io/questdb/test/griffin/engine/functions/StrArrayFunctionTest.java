@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
 import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sink;
 import org.junit.Test;
 
 public class StrArrayFunctionTest {
@@ -40,43 +39,43 @@ public class StrArrayFunctionTest {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return "{hello}";
         }
 
         @Override
-        public CharSequence getStr(Record rec, int arrayIndex) {
+        public CharSequence getStrA(Record rec, int arrayIndex) {
             return "hello";
         }
 
         @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
-            utf16Sink.put(getStr(rec));
+            utf16Sink.put(getStrA(rec));
         }
 
         @Override
         public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
-            sink.put(getStr(rec, arrayIndex));
+            sink.put(getStrA(rec, arrayIndex));
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return getStr(rec);
+            return getStrA(rec);
         }
 
         @Override
         public CharSequence getStrB(Record rec, int arrayIndex) {
-            return getStr(rec, arrayIndex);
+            return getStrA(rec, arrayIndex);
         }
 
         @Override
         public int getStrLen(Record rec) {
-            return getStr(rec).length();
+            return getStrA(rec).length();
         }
 
         @Override
         public int getStrLen(Record rec, int arrayIndex) {
-            return getStr(rec, arrayIndex).length();
+            return getStrA(rec, arrayIndex).length();
         }
 
         @Override

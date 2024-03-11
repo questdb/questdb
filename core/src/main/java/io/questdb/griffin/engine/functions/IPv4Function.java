@@ -148,7 +148,7 @@ public abstract class IPv4Function implements ScalarFunction {
     }
 
     @Override
-    public final CharSequence getStr(Record rec) {
+    public final CharSequence getStrA(Record rec) {
         return getStringSink(rec, sinkA);
     }
 

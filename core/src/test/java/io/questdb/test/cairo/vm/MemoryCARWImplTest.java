@@ -1080,13 +1080,13 @@ public class MemoryCARWImplTest {
             for (int i = 0; i < N; i++) {
                 int flag = rnd.nextInt();
                 if ((flag % 4) == 0) {
-                    assertNull(mem.getStr(o));
+                    assertNull(mem.getStrA(o));
                     o += 4;
                 } else if ((flag % 2) == 0) {
-                    TestUtils.assertEquals("", mem.getStr(o));
+                    TestUtils.assertEquals("", mem.getStrA(o));
                     o += 4;
                 } else {
-                    TestUtils.assertEquals(rnd.nextChars(M), mem.getStr(o));
+                    TestUtils.assertEquals(rnd.nextChars(M), mem.getStrA(o));
                     o += M * 2 + 4;
                 }
             }
@@ -1111,36 +1111,36 @@ public class MemoryCARWImplTest {
         long o9 = mem.putStr('x');
         Assert.assertEquals(o9, mem.getAppendOffset());
 
-        TestUtils.assertEquals("123", mem.getStr(0));
+        TestUtils.assertEquals("123", mem.getStrA(0));
         assertEquals(3, mem.getStrLen(0));
-        TestUtils.assertEquals("123", mem.getStr2(0));
+        TestUtils.assertEquals("123", mem.getStrB(0));
 
         String expected = "0987654321abcd";
-        TestUtils.assertEquals("0987654321abcd", mem.getStr(o1));
-        TestUtils.assertEquals("0987654321abcd", mem.getStr2(o1));
+        TestUtils.assertEquals("0987654321abcd", mem.getStrA(o1));
+        TestUtils.assertEquals("0987654321abcd", mem.getStrB(o1));
 
         for (int i = 0; i < expected.length(); i++) {
             long offset = o1 + 4 + i * 2;
             assertEquals(expected.charAt(i), mem.getChar(offset));
         }
 
-        assertNull(mem.getStr(o2));
-        assertNull(mem.getStr2(o2));
-        TestUtils.assertEquals("xyz123", mem.getStr(o3));
-        TestUtils.assertEquals("xyz123", mem.getStr2(o3));
-        assertNull(mem.getStr(o4));
-        assertNull(mem.getStr2(o4));
+        assertNull(mem.getStrA(o2));
+        assertNull(mem.getStrB(o2));
+        TestUtils.assertEquals("xyz123", mem.getStrA(o3));
+        TestUtils.assertEquals("xyz123", mem.getStrB(o3));
+        assertNull(mem.getStrA(o4));
+        assertNull(mem.getStrB(o4));
         assertEquals(-1, mem.getStrLen(o4));
 
-        TestUtils.assertEquals("ohh", mem.getStr(o5));
-        assertNull(mem.getStr(o6));
+        TestUtils.assertEquals("ohh", mem.getStrA(o5));
+        assertNull(mem.getStrA(o6));
 
-        CharSequence s1 = mem.getStr(0);
-        CharSequence s2 = mem.getStr2(o1);
+        CharSequence s1 = mem.getStrA(0);
+        CharSequence s2 = mem.getStrB(o1);
         assertFalse(Chars.equals(s1, s2));
 
-        assertNull(mem.getStr(o7));
-        TestUtils.assertEquals("x", mem.getStr(o8));
+        assertNull(mem.getStrA(o7));
+        TestUtils.assertEquals("x", mem.getStrA(o8));
     }
 
     static void testBinSequence0(long mem1Size, long mem2Size) {

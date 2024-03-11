@@ -61,7 +61,7 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         return isNull ? null : utf16Sink;
     }
 

@@ -66,7 +66,7 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             final double value = arg.getDouble(rec);
             if (Double.isNaN(value)) {
                 return null;

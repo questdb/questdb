@@ -347,10 +347,6 @@ public class MemoryPARWImpl implements MemoryARW {
         return value;
     }
 
-    public final CharSequence getStr(long offset) {
-        return getStr0(offset, csview);
-    }
-
     public final CharSequence getStr0(long offset, CharSequenceView view) {
         final int len = getInt(offset);
         if (len == TableUtils.NULL_LEN) {
@@ -362,7 +358,11 @@ public class MemoryPARWImpl implements MemoryARW {
         return view.of(offset + STRING_LENGTH_BYTES, len);
     }
 
-    public final CharSequence getStr2(long offset) {
+    public final CharSequence getStrA(long offset) {
+        return getStr0(offset, csview);
+    }
+
+    public final CharSequence getStrB(long offset) {
         return getStr0(offset, csview2);
     }
 
@@ -1258,7 +1258,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
     }
 
-    public class CharSequenceView extends AbstractCharSequence {
+    private class CharSequenceView extends AbstractCharSequence {
         private int len;
         private long offset;
 

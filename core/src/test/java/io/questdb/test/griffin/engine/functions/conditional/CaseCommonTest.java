@@ -201,7 +201,7 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
                                 commonFunction.getDouble(null);
                                 break;
                             case ColumnType.STRING:
-                                commonFunction.getStr(null);
+                                commonFunction.getStrA(null);
                                 break;
                             case ColumnType.SYMBOL:
                                 commonFunction.getSymbol(null);

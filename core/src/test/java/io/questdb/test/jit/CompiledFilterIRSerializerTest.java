@@ -516,7 +516,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         Assert.assertEquals(1, bindVarFunctions.size());
         Assert.assertEquals(ColumnType.SYMBOL, bindVarFunctions.get(0).getType());
-        Assert.assertEquals(UNKNOWN_SYMBOL, bindVarFunctions.get(0).getStr(null));
+        Assert.assertEquals(UNKNOWN_SYMBOL, bindVarFunctions.get(0).getStrA(null));
     }
 
     @Test(expected = SqlException.class)

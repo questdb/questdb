@@ -171,30 +171,22 @@ public class PageFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharLongColumnTop() throws Exception {
-        assertMemoryLeak(() -> {
-            testColumnTop(40);
-        });
+        assertMemoryLeak(() -> testColumnTop(40));
     }
 
     @Test
     public void testVarcharLongSimple() throws Exception {
-        assertMemoryLeak(() -> {
-            testSimple(40);
-        });
+        assertMemoryLeak(() -> testSimple(40));
     }
 
     @Test
     public void testVarcharShortColumnTop() throws Exception {
-        assertMemoryLeak(() -> {
-            testColumnTop(1);
-        });
+        assertMemoryLeak(() -> testColumnTop(1));
     }
 
     @Test
     public void testVarcharShortSimple() throws Exception {
-        assertMemoryLeak(() -> {
-            testSimple(1);
-        });
+        assertMemoryLeak(() -> testSimple(1));
     }
 
     private static void readFromPageFrame() throws SqlException {
@@ -220,7 +212,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                     final long auxTopAddress = frame.getIndexPageAddress(1);
                     final long count = frame.getPartitionHi() - frame.getPartitionLo();
                     for (int row = 0; row < count; row++) {
-                        actualSink.put(VarcharTypeDriver.varcharRead(auxTopAddress, dataTopAddress, row, utf8view, utf8SplitView));
+                        actualSink.put(VarcharTypeDriver.getValue(auxTopAddress, dataTopAddress, row, utf8view, utf8SplitView));
                         actualSink.put('\n');
                     }
                 }

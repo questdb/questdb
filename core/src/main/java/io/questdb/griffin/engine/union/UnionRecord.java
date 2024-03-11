@@ -205,11 +205,11 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public CharSequence getStr(int col) {
+    public CharSequence getStrA(int col) {
         if (useA) {
-            return recordA.getStr(col);
+            return recordA.getStrA(col);
         }
-        return recordB.getStr(col);
+        return recordB.getStrA(col);
     }
 
     @Override

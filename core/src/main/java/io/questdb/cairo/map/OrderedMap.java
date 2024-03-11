@@ -1037,9 +1037,10 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void putVarchar(Utf8Sequence value) {
-            int expectedCapacity = value == null ? Integer.BYTES : value.size() + Integer.BYTES;
-            checkCapacity(expectedCapacity);
-            appendAddress += VarcharTypeDriver.varcharAppend(appendAddress, value);
+            int byteCount = VarcharTypeDriver.getSingleMemValueByteCount(value);
+            checkCapacity(byteCount);
+            VarcharTypeDriver.appendValue(appendAddress, value);
+            appendAddress += byteCount;
         }
 
         @Override

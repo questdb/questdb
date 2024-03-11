@@ -444,14 +444,14 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             Assert.assertEquals(ColumnType.STRING, type);
             callCount++;
             return "abc";
         }
 
         @Override
-        public CharSequence getStr(Record rec, int arrayIndex) {
+        public CharSequence getStrA(Record rec, int arrayIndex) {
             throw new UnsupportedOperationException();
         }
 
@@ -664,14 +664,14 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.STRING);
             return "abc";
         }
 
         @Override
-        public CharSequence getSym(int col) {
+        public CharSequence getSymA(int col) {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.SYMBOL);
             return "abc";

@@ -403,7 +403,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putStrValue(HttpChunkedResponse response, Record rec, int col) {
-        putStringOrNull(response, rec.getStr(col));
+        putStringOrNull(response, rec.getStrA(col));
     }
 
     private static void putStringOrNull(HttpChunkedResponse response, CharSequence str) {
@@ -415,7 +415,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putSymValue(HttpChunkedResponse response, Record rec, int col) {
-        putStringOrNull(response, rec.getSym(col));
+        putStringOrNull(response, rec.getSymA(col));
     }
 
     private static void putTimestampValue(HttpChunkedResponse response, Record rec, int col) {

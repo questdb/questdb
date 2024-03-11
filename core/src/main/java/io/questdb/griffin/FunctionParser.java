@@ -818,11 +818,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && arg.isConstant()) {
                 if (sigArgTypeTag == ColumnType.TIMESTAMP) {
                     int position = argPositions.getQuick(k);
-                    long timestamp = parseTimestamp(arg.getStr(null), position);
+                    long timestamp = parseTimestamp(arg.getStrA(null), position);
                     args.set(k, TimestampConstant.newInstance(timestamp));
                 } else if (sigArgTypeTag == ColumnType.DATE) {
                     int position = argPositions.getQuick(k);
-                    long millis = parseDate(arg.getStr(null), position);
+                    long millis = parseDate(arg.getStrA(null), position);
                     args.set(k, DateConstant.newInstance(millis));
                 }
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
@@ -1003,7 +1003,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof StrConstant) {
                     return function;
                 } else {
-                    return StrConstant.newInstance(function.getStr(null));
+                    return StrConstant.newInstance(function.getStrA(null));
                 }
             case ColumnType.VARCHAR:
                 if (function instanceof VarcharConstant) {

@@ -168,7 +168,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private static CharSequence getString(Function function, Record record) {
-        return function.getStr(record);
+        return function.getStrA(record);
     }
 
     private static long getTimestamp(Function function, Record record) {

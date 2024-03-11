@@ -66,8 +66,8 @@ public class StrArrayDereferenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return arrayFunction.getStr(rec, indexFunction.getInt(rec));
+        public CharSequence getStrA(Record rec) {
+            return arrayFunction.getStrA(rec, indexFunction.getInt(rec));
         }
 
         @Override

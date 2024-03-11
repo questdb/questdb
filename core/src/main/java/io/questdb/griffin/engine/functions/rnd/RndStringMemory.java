@@ -104,14 +104,14 @@ class RndStringMemory implements Closeable {
         if (index < 0) {
             return null;
         }
-        return strMem.getStr(getStrAddress(index));
+        return strMem.getStrA(getStrAddress(index));
     }
 
     CharSequence getStr2(long index) {
         if (index < 0) {
             return null;
         }
-        return strMem.getStr2(getStrAddress(index));
+        return strMem.getStrB(getStrAddress(index));
     }
 
     void init(Rnd rnd) {

@@ -2316,7 +2316,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function symbolValueFunc = intrinsicModel.keyValueFuncs.get(0);
                     final int symbol = symbolValueFunc.isRuntimeConstant()
                             ? SymbolTable.VALUE_NOT_FOUND
-                            : symbolMapReader.keyOf(symbolValueFunc.getStr(null));
+                            : symbolMapReader.keyOf(symbolValueFunc.getStrA(null));
 
                     if (filter == null) {
                         if (symbol == SymbolTable.VALUE_NOT_FOUND) {
@@ -2402,7 +2402,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
             final int symbolKey = symbolKeyFunc.isRuntimeConstant()
                     ? SymbolTable.VALUE_NOT_FOUND
-                    : symbolMapReader.keyOf(symbolKeyFunc.getStr(null));
+                    : symbolMapReader.keyOf(symbolKeyFunc.getStrA(null));
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                 return new LatestByValueDeferredFilteredRecordCursorFactory(
                         metadata,
@@ -4825,7 +4825,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(keyColumnIndex);
                         final int symbolKey = symbolFunc.isRuntimeConstant()
                                 ? SymbolTable.VALUE_NOT_FOUND
-                                : symbolMapReader.keyOf(symbolFunc.getStr(null));
+                                : symbolMapReader.keyOf(symbolFunc.getStrA(null));
 
                         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                             if (filter == null) {

@@ -108,7 +108,7 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return getStr0(rec, sink, true);
         }
 
@@ -130,8 +130,8 @@ public class SplitPartFunctionFactory implements FunctionFactory {
 
         @Nullable
         private <S extends Utf16Sink> S getStr0(Record rec, S sink, boolean clearSink) {
-            CharSequence str = strFunc.getStr(rec);
-            CharSequence delimiter = delimiterFunc.getStr(rec);
+            CharSequence str = strFunc.getStrA(rec);
+            CharSequence delimiter = delimiterFunc.getStrA(rec);
             int index = getIndex(rec);
             if (str == null || delimiter == null || index == Numbers.INT_NaN) {
                 return null;

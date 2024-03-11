@@ -26,7 +26,7 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -150,7 +150,7 @@ public class SymbolFunctionTest {
 
     @Test
     public void testGetStr() {
-        Assert.assertEquals("XYZ", function.getStr(null));
+        Assert.assertEquals("XYZ", function.getStrA(null));
     }
 
     @Test
@@ -165,7 +165,7 @@ public class SymbolFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStrSink() {
-        function.getStr(null, (Utf16Sink) null);
+        function.getStr(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -207,11 +207,15 @@ public class SymbolFunctionTest {
 
     @Test
     public void testGetVarcharA() {
-        TestUtils.assertEquals("XYZ", function.getVarcharA(null).toString());
+        Utf8Sequence value = function.getVarcharA(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("XYZ", value.toString());
     }
 
     @Test
     public void testGetVarcharB() {
-        TestUtils.assertEquals("XYZ", function.getVarcharB(null).toString());
+        Utf8Sequence value = function.getVarcharB(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("XYZ", value.toString());
     }
 }

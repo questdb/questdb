@@ -91,7 +91,7 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return getStr0(size.getLong(rec), sinkA);
         }
 

@@ -50,8 +50,8 @@ class StrCaseFunction extends StrFunction implements CaseFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return picker.pick(rec).getStr(rec);
+    public CharSequence getStrA(Record rec) {
+        return picker.pick(rec).getStrA(rec);
     }
 
     @Override

@@ -283,8 +283,10 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
             recordOffset += 8;
             // appendAddressFor grows the memory if necessary
-            final long appendAddress = mem.appendAddressFor(varAppendOffset, 4 + value.size());
-            varAppendOffset += VarcharTypeDriver.varcharAppend(appendAddress, value);
+            int byteCount = VarcharTypeDriver.getSingleMemValueByteCount(value);
+            final long appendAddress = mem.appendAddressFor(varAppendOffset, byteCount);
+            VarcharTypeDriver.appendValue(appendAddress, value);
+            varAppendOffset += byteCount;
         } else {
             putNull();
         }
@@ -453,17 +455,17 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             long offset = varWidthColumnOffset(col);
             assert offset > -2;
-            return offset == -1 ? null : mem.getStr(offset);
+            return offset == -1 ? null : mem.getStrA(offset);
         }
 
         @Override
         public CharSequence getStrB(int col) {
             long offset = varWidthColumnOffset(col);
             assert offset > -2;
-            return offset == -1 ? null : mem.getStr2(offset);
+            return offset == -1 ? null : mem.getStrB(offset);
         }
 
         @Override
@@ -476,7 +478,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
-        public CharSequence getSym(int col) {
+        public CharSequence getSymA(int col) {
             return symbolTableResolver.getSymbolTable(col).valueOf(getInt(col));
         }
 
@@ -491,7 +493,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             if (offset == -1) {
                 return null;
             }
-            return VarcharTypeDriver.varcharRead(mem, offset, 1); // VarcharA
+            return VarcharTypeDriver.getValue(mem, offset, 1); // VarcharA
         }
 
         @Override
@@ -500,7 +502,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             if (offset == -1) {
                 return null;
             }
-            return VarcharTypeDriver.varcharRead(mem, offset, 2); // VarcharB
+            return VarcharTypeDriver.getValue(mem, offset, 2); // VarcharB
         }
 
         private long fixedWithColumnOffset(int index) {

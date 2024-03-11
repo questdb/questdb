@@ -48,6 +48,6 @@ public class CastStrToStrArrayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new StringToStringArrayFunction(argPositions.getQuick(0), args.getQuick(0).getStr(null));
+        return new StringToStringArrayFunction(argPositions.getQuick(0), args.getQuick(0).getStrA(null));
     }
 }

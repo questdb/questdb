@@ -35,7 +35,6 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
-import io.questdb.std.str.Utf16Sink;
 import org.junit.Test;
 
 public class GroupByFunctionTest {
@@ -168,12 +167,12 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return null;
         }
 
         @Override
-        public CharSequence getStr(Record rec, int arrayIndex) {
+        public CharSequence getStrA(Record rec, int arrayIndex) {
             return null;
         }
 

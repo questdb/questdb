@@ -65,7 +65,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
 
     @NotNull
     static TimestampFunction getTimestampFunction(IntList argPositions, Function timestamp, Function timezone, int multiplier) throws SqlException {
-        final CharSequence tz = timezone.getStr(null);
+        final CharSequence tz = timezone.getStrA(null);
         if (tz != null) {
             final int hi = tz.length();
             final long l = Timestamps.parseOffset(tz, 0, hi);
@@ -120,7 +120,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final long timestampValue = timestamp.getTimestamp(rec);
             try {
-                final CharSequence tz = timezone.getStr(rec);
+                final CharSequence tz = timezone.getStrA(rec);
                 return tz != null ? Timestamps.toUTC(timestampValue, TimestampFormatUtils.EN_LOCALE, tz) : timestampValue;
             } catch (NumericException e) {
                 return timestampValue;

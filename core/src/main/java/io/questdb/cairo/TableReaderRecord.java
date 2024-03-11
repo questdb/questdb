@@ -254,13 +254,13 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
-    public CharSequence getStr(int col) {
+    public CharSequence getStrA(int col) {
         final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
                 recordIndex,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
-        return reader.getColumn(absoluteColumnIndex).getStr(
+        return reader.getColumn(absoluteColumnIndex).getStrA(
                 reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
         );
     }
@@ -270,7 +270,7 @@ public class TableReaderRecord implements Record, Sinkable {
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(recordIndex, index);
-        return reader.getColumn(absoluteColumnIndex).getStr2(
+        return reader.getColumn(absoluteColumnIndex).getStrB(
                 reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
         );
     }
@@ -286,7 +286,7 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
-    public CharSequence getSym(int col) {
+    public CharSequence getSymA(int col) {
         final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
                 offset,
@@ -354,7 +354,7 @@ public class TableReaderRecord implements Record, Sinkable {
                 rowNum,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
-        return VarcharTypeDriver.varcharRead(
+        return VarcharTypeDriver.getValue(
                 rowNum,
                 reader.getColumn(absoluteColumnIndex),
                 reader.getColumn(absoluteColumnIndex + 1),

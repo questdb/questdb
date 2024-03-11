@@ -62,7 +62,7 @@ public class CastVarcharToTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             // we defensively get CharSequence instead of relying on getVarChar().asAsciiSequence(). Why?
             // Timestamp literal may contain non-ascii characters, for example hyphens, days of the week etc.
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             try {
                 return value == null ? Numbers.LONG_NaN : IntervalUtils.parseFloorPartialTimestamp(value);
             } catch (NumericException e) {

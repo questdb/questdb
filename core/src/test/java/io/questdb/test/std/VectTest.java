@@ -429,19 +429,19 @@ public class VectTest {
                 int len = i % maxLen;
 
                 if (i % nullModA == 0) {
-                    VarcharTypeDriver.varcharAppend(dataMemA, auxMemA, null);
+                    VarcharTypeDriver.appendValue(dataMemA, auxMemA, null);
                 } else {
                     utf8Sink.clear();
                     utf8Sink.repeat('a', len);
-                    VarcharTypeDriver.varcharAppend(dataMemA, auxMemA, utf8Sink);
+                    VarcharTypeDriver.appendValue(dataMemA, auxMemA, utf8Sink);
                 }
 
                 if (i % nullModB == 0) {
-                    VarcharTypeDriver.varcharAppend(dataMemB, auxMemB, null);
+                    VarcharTypeDriver.appendValue(dataMemB, auxMemB, null);
                 } else {
                     utf8Sink.clear();
                     utf8Sink.repeat('b', len);
-                    VarcharTypeDriver.varcharAppend(dataMemB, auxMemB, utf8Sink);
+                    VarcharTypeDriver.appendValue(dataMemB, auxMemB, utf8Sink);
                 }
                 index.add(i * 2); // rowA synthetic timestamp
                 index.add(i); // rowA index
@@ -617,7 +617,7 @@ public class VectTest {
     private String[] strColAsStringArray(MemoryCMARW dataMemA, MemoryCMARW auxMemA, int rowCount) {
         String[] strings = new String[rowCount];
         for (int i = 0; i < rowCount; i++) {
-            CharSequence cs = dataMemA.getStr(auxMemA.getLong(i * 8L));
+            CharSequence cs = dataMemA.getStrA(auxMemA.getLong(i * 8L));
             strings[i] = Chars.toString(cs);
         }
         return strings;
@@ -627,7 +627,7 @@ public class VectTest {
         String[] strings = new String[rowCount];
         StringSink sink = new StringSink();
         for (int i = 0; i < rowCount; i++) {
-            Utf8Sequence utf8Sequence = VarcharTypeDriver.varcharRead(i, dataMemA, auxMemA, 1);
+            Utf8Sequence utf8Sequence = VarcharTypeDriver.getValue(i, dataMemA, auxMemA, 1);
             if (utf8Sequence == null) {
                 strings[i] = null;
             } else {

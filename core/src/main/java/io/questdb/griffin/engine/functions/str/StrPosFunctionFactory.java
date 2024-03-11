@@ -56,7 +56,7 @@ public class StrPosFunctionFactory implements FunctionFactory {
     ) {
         final Function substrFunc = args.getQuick(1);
         if (substrFunc.isConstant()) {
-            CharSequence substr = substrFunc.getStr(null);
+            CharSequence substr = substrFunc.getStrA(null);
             if (substr == null) {
                 return IntConstant.NULL;
             }
@@ -107,7 +107,7 @@ public class StrPosFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final CharSequence str = this.strFunc.getStr(rec);
+            final CharSequence str = this.strFunc.getStrA(rec);
             if (str == null) {
                 return Numbers.INT_NaN;
             }
@@ -132,11 +132,11 @@ public class StrPosFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final CharSequence str = this.strFunc.getStr(rec);
+            final CharSequence str = this.strFunc.getStrA(rec);
             if (str == null) {
                 return Numbers.INT_NaN;
             }
-            final CharSequence substr = this.substrFunc.getStr(rec);
+            final CharSequence substr = this.substrFunc.getStrA(rec);
             if (substr == null) {
                 return Numbers.INT_NaN;
             }

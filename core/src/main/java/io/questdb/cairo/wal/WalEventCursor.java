@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -220,13 +221,13 @@ public class WalEventCursor {
         final long storageLength = strLength > 0 ? Vm.getStorageLength(strLength) : Integer.BYTES;
 
         checkMemSize(storageLength);
-        final CharSequence value = strLength >= 0 ? eventMem.getStr(offset) : null;
+        final CharSequence value = strLength >= 0 ? eventMem.getStrA(offset) : null;
         offset += storageLength;
         return value;
     }
 
     private Utf8Sequence readVarchar() {
-        Utf8Sequence seq = VarcharTypeDriver.varcharRead(eventMem, offset);
+        Utf8Sequence seq = VarcharTypeDriver.getValue(eventMem, offset, 1);
         if (seq == null) {
             offset += Integer.BYTES;
             return null;
@@ -415,7 +416,7 @@ public class WalEventCursor {
             final int count = readInt();
             for (int i = 0; i < count; i++) {
                 // garbage, string intern?
-                final CharSequence name = readStr().toString();
+                final CharSequence name = Chars.toString(readStr());
                 final int type = readInt();
                 switch (ColumnType.tagOf(type)) {
                     case ColumnType.BOOLEAN:

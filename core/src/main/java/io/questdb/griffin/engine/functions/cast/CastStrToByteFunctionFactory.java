@@ -51,7 +51,7 @@ public class CastStrToByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
-            return (byte) Numbers.parseIntQuiet(arg.getStr(rec));
+            return (byte) Numbers.parseIntQuiet(arg.getStrA(rec));
         }
     }
 }

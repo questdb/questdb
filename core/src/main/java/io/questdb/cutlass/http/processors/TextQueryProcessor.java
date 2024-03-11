@@ -602,10 +602,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.RECORD:
                 break;
             case ColumnType.STRING:
-                putStringOrNull(response, rec.getStr(col));
+                putStringOrNull(response, rec.getStrA(col));
                 break;
             case ColumnType.SYMBOL:
-                putStringOrNull(response, rec.getSym(col));
+                putStringOrNull(response, rec.getSymA(col));
                 break;
             case ColumnType.LONG256:
                 rec.getLong256(col, response);

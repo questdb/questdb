@@ -110,14 +110,14 @@ public class TestUtils {
                         Assert.assertEquals(rr.getGeoInt(i), lr.getGeoInt(i));
                         break;
                     case ColumnType.STRING:
-                        CharSequence actual = symbolsAsStrings && ColumnType.isSymbol(metadataActual.getColumnType(i)) ? lr.getSym(i) : lr.getStr(i);
-                        CharSequence expected = rr.getStr(i);
+                        CharSequence actual = symbolsAsStrings && ColumnType.isSymbol(metadataActual.getColumnType(i)) ? lr.getSymA(i) : lr.getStrA(i);
+                        CharSequence expected = rr.getStrA(i);
                         if (expected != actual && !Chars.equalsNc(actual, expected)) {
                             Assert.assertEquals(expected, actual);
                         }
                         break;
                     case ColumnType.SYMBOL:
-                        Assert.assertEquals(rr.getSym(i), lr.getSym(i));
+                        Assert.assertEquals(rr.getSymA(i), lr.getSymA(i));
                         break;
                     case ColumnType.SHORT:
                         Assert.assertEquals(rr.getShort(i), lr.getShort(i));

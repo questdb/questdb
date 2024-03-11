@@ -147,7 +147,7 @@ public abstract class VarcharFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         Utf8Sequence utf8seq = getVarcharA(rec);
         if (utf8seq == null) {
             return null;
@@ -184,12 +184,12 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public int getStrLen(Record rec) {
-        return getStr(rec).length();
+        return getStrA(rec).length();
     }
 
     @Override
     public final CharSequence getSymbol(Record rec) {
-        return getStr(rec);
+        return getStrA(rec);
     }
 
     @Override
@@ -199,7 +199,7 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
-        return SqlUtil.implicitCastVarcharAsTimestamp(getStr(rec));
+        return SqlUtil.implicitCastVarcharAsTimestamp(getStrA(rec));
     }
 
     @Override

@@ -41,8 +41,8 @@ import java.io.Closeable;
 public class PageAddressCacheRecord implements Record, Closeable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-    private final DirectString csview = new DirectString();
-    private final DirectString csview2 = new DirectString();
+    private final DirectString csviewA = new DirectString();
+    private final DirectString csviewB = new DirectString();
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
@@ -130,7 +130,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
-        return getStr(dataPageAddress, offset, size, csview);
+        return getStrA(dataPageAddress, offset, size, csviewA);
     }
 
     @Override
@@ -269,27 +269,27 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public CharSequence getStr(int columnIndex) {
+    public CharSequence getStrA(int columnIndex) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (dataPageAddress == 0) {
-            return NullMemoryMR.INSTANCE.getStr(0);
+            return NullMemoryMR.INSTANCE.getStrA(0);
         }
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
-        return getStr(dataPageAddress, offset, size, csview);
+        return getStrA(dataPageAddress, offset, size, csviewA);
     }
 
     @Override
     public CharSequence getStrB(int columnIndex) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (dataPageAddress == 0) {
-            return NullMemoryMR.INSTANCE.getStr2(0);
+            return NullMemoryMR.INSTANCE.getStrB(0);
         }
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
-        return getStr(dataPageAddress, offset, size, csview2);
+        return getStrA(dataPageAddress, offset, size, csviewB);
     }
 
     @Override
@@ -304,7 +304,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public CharSequence getSym(int columnIndex) {
+    public CharSequence getSymA(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         int key = NullMemoryMR.INSTANCE.getInt(0);
         if (address != 0) {
@@ -396,7 +396,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         );
     }
 
-    private DirectString getStr(long base, long offset, long size, DirectString view) {
+    private DirectString getStrA(long base, long offset, long size, DirectString view) {
         final long address = base + offset;
         final int len = Unsafe.getUnsafe().getInt(address);
         if (len != TableUtils.NULL_LEN) {
@@ -428,7 +428,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
     private Utf8Sequence getVarchar(int columnIndex, DirectUtf8String utf8view, Utf8SplitString utf8SplitView) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         final long auxPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
-        return VarcharTypeDriver.varcharRead(
+        return VarcharTypeDriver.getValue(
                 auxPageAddress,
                 dataPageAddress,
                 rowIndex,

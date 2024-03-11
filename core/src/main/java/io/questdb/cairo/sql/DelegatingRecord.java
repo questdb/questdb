@@ -135,8 +135,8 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return base.getStr(col);
+    public CharSequence getStrA(int col) {
+        return base.getStrA(col);
     }
 
     @Override
@@ -155,8 +155,8 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
-    public CharSequence getSym(int col) {
-        return base.getSym(col);
+    public CharSequence getSymA(int col) {
+        return base.getSymA(col);
     }
 
     @Override

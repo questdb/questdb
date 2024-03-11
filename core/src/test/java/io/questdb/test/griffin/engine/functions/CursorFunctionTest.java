@@ -25,8 +25,6 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sink;
 import org.junit.Test;
 
 public class CursorFunctionTest {
@@ -114,7 +112,7 @@ public class CursorFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
-        function.getStr(null);
+        function.getStrA(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

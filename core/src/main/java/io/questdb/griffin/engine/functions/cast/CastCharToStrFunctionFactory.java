@@ -63,7 +63,7 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             final char value = arg.getChar(rec);
             if (value == 0) {
                 return null;

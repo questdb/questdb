@@ -60,7 +60,7 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             final int value = arg.getInt(rec);
             if (value == Numbers.INT_NaN) {
                 return null;

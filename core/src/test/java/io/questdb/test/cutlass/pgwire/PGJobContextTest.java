@@ -11477,15 +11477,15 @@ create table tab as (
                                 }
 
                                 if (rnd.nextInt() % 4 > 0) {
-                                    TestUtils.assertEquals("hello21", record.getStr(7));
+                                    TestUtils.assertEquals("hello21", record.getStrA(7));
                                 } else {
-                                    Assert.assertNull(record.getStr(7));
+                                    Assert.assertNull(record.getStrA(7));
                                 }
 
                                 if (rnd.nextInt() % 4 > 0) {
-                                    TestUtils.assertEquals("bus", record.getSym(8));
+                                    TestUtils.assertEquals("bus", record.getSymA(8));
                                 } else {
-                                    Assert.assertNull(record.getSym(8));
+                                    Assert.assertNull(record.getSymA(8));
                                 }
 
                                 if (rnd.nextInt() % 4 > 0) {

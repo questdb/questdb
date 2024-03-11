@@ -28,7 +28,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -145,7 +145,7 @@ public class CharFunctionTest {
 
     @Test
     public void testGetStr() {
-        TestUtils.assertEquals("4", function.getStr(null));
+        TestUtils.assertEquals("4", function.getStrA(null));
     }
 
     @Test
@@ -167,7 +167,7 @@ public class CharFunctionTest {
 
     @Test
     public void testGetStrZ() {
-        Assert.assertNull(zeroFunc.getStr(null));
+        Assert.assertNull(zeroFunc.getStrA(null));
     }
 
     @Test
@@ -225,12 +225,16 @@ public class CharFunctionTest {
 
     @Test
     public void testGetVarcharA() {
-        TestUtils.assertEquals("4", function.getVarcharA(null).toString());
+        Utf8Sequence value = function.getVarcharA(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("4", value.toString());
     }
 
     @Test
     public void testGetVarcharB() {
-        TestUtils.assertEquals("4", function.getVarcharB(null).toString());
+        Utf8Sequence value = function.getVarcharB(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("4", value.toString());
     }
 
     @Test

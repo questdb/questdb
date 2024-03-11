@@ -66,7 +66,7 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             final float value = arg.getFloat(rec);
             if (Float.isNaN(value)) {
                 return null;

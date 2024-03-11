@@ -242,8 +242,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         }
 
                         lastTs = ts;
-                        String tableName = internStrObj(stringIntern, rec.getSym(TABLE_NAME_COLUMN));
-                        String columnName = internStrObj(stringIntern, rec.getSym(COLUMN_NAME_COLUMN));
+                        String tableName = internStrObj(stringIntern, rec.getSymA(TABLE_NAME_COLUMN));
+                        String columnName = internStrObj(stringIntern, rec.getSymA(COLUMN_NAME_COLUMN));
                         int tableId = rec.getInt(TABLE_ID_COLUMN);
                         long truncateVersion = rec.getLong(TABLE_TRUNCATE_VERSION);
                         int columnType = rec.getInt(COLUMN_TYPE_COLUMN);

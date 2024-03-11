@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 
@@ -154,7 +153,7 @@ public abstract class StrArrayFunction implements Function {
 
     @Override
     public final CharSequence getSymbol(Record rec) {
-        return getStr(rec);
+        return getStrA(rec);
     }
 
     @Override

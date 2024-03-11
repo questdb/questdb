@@ -55,8 +55,8 @@ public class StrColumn extends StrFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return rec.getStr(columnIndex);
+    public CharSequence getStrA(Record rec) {
+        return rec.getStrA(columnIndex);
     }
 
     @Override
@@ -72,11 +72,6 @@ public class StrColumn extends StrFunction implements ScalarFunction {
     @Override
     public int getStrLen(Record rec) {
         return rec.getStrLen(columnIndex);
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
     }
 
     @Override

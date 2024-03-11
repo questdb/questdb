@@ -38,7 +38,7 @@ public class StrBindVariableTest {
     @Test
     public void testNull() {
         StrBindVariable variable = new StrBindVariable(Numbers.MAX_SCALE);
-        Assert.assertNull(variable.getStr(null));
+        Assert.assertNull(variable.getStrA(null));
         Assert.assertNull(variable.getStrB(null));
         Assert.assertEquals(-1, variable.getStrLen(null));
 
@@ -52,7 +52,7 @@ public class StrBindVariableTest {
         String expected = "xyz";
         StrBindVariable variable = new StrBindVariable(Numbers.MAX_SCALE);
         variable.setValue(expected);
-        TestUtils.assertEquals(expected, variable.getStr(null));
+        TestUtils.assertEquals(expected, variable.getStrA(null));
         TestUtils.assertEquals(expected, variable.getStrB(null));
         Assert.assertEquals(expected.length(), variable.getStrLen(null));
 

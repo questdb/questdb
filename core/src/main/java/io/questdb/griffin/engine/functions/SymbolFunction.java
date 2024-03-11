@@ -154,7 +154,7 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         return getSymbol(rec);
     }
 
@@ -185,13 +185,13 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        utf8Sink.put(getStr(rec));
+        utf8Sink.put(getStrA(rec));
     }
 
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
         utf8SinkA.clear();
-        utf8SinkA.put(getStr(rec));
+        utf8SinkA.put(getStrA(rec));
         return utf8SinkA;
     }
 

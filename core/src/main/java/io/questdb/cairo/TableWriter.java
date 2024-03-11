@@ -2358,7 +2358,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static int getColumnIndexQuiet(MemoryMR metaMem, CharSequence name, int columnCount) {
         long nameOffset = getColumnNameOffset(columnCount);
         for (int i = 0; i < columnCount; i++) {
-            CharSequence col = metaMem.getStr(nameOffset);
+            CharSequence col = metaMem.getStrA(nameOffset);
             int columnType = getColumnType(metaMem, i); // Negative means deleted column
             if (columnType > 0 && Chars.equalsIgnoreCase(col, name)) {
                 return i;
@@ -2466,7 +2466,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStr(nameOffset);
+                CharSequence columnName = metaMem.getStrA(nameOffset);
                 ddlMem.putStr(columnName);
                 nameOffset += Vm.getStorageLength(columnName);
             }
@@ -3308,7 +3308,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStr(nameOffset);
+                CharSequence columnName = metaMem.getStrA(nameOffset);
                 ddlMem.putStr(columnName);
                 nameOffset += Vm.getStorageLength(columnName);
             }
@@ -3334,7 +3334,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStr(nameOffset);
+                CharSequence columnName = metaMem.getStrA(nameOffset);
                 ddlMem.putStr(columnName);
                 nameOffset += Vm.getStorageLength(columnName);
             }
@@ -6580,7 +6580,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStr(nameOffset);
+                CharSequence columnName = metaMem.getStrA(nameOffset);
                 ddlMem.putStr(columnName);
                 nameOffset += Vm.getStorageLength(columnName);
             }
@@ -6768,7 +6768,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStr(nameOffset);
+                CharSequence columnName = metaMem.getStrA(nameOffset);
                 nameOffset += Vm.getStorageLength(columnName);
 
                 if (i == index && getColumnType(metaMem, i) > 0) {
@@ -7595,7 +7595,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStr(nameOffset);
+                CharSequence columnName = metaMem.getStrA(nameOffset);
                 ddlMem.putStr(columnName);
                 nameOffset += Vm.getStorageLength(columnName);
             }
@@ -8405,7 +8405,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         public void putVarchar(int columnIndex, char value) {
             utf8Sink.clear();
             utf8Sink.put(value);
-            VarcharTypeDriver.varcharAppend(
+            VarcharTypeDriver.appendValue(
                     getPrimaryColumn(columnIndex),
                     getSecondaryColumn(columnIndex),
                     utf8Sink
@@ -8415,7 +8415,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putVarchar(int columnIndex, Utf8Sequence value) {
-            VarcharTypeDriver.varcharAppend(
+            VarcharTypeDriver.appendValue(
                     getPrimaryColumn(columnIndex),
                     getSecondaryColumn(columnIndex),
                     value

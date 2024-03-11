@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 
@@ -53,7 +52,7 @@ public class CastBooleanToVarcharFunctionFactory implements FunctionFactory {
     ) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
-            return new VarcharConstant(func.getStr(null));
+            return new VarcharConstant(func.getStrA(null));
         }
         return new Func(args.getQuick(0));
     }

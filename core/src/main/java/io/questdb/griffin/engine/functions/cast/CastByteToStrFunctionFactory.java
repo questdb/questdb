@@ -59,7 +59,7 @@ public class CastByteToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             sinkA.clear();
             sinkA.put(arg.getByte(rec));
             return sinkA;

@@ -108,12 +108,12 @@ public class ShortFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
-        function.getStr(null);
+        function.getStrA(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr2() {
-        function.getStr(null, (Utf16Sink) null);
+        function.getStr(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -168,7 +168,7 @@ public class ShortFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetVarcharUtf8Sink() {
-        function.getVarchar(null, (Utf8Sink) null);
+        function.getVarchar(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

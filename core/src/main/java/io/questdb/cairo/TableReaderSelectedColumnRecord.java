@@ -257,7 +257,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int columnIndex) {
+    public CharSequence getStrA(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
@@ -266,7 +266,7 @@ public class TableReaderSelectedColumnRecord implements Record {
         );
         long offset = reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex);
         assert recordIndex != 0 || (offset == 0 || offset == Numbers.LONG_NaN);
-        return reader.getColumn(absoluteColumnIndex).getStr(offset);
+        return reader.getColumn(absoluteColumnIndex).getStrA(offset);
     }
 
     @Override
@@ -277,7 +277,7 @@ public class TableReaderSelectedColumnRecord implements Record {
                 recordIndex,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
-        return reader.getColumn(absoluteColumnIndex).getStr2(
+        return reader.getColumn(absoluteColumnIndex).getStrB(
                 reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
         );
     }
@@ -296,7 +296,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public CharSequence getSym(int columnIndex) {
+    public CharSequence getSymA(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
@@ -366,7 +366,7 @@ public class TableReaderSelectedColumnRecord implements Record {
                 rowNum,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
-        return VarcharTypeDriver.varcharRead(
+        return VarcharTypeDriver.getValue(
                 rowNum,
                 reader.getColumn(absoluteColumnIndex),
                 reader.getColumn(absoluteColumnIndex + 1),

@@ -49,7 +49,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            final CharSequence value = arg.getStr(null);
+            final CharSequence value = arg.getStrA(null);
             if (value == null || value.length() == 0) {
                 return UuidConstant.NULL;
             }
@@ -71,7 +71,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong128Hi(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             if (value == null) {
                 return Numbers.LONG_NaN;
             }
@@ -85,7 +85,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong128Lo(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             if (value == null) {
                 return Numbers.LONG_NaN;
             }

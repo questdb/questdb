@@ -76,7 +76,7 @@ public class VirtualMemoryStrReadBenchmark {
         long sum = 0;
         for (int i = 0; i < 100; i++) {
             long o = mem4.getLong(i * Long.BYTES);
-            CharSequence s = mem3.getStr(o);
+            CharSequence s = mem3.getStrA(o);
             int l = s.length();
             assert l > 0 && l < 4;
             for (int k = 0; k < l; k++) {
@@ -91,7 +91,7 @@ public class VirtualMemoryStrReadBenchmark {
         long sum = 0;
         for (int i = 0; i < 100; i++) {
             long o = mem2.getLong(i * Long.BYTES);
-            CharSequence s = mem1.getStr(o);
+            CharSequence s = mem1.getStrA(o);
             int l = s.length();
             for (int k = 0; k < l; k++) {
                 sum += s.charAt(k);

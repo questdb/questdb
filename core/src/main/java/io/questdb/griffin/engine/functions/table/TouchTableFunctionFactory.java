@@ -110,7 +110,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             sinkA.clear();
             getStr(rec, sinkA);
             return sinkA;

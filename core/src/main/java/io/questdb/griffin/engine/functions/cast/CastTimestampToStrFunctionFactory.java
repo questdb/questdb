@@ -61,7 +61,7 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             sinkA.clear();
             final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NaN) {

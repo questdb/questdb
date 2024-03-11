@@ -25,10 +25,7 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sink;
 import org.junit.Test;
 
 public class UuidFunctionTest {
@@ -128,12 +125,12 @@ public class UuidFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
-        function.getStr(null);
+        function.getStrA(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr2() {
-        function.getStr(null, (Utf16Sink) null);
+        function.getStr(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

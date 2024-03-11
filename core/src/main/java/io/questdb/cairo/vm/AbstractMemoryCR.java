@@ -38,9 +38,9 @@ import org.jetbrains.annotations.NotNull;
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-    private final DirectString csview = new DirectString();
-    private final DirectString csview2 = new DirectString();
-    private final Long256Impl long256 = new Long256Impl();
+    private final DirectString csviewA = new DirectString();
+    private final DirectString csviewB = new DirectString();
+    private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
     private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
@@ -61,8 +61,8 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     public void clear() {
         // avoid debugger seg faulting when memory is closed
-        csview.clear();
-        csview2.clear();
+        csviewA.clear();
+        csviewB.clear();
         bsview.clear();
     }
 
@@ -72,7 +72,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     @Override
     public DirectCharSequence getDirectStr(long offset) {
-        return getStr(offset, csview);
+        return getStr(offset, csviewA);
     }
 
     public int getFd() {
@@ -84,8 +84,8 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     }
 
     public Long256 getLong256A(long offset) {
-        getLong256(offset, long256);
-        return long256;
+        getLong256(offset, long256A);
+        return long256A;
     }
 
     public Long256 getLong256B(long offset) {
@@ -113,12 +113,12 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return pageAddress == 0 ? 0 : 1;
     }
 
-    public final CharSequence getStr(long offset) {
-        return getStr(offset, csview);
+    public final CharSequence getStrA(long offset) {
+        return getStr(offset, csviewA);
     }
 
-    public final CharSequence getStr2(long offset) {
-        return getStr(offset, csview2);
+    public final CharSequence getStrB(long offset) {
+        return getStr(offset, csviewB);
     }
 
     @Override

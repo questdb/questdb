@@ -76,7 +76,7 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         return null;
     }
 

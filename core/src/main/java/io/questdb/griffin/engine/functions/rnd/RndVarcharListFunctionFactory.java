@@ -66,7 +66,7 @@ public class RndVarcharListFunctionFactory implements FunctionFactory {
             if (f.isConstant()) {
                 final int typeTag = ColumnType.tagOf(f.getType());
                 if (typeTag == ColumnType.STRING || typeTag == ColumnType.NULL) {
-                    final CharSequence value = f.getStr(null);
+                    final CharSequence value = f.getStrA(null);
                     symbols.add(value != null ? new Utf8String(value) : null);
                     continue;
                 }

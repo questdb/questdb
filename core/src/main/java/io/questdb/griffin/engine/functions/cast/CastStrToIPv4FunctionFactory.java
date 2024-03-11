@@ -52,7 +52,7 @@ public class CastStrToIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public int getIPv4(Record rec) {
-            return Numbers.parseIPv4Quiet(arg.getStr(rec));
+            return Numbers.parseIPv4Quiet(arg.getStrA(rec));
         }
     }
 }

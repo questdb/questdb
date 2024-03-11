@@ -52,7 +52,7 @@ public class CastStrToShortFunctionFactory implements FunctionFactory {
 
         @Override
         public short getShort(Record rec) {
-            CharSequence value = arg.getStr(rec);
+            CharSequence value = arg.getStrA(rec);
             try {
                 if (value == null) {
                     return 0;

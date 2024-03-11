@@ -147,7 +147,7 @@ public abstract class RecordFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         throw new UnsupportedOperationException();
     }
 

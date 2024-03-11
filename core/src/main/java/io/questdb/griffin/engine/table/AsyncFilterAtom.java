@@ -181,7 +181,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                         sum += record.getGeoLong(i);
                         break;
                     case ColumnType.STRING:
-                        CharSequence cs = record.getStr(i);
+                        CharSequence cs = record.getStrA(i);
                         if (cs != null && cs.length() > 0) {
                             // Touch the first page of the string contents only.
                             sum += cs.charAt(0);

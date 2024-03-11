@@ -46,7 +46,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
             final int bits = ColumnType.getGeoHashBits(geoType);
             assert bits > 0 && bits < GEOLONG_MAX_BITS + 1;
             return Constants.getGeoHashConstantWithType(
-                    parseGeoHash(value.getStr(null), argPosition, bits),
+                    parseGeoHash(value.getStrA(null), argPosition, bits),
                     geoType
             );
         }
@@ -104,7 +104,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         protected long getGeoHashLong0(Record rec) {
             try {
-                return parseGeoHash(arg.getStr(rec), position, bitsPrecision);
+                return parseGeoHash(arg.getStrA(rec), position, bitsPrecision);
             } catch (SqlException e) {
                 return GeoHashes.NULL;
             }

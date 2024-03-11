@@ -3134,7 +3134,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             if (i > 0) {
                 b.append(',');
             }
-            b.append(keyValueFuncs.getQuick(i).getStr(null));
+            b.append(keyValueFuncs.getQuick(i).getStrA(null));
         }
         b.append(']');
         return b.toString();

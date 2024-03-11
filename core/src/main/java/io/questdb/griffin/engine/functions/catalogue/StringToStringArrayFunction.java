@@ -152,12 +152,12 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         return initSink();
     }
 
     @Override
-    public CharSequence getStr(Record rec, int arrayIndex) {
+    public CharSequence getStrA(Record rec, int arrayIndex) {
         return items.getQuick(arrayIndex);
     }
 
@@ -168,7 +168,7 @@ public class StringToStringArrayFunction extends StrArrayFunction {
 
     @Override
     public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
-        sink.put(getStr(rec, arrayIndex));
+        sink.put(getStrA(rec, arrayIndex));
     }
 
     @Override
@@ -178,7 +178,7 @@ public class StringToStringArrayFunction extends StrArrayFunction {
 
     @Override
     public CharSequence getStrB(Record rec, int arrayIndex) {
-        return getStr(rec, arrayIndex);
+        return getStrA(rec, arrayIndex);
     }
 
     @Override
@@ -188,7 +188,7 @@ public class StringToStringArrayFunction extends StrArrayFunction {
 
     @Override
     public int getStrLen(Record rec, int arrayIndex) {
-        return getStr(rec, arrayIndex).length();
+        return getStrA(rec, arrayIndex).length();
     }
 
     @Override

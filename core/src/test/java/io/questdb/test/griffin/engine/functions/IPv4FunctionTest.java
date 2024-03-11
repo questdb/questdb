@@ -27,10 +27,11 @@ package io.questdb.test.griffin.engine.functions;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class IPv4FunctionTest {
@@ -118,7 +119,7 @@ public class IPv4FunctionTest {
 
     @Test
     public void testGetStr() {
-        TestUtils.assertEquals("0.0.0.150", function.getStr(null));
+        TestUtils.assertEquals("0.0.0.150", function.getStrA(null));
     }
 
     @Test
@@ -187,11 +188,15 @@ public class IPv4FunctionTest {
 
     @Test
     public void testGetVarcharA() {
-        TestUtils.assertEquals("0.0.0.150", function.getVarcharA(null).toString());
+        Utf8Sequence value = function.getVarcharA(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("0.0.0.150", value.toString());
     }
 
     @Test
     public void testGetVarcharB() {
-        TestUtils.assertEquals("0.0.0.150", function.getVarcharB(null).toString());
+        Utf8Sequence value = function.getVarcharB(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("0.0.0.150", value.toString());
     }
 }

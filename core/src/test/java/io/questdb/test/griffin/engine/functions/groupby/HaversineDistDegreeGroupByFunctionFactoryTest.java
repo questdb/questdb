@@ -234,10 +234,10 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals("AAA", record.getSym(0));
+                Assert.assertEquals("AAA", record.getSymA(0));
                 Assert.assertEquals(1414.545985354098, record.getDouble(1), DELTA);
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals("BBB", record.getSym(0));
+                Assert.assertEquals("BBB", record.getSymA(0));
                 Assert.assertEquals(137.51028123371657, record.getDouble(1), DELTA);
             }
         }
@@ -534,7 +534,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                     }
 
                     @Override
-                    public CharSequence getSym(int col) {
+                    public CharSequence getSymA(int col) {
                         return s.length() > 0 ? s : null;
                     }
 
@@ -558,7 +558,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                     }
 
                     @Override
-                    public CharSequence getSym(int col) {
+                    public CharSequence getSymA(int col) {
                         return s.length() > 0 ? s : null;
                     }
 

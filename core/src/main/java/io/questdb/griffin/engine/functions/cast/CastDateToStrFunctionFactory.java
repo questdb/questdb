@@ -60,7 +60,7 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             final long value = arg.getDate(rec);
             if (value == Numbers.LONG_NaN) {
                 return null;

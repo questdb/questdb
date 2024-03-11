@@ -30,8 +30,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -136,12 +134,12 @@ public class Long256FunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
-        function.getStr(null);
+        function.getStrA(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr2() {
-        function.getStr(null, (Utf16Sink) null);
+        function.getStr(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -181,7 +179,7 @@ public class Long256FunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetVarcharUtf8Sink() {
-        function.getVarchar(null, (Utf8Sink) null);
+        function.getVarchar(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

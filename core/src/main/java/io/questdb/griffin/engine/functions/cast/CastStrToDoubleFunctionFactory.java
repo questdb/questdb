@@ -58,7 +58,7 @@ public class CastStrToDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             try {
                 return value == null ? Double.NaN : Numbers.parseDouble(value);
             } catch (NumericException e) {

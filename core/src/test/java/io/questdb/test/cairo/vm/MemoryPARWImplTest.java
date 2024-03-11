@@ -1057,13 +1057,13 @@ public class MemoryPARWImplTest {
             for (int i = 0; i < N; i++) {
                 int flag = rnd.nextInt();
                 if ((flag % 4) == 0) {
-                    assertNull(mem.getStr(o));
+                    assertNull(mem.getStrA(o));
                     o += 4;
                 } else if ((flag % 2) == 0) {
-                    TestUtils.assertEquals("", mem.getStr(o));
+                    TestUtils.assertEquals("", mem.getStrA(o));
                     o += 4;
                 } else {
-                    TestUtils.assertEquals(rnd.nextChars(M), mem.getStr(o));
+                    TestUtils.assertEquals(rnd.nextChars(M), mem.getStrA(o));
                     o += M * 2 + 4;
                 }
             }

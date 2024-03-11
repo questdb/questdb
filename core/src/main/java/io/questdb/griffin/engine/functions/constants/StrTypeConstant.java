@@ -34,7 +34,7 @@ public class StrTypeConstant extends StrFunction implements TypeConstant {
     public static final StrTypeConstant INSTANCE = new StrTypeConstant();
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         return null;
     }
 

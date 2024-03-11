@@ -388,11 +388,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public CharSequence getStr(int columnIndex) {
-        return getStr0(columnIndex, csA[columnIndex]);
-    }
-
-    @Override
     public void getStr(int columnIndex, Utf16Sink utf16Sink) {
         long address = addressOfColumn(columnIndex);
         int len = Unsafe.getUnsafe().getInt(address);
@@ -401,6 +396,11 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             utf16Sink.put(Unsafe.getUnsafe().getChar(address));
             address += Character.BYTES;
         }
+    }
+
+    @Override
+    public CharSequence getStrA(int columnIndex) {
+        return getStr0(columnIndex, csA[columnIndex]);
     }
 
     @Override
@@ -414,7 +414,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public CharSequence getSym(int columnIndex) {
+    public CharSequence getSymA(int columnIndex) {
         return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(columnIndex)).valueOf(getInt(columnIndex));
     }
 
@@ -533,6 +533,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     private Utf8Sequence getVarchar0(int index, DirectUtf8String us) {
         long address = addressOfColumn(index);
-        return VarcharTypeDriver.varcharRead(address, us);
+        return VarcharTypeDriver.getValue(address, us);
     }
 }

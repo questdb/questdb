@@ -153,8 +153,8 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return getFunction(col).getStr(base);
+    public CharSequence getStrA(int col) {
+        return getFunction(col).getStrA(base);
     }
 
     @Override
@@ -173,7 +173,7 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
-    public CharSequence getSym(int col) {
+    public CharSequence getSymA(int col) {
         return getFunction(col).getSymbol(base);
     }
 

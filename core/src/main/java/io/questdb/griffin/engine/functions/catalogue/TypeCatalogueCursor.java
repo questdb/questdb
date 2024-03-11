@@ -87,10 +87,8 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public boolean getBool(int col) {
-            if (col == 18) {//typisdefined
-                return true;
-            }
-            return false;
+            //typisdefined
+            return col == 18;
         }
 
         @Override
@@ -122,7 +120,7 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             if (col == 1) {
                 return PG_TYPE_TO_NAME[row];
             }
@@ -134,12 +132,12 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public CharSequence getStrB(int col) {
-            return getStr(col);
+            return getStrA(col);
         }
 
         @Override
         public int getStrLen(int col) {
-            CharSequence str = getStr(col);
+            CharSequence str = getStrA(col);
             return str == null ? TableUtils.NULL_LEN : str.length();
         }
     }

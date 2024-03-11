@@ -1550,8 +1550,8 @@ public class InsertTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextDouble(), record.getDouble(3), 0.0001);
                     Assert.assertEquals(rnd.nextFloat(), record.getFloat(4), 0.000001);
                     Assert.assertEquals(rnd.nextLong(), record.getLong(5));
-                    TestUtils.assertEquals(rnd.nextChars(6), record.getStr(6));
-                    TestUtils.assertEquals(rnd.nextChars(1), record.getSym(7));
+                    TestUtils.assertEquals(rnd.nextChars(6), record.getStrA(6));
+                    TestUtils.assertEquals(rnd.nextChars(1), record.getSymA(7));
                     Assert.assertEquals(rnd.nextBoolean(), record.getBool(8));
                     rnd.nextBytes(blob);
                     BinarySequence binarySequence = record.getBin(9);

@@ -62,7 +62,7 @@ public class CastVarcharToDateFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             // we defensively get CharSequence instead of relying on getVarChar().asAsciiSequence(). Why?
             // Date literal may contain non-ascii characters, for example hyphens, days of the week etc.
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             try {
                 return value == null ? Numbers.LONG_NaN : DateFormatUtils.parseDate(value);
             } catch (NumericException e) {

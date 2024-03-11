@@ -1061,7 +1061,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void appendStrColumn(Record record, int columnIndex) {
-        final CharSequence strValue = record.getStr(columnIndex);
+        final CharSequence strValue = record.getStrA(columnIndex);
         if (strValue == null) {
             responseUtf8Sink.setNullValue();
         } else {
@@ -1072,7 +1072,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void appendSymbolColumn(Record record, int columnIndex) {
-        final CharSequence strValue = record.getSym(columnIndex);
+        final CharSequence strValue = record.getSymA(columnIndex);
         if (strValue == null) {
             responseUtf8Sink.setNullValue();
         } else {

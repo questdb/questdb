@@ -55,7 +55,7 @@ public final class InUuidFunctionFactory implements FunctionFactory {
                 case ColumnType.NULL:
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
-                    CharSequence value = func.getStr(null);
+                    CharSequence value = func.getStrA(null);
                     if (value == null) {
                         throw SqlException.$(argPositions.getQuick(i), "NULL is not allowed in IN list");
                     }

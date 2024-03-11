@@ -80,7 +80,7 @@ public class RndStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             if ((rnd.nextInt() % nullRate) == 1) {
                 return null;
             }
@@ -89,7 +89,7 @@ public class RndStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return getStr(rec);
+            return getStrA(rec);
         }
 
         @Override
