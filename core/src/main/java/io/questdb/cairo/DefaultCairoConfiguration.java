@@ -244,6 +244,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getDefaultSeqPartTxnCount() {
+        return 0;
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return 509;
     }

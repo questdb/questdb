@@ -1110,7 +1110,7 @@ public class WalWriter implements TableWriterAPI {
     private long getSequencerTxn() {
         long seqTxn;
         do {
-            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn);
+            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
             if (seqTxn == NO_TXN) {
                 applyMetadataChangeLog(Long.MAX_VALUE);
             }

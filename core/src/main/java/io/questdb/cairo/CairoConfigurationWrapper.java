@@ -236,6 +236,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getDefaultSeqPartTxnCount() {
+        return getDelegate().getDefaultSeqPartTxnCount();
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return getDelegate().getDetachedMkDirMode();
     }

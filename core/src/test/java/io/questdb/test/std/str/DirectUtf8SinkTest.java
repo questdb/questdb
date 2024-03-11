@@ -30,13 +30,14 @@ import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 
-public class DirectUtf8SinkTest {
+public class DirectUtf8SinkTest extends AbstractTest {
 
     @Test
     public void testAsAsciiCharSequence() {

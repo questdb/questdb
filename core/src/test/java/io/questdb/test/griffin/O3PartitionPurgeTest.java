@@ -126,7 +126,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                                     "select 1, '1970-01-09T09'  from long_sequence(1)");
                         }
                     }
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                     done.incrementAndGet();
                 } catch (Throwable ex) {
                     LOG.error().$(ex).$();
@@ -143,7 +143,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                             readers.get(i).reload();
                         }
                         Os.pause();
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                     }
                 } catch (Throwable ex) {
                     LOG.error().$(ex).$();

@@ -1069,7 +1069,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         }
                     }, failureCounter);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearThreadLocals();
                     end.countDown();
                 }
             });
@@ -1100,7 +1100,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         }
                     }, failureCounter);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearThreadLocals();
                     end.countDown();
                 }
             });

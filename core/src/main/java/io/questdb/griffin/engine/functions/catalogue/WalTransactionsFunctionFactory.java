@@ -40,9 +40,15 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
+import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V2;
+
 public class WalTransactionsFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "wal_transactions(s)";
+    private static final int alterCommandTypeColumn;
+    private static final int maxTimestampColumn;
+    private static final int minTimestampColumn;
+    private static final int rowCountColumn;
     private static final int segmentIdColumn;
     private static final int segmentTxnColumn;
     private static final int sequencerTxnColumn;
@@ -92,7 +98,28 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             cursor.close();
-            cursor.logCursor = executionContext.getCairoEngine().getTableSequencerAPI().getCursor(tableToken, 0);
+            long txnLo = 0;
+            while (true) {
+                try {
+                    TransactionLogCursor cursor = executionContext.getCairoEngine().getTableSequencerAPI().getCursor(tableToken, txnLo);
+                    cursor.toMinTxn();
+                    this.cursor.logCursor = cursor;
+                    break;
+                } catch (CairoException e) {
+                    if (e.errnoReadPathDoesNotExist()) {
+                        // Txn sequencer can have it's parts deleted due to housekeeping
+                        // Need to keep scanning until we find a valid part
+                        if (txnLo == 0) {
+                            long writerTxn = executionContext.getCairoEngine().getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn();
+                            if (writerTxn > 0) {
+                                txnLo = writerTxn;
+                                continue;
+                            }
+                        }
+                        throw e;
+                    }
+                }
+            }
             return cursor;
         }
 
@@ -169,13 +196,47 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                     if (col == sequencerTxnColumn) {
                         return logCursor.getTxn();
                     }
+                    if (col == rowCountColumn) {
+                        if (logCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V2
+                                && logCursor.getTxnRowCount() > 0) {
+                            return logCursor.getTxnRowCount();
+                        } else {
+                            return Numbers.LONG_NaN;
+                        }
+                    }
                     return Numbers.LONG_NaN;
+                }
+
+                @Override
+                public short getShort(int col) {
+                    if (col == alterCommandTypeColumn && logCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V2
+                            && logCursor.getTxnRowCount() == 0) {
+                        return (short) logCursor.getTxnMinTimestamp();
+                    }
+
+                    return 0;
                 }
 
                 @Override
                 public long getTimestamp(int col) {
                     if (col == timestampColumn) {
                         return logCursor.getCommitTimestamp();
+                    }
+                    if (col == minTimestampColumn) {
+                        if (logCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V2
+                                && logCursor.getTxnRowCount() > 0) {
+                            return logCursor.getTxnMinTimestamp();
+                        } else {
+                            return Numbers.LONG_NaN;
+                        }
+                    }
+                    if (col == maxTimestampColumn) {
+                        if (logCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V2
+                                && logCursor.getTxnRowCount() > 0) {
+                            return logCursor.getTxnMaxTimestamp();
+                        } else {
+                            return Numbers.LONG_NaN;
+                        }
                     }
                     return Numbers.LONG_NaN;
                 }
@@ -197,6 +258,14 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         segmentTxnColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("structureVersion", ColumnType.LONG));
         structureVersionColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("minTimestamp", ColumnType.TIMESTAMP));
+        minTimestampColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("maxTimestamp", ColumnType.TIMESTAMP));
+        maxTimestampColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("rowCount", ColumnType.LONG));
+        rowCountColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("alterCommandType", ColumnType.SHORT));
+        alterCommandTypeColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 }

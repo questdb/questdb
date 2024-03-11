@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -629,7 +630,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "wal.apply.worker.yield.threshold\tQDB_WAL_APPLY_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.recompile.attempts\tQDB_CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.wal.writer.event.append.page.size\tQDB_CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t16384\tdefault\tfalse\tfalse\n" +
-                                    "cairo.wal.writer.event.append.page.size\tQDB_CAIRO_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t131072\tdefault\tfalse\tfalse\n"
+                                    "cairo.wal.writer.event.append.page.size\tQDB_CAIRO_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t131072\tdefault\tfalse\tfalse\n" +
+                                    "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse\n"
                             )
                                     .split("\n");
 
