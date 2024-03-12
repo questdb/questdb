@@ -354,6 +354,49 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testRndUtf8toUtf16EqualityShortStr() {
+        Rnd rnd = TestUtils.generateRandom(null);
+        StringSink sink = new StringSink();
+        try (DirectUtf8Sink utf8Sink = new DirectUtf8Sink(4)) {
+            for (int i = 0; i < 1000; i++) {
+                utf8Sink.clear();
+                rnd.nextUtf8Str(100, utf8Sink);
+
+                sink.clear();
+                Utf8s.utf8ToUtf16(utf8Sink, sink);
+
+                // remove the last character
+                if (Utf8s.equalsUtf16(sink, 0, sink.length() - 1, utf8Sink, 0, utf8Sink.size())) {
+                    Assert.fail("iteration " + i + ", expected non-equals: " + sink);
+                }
+
+                // remove the last character
+                if (Utf8s.equalsUtf16(sink, 0, sink.length(), utf8Sink, 0, utf8Sink.size() - 1)) {
+                    Assert.fail("iteration " + i + ", expected non-equals: " + sink);
+                }
+
+                if (sink.length() > 0) {
+                    // compare to empty
+                    if (Utf8s.equalsUtf16(sink, 0, 0, utf8Sink, 0, utf8Sink.size() - 1)) {
+                        Assert.fail("iteration " + i + ", expected non-equals: " + sink);
+                    }
+
+                    if (Utf8s.equalsUtf16(sink, 0, sink.length(), utf8Sink, 0, 0)) {
+                        Assert.fail("iteration " + i + ", expected non-equals: " + sink);
+                    }
+
+                    long address = utf8Sink.ptr() + rnd.nextInt(utf8Sink.size());
+                    byte b = Unsafe.getUnsafe().getByte(address);
+                    Unsafe.getUnsafe().putByte(address, (byte) (b + 1));
+                    if (Utf8s.equalsUtf16(sink, utf8Sink)) {
+                        Assert.fail("iteration " + i + ", expected non-equals: " + sink);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     public void testStartsWith() {
         Assert.assertTrue(Utf8s.startsWith(new Utf8String("фу бар баз"), new Utf8String("фу")));
         Assert.assertFalse(Utf8s.startsWith(new Utf8String("фу бар баз"), new Utf8String("бар")));

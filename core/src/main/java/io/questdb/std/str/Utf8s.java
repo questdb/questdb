@@ -282,10 +282,10 @@ public final class Utf8s {
         int ui = 0, un = r.size();
         int ci = 0, cn = l.length();
 
-        return equalsUtf16(l, r, ui, un, ci, cn);
+        return equalsUtf16(l, ui, un, r, ci, cn);
     }
 
-    public static boolean equalsUtf16(CharSequence l, Utf8Sequence r, int ui, int un, int ci, int cn) {
+    public static boolean equalsUtf16(CharSequence l, int ui, int un, Utf8Sequence r, int ci, int cn) {
         while (ui < un && ci < cn) {
             int bytes = utf16Equals(l, ci, cn, r, ui, un);
             switch (bytes) {
@@ -962,19 +962,15 @@ public final class Utf8s {
     }
 
     private static int utf16Equals(CharSequence c, int ci, int cn, Utf8Sequence u, int ui, int un) {
-        if (ui < un) {
-            byte b = u.byteAt(ui++);
-            if ((b & 0x80) == 0x00) {
-                return ci < cn && c.charAt(ci) == b ? 1 : -1;
-            } else if ((b & 0xE0) == 0xC0) {
-                return utf16Equals2Bytes(c, ci, cn, b, u, ui, un);
-            } else if ((b & 0xF0) == 0xE0) {
-                return utf16Equals3Bytes(c, ci, cn, b, u, ui, un);
-            } else if ((b & 0xF8) == 0xF0) {
-                return utf16Equals4Bytes(c, ci, cn, b, u, ui, un);
-            }
+        byte b = u.byteAt(ui++);
+        if ((b & 0x80) == 0x00) {
+            return ci < cn && c.charAt(ci) == b ? 1 : -1;
+        } else if ((b & 0xE0) == 0xC0) {
+            return utf16Equals2Bytes(c, ci, cn, b, u, ui, un);
+        } else if ((b & 0xF0) == 0xE0) {
+            return utf16Equals3Bytes(c, ci, cn, b, u, ui, un);
         }
-        return -1;
+        return utf16Equals4Bytes(c, ci, cn, b, u, ui, un);
     }
 
     private static int utf16Equals2Bytes(CharSequence c, int ci, int cn, byte b1, Utf8Sequence u, int ui, int un) {
