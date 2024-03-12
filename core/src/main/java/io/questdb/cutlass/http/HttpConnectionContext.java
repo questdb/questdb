@@ -31,6 +31,7 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.ex.*;
+import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
@@ -63,7 +64,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final MultipartParserState multipartParserState = new MultipartParserState();
     private final NetworkFacade nf;
     private final int recvBufferSize;
-    private final RejectProcessor rejectProcessor = new RejectProcessor();
+    private final RejectProcessor rejectProcessor;
     private final HttpResponseSink responseSink;
     private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
     private final RescheduleContext retryRescheduleContext = retry -> {
@@ -117,6 +118,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.metrics = metrics;
         this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
+        this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
         this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();
 
         if (configuration instanceof HttpServerConfiguration) {
@@ -309,21 +311,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public HttpRequestProcessor rejectRequest(int code, byte authenticationType) {
-        return rejectRequest(code, null, null, null, authenticationType);
+        LOG.error().$("rejecting request [code=").$(code).I$();
+        return rejectProcessor.rejectRequest(code, null, null, null, authenticationType);
     }
 
     public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue) {
-        return rejectRequest(code, userMessage, cookieName, cookieValue, AUTH_TYPE_NONE);
-    }
-
-    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue, byte authenticationType) {
         LOG.error().$(userMessage).$(" [code=").$(code).I$();
-        rejectProcessor.rejectCode = code;
-        rejectProcessor.rejectMessage = userMessage;
-        rejectProcessor.rejectCookieName = cookieName;
-        rejectProcessor.rejectCookieValue = cookieValue;
-        rejectProcessor.authenticationType = authenticationType;
-        return rejectProcessor;
+        return rejectProcessor.rejectRequest(code, userMessage, cookieName, cookieValue, AUTH_TYPE_NONE);
     }
 
     public void reset() {
@@ -860,7 +854,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (url == null) {
                 throw HttpException.instance("missing URL");
             }
-            HttpRequestProcessor processor = isRequestBeingRejected() ? rejectProcessor : getHttpRequestProcessor(selector);
+            HttpRequestProcessor processor = rejectProcessor.isRequestBeingRejected() ? rejectProcessor : getHttpRequestProcessor(selector);
             long contentLength = headerParser.getContentLength();
             final boolean chunked = Utf8s.equalsNcAscii("chunked", headerParser.getHeader(HEADER_TRANSFER_ENCODING));
             final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType())
@@ -988,10 +982,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return false;
     }
 
-    private boolean isRequestBeingRejected() {
-        return rejectProcessor.rejectCode != 0;
-    }
-
     private boolean parseMultipartResult(
             long start,
             long buf,
@@ -1026,58 +1016,4 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
     }
 
-    private class RejectProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
-        private byte authenticationType = AUTH_TYPE_NONE;
-        private int rejectCode;
-        private CharSequence rejectCookieName = null;
-        private CharSequence rejectCookieValue = null;
-        private CharSequence rejectMessage = null;
-
-        public void clear() {
-            rejectCode = 0;
-            authenticationType = AUTH_TYPE_NONE;
-            rejectCookieName = null;
-            rejectCookieValue = null;
-            rejectMessage = null;
-        }
-
-        @Override
-        public boolean isErrorProcessor() {
-            return true;
-        }
-
-        @Override
-        public void onChunk(long lo, long hi) {
-        }
-
-        @Override
-        public void onPartBegin(HttpRequestHeader partHeader) {
-        }
-
-        @Override
-        public void onPartEnd() {
-        }
-
-        @Override
-        public void onRequestComplete(
-                HttpConnectionContext context
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            if (rejectCode == HTTP_UNAUTHORIZED) {
-                if (authenticationType == SecurityContext.AUTH_TYPE_CREDENTIALS) {
-                    // Special case, include WWW-Authenticate header
-                    simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
-                } else {
-                    simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED);
-                }
-            } else {
-                simpleResponse().sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
-            }
-            reset();
-        }
-
-        @Override
-        public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            onRequestComplete(context);
-        }
-    }
 }
