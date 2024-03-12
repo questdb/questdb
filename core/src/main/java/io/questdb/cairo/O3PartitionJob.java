@@ -350,6 +350,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             suffixType = O3_BLOCK_O3;
                             suffixLo = mergeO3Hi + 1;
                             suffixHi = srcOooHi;
+                            assert suffixLo <= suffixHi : String.format("Branch %,d suffixLo %,d > suffixHi %,d",
+                                    branch, suffixLo, suffixHi);
                         } else {
 
                             //
@@ -422,6 +424,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             suffixHi = srcDataMax - 1;
 
                         } else if (o3TimestampMax > dataTimestampHi) {
+                            assert suffixLo <= suffixHi : String.format("Branch %,d suffixLo %,d > suffixHi %,d",
+                                    branch, suffixLo, suffixHi);
 
                             // |      | |     |
                             // |      | | OOO |
