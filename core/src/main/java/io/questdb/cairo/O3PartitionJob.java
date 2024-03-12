@@ -61,7 +61,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcOooHi,
             long srcOooMax,
             long o3TimestampMin,
-            long o3TimestampMax,
             long partitionTimestamp,
             long maxTimestamp,
             long srcDataMax,
@@ -668,7 +667,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long srcOooHi = task.getSrcOooHi();
         final long srcOooMax = task.getSrcOooMax();
         final long oooTimestampMin = task.getOooTimestampMin();
-        final long oooTimestampMax = task.getOooTimestampMax();
         final long partitionTimestamp = task.getPartitionTimestamp();
         final long maxTimestamp = task.getMaxTimestamp();
         final long srcDataMax = task.getSrcDataMax();
@@ -695,7 +693,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 srcOooHi,
                 srcOooMax,
                 oooTimestampMin,
-                oooTimestampMax,
                 partitionTimestamp,
                 maxTimestamp,
                 srcDataMax,
