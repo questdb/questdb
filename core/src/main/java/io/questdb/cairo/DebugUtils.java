@@ -102,4 +102,32 @@ public class DebugUtils {
         }
         return true;
     }
+
+    static void assertTimestampColumnSorted(long columnAddr, long columnSize) {
+        long lastTs = Long.MIN_VALUE;
+        for (long i = 0; i < columnSize; i++) {
+            long ts = Unsafe.getUnsafe().getLong(columnAddr + 8 * i);
+            assert ts >= lastTs : String.format("ts %,d lastTs %,d", ts, lastTs);
+            lastTs = ts;
+        }
+    }
+
+    static void assertO3IndexSorted(long indexAddr, long indexSize) {
+        long lastTs = Long.MIN_VALUE;
+        for (long i = 0; i < indexSize; i++) {
+            long ts = Unsafe.getUnsafe().getLong(indexAddr + 16 * i);
+            long rowId = Unsafe.getUnsafe().getLong(indexAddr + 16 * i + 8);
+            assert ts >= lastTs : String.format("ts %,d lastTs %,d rowId %,d", ts, lastTs, rowId);
+            lastTs = ts;
+        }
+    }
+
+    static void logO3Index(long indexAddr, long indexSize, long tailLen) {
+        long start = Math.max(0, indexSize - tailLen);
+        for (long i = start; i < indexSize; i++) {
+            long ts = Unsafe.getUnsafe().getLong(indexAddr + 16 * i);
+            long rowId = Unsafe.getUnsafe().getLong(indexAddr + 16 * i + 8);
+            LOG.info().$("index [").$(i).$("] = ").$ts(ts).$(", ts=").$(ts).$(", rowId=").$(rowId).$();
+        }
+    }
 }
