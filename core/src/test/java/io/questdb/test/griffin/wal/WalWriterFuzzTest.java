@@ -29,7 +29,6 @@ import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
@@ -49,7 +48,6 @@ import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABL
 // There are already measures to prevent invalid data generation, but it still can happen.
 // In order to verify that the test is not broken we check that there are no duplicate
 // timestamps for the record where the comparison fails.
-@Ignore
 public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Before

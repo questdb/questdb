@@ -5144,7 +5144,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (o3dstAuxOffset > 0) {
                     o3dstAuxMem.jumpTo(o3dstAuxOffset);
-                    o3dstDataOffset = columnTypeDriver.getDataVectorOffset(o3dstAuxMem.addressOf(o3dstAuxOffset), 0);
+                    o3dstDataOffset = columnTypeDriver.getDataVectorSizeAt(o3dstAuxMem.addressOf(0), dstRowCount - 1);
                 } else {
                     o3dstDataOffset = 0;
                 }
