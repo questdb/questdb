@@ -45,7 +45,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, false);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, false);
     }
 
     @Test

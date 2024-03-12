@@ -325,6 +325,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(500, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
+        Assert.assertEquals(true, configuration.getCairoConfiguration().getSampleByDefaultAlignmentCalendar());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
         Assert.assertEquals(2048, configuration.getCairoConfiguration().getWriterCommandQueueSlotSize());
         Assert.assertEquals(500, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
@@ -1060,6 +1061,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(256, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
             Assert.assertEquals(64, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
             Assert.assertEquals(2001, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
+            Assert.assertEquals(false, configuration.getCairoConfiguration().getSampleByDefaultAlignmentCalendar());
             Assert.assertEquals(16, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
             Assert.assertEquals(4096, configuration.getCairoConfiguration().getWriterCommandQueueSlotSize());
             Assert.assertEquals(333000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
