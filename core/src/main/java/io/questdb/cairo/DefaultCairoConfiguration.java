@@ -199,6 +199,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getCreateTableModelBatchSize() {
+        return 8192;
+    }
+
+    @Override
     public long getDataAppendPageSize() {
         return 2 * 1024 * 1024;
     }
@@ -344,8 +349,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getInsertPoolCapacity() {
+    public int getInsertModelPoolCapacity() {
         return 8;
+    }
+
+    @Override
+    public long getInsertModelBatchSize() {
+        return 8192;
     }
 
     @Override

@@ -134,6 +134,10 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return tableNameExpr;
     }
 
+    public boolean isAtomic() {
+        return batchSize == -1;
+    }
+
     public void setBatchSize(long batchSize) {
         this.batchSize = batchSize;
     }

@@ -1515,6 +1515,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateAsSelectAtomicMissingTableKeyword() throws Exception {
+        assertSyntaxError(
+                "create atomic tab as",
+                14,
+                "'table' expected",
+                modelOf("table").col("ts", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testCreateAsSelectDuplicateColumn0() throws Exception {
         assertSyntaxError(
                 "create table tab as (select rnd_byte() b, rnd_boolean() b from long_sequence(1))",
@@ -2567,7 +2577,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create",
                 6,
-                "'table' expected"
+                "'table'"
         );
     }
 
@@ -4395,7 +4405,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testInsertAsSelect() throws SqlException {
         assertModel(
                 "insert into x select-choose c, d from (select [c, d] from y)",
-                "insert into x select * from y",
+                "insert atomic into x select * from y",
                 ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -4403,6 +4413,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("y")
                         .col("c", ColumnType.INT)
                         .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectAtomicMissingIntoKeyword() throws Exception {
+        assertSyntaxError(
+                "insert atomic tab",
+                14,
+                "'into' expected",
+                modelOf("table").col("ts", ColumnType.TIMESTAMP)
         );
     }
 
@@ -4467,7 +4487,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testInsertAsSelectColumnList() throws SqlException {
         assertModel(
                 "insert into x (a, b) select-choose c, d from (select [c, d] from y)",
-                "insert into x (a,b) select * from y",
+                "insert atomic into x (a,b) select * from y",
                 ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -4572,7 +4592,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "insert onto",
                 7,
-                "'into' expected"
+                "'into'"
         );
     }
 

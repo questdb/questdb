@@ -52,8 +52,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private ExpressionNode timestamp;
     private CharSequence volumeAlias;
     private boolean walEnabled;
+    private long batchSize = -1;
 
     private CreateTableModel() {
+
     }
 
     public void addColumn(CharSequence name, int type, int symbolCapacity) throws SqlException {
@@ -190,6 +192,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public CharSequence getVolumeAlias() {
         return volumeAlias;
+    }
+
+    public boolean isAtomic() {
+        return batchSize == -1;
     }
 
     @Override
@@ -394,5 +400,13 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         } else {
             columnBits.setQuick(index, Numbers.encodeLowHighInts(flags & ~COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
         }
+    }
+
+    public long getBatchSize() {
+        return batchSize;
+    }
+
+    public void setBatchSize(long batchSize) {
+        this.batchSize = batchSize;
     }
 }

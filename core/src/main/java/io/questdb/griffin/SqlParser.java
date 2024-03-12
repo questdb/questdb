@@ -96,7 +96,7 @@ public class SqlParser {
         this.columnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, configuration.getColumnCastModelPoolCapacity());
         this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
-        this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertPoolCapacity());
+        this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertModelPoolCapacity());
         this.copyModelPool = new ObjectPool<>(CopyModel.FACTORY, configuration.getCopyPoolCapacity());
         this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, configuration.getExplainPoolCapacity());
         this.configuration = configuration;
@@ -514,15 +514,6 @@ public class SqlParser {
         throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
     }
 
-    private ExecutionModel parseCreateStatement(
-            GenericLexer lexer,
-            SqlExecutionContext executionContext,
-            SqlParserCallback sqlParserCallback
-    ) throws SqlException {
-        expectTok(lexer, "table");
-        return parseCreateTable(lexer, executionContext, sqlParserCallback);
-    }
-
     private ExecutionModel parseCreateTable(
             GenericLexer lexer,
             SqlExecutionContext executionContext,
@@ -530,7 +521,43 @@ public class SqlParser {
     ) throws SqlException {
         final CreateTableModel model = createTableModelPool.next();
         final CharSequence tableName;
-        CharSequence tok = tok(lexer, "table name or 'if'");
+        // default to non-atomic, batched, creation
+        CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch'");
+        model.setBatchSize(configuration.getInsertModelBatchSize());
+        boolean atomicSpecified = false;
+        boolean batchSpecified = false;
+        boolean isCreateAsSelect = false;
+
+        // if it's a CREATE ATOMIC, we don't accept BATCH
+        if (SqlKeywords.isAtomicKeyword(tok)) {
+            atomicSpecified = true;
+            model.setBatchSize(-1);
+            expectTok(lexer, "table");
+            tok = tok(lexer, "table name or 'if'");
+        } else if (SqlKeywords.isBatchKeyword(tok)) {
+            batchSpecified = true;
+
+            long val = expectLong(lexer);
+            if (val > 0) {
+                model.setBatchSize(val);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "batch size must be positive integer");
+            }
+
+            expectTok(lexer, "table");
+
+            tok = tok(lexer, "table name or 'if' or o3MaxLag");
+            if (SqlKeywords.isO3MaxLagKeyword(tok)) {
+                int pos = lexer.getPosition();
+                model.setO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
+                expectTok(lexer, "table name or 'if'");
+            }
+        } else if(SqlKeywords.isTableKeyword(tok)) {
+            tok = tok(lexer, "table name or 'if'");
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected 'atomic' or 'table' or 'batch'");
+        }
+
         if (SqlKeywords.isIfKeyword(tok)) {
             if (SqlKeywords.isNotKeyword(tok(lexer, "'not'")) && SqlKeywords.isExistsKeyword(tok(lexer, "'exists'"))) {
                 model.setIgnoreIfExists(true);
@@ -559,9 +586,20 @@ public class SqlParser {
                 parseCreateTableColumns(lexer, model);
             }
         } else if (isAsKeyword(tok)) {
+            isCreateAsSelect = true;
             parseCreateTableAsSelect(lexer, model, executionContext, sqlParserCallback);
         } else {
             throw errUnexpected(lexer, tok);
+        }
+
+        // if not CREATE ... AS SELECT, make it atomic
+        if (!isCreateAsSelect) {
+            model.setBatchSize(-1);
+
+            // if we use atomic or batch keywords, then throw an error
+            if (atomicSpecified || batchSpecified) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'atomic' or 'batch' keywords can only be used in CREATE ... AS SELECT statements.");
+            }
         }
 
         while ((tok = optTok(lexer)) != null && Chars.equals(tok, ',')) {
@@ -1234,7 +1272,7 @@ public class SqlParser {
         }
 
         if (isCreateKeyword(tok)) {
-            return parseCreateStatement(lexer, executionContext, sqlParserCallback);
+            return parseCreateTable(lexer, executionContext, sqlParserCallback);
         }
 
         if (isUpdateKeyword(tok)) {
@@ -1536,10 +1574,16 @@ public class SqlParser {
     }
 
     private ExecutionModel parseInsert(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
-
         final InsertModel model = insertModelPool.next();
-        CharSequence tok = tok(lexer, "into or batch");
-        if (SqlKeywords.isBatchKeyword(tok)) {
+        CharSequence tok = tok(lexer, "atomic or into or batch");
+        model.setBatchSize(configuration.getInsertModelBatchSize());
+        boolean atomicSpecified = false;
+
+        if (SqlKeywords.isAtomicKeyword(tok)) {
+            atomicSpecified = true;
+            model.setBatchSize(-1);
+            tok = tok(lexer, "into");
+        } else if (SqlKeywords.isBatchKeyword(tok)) {
             long val = expectLong(lexer);
             if (val > 0) {
                 model.setBatchSize(val);
@@ -1551,8 +1595,12 @@ public class SqlParser {
             if (SqlKeywords.isO3MaxLagKeyword(tok)) {
                 int pos = lexer.getPosition();
                 model.setO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
-                expectTok(lexer, "into");
+                tok = tok(lexer, "into");
             }
+        } else if (SqlKeywords.isIntoKeyword(tok)) {
+            // noop
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected 'atomic' or 'into' or 'batch'");
         }
 
         if (!SqlKeywords.isIntoKeyword(tok)) {
@@ -1591,6 +1639,14 @@ public class SqlParser {
             final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback);
             model.setQueryModel(queryModel);
             return model;
+        }
+
+        // if not INSERT INTO SELECT, make it atomic (select returns early)
+        model.setBatchSize(-1);
+
+        // if they used atomic or batch keywords, then throw an error
+        if (atomicSpecified) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'atomic' keyword can only be used in INSERT INTO SELECT statements.");
         }
 
         if (isValuesKeyword(tok)) {
@@ -2772,7 +2828,7 @@ public class SqlParser {
         }
 
         if (isCreateKeyword(tok)) {
-            return parseCreateStatement(lexer, executionContext, sqlParserCallback);
+            return parseCreateTable(lexer, executionContext, sqlParserCallback);
         }
 
         if (isUpdateKeyword(tok)) {

@@ -128,6 +128,8 @@ public interface CairoConfiguration {
 
     int getCreateTableModelPoolCapacity();
 
+    long getCreateTableModelBatchSize();
+
     long getDataAppendPageSize();
 
     long getDataIndexKeyAppendPageSize();
@@ -199,7 +201,9 @@ public interface CairoConfiguration {
 
     int getIndexValueBlockSize();
 
-    int getInsertPoolCapacity();
+    int getInsertModelPoolCapacity();
+
+    long getInsertModelBatchSize();
 
     int getLatestByQueueCapacity();
 

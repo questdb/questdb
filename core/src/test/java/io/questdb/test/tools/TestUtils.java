@@ -916,7 +916,7 @@ public final class TestUtils {
 
         StringBuilder sql = new StringBuilder();
         StringBuilder indexes = new StringBuilder();
-        sql.append("create table ").append(tableName).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
+        sql.append("create atomic table ").append(tableName).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
         for (int i = 0; i < tableModel.getColumnCount(); i++) {
             int colType = ColumnType.tagOf(tableModel.getColumnType(i));
             CharSequence colName = tableModel.getColumnName(i);
@@ -1240,7 +1240,7 @@ public final class TestUtils {
         long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
 
         StringBuilder insertFromSelect = new StringBuilder();
-        insertFromSelect.append("INSERT INTO ").append(tableModel.getTableName()).append(" SELECT").append(Misc.EOL);
+        insertFromSelect.append("INSERT ATOMIC INTO ").append(tableModel.getTableName()).append(" SELECT").append(Misc.EOL);
         for (int i = 0; i < tableModel.getColumnCount(); i++) {
             CharSequence colName = tableModel.getColumnName(i);
             switch (ColumnType.tagOf(tableModel.getColumnType(i))) {

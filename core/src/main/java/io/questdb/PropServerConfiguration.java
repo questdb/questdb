@@ -259,6 +259,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlCountDistinctCapacity;
     private final double sqlCountDistinctLoadFactor;
     private final int sqlCreateTableModelPoolCapacity;
+    private final long sqlCreateTableModelBatchSize;
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
     private final int sqlDoubleToStrCastScale;
@@ -275,6 +276,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlHashJoinValueMaxPages;
     private final int sqlHashJoinValuePageSize;
     private final int sqlInsertModelPoolCapacity;
+    private final long sqlInsertModelBatchSize;
     private final int sqlJitBindVarsMemoryMaxPages;
     private final int sqlJitBindVarsMemoryPageSize;
     private final boolean sqlJitDebugEnabled;
@@ -946,11 +948,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJoinMetadataMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_MAX_RESIZES, Integer.MAX_VALUE);
             int sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY, 64);
             this.sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY, sqlWindowColumnPoolCapacity);
-            this.sqlCreateTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABEL_MODEL_POOL_CAPACITY, 16);
+            this.sqlCreateTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_POOL_CAPACITY, 16);
+            this.sqlCreateTableModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE, 8192);
             this.sqlColumnCastModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY, 16);
             this.sqlRenameTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY, 16);
             this.sqlWithClauseModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY, 128);
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
+            this.sqlInsertModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_BATCH_SIZE, 8192);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
@@ -2015,6 +2019,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getCreateTableModelBatchSize() {
+            return sqlCreateTableModelBatchSize;
+        }
+
+        @Override
         public long getDataAppendPageSize() {
             return writerDataAppendPageSize;
         }
@@ -2160,8 +2169,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getInsertPoolCapacity() {
+        public int getInsertModelPoolCapacity() {
             return sqlInsertModelPoolCapacity;
+        }
+
+        @Override
+        public long getInsertModelBatchSize() {
+            return sqlInsertModelBatchSize;
         }
 
         @Override
