@@ -3186,7 +3186,8 @@ if __name__ == "__main__":
                 ResultSet rs = pstmt.executeQuery();
                 sink.clear();
                 assertResultSet("query_id[BIGINT],worker_id[BIGINT],worker_pool[VARCHAR],username[VARCHAR],query_start[TIMESTAMP],state_change[TIMESTAMP],state[VARCHAR],is_wal[BIT],query[VARCHAR]\n",
-                        sink, rs);
+                        sink, rs
+                );
             }
         });
     }
@@ -11019,10 +11020,15 @@ create table tab as (
                     assertEquals(testSize, stmt.getFetchSize());
 
                     try {
-                        // sleep to allow disconnect timer to trigger.
-                        Os.sleep(500);
+                        // wait for disconnect timer to trigger
+                        while (connection.isValid(10)) {
+                            // in theory, we do not need to execute the query here, but if the line is removed
+                            // connection.isValid() does not always detect that the connection is closed (or it takes a very long time)
+                            stmt.executeQuery();
+                            Os.sleep(250);
+                        }
                         stmt.executeQuery();
-                        Assert.fail();
+                        Assert.fail("Exception is not thrown");
                     } catch (PSQLException ex) {
                         // expected
                         Assert.assertNotNull(ex);
