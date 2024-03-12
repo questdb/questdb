@@ -529,24 +529,23 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertEmptyVarcharSelectEmptyVarcharColumnIndexed() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    ddl("create table tab (id int, val symbol index)");
-                    insert("insert into tab values (1, ''::varchar)");
-                    assertSql("id\n1\n", "select id from tab where val = ''");
-                }
-        );
-    }
-
-
-    @Test
     public void testInsertEmptyStringSelectNullStringColumnIndexed() throws Exception {
         assertMemoryLeak(
                 () -> {
                     ddl("create table tab (id int, val symbol index)");
                     insert("insert into tab values (1, '')");
                     assertSql("id\n", "select id from tab where val = null");
+                }
+        );
+    }
+
+    @Test
+    public void testInsertEmptyVarcharSelectEmptyVarcharColumnIndexed() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    ddl("create table tab (id int, val symbol index)");
+                    insert("insert into tab values (1, ''::varchar)");
+                    assertSql("id\n1\n", "select id from tab where val = ''");
                 }
         );
     }
@@ -644,19 +643,6 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertISOMicroVarcharTimestampColumn() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:00:00.000000Z\n";
-
-        assertInsertTimestamp(
-                expected,
-                "insert into tab values (1, '2021-01-03T00:00:00.000000Z'::varchar)",
-                null,
-                true
-        );
-    }
-
-    @Test
     public void testInsertISOMicroStringTimestampColumnNoTimezone() throws Exception {
         final String expected = "seq\tts\n" +
                 "1\t2021-01-03T00:00:00.000000Z\n";
@@ -664,6 +650,19 @@ public class InsertTest extends AbstractCairoTest {
         assertInsertTimestamp(
                 expected,
                 "insert into tab values (1, '2021-01-03T00:00:00.000000')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMicroVarcharTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T00:00:00.000000Z'::varchar)",
                 null,
                 true
         );
@@ -696,19 +695,6 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertISOMilliWithTzDateVarcharTimestampColumn() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-02T23:00:00.000000Z\n";
-
-        assertInsertTimestamp(
-                expected,
-                "insert into tab values (1, '2021-01-03T00:00:00+01'::varchar)",
-                null,
-                true
-        );
-    }
-
-    @Test
     public void testInsertISOMilliWithTzDateStringTimestampColumn2() throws Exception {
         final String expected = "seq\tts\n" +
                 "1\t2021-01-03T03:30:00.000000Z\n";
@@ -716,6 +702,29 @@ public class InsertTest extends AbstractCairoTest {
         assertInsertTimestamp(
                 expected,
                 "insert into tab values (1, '2021-01-03T02:00:00-01:30')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateStringTimestampColumnFails() throws Exception {
+        assertInsertTimestamp(
+                "inconvertible value: `2021-01-03T02:00:00-:30` [STRING -> TIMESTAMP]",
+                "insert into tab values (1, '2021-01-03T02:00:00-:30')",
+                ImplicitCastException.class,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateVarcharTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-02T23:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T00:00:00+01'::varchar)",
                 null,
                 true
         );
@@ -730,16 +739,6 @@ public class InsertTest extends AbstractCairoTest {
                 expected,
                 "insert into tab values (1, '2021-01-03T02:00:00-01:30'::varchar)",
                 null,
-                true
-        );
-    }
-
-    @Test
-    public void testInsertISOMilliWithTzDateStringTimestampColumnFails() throws Exception {
-        assertInsertTimestamp(
-                "inconvertible value: `2021-01-03T02:00:00-:30` [STRING -> TIMESTAMP]",
-                "insert into tab values (1, '2021-01-03T02:00:00-:30')",
-                ImplicitCastException.class,
                 true
         );
     }
@@ -1000,23 +999,23 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertNullVarcharSelectEmptyVarcharColumnIndexed() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    ddl("create table tab (id int, val symbol index)");
-                    insert("insert into tab values (1, NULL::varchar)");
-                    assertSql("id\n", "select id from tab where val = ''");
-                }
-        );
-    }
-
-    @Test
     public void testInsertNullStringSelectNullStringColumnIndexed() throws Exception {
         assertMemoryLeak(
                 () -> {
                     ddl("create table tab (id int, val symbol index)");
                     insert("insert into tab values (1, null)");
                     assertSql("id\n1\n", "select id from tab where val = null");
+                }
+        );
+    }
+
+    @Test
+    public void testInsertNullVarcharSelectEmptyVarcharColumnIndexed() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    ddl("create table tab (id int, val symbol index)");
+                    insert("insert into tab values (1, NULL::varchar)");
+                    assertSql("id\n", "select id from tab where val = ''");
                 }
         );
     }
@@ -1079,6 +1078,37 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertSymbolIntoVarcharCol() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table src (ts timestamp, sym symbol) timestamp(ts) partition by day;");
+            insert("insert into src values (0, 'foo');");
+            insert("insert into src values (20000, null);");
+            insert("insert into src values (30000, 'bar');");
+
+            ddl("create table dest (ts timestamp, vch varchar) timestamp(ts) partition by day;");
+            drainWalQueue();
+
+            ddl("insert into dest select ts, sym from src;");
+
+            String expected = "ts\tvch\n" +
+                    "1970-01-01T00:00:00.000000Z\tfoo\n" +
+                    "1970-01-01T00:00:00.020000Z\t\n" +
+                    "1970-01-01T00:00:00.030000Z\tbar\n";
+            assertQueryCheckWal(expected);
+
+            // check symbol null was inserted as a null varch and not as an empty varchar
+            assertQuery(
+                    "ts\tvch\n" +
+                            "1970-01-01T00:00:00.020000Z\t\n",
+                    "select * from dest where vch is null",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testInsertSymbolNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table symbols (sym symbol, isNewSymbol BOOLEAN)");
@@ -1114,21 +1144,6 @@ public class InsertTest extends AbstractCairoTest {
             ddl("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
             insert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
             insert("insert into trades VALUES ( 1262599300000000, 'USDFJD', 2, 4);");
-
-            String expected = "ts\tsym\tbid\task\n" +
-                    "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
-                    "2010-01-04T10:01:40.000000Z\tUSDFJD\t2.0\t4.0\n";
-
-            assertReaderCheckWal(expected, "trades");
-        });
-    }
-
-    @Test
-    public void testInsertSymbolPartitioned_varchar() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
-            insert("insert into trades VALUES ( 1262599200000000, 'USDJPY'::varchar, 1, 2);");
-            insert("insert into trades VALUES ( 1262599300000000, 'USDFJD'::varchar, 2, 4);");
 
             String expected = "ts\tsym\tbid\task\n" +
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
@@ -1217,6 +1232,21 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertSymbolPartitioned_varchar() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;");
+            insert("insert into trades VALUES ( 1262599200000000, 'USDJPY'::varchar, 1, 2);");
+            insert("insert into trades VALUES ( 1262599300000000, 'USDFJD'::varchar, 2, 4);");
+
+            String expected = "ts\tsym\tbid\task\n" +
+                    "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
+                    "2010-01-04T10:01:40.000000Z\tUSDFJD\t2.0\t4.0\n";
+
+            assertReaderCheckWal(expected, "trades");
+        });
+    }
+
+    @Test
     public void testInsertTimestampWithTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table t (timestamp timestamp) timestamp(timestamp);");
@@ -1261,6 +1291,37 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertUUIDIntoVarcharCol() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table src (ts timestamp, u uuid) timestamp(ts) partition by day;");
+            insert("insert into src values (0, '11111111-1111-1111-1111-111111111111');");
+            insert("insert into src values (20000, null);");
+            insert("insert into src values (30000, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11');");
+
+            ddl("create table dest (ts timestamp, vch varchar) timestamp(ts) partition by day;");
+            drainWalQueue();
+
+            ddl("insert into dest select ts, u from src;");
+
+            String expected = "ts\tvch\n" +
+                    "1970-01-01T00:00:00.000000Z\t11111111-1111-1111-1111-111111111111\n" +
+                    "1970-01-01T00:00:00.020000Z\t\n" +
+                    "1970-01-01T00:00:00.030000Z\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n";
+            assertQueryCheckWal(expected);
+
+            // check symbol null was inserted as a null varch and not as an empty varchar
+            assertQuery(
+                    "ts\tvch\n" +
+                            "1970-01-01T00:00:00.020000Z\t\n",
+                    "select * from dest where vch is null",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testInsertValueCannotReferenceTableColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
@@ -1275,6 +1336,37 @@ public class InsertTest extends AbstractCairoTest {
                 25,
                 "query is not allowed here"
         );
+    }
+
+    @Test
+    public void testInsertVarcharToDifferentTypeCol() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table src (ts timestamp, vch varchar, vch2 varchar, vch3 varchar) timestamp(ts) partition by day;");
+            insert("insert into src values (0, '1', '11111111-1111-1111-1111-111111111111', '2022-11-20T10:30:55.123Z');");
+            insert("insert into src values (20000, null, null, null);");
+            insert("insert into src values (30000, '2', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '-900');");
+
+            ddl("create table dest (ts timestamp, s string, l long, sh short, i int, b byte, c char, f float, d double, u uuid, dt date, ts2 timestamp, sym symbol) timestamp(ts) partition by day;");
+            drainWalQueue();
+
+            ddl("insert into dest select ts, vch, vch, vch, vch, vch, vch, vch, vch, vch2, vch3, vch3, vch from src;");
+
+            String expected = "ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t1\t1\t1\t1\t1.0000\t1.0\t11111111-1111-1111-1111-111111111111\t2022-11-20T10:30:55.123Z\t2022-11-20T10:30:55.123000Z\t1\n" +
+                    "1970-01-01T00:00:00.020000Z\t\tNaN\t0\tNaN\t0\t\tNaN\tNaN\t\t\t\t\n" +
+                    "1970-01-01T00:00:00.030000Z\t2\t2\t2\t2\t2\t2\t2.0000\t2.0\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t1969-12-31T23:59:59.100Z\t1969-12-31T23:59:59.999100Z\t2\n";
+            assertQueryCheckWal(expected);
+
+            // check varchar null was inserted as a null string and not as an empty string
+            assertQuery(
+                    "ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym\n" +
+                            "1970-01-01T00:00:00.020000Z\t\tNaN\t0\tNaN\t0\t\tNaN\tNaN\t\t\t\t\n",
+                    "select * from dest where s is null",
+                    "ts",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
@@ -1446,9 +1538,10 @@ public class InsertTest extends AbstractCairoTest {
                 bindVariableService.setDate(10, 1234L);
                 bindVariableService.setLong256(11, 1, 2, 3, 4);
                 bindVariableService.setChar(12, 'A');
-                bindVariableService.setStr(13, "192.0.0.1");
-                bindVariableService.setStr(14, "foo bar");
-                bindVariableService.setTimestamp(15, timestampFunction.getTimestamp());
+                bindVariableService.setStr(13, "a07934b2-a15d-48e0-9509-88dbaca49734");
+                bindVariableService.setStr(14, "192.0.0.1");
+                bindVariableService.setStr(15, "foo bar");
+                bindVariableService.setTimestamp(16, timestampFunction.getTimestamp());
             }
 
             final String sql;
@@ -1467,6 +1560,7 @@ public class InsertTest extends AbstractCairoTest {
                         "date, " +
                         "long256, " +
                         "chr, " +
+                        "uuid, " +
                         "ipv4, " +
                         "varchar, " +
                         "timestamp" +
@@ -1486,7 +1580,8 @@ public class InsertTest extends AbstractCairoTest {
                         "$13, " +
                         "$14, " +
                         "$15, " +
-                        "$16)";
+                        "$16, " +
+                        "$17)";
             } else {
                 sql = "insert into all2 values (" +
                         "$1, " +
@@ -1504,7 +1599,8 @@ public class InsertTest extends AbstractCairoTest {
                         "$13, " +
                         "$14, " +
                         "$15, " +
-                        "$16)";
+                        "$16, " +
+                        "$17)";
             }
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -1529,10 +1625,13 @@ public class InsertTest extends AbstractCairoTest {
                         bindVariableService.setLong256(11, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
                         bindVariableService.setChar(12, rnd.nextChar());
                         sink.clear();
-                        Numbers.intToIPv4Sink(sink, rnd.nextInt());
+                        Numbers.appendUuid(rnd.nextLong(), rnd.nextLong(), sink);
                         bindVariableService.setStr(13, sink);
-                        bindVariableService.setStr(14, rnd.nextChars(16));
-                        bindVariableService.setTimestamp(15, timestampFunction.getTimestamp());
+                        sink.clear();
+                        Numbers.intToIPv4Sink(sink, rnd.nextInt());
+                        bindVariableService.setStr(14, sink);
+                        bindVariableService.setStr(15, rnd.nextChars(16));
+                        bindVariableService.setTimestamp(16, timestampFunction.getTimestamp());
                         method.execute();
                     }
                     method.commit();
@@ -1566,106 +1665,14 @@ public class InsertTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextLong(), long256.getLong2());
                     Assert.assertEquals(rnd.nextLong(), long256.getLong3());
                     Assert.assertEquals(rnd.nextChar(), record.getChar(12));
-                    Assert.assertEquals(rnd.nextInt(), record.getInt(13));
-                    TestUtils.assertEquals(rnd.nextChars(16), record.getVarcharA(14));
+                    Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(13));
+                    Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(13));
+                    Assert.assertEquals(rnd.nextInt(), record.getInt(14));
+                    TestUtils.assertEquals(rnd.nextChars(16), record.getVarcharA(15));
                 }
             }
         });
     }
-
-    @Test
-    public void testInsertVarcharToDifferentTypeCol() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table src (ts timestamp, vch varchar, vch2 varchar, vch3 varchar) timestamp(ts) partition by day;");
-            insert("insert into src values (0, '1', '11111111-1111-1111-1111-111111111111', '2022-11-20T10:30:55.123Z');");
-            insert("insert into src values (20000, null, null, null);");
-            insert("insert into src values (30000, '2', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '-900');");
-
-            ddl("create table dest (ts timestamp, s string, l long, sh short, i int, b byte, c char, f float, d double, u uuid, dt date, ts2 timestamp, sym symbol) timestamp(ts) partition by day;");
-            drainWalQueue();
-
-            ddl("insert into dest select ts, vch, vch, vch, vch, vch, vch, vch, vch, vch2, vch3, vch3, vch from src;");
-
-            String expected = "ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t1\t1\t1\t1\t1.0000\t1.0\t11111111-1111-1111-1111-111111111111\t2022-11-20T10:30:55.123Z\t2022-11-20T10:30:55.123000Z\t1\n" +
-                    "1970-01-01T00:00:00.020000Z\t\tNaN\t0\tNaN\t0\t\tNaN\tNaN\t\t\t\t\n" +
-                    "1970-01-01T00:00:00.030000Z\t2\t2\t2\t2\t2\t2\t2.0000\t2.0\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t1969-12-31T23:59:59.100Z\t1969-12-31T23:59:59.999100Z\t2\n";
-            assertQueryCheckWal(expected);
-
-            // check varchar null was inserted as a null string and not as an empty string
-            assertQuery(
-                    "ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym\n" +
-                            "1970-01-01T00:00:00.020000Z\t\tNaN\t0\tNaN\t0\t\tNaN\tNaN\t\t\t\t\n",
-                    "select * from dest where s is null",
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testInsertSymbolIntoVarcharCol() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table src (ts timestamp, sym symbol) timestamp(ts) partition by day;");
-            insert("insert into src values (0, 'foo');");
-            insert("insert into src values (20000, null);");
-            insert("insert into src values (30000, 'bar');");
-
-            ddl("create table dest (ts timestamp, vch varchar) timestamp(ts) partition by day;");
-            drainWalQueue();
-
-            ddl("insert into dest select ts, sym from src;");
-
-            String expected = "ts\tvch\n" +
-                    "1970-01-01T00:00:00.000000Z\tfoo\n" +
-                    "1970-01-01T00:00:00.020000Z\t\n" +
-                    "1970-01-01T00:00:00.030000Z\tbar\n";
-            assertQueryCheckWal(expected);
-
-            // check symbol null was inserted as a null varch and not as an empty varchar
-            assertQuery(
-                    "ts\tvch\n" +
-                            "1970-01-01T00:00:00.020000Z\t\n",
-                    "select * from dest where vch is null",
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testInsertUUIDIntoVarcharCol() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table src (ts timestamp, u uuid) timestamp(ts) partition by day;");
-            insert("insert into src values (0, '11111111-1111-1111-1111-111111111111');");
-            insert("insert into src values (20000, null);");
-            insert("insert into src values (30000, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11');");
-
-            ddl("create table dest (ts timestamp, vch varchar) timestamp(ts) partition by day;");
-            drainWalQueue();
-
-            ddl("insert into dest select ts, u from src;");
-
-            String expected = "ts\tvch\n" +
-                    "1970-01-01T00:00:00.000000Z\t11111111-1111-1111-1111-111111111111\n" +
-                    "1970-01-01T00:00:00.020000Z\t\n" +
-                    "1970-01-01T00:00:00.030000Z\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n";
-            assertQueryCheckWal(expected);
-
-            // check symbol null was inserted as a null varch and not as an empty varchar
-            assertQuery(
-                    "ts\tvch\n" +
-                            "1970-01-01T00:00:00.020000Z\t\n",
-                    "select * from dest where vch is null",
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
 
     private void testInsertAsSelectWithOrderBy(String orderByClause) throws Exception {
         assertMemoryLeak(() -> {

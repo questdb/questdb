@@ -79,8 +79,8 @@ public class CreateTableTestUtils {
                     .col("k", ColumnType.BOOLEAN)
                     .col("l", ColumnType.BINARY)
                     .col("m", ColumnType.UUID)
-                        .col("n", ColumnType.VARCHAR);
-                TestUtils.create(model, engine);
+                    .col("n", ColumnType.VARCHAR);
+            TestUtils.create(model, engine);
 
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
@@ -213,6 +213,7 @@ public class CreateTableTestUtils {
                 .col("date", ColumnType.DATE)
                 .col("long256", ColumnType.LONG256)
                 .col("chr", ColumnType.CHAR)
+                .col("uuid", ColumnType.UUID)
                 .col("ipv4", ColumnType.IPv4)
                 .col("varchar", ColumnType.VARCHAR)
                 .timestamp();
