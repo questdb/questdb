@@ -99,4 +99,23 @@ public class LengthFunctionFactoryTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testVarcharSimple() throws Exception {
+        assertQuery(
+                "v\tlength\n" +
+                        "abc\t3\n" +
+                        "едно-две-три\t12\n" +
+                        "едно-две-три\t12\n" +
+                        "x\t1\n" +
+                        "x\t1\n",
+                "select v,length(v) from x",
+                "create table x as (" +
+                        "select rnd_varchar('abc','x','','едно-две-три',NULL) as v\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
 }

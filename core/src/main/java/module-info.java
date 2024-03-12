@@ -264,6 +264,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory,
 //                     'length',
             io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LengthVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.str.LengthBinFunctionFactory,
 //                     random generator functions,

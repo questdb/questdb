@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
@@ -48,7 +49,9 @@ public abstract class VarcharFunction implements ScalarFunction {
     }
 
     @Override
-    public final boolean getBool(Record rec) { throw new UnsupportedOperationException(); }
+    public final boolean getBool(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public final byte getByte(Record rec) {
@@ -147,6 +150,14 @@ public abstract class VarcharFunction implements ScalarFunction {
     }
 
     @Override
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
+        Utf8Sequence utf8seq = getVarcharA(rec);
+        if (utf8seq != null) {
+            Utf8s.utf8ToUtf16(utf8seq, utf16Sink);
+        }
+    }
+
+    @Override
     public CharSequence getStrA(Record rec) {
         Utf8Sequence utf8seq = getVarcharA(rec);
         if (utf8seq == null) {
@@ -158,14 +169,6 @@ public abstract class VarcharFunction implements ScalarFunction {
         utf16sinkA.clear();
         Utf8s.utf8ToUtf16(utf8seq, utf16sinkA);
         return utf16sinkA;
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        Utf8Sequence utf8seq = getVarcharA(rec);
-        if (utf8seq != null) {
-            Utf8s.utf8ToUtf16(utf8seq, utf16Sink);
-        }
     }
 
     @Override
@@ -184,7 +187,8 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public int getStrLen(Record rec) {
-        return getStrA(rec).length();
+        CharSequence cs = getStrA(rec);
+        return cs != null ? cs.length() : TableUtils.NULL_LEN;
     }
 
     @Override

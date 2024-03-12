@@ -561,6 +561,30 @@ public class Utf8sTest {
         }
     }
 
+    @Test
+    public void testValidateUtf8() {
+        Assert.assertEquals(0, Utf8s.validateUtf8(Utf8String.EMPTY));
+        Assert.assertEquals(3, Utf8s.validateUtf8(new Utf8String("abc")));
+        Assert.assertEquals(10, Utf8s.validateUtf8(new Utf8String("привет мир")));
+        // invalid UTF-8
+        Assert.assertEquals(-1, Utf8s.validateUtf8(new Utf8String(new byte[]{(byte) 0x80}, false)));
+    }
+
+    @Test
+    public void testValidateUtf8Direct() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
+            Assert.assertEquals(0, Utf8s.validateUtf8(sink.lo(), sink.hi()));
+            sink.put("abc");
+            Assert.assertEquals(3, Utf8s.validateUtf8(sink.lo(), sink.hi()));
+            sink.put("привет мир");
+            Assert.assertEquals(13, Utf8s.validateUtf8(sink.lo(), sink.hi()));
+            // invalid UTF-8
+            sink.clear();
+            sink.put((byte) 0x80);
+            Assert.assertEquals(-1, Utf8s.validateUtf8(sink.lo(), sink.hi()));
+        }
+    }
+
     private static void assertUtf8ToUtf16WithTerminator(
             DirectUtf8Sink utf8Sink,
             StringSink utf16Sink,

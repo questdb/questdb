@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -33,12 +34,14 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
-public class LengthStrFunctionFactory implements FunctionFactory {
+public class LengthVarcharFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "length(S)";
+        return "length(Ø)";
     }
 
     @Override
@@ -66,7 +69,11 @@ public class LengthStrFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return arg.getStrLen(rec);
+            final Utf8Sequence value = arg.getVarcharA(rec);
+            if (value == null) {
+                return TableUtils.NULL_LEN;
+            }
+            return Utf8s.validateUtf8(value);
         }
 
         @Override

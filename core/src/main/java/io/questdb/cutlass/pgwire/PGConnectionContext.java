@@ -119,7 +119,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final IntList bindSelectColumnFormats = new IntList();
     private final IntList bindVariableTypes = new IntList();
     private final CharacterStore characterStore;
-    private final DirectUtf8String utf8String = new DirectUtf8String();
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
@@ -150,6 +149,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private final WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private final DirectUtf16Sink utf8Sink;
+    private final DirectUtf8String utf8String = new DirectUtf8String();
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
@@ -638,8 +638,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         Function fn = bindVariableService.getFunction(index);
         // If the function type is VARCHAR, there's no need to convert to UTF-16
         if (fn != null && fn.getType() == ColumnType.VARCHAR) {
-            if (Utf8s.validateUtf8(address, address + valueLen)) {
-                bindVariableService.setVarchar(index, utf8String.of(address, address+valueLen));
+            if (Utf8s.validateUtf8(address, address + valueLen) != -1) {
+                bindVariableService.setVarchar(index, utf8String.of(address, address + valueLen));
             } else {
                 LOG.error().$("invalid varchar bind variable type [index=").$(index).I$();
                 throw BadProtocolException.INSTANCE;
@@ -1050,16 +1050,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void appendVarcharColumn(Record record, int i) {
-        final Utf8Sequence strValue = record.getVarcharA(i);
-        if (strValue == null) {
-            responseUtf8Sink.setNullValue();
-        } else {
-            responseUtf8Sink.putNetworkInt(strValue.size());
-            responseUtf8Sink.put(strValue);
-        }
-    }
-
     private void appendStrColumn(Record record, int columnIndex) {
         final CharSequence strValue = record.getStrA(columnIndex);
         if (strValue == null) {
@@ -1126,6 +1116,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             responseUtf8Sink.putNetworkInt(Long.BYTES * 2);
             responseUtf8Sink.putNetworkLong(hi);
             responseUtf8Sink.putNetworkLong(lo);
+        }
+    }
+
+    private void appendVarcharColumn(Record record, int i) {
+        final Utf8Sequence strValue = record.getVarcharA(i);
+        if (strValue == null) {
+            responseUtf8Sink.setNullValue();
+        } else {
+            responseUtf8Sink.putNetworkInt(strValue.size());
+            responseUtf8Sink.put(strValue);
         }
     }
 
