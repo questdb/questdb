@@ -99,6 +99,11 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                     pendingHeartbeats.deleteRow(heartbeatRow);
                 }
             } else {
+                if (operation == IOOperation.READ && context.getSocket().isMorePlaintextBuffered()) {
+                    publishOperation(IOOperation.READ, context);
+                    continue;
+                }
+
                 LOG.debug().$("processing registration [fd=").$(fd)
                         .$(", op=").$(operation)
                         .$(", id=").$(opId).I$();
