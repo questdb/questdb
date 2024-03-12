@@ -413,10 +413,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // should go into the merge section.
                             mergeDataHi = Vect.boundedBinarySearch64Bit(
                                     srcTimestampAddr,
-                                    o3TimestampMax + 1,
+                                    o3TimestampHi,
                                     0,
                                     srcDataMax - 1,
-                                    BinarySearch.SCAN_UP
+                                    BinarySearch.SCAN_DOWN
                             );
 
                             suffixLo = mergeDataHi + 1;
