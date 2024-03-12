@@ -361,7 +361,7 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                 "ts\tapprox_count_distinct\n" +
                         "1970-01-01T00:00:00.050000Z\t16\n" +
                         "1970-01-01T00:00:02.050000Z\t16\n", "with x as (select * from (select rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
-                        "select ts, approx_count_distinct(s) from x sample by 2s"
+                        "select ts, approx_count_distinct(s) from x sample by 2s align to first observation"
         ));
     }
 
@@ -402,7 +402,7 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
                         "e\t8\t1970-01-01T00:00:05.000000Z\n" +
                         "d\t7\t1970-01-01T00:00:05.000000Z\n" +
                         "a\t5\t1970-01-01T00:00:05.000000Z\n",
-                "select a, approx_count_distinct(s), ts from x sample by 5s",
+                "select a, approx_count_distinct(s), ts from x sample by 5s align to first observation",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_ipv4('1.1.1.1/28', 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false
