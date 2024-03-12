@@ -335,6 +335,25 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testRndUtf8toUtf16Equality() {
+        Rnd rnd = TestUtils.generateRandom(null);
+        StringSink sink = new StringSink();
+        try (DirectUtf8Sink utf8Sink = new DirectUtf8Sink(4)) {
+            for (int i = 0; i < 1000; i++) {
+                utf8Sink.clear();
+                rnd.nextUtf8Str(100, utf8Sink);
+
+                sink.clear();
+                Utf8s.utf8ToUtf16(utf8Sink, sink);
+
+                if (!Utf8s.equalsUtf16(sink, utf8Sink)) {
+                    Assert.fail("iteration " + i + ", expected equals: " + sink);
+                }
+            }
+        }
+    }
+
+    @Test
     public void testStartsWith() {
         Assert.assertTrue(Utf8s.startsWith(new Utf8String("фу бар баз"), new Utf8String("фу")));
         Assert.assertFalse(Utf8s.startsWith(new Utf8String("фу бар баз"), new Utf8String("бар")));
@@ -555,6 +574,32 @@ public class Utf8sTest {
                         String input = left + right;
                         int expectedUtf8ByteRead = input.getBytes(StandardCharsets.UTF_8).length;
                         assertUtf8ToUtf16WithTerminator(utf8Sink, utf16Sink, input, input, terminator, expectedUtf8ByteRead);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testUtf8toUtf16Equality() {
+        String empty = "";
+        String ascii = "abc";
+        String cyrillic = "абв";
+        String chinese = "你好";
+        String emoji = "😀";
+        String mixed = "abcабв你好😀";
+        String[] strings = {empty, ascii, cyrillic, chinese, emoji, mixed};
+
+        try (DirectUtf8Sink utf8Sink = new DirectUtf8Sink(4)) {
+            for (String left : strings) {
+                for (String right : strings) {
+                    utf8Sink.clear();
+                    utf8Sink.put(right);
+
+                    if (left.equals(right)) {
+                        Assert.assertTrue("expected equals " + right, Utf8s.equalsNc(left, utf8Sink));
+                    } else {
+                        Assert.assertFalse("expected not equals " + right, Utf8s.equalsNc(left, utf8Sink));
                     }
                 }
             }

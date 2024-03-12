@@ -254,6 +254,14 @@ public final class Utf8s {
         return true;
     }
 
+    public static boolean equalsNc(CharSequence l, Utf8Sequence r) {
+        if (l == null || r == null) {
+            return l == r;
+        }
+
+        return equalsUtf16(l, r);
+    }
+
     public static boolean equalsNc(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
         if (l == null && r == null) {
             return true;
@@ -268,6 +276,35 @@ public final class Utf8s {
 
     public static boolean equalsNcAscii(@NotNull CharSequence asciiSeq, @Nullable Utf8Sequence seq) {
         return seq != null && equalsAscii(asciiSeq, seq);
+    }
+
+    public static boolean equalsUtf16(CharSequence l, Utf8Sequence r) {
+        int ui = 0, un = r.size();
+        int ci = 0, cn = l.length();
+
+        return equalsUtf16(l, r, ui, un, ci, cn);
+    }
+
+    public static boolean equalsUtf16(CharSequence l, Utf8Sequence r, int ui, int un, int ci, int cn) {
+        while (ui < un && ci < cn) {
+            int bytes = utf16Equals(l, ci, cn, r, ui, un);
+            switch (bytes) {
+                case 4:
+                    // 4 bytes decoded from UTF-8 sequence
+                    ci++;
+                    // fall through
+                case 1:
+                case 2:
+                case 3:
+                    // 1,2,3 bytes decoded from UTF-8 sequence
+                    ui += bytes;
+                    ci++;
+                    break;
+                default:
+                    return false;
+            }
+        }
+        return ui == un && ci == cn;
     }
 
     public static int getUtf8Codepoint(int b1, int b2, int b3, int b4) {
@@ -922,6 +959,60 @@ public final class Utf8s {
 
     private static byte toLowerCaseAscii(byte b) {
         return b > 64 && b < 91 ? (byte) (b + 32) : b;
+    }
+
+    private static int utf16Equals(CharSequence c, int ci, int cn, Utf8Sequence u, int ui, int un) {
+        if (ui < un) {
+            byte b = u.byteAt(ui++);
+            if ((b & 0x80) == 0x00) {
+                return ci < cn && c.charAt(ci) == b ? 1 : -1;
+            } else if ((b & 0xE0) == 0xC0) {
+                return utf16Equals2Bytes(c, ci, cn, b, u, ui, un);
+            } else if ((b & 0xF0) == 0xE0) {
+                return utf16Equals3Bytes(c, ci, cn, b, u, ui, un);
+            } else if ((b & 0xF8) == 0xF0) {
+                return utf16Equals4Bytes(c, ci, cn, b, u, ui, un);
+            }
+        }
+        return -1;
+    }
+
+    private static int utf16Equals2Bytes(CharSequence c, int ci, int cn, byte b1, Utf8Sequence u, int ui, int un) {
+        if (ui < un && ci < cn) {
+            byte b2 = u.byteAt(ui);
+            char c1 = (char) (b1 << 6 ^ b2 ^ 3968);
+            return c.charAt(ci) == c1 ? 2 : -1;
+        }
+        return -1;
+    }
+
+    private static int utf16Equals3Bytes(CharSequence c, int ci, int cn, byte b1, Utf8Sequence u, int ui, int un) {
+        if (ui + 1 < un && ci < cn) {
+            byte b2 = u.byteAt(ui++);
+            byte b3 = u.byteAt(ui);
+            char c1 = utf8ToChar(b1, b2, b3);
+            return c.charAt(ci) == c1 ? 3 : -1;
+        }
+        return -1;
+    }
+
+    private static int utf16Equals4Bytes(CharSequence c, int ci, int cn, byte b1, Utf8Sequence u, int ui, int un) {
+        if (ui + 2 < un && ci + 1 < cn) {
+            byte b2 = u.byteAt(ui++);
+            byte b3 = u.byteAt(ui++);
+            byte b4 = u.byteAt(ui);
+            if (isMalformed4(b2, b3, b4)) {
+                return -1;
+            }
+            final int codePoint = getUtf8Codepoint(b1, b2, b3, b4);
+            char c1 = c.charAt(ci++);
+            char c2 = c.charAt(ci);
+
+            if (Character.isSupplementaryCodePoint(codePoint)) {
+                return c1 == Character.highSurrogate(codePoint) && c2 == Character.lowSurrogate(codePoint) ? 4 : -1;
+            }
+        }
+        return -1;
     }
 
     private static int utf8Decode2Bytes(@NotNull Utf8Sequence seq, int index, int b1, @NotNull Utf16Sink sink) {
