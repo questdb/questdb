@@ -741,7 +741,8 @@ public class FuzzRunner {
 
                         long colTop = reader.getColumnTop(columnBase, i);
                         long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
-                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dCol.getPageAddress(0), columnType)) {
+                        long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
+                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
                             Assert.fail("var column " + reader.getMetadata().getColumnName(i)
                                     + " is not dense, .i file record size is different from .d file record size");
                         }
