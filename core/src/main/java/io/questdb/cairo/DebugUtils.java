@@ -71,7 +71,16 @@ public class DebugUtils {
             }
             return false;
         } else if (colType == ColumnType.VARCHAR) {
-            // todo - assert no swiss cheese
+            ColumnTypeDriver driver = ColumnType.getDriver(colType);
+            long lastSizeInDataVector = 0;
+            for (int row = 0; row < colRowCount; row++) {
+                long offset = driver.getDataVectorOffset(iAddr, row);
+                if (offset != lastSizeInDataVector) {
+                    // Swiss cheese hole in var col file
+                    return true;
+                }
+                lastSizeInDataVector = driver.getDataVectorSizeAt(iAddr, row);
+            }
             return false;
         } else {
             throw new AssertionError("Not a var col");
