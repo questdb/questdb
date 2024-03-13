@@ -69,6 +69,45 @@ public class InTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInChar_const() throws Exception {
+        // single-char constant
+        assertQuery(
+                "ts\tch\n" +
+                        "2020-01-01T00:00:00.000000Z\t1\n",
+                "select * from tab WHERE ch in ('1'::char)",
+                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::string::char ch from long_sequence(9))" +
+                        " timestamp(ts) PARTITION BY MONTH",
+                "ts",
+                true,
+                false
+        );
+
+        // '' literal is treated as a zero char
+        assertQuery(
+                "ts\tcast\n" +
+                        "2020-01-01T00:00:00.000000Z\t0\n",
+                "select ts, ch::byte from tab2 where ch in ('')",
+                "create table tab2 as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, (x-1)::char ch from long_sequence(9))" +
+                        " timestamp(ts) PARTITION BY MONTH",
+                "ts",
+                true,
+                false
+        );
+
+        // empty varchar is also treated as a zero char
+        assertQuery(
+                "ts\tcast\n" +
+                        "2020-01-01T00:00:00.000000Z\t0\n",
+                "select ts, ch::byte from tab3 where ch in (''::varchar)",
+                "create table tab3 as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, (x-1)::char ch from long_sequence(9))" +
+                        " timestamp(ts) PARTITION BY MONTH",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testInSymbol_const() throws Exception {
         assertQuery(
                 "ts\ts\n" +

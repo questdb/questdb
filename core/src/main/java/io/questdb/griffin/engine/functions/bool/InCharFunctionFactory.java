@@ -66,7 +66,7 @@ public class InCharFunctionFactory implements FunctionFactory {
             Function func = args.getQuick(i);
             if (ColumnType.isChar(func.getType())) {
                 set.add(func.getChar(null));
-            } else if (ColumnType.isString(func.getType())) {
+            } else if (ColumnType.isString(func.getType()) || ColumnType.isVarchar(func.getType())) {
                 // Implicitly cast empty string literal ('') to zero char
                 if (func.getStrLen(null) != 0) {
                     throw SqlException.$(argPositions.getQuick(i), "CHAR constant expected");
