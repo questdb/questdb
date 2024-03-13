@@ -56,7 +56,6 @@ public final class InUuidFunctionFactory implements FunctionFactory {
                 case ColumnType.VARCHAR: //todo: this can be optimized, we can parse UUIDs directly from VarChar
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
-                case ColumnType.CHAR:
                     CharSequence value = func.getStrA(null);
                     if (value == null) {
                         throw SqlException.$(argPositions.getQuick(i), "NULL is not allowed in IN list");
