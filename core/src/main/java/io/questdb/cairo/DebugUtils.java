@@ -139,4 +139,12 @@ public class DebugUtils {
             LOG.info().$("index [").$(i).$("] = ").$ts(ts).$(", ts=").$(ts).$(", rowId=").$(rowId).$();
         }
     }
+
+    static void logTimestampColumn(long colAddr, long colSize, long tailLen) {
+        long start = Math.max(0, colSize - tailLen);
+        for (long i = start; i < colSize; i++) {
+            long ts = Unsafe.getUnsafe().getLong(colAddr + 8 * i);
+            LOG.info().$("ts_col [").$(i).$("] = ").$ts(ts).$(", ts=").$(ts).$();
+        }
+    }
 }
