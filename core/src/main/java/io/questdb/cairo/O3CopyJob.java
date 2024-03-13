@@ -161,23 +161,25 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     );
                     break;
                 case O3_BLOCK_DATA:
-                    copyData(
-                            tableWriter.getFilesFacade(),
-                            columnType,
-                            srcDataFixAddr + srcDataFixOffset,
-                            srcDataVarAddr + srcDataVarOffset,
-                            srcDataLo,
-                            srcDataHi,
-                            dstAuxAddr + dstFixOffset,
-                            dstFixFd,
-                            dstFixFileOffset,
-                            dstVarAddr,
-                            dstVarFd,
-                            dstVarOffset,
-                            dstVarAdjust,
-                            dstVarSize,
-                            mixedIOFlag
-                    );
+                    if (srcDataLo <= srcDataHi) {
+                        copyData(
+                                tableWriter.getFilesFacade(),
+                                columnType,
+                                srcDataFixAddr + srcDataFixOffset,
+                                srcDataVarAddr + srcDataVarOffset,
+                                srcDataLo,
+                                srcDataHi,
+                                dstAuxAddr + dstFixOffset,
+                                dstFixFd,
+                                dstFixFileOffset,
+                                dstVarAddr,
+                                dstVarFd,
+                                dstVarOffset,
+                                dstVarAdjust,
+                                dstVarSize,
+                                mixedIOFlag
+                        );
+                    }
                     break;
                 default:
                     break;
@@ -372,6 +374,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstDataSize,
             boolean mixedIOFlag
     ) {
+        assert srcLo <= srcHi : String.format("srcLo %,d > srcHi %,d", srcLo, srcHi);
+
         // we can find out the edge of string column in one of two ways
         // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
         // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
@@ -382,7 +386,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         assert lo >= 0;
         // copy this before it changes
         final long len = columnTypeDriver.getDataVectorSize(srcAuxAddr, srcLo, srcHi);
-        assert len <= Math.abs(dstDataSize) - dstDataOffset;
+        assert len <= Math.abs(dstDataSize) - dstDataOffset :
+                String.format("len %,d dstDataSize %,d dstDataOffset %,d srcLo %,d srcHi %,d\n",
+                        len, dstDataSize, dstDataOffset, srcLo, srcHi);
         final long offset = dstDataOffset + dstDataAdjust;
         if (mixedIOFlag) {
             if (ff.write(Math.abs(dstDataFd), srcDataAddr + lo, len, offset) != len) {

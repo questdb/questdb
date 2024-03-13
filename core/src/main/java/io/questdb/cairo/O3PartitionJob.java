@@ -310,7 +310,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             if (mergeDataLo > mergeDataHi) {
                                 // the OO data implodes right between rows of existing data
                                 // so we will have both data prefix and suffix and the middle bit
-
                                 // is the out of order
                                 mergeType = O3_BLOCK_O3;
                             } else {
@@ -581,7 +580,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 if (!partitionSplit && prefixType == O3_BLOCK_NONE) {
                     // We do not need to create a copy of partition when we simply need to append
-                    // existing the one.
+                    // to the existing one.
                     openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
                 } else {
                     TableUtils.setPathForPartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn);

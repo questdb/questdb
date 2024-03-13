@@ -481,6 +481,48 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testStrCpySubstring() {
+        final int len = 3;
+        Utf8StringSink srcSink = new Utf8StringSink();
+        Utf8StringSink destSink = new Utf8StringSink();
+
+        // ASCII
+        srcSink.repeat("a", len);
+
+        destSink.clear();
+        Assert.assertEquals(0, Utf8s.strCpy(srcSink, 0, 0, destSink));
+        TestUtils.assertEquals(Utf8String.EMPTY, destSink);
+
+        destSink.clear();
+        Assert.assertEquals(len, Utf8s.strCpy(srcSink, 0, len, destSink));
+        TestUtils.assertEquals(srcSink, destSink);
+
+        for (int i = 0; i < len - 1; i++) {
+            destSink.clear();
+            Assert.assertEquals(1, Utf8s.strCpy(srcSink, i, i + 1, destSink));
+            TestUtils.assertEquals(new Utf8String("a"), destSink);
+        }
+
+        // non-ASCII
+        srcSink.clear();
+        srcSink.repeat("ы", len);
+
+        destSink.clear();
+        Assert.assertEquals(0, Utf8s.strCpy(srcSink, 0, 0, destSink));
+        TestUtils.assertEquals(Utf8String.EMPTY, destSink);
+
+        destSink.clear();
+        Assert.assertEquals(2 * len, Utf8s.strCpy(srcSink, 0, len, destSink));
+        TestUtils.assertEquals(srcSink, destSink);
+
+        for (int i = 0; i < len - 1; i++) {
+            destSink.clear();
+            Assert.assertEquals(2, Utf8s.strCpy(srcSink, i, i + 1, destSink));
+            TestUtils.assertEquals(new Utf8String("ы"), destSink);
+        }
+    }
+
+    @Test
     public void testUtf8CharDecode() {
         long p = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
         try {

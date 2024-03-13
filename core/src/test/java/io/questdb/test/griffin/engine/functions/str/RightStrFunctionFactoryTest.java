@@ -27,7 +27,7 @@ package io.questdb.test.griffin.engine.functions.str;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class RightFunctionFactoryTest extends AbstractCairoTest {
+public class RightStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstLarge() throws Exception {

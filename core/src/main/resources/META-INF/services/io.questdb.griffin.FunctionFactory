@@ -780,8 +780,10 @@ io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory
 io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory
 
 # left()/right()
-io.questdb.griffin.engine.functions.str.LeftFunctionFactory
-io.questdb.griffin.engine.functions.str.RightFunctionFactory
+io.questdb.griffin.engine.functions.str.LeftStrFunctionFactory
+io.questdb.griffin.engine.functions.str.LeftVarcharFunctionFactory
+io.questdb.griffin.engine.functions.str.RightStrFunctionFactory
+io.questdb.griffin.engine.functions.str.RightVarcharFunctionFactory
 
 # size_pretty()
 io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory
