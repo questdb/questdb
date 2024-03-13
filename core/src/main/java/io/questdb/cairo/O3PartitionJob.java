@@ -581,7 +581,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 if (!partitionSplit && prefixType == O3_BLOCK_NONE) {
                     // We do not need to create a copy of partition when we simply need to append
-                    // existing the one.
+                    // to the existing one.
                     openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
                 } else {
                     TableUtils.setPathForPartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn);
