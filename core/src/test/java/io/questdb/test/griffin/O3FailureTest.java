@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
@@ -3623,6 +3624,21 @@ public class O3FailureTest extends AbstractO3Test {
 
     }
 
+    private static void putRndStr(Rnd rnd, RecordMetadata metadata, TableWriter.Row r, int col, int len, Utf8StringSink sink) {
+        switch (metadata.getColumnType(col)) {
+            case ColumnType.STRING:
+                r.putStr(col, rnd.nextChars(len));
+                break;
+            case ColumnType.VARCHAR:
+                sink.clear();
+                rnd.nextUtf8Str(len, sink);
+                r.putVarchar(col, sink);
+                break;
+            default:
+                throw new UnsupportedOperationException();
+        }
+    }
+
     private static void testVarColumnStress(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -3649,18 +3665,13 @@ public class O3FailureTest extends AbstractO3Test {
                     for (int k = 0; k < 1000; k++) {
                         TableWriter.Row r = w.newRow(rnd.nextPositiveInt() % 100_000);
                         r.putSym(0, symbols[rnd.nextInt(symbolLen)]);
-                        r.putStr(1, rnd.nextChars(7));
-                        r.putStr(2, rnd.nextChars(8));
-                        r.putStr(3, rnd.nextChars(4));
-                        r.putStr(4, rnd.nextChars(6));
+                        putRndStr(rnd, w.getMetadata(), r, 1, 7, utf8Sink);
+                        putRndStr(rnd, w.getMetadata(), r, 2, 8, utf8Sink);
+                        putRndStr(rnd, w.getMetadata(), r, 3, 4, utf8Sink);
+                        putRndStr(rnd, w.getMetadata(), r, 4, 6, utf8Sink);
 
-                        utf8Sink.clear();
-                        rnd.nextUtf8Str(40, utf8Sink);
-                        r.putVarchar(5, utf8Sink);
-
-                        utf8Sink.clear();
-                        rnd.nextUtf8Str(1, utf8Sink);
-                        r.putVarchar(6, utf8Sink);
+                        putRndStr(rnd, w.getMetadata(), r, 5, 40, utf8Sink);
+                        putRndStr(rnd, w.getMetadata(), r, 6, 1, utf8Sink);
 
                         r.putSym(7, symbols[rnd.nextInt(symbolLen)]);
                         r.putInt(8, rnd.nextInt());

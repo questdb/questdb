@@ -148,10 +148,10 @@ public final class TestUtils {
             RecordMetadata metadataExpected,
             RecordCursor cursorActual,
             RecordMetadata metadataActual,
-            boolean symbolsAsStrings
+            boolean genericStringMatch
     ) {
         StringSink sink = getTlSink();
-        assertEquals(metadataExpected, metadataActual, symbolsAsStrings);
+        assertEquals(metadataExpected, metadataActual, genericStringMatch);
         Record r = cursorExpected.getRecord();
         Record l = cursorActual.getRecord();
         final int timestampIndex = metadataActual.getTimestampIndex();
@@ -174,8 +174,8 @@ public final class TestUtils {
 
                 if (tsL == timestampValue && tsR == timestampValue) {
                     // store both records
-                    addRecordToMap(sink, l, metadataActual, mapL, symbolsAsStrings);
-                    addRecordToMap(sink, r, metadataExpected, mapR, symbolsAsStrings);
+                    addRecordToMap(sink, l, metadataActual, mapL, genericStringMatch);
+                    addRecordToMap(sink, r, metadataExpected, mapR, genericStringMatch);
                     continue;
                 }
 
@@ -208,7 +208,7 @@ public final class TestUtils {
                 mapR.clear();
             }
             try {
-                assertColumnValues(metadataExpected, metadataActual, l, r, rowIndex, symbolsAsStrings);
+                assertColumnValues(metadataExpected, metadataActual, l, r, rowIndex, genericStringMatch);
             } catch (AssertionError e) {
                 // Assertion error could be to do with unstable sort order,
                 // lets try to eliminate this.
@@ -236,8 +236,8 @@ public final class TestUtils {
                     }
 
                     // store both records
-                    addRecordToMap(sink, l, metadataActual, mapL, symbolsAsStrings);
-                    addRecordToMap(sink, r, metadataExpected, mapR, symbolsAsStrings);
+                    addRecordToMap(sink, l, metadataActual, mapL, genericStringMatch);
+                    addRecordToMap(sink, r, metadataExpected, mapR, genericStringMatch);
                 }
             }
         }
@@ -497,9 +497,9 @@ public final class TestUtils {
             RecordMetadata metadataExpected,
             RecordCursor cursorActual,
             RecordMetadata metadataActual,
-            boolean symbolsAsStrings
+            boolean genericStringMatch
     ) {
-        assertEquals(metadataExpected, metadataActual, symbolsAsStrings);
+        assertEquals(metadataExpected, metadataActual, genericStringMatch);
         Record r = cursorExpected.getRecord();
         Record l = cursorActual.getRecord();
         long rowIndex = 0;
@@ -508,7 +508,7 @@ public final class TestUtils {
                 Assert.fail("Actual cursor does not have record at " + rowIndex);
             }
             rowIndex++;
-            assertColumnValues(metadataExpected, metadataActual, l, r, rowIndex, symbolsAsStrings);
+            assertColumnValues(metadataExpected, metadataActual, l, r, rowIndex, genericStringMatch);
         }
 
         Assert.assertFalse("Expected cursor misses record " + rowIndex, cursorActual.hasNext());
@@ -720,9 +720,9 @@ public final class TestUtils {
         }
     }
 
-    public static void assertSqlCursors(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log, boolean symbolsAsStrings) throws SqlException {
+    public static void assertSqlCursors(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log, boolean genericStringMatch) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, symbolsAsStrings);
+            assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, genericStringMatch);
         }
     }
 
@@ -730,12 +730,12 @@ public final class TestUtils {
         assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, false);
     }
 
-    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log, boolean symbolsAsStrings) throws SqlException {
+    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log, boolean genericStringMatch) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)) {
                     try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
-                        assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), symbolsAsStrings);
+                        assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), genericStringMatch);
                     }
                 } catch (AssertionError e) {
                     log.error().$(e).$();
@@ -763,7 +763,7 @@ public final class TestUtils {
         }
     }
 
-    public static void assertSqlCursors(QuestDBTestNode node, ObjList<QuestDBTestNode> nodes, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
+    public static void assertSqlCursors(QuestDBTestNode node, ObjList<QuestDBTestNode> nodes, String expected, String actual, Log log, boolean genericStringMatch) throws SqlException {
         try (
                 SqlCompiler compiler = node.getEngine().getSqlCompiler();
                 RecordCursorFactory factory = compiler.compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()
@@ -776,7 +776,7 @@ public final class TestUtils {
                 ) {
                     try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext())) {
                         try (RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())) {
-                            assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), symbolsAsStrings);
+                            assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), genericStringMatch);
                         }
                     } catch (AssertionError e) {
                         log.error().$(e).$();
@@ -1585,8 +1585,8 @@ public final class TestUtils {
         }
     }
 
-    private static void assertCharEquals(RecordMetadata metaL, RecordMetadata metaR, Record lr, Record rr, boolean symbolsAsStrings, int col) {
-        if (symbolsAsStrings && metaL.getColumnType(col) != metaR.getColumnType(col)) {
+    private static void assertCharEquals(RecordMetadata metaL, RecordMetadata metaR, Record lr, Record rr, boolean genericStringMatch, int col) {
+        if (genericStringMatch && metaL.getColumnType(col) != metaR.getColumnType(col)) {
             char right = readAsChar(metaR, rr, col);
             char left = readAsChar(metaL, lr, col);
             Assert.assertEquals(left, right);
@@ -1601,7 +1601,7 @@ public final class TestUtils {
             Record lr,
             Record rr,
             long rowIndex,
-            boolean symbolsAsStrings
+            boolean genericStringMatch
     ) {
         int columnType = 0;
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
@@ -1636,13 +1636,13 @@ public final class TestUtils {
                     case ColumnType.SYMBOL:
                     case ColumnType.STRING:
                     case ColumnType.VARCHAR:
-                        assertStringEquals(metadataActual, metadataExpected, lr, rr, symbolsAsStrings, i);
+                        assertStringEquals(metadataActual, metadataExpected, lr, rr, genericStringMatch, i);
                         break;
                     case ColumnType.SHORT:
                         Assert.assertEquals(rr.getShort(i), lr.getShort(i));
                         break;
                     case ColumnType.CHAR:
-                        assertCharEquals(metadataActual, metadataExpected, lr, rr, symbolsAsStrings, i);
+                        assertCharEquals(metadataActual, metadataExpected, lr, rr, genericStringMatch, i);
                         break;
                     case ColumnType.GEOSHORT:
                         Assert.assertEquals(rr.getGeoShort(i), lr.getGeoShort(i));
@@ -1680,8 +1680,8 @@ public final class TestUtils {
                         break;
                 }
             } catch (AssertionError e) {
-                String expected = recordToString(rr, metadataExpected, symbolsAsStrings);
-                String actual = recordToString(lr, metadataActual, symbolsAsStrings);
+                String expected = recordToString(rr, metadataExpected, genericStringMatch);
+                String actual = recordToString(lr, metadataActual, genericStringMatch);
                 Assert.assertEquals(
                         String.format(String.format("Row %d column %s[%s]", rowIndex, columnName, ColumnType.nameOf(columnType))),
                         expected,
@@ -1707,22 +1707,22 @@ public final class TestUtils {
         }
     }
 
-    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean genericStringMatch) {
         Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
             Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
             int columnType1 = metadataExpected.getColumnType(i);
-            columnType1 = symbolsAsStrings && (ColumnType.isSymbol(columnType1) || columnType1 == ColumnType.VARCHAR || columnType1 == ColumnType.CHAR) ? ColumnType.STRING : columnType1;
+            columnType1 = genericStringMatch && (ColumnType.isSymbol(columnType1) || columnType1 == ColumnType.VARCHAR || columnType1 == ColumnType.CHAR) ? ColumnType.STRING : columnType1;
             int columnType2 = metadataActual.getColumnType(i);
-            columnType2 = symbolsAsStrings && (ColumnType.isSymbol(columnType2) || columnType2 == ColumnType.VARCHAR || columnType2 == ColumnType.CHAR) ? ColumnType.STRING : columnType2;
+            columnType2 = genericStringMatch && (ColumnType.isSymbol(columnType2) || columnType2 == ColumnType.VARCHAR || columnType2 == ColumnType.CHAR) ? ColumnType.STRING : columnType2;
             Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
     }
 
-    private static void assertStringEquals(RecordMetadata metaL, RecordMetadata metaR, Record lr, Record rr, boolean symbolsAsStrings, int col) {
+    private static void assertStringEquals(RecordMetadata metaL, RecordMetadata metaR, Record lr, Record rr, boolean genericStringMatch, int col) {
         int colTypeL = metaL.getColumnType(col);
         int colTypeR = metaR.getColumnType(col);
-        if (symbolsAsStrings && colTypeL != colTypeR) {
+        if (genericStringMatch && colTypeL != colTypeR) {
             if (colTypeL != ColumnType.VARCHAR && colTypeR != ColumnType.VARCHAR) {
                 CharSequence left = readAsCharSequence(colTypeL, lr, col);
                 CharSequence right = readAsCharSequence(colTypeR, rr, col);
@@ -1813,10 +1813,10 @@ public final class TestUtils {
         }
     }
 
-    private static String recordToString(Record record, RecordMetadata metadata, boolean symbolsAsStrings) {
+    private static String recordToString(Record record, RecordMetadata metadata, boolean genericStringMatch) {
         StringSink sink = getTlSink();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            CursorPrinter.printColumn(record, metadata, i, sink, symbolsAsStrings, false);
+            CursorPrinter.printColumn(record, metadata, i, sink, genericStringMatch, false);
             if (i < n - 1) {
                 sink.put('\t');
             }
@@ -1839,10 +1839,10 @@ public final class TestUtils {
         }
     }
 
-    static void addRecordToMap(StringSink sink, Record record, RecordMetadata metadata, Map<String, Integer> map, boolean symbolsAsStrings) {
+    static void addRecordToMap(StringSink sink, Record record, RecordMetadata metadata, Map<String, Integer> map, boolean genericStringMatch) {
         sink.clear();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            CursorPrinter.printColumn(record, metadata, i, sink, symbolsAsStrings, true);
+            CursorPrinter.printColumn(record, metadata, i, sink, genericStringMatch, true);
         }
         String printed = sink.toString();
         map.compute(printed, (s, i) -> {

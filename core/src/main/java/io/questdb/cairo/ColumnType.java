@@ -24,10 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.IntObjHashMap;
-import io.questdb.std.Long256;
-import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
-import io.questdb.std.Numbers;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
@@ -114,6 +111,10 @@ public final class ColumnType {
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
 
     private ColumnType() {
+    }
+
+    public static boolean defaultStringImplementationIsUtf8() {
+        return Chars.equals(nameOf(STRING), "VARCHAR");
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {

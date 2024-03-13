@@ -858,7 +858,8 @@ public class O3Test extends AbstractO3Test {
                                 executionContextRef.get(),
                                 "zz order by ts",
                                 "x",
-                                LOG
+                                LOG,
+                                ColumnType.defaultStringImplementationIsUtf8()
                         );
                         compared.set(true);
                     } catch (SqlException e) {
@@ -941,7 +942,8 @@ public class O3Test extends AbstractO3Test {
                             executionContext,
                             "zz order by ts",
                             "x",
-                            LOG
+                            LOG,
+                            ColumnType.defaultStringImplementationIsUtf8()
                     );
                 },
                 ff

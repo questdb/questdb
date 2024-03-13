@@ -57,9 +57,9 @@ public class TestUtils {
             RecordMetadata metadataExpected,
             RecordCursor cursorActual,
             RecordMetadata metadataActual,
-            boolean symbolsAsStrings
+            boolean genericStringMatch
     ) {
-        assertEquals(metadataExpected, metadataActual, symbolsAsStrings);
+        assertEquals(metadataExpected, metadataActual, genericStringMatch);
         Record r = cursorExpected.getRecord();
         Record l = cursorActual.getRecord();
 
@@ -69,7 +69,7 @@ public class TestUtils {
                 Assert.fail("Actual cursor does not have record at " + rowIndex);
             }
             rowIndex++;
-            assertColumnValues(metadataExpected, metadataActual, l, r, rowIndex, symbolsAsStrings);
+            assertColumnValues(metadataExpected, metadataActual, l, r, rowIndex, genericStringMatch);
         }
 
         Assert.assertFalse("Expected cursor misses record " + rowIndex, cursorActual.hasNext());
@@ -81,7 +81,7 @@ public class TestUtils {
             Record lr,
             Record rr,
             long rowIndex,
-            boolean symbolsAsStrings
+            boolean genericStringMatch
     ) {
         int columnType = 0;
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
@@ -110,7 +110,7 @@ public class TestUtils {
                         Assert.assertEquals(rr.getGeoInt(i), lr.getGeoInt(i));
                         break;
                     case ColumnType.STRING:
-                        CharSequence actual = symbolsAsStrings && ColumnType.isSymbol(metadataActual.getColumnType(i)) ? lr.getSymA(i) : lr.getStrA(i);
+                        CharSequence actual = genericStringMatch && ColumnType.isSymbol(metadataActual.getColumnType(i)) ? lr.getSymA(i) : lr.getStrA(i);
                         CharSequence expected = rr.getStrA(i);
                         if (expected != actual && !Chars.equalsNc(actual, expected)) {
                             Assert.assertEquals(expected, actual);
@@ -163,14 +163,14 @@ public class TestUtils {
         }
     }
 
-    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean genericStringMatch) {
         Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
             Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
             int columnType1 = metadataExpected.getColumnType(i);
-            columnType1 = symbolsAsStrings && ColumnType.isSymbol(columnType1) ? ColumnType.STRING : columnType1;
+            columnType1 = genericStringMatch && ColumnType.isSymbol(columnType1) ? ColumnType.STRING : columnType1;
             int columnType2 = metadataActual.getColumnType(i);
-            columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
+            columnType2 = genericStringMatch && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
             Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
     }

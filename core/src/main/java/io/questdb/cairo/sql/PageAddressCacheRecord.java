@@ -33,8 +33,6 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
-import io.questdb.std.str.DirectCharSequence;
-import io.questdb.std.str.DirectString;
 
 import java.io.Closeable;
 
@@ -427,6 +425,10 @@ public class PageAddressCacheRecord implements Record, Closeable {
     @Nullable
     private Utf8Sequence getVarchar(int columnIndex, DirectUtf8String utf8view, Utf8SplitString utf8SplitView) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (dataPageAddress == 0) {
+            // Column top.
+            return null;
+        }
         final long auxPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         return VarcharTypeDriver.getValue(
                 auxPageAddress,
