@@ -1479,7 +1479,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         assertBindVariableTypes(
                 "length($1)",
                 new LengthStrFunctionFactory(),
-                "io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory.LengthStrVFunc",
+                "io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory.Func",
                 ColumnType.STRING
         );
     }
