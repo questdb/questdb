@@ -69,6 +69,22 @@ public class InTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInUuid_const() throws Exception {
+        assertQuery(
+                "ts\tu\n" +
+                        "2020-01-01T00:00:00.000000Z\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                        "2020-01-01T00:10:00.000000Z\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "2020-01-01T00:20:00.000000Z\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n",
+                "select * from tab where u in ('0010cde8-12ce-40ee-8010-a928bb8b9650', '9f9b2131-d49f-4d1d-ab81-39815c50d341'::varchar, '7bcd48d8-c77a-4655-b2a2-15ba0462ad15'::symbol);",
+                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, rnd_uuid4() u from long_sequence(20))" +
+                        " timestamp(ts) PARTITION BY MONTH",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testInChar_const() throws Exception {
         // single-char constant
         assertQuery(
