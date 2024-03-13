@@ -337,7 +337,7 @@ public interface Sender extends Closeable {
      */
     final class LineSenderBuilder {
         private static final int AUTO_FLUSH_DISABLED = 0;
-        private static final int DEFAULT_AUTO_FLUSH_INTERVAL_MILLIS = 10_000;
+        private static final int DEFAULT_AUTO_FLUSH_INTERVAL_MILLIS = 1_000;
         private static final int DEFAULT_AUTO_FLUSH_ROWS = 75_000;
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
@@ -470,7 +470,7 @@ public interface Sender extends Closeable {
          * <br>
          * You cannot set this value when auto-flush is disabled. See {@link #disableAutoFlush()}.
          * <br>
-         * Default value is 10000 milliseconds.
+         * Default value is 1000 milliseconds.
          *
          * @param autoFlushIntervalMillis interval at which the Sender automatically flushes it's buffer in milliseconds.
          * @return this instance for method chaining
