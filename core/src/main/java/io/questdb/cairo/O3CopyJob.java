@@ -161,23 +161,25 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     );
                     break;
                 case O3_BLOCK_DATA:
-                    copyData(
-                            tableWriter.getFilesFacade(),
-                            columnType,
-                            srcDataFixAddr + srcDataFixOffset,
-                            srcDataVarAddr + srcDataVarOffset,
-                            srcDataLo,
-                            srcDataHi,
-                            dstAuxAddr + dstFixOffset,
-                            dstFixFd,
-                            dstFixFileOffset,
-                            dstVarAddr,
-                            dstVarFd,
-                            dstVarOffset,
-                            dstVarAdjust,
-                            dstVarSize,
-                            mixedIOFlag
-                    );
+                    if (srcDataLo <= srcDataHi) {
+                        copyData(
+                                tableWriter.getFilesFacade(),
+                                columnType,
+                                srcDataFixAddr + srcDataFixOffset,
+                                srcDataVarAddr + srcDataVarOffset,
+                                srcDataLo,
+                                srcDataHi,
+                                dstAuxAddr + dstFixOffset,
+                                dstFixFd,
+                                dstFixFileOffset,
+                                dstVarAddr,
+                                dstVarFd,
+                                dstVarOffset,
+                                dstVarAdjust,
+                                dstVarSize,
+                                mixedIOFlag
+                        );
+                    }
                     break;
                 default:
                     break;
