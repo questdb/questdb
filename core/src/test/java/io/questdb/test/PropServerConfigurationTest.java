@@ -89,7 +89,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSendBufferSize());
         Assert.assertEquals("index.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
-        Assert.assertEquals(SecurityContext.AUTH_TYPE_CREDENTIALS, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRequiredAuthType());
+        Assert.assertEquals(SecurityContext.AUTH_TYPE_NONE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRequiredAuthType());
         Assert.assertTrue(configuration.getHttpServerConfiguration().isEnabled());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getDumpNetworkTraffic());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().allowDeflateBeforeSend());
@@ -799,6 +799,14 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMinimum4SharedWorkers() throws Exception {
+        final Properties properties = new Properties();
+        final PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        Assert.assertEquals("shared", configuration.getWorkerPoolConfiguration().getPoolName());
+        Assert.assertTrue("must be minimum of 4 shared workers", configuration.getWorkerPoolConfiguration().getWorkerCount() >= 4);
+    }
+
+    @Test
     public void testNotValidAllowedVolumePaths0() throws Exception {
         File volumeA = temp.newFolder("volumeA");
         try {
@@ -1386,14 +1394,6 @@ public class PropServerConfigurationTest {
         properties.setProperty("this.will.not.throw", "Test");
         properties.setProperty("this.will.also.not", "throw");
         newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-    }
-
-    @Test
-    public void testMinimum4SharedWorkers() throws Exception {
-        Properties properties = new Properties();
-        PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-        Assert.assertEquals("shared", configuration.getWorkerPoolConfiguration().getPoolName());
-        Assert.assertTrue("must be minimum of 4 shared workers", configuration.getWorkerPoolConfiguration().getWorkerCount() >= 4);
     }
 
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws JsonException {

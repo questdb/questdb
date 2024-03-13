@@ -423,8 +423,8 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testUnauthenticated_403() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .replyWithContent(403, "Unauthorized", "text/plain");
-        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error: Unauthorized [http-status=403]"));
+                .replyWithContent(403, "Forbidden", "text/plain");
+        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error: Forbidden [http-status=403]"));
     }
 
     @Test

@@ -146,6 +146,11 @@ public final class JavaTlsClientSocket implements Socket {
     }
 
     @Override
+    public boolean isMorePlaintextBuffered() {
+        return false;
+    }
+
+    @Override
     public boolean isTlsSessionStarted() {
         return sslEngine != null;
     }

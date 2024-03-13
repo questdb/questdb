@@ -55,6 +55,11 @@ public class PlainSocket implements Socket {
     }
 
     @Override
+    public boolean isMorePlaintextBuffered() {
+        return false;
+    }
+
+    @Override
     public boolean isTlsSessionStarted() {
         return false;
     }
