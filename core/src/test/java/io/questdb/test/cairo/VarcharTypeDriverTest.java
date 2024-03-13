@@ -86,7 +86,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     driver.setColumnRefs(auxMem.addressOf(auxOffset * 2 * Long.BYTES), dataOffset, n);
 
                     for (int i = 0; i < n; i++) {
-                        Assert.assertNull(VarcharTypeDriver.getValue((i + auxOffset) , dataMem, auxMem, 1));
+                        Assert.assertNull(VarcharTypeDriver.getValue((i + auxOffset), dataMem, auxMem, 1));
                         Assert.assertEquals(dataOffset, VarcharTypeDriver.getDataVectorSize(auxMem, (i + auxOffset) * 16L));
                     }
                 }

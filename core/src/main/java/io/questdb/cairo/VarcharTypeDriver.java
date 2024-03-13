@@ -137,11 +137,19 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     public static long getDataOffset(long auxEntry) {
+        // the first 4 bytes cannot ever be 0
+        // why? the first 4 bytes contains size and flags and there are 3 possibilities:
+        // 1. null string -> the null flag is set
+        // 2. empty string -> it's fully inlined -> the inline flag is set
+        // 3. non-empty string -> the size is non-zero
+        assert Unsafe.getUnsafe().getInt(auxEntry) != 0;
+
         return Unsafe.getUnsafe().getLong(auxEntry + 8L) >>> 16;
     }
 
     public static long getDataVectorSize(MemoryR auxMem, long offset) {
         final int raw = auxMem.getInt(offset);
+        assert raw != 0;
         final int flags = raw & 0x0f; // 4 bit flags
         final long dataOffset = getDataOffset(auxMem, offset);
 
@@ -168,6 +176,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public static Utf8Sequence getValue(@NotNull MemoryR dataMem, long offset, int ab) {
         long address = dataMem.addressOf(offset);
         int header = Unsafe.getUnsafe().getInt(address);
+        assert header != 0;
         if (isNull(header)) {
             return null;
         }
@@ -185,6 +194,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static DirectUtf8Sequence getValue(long dataMemAddr, @NotNull DirectUtf8String sequence) {
         int header = Unsafe.getUnsafe().getInt(dataMemAddr);
+        assert header != 0;
         if (isNull(header)) {
             return null;
         }
@@ -194,6 +204,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public static Utf8Sequence getValue(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
         final long auxOffset = rowNum << 4;
         int raw = auxMem.getInt(auxOffset);
+        assert raw != 0;
         int flags = raw & 0x0f; // 4 bit flags
 
         if ((flags & 4) == 4) {
@@ -231,6 +242,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     ) {
         long auxEntry = auxAddr + (row << VARCHAR_AUX_SHL);
         int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        assert raw != 0;
         int flags = raw & 0x0f; // 4 bit flags
 
         if ((flags & 4) == 4) {
