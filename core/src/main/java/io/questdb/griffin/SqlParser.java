@@ -544,15 +544,17 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "batch size must be positive integer");
             }
 
-            expectTok(lexer, "table");
-
-            tok = tok(lexer, "table name or 'if' or o3MaxLag");
+            tok = tok(lexer, "table or o3MaxLag");
             if (SqlKeywords.isO3MaxLagKeyword(tok)) {
                 int pos = lexer.getPosition();
                 model.setO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
-                expectTok(lexer, "table name or 'if'");
+                expectTok(lexer, "table");
+                tok = tok(lexer, "table name or 'if'");
             }
-        } else if(SqlKeywords.isTableKeyword(tok)) {
+            else {
+                tok = tok(lexer, "table name or 'if'");
+            }
+        } else if (SqlKeywords.isTableKeyword(tok)) {
             tok = tok(lexer, "table name or 'if'");
         } else {
             throw SqlException.$(lexer.lastTokenPosition(), "expected 'atomic' or 'table' or 'batch'");
@@ -665,7 +667,12 @@ public class SqlParser {
         model.setWalEnabled(isWalEnabled);
 
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
-        long o3MaxLag = configuration.getO3MaxLag();
+
+        long o3MaxLag = model.getO3MaxLag();
+        // if o3MaxLag wasn't explicitly set, fall back to config setting
+        if (o3MaxLag == -1) {
+            o3MaxLag = configuration.getO3MaxLag();
+        }
 
         if (tok != null && isWithKeyword(tok)) {
             ExpressionNode expr;
@@ -1598,7 +1605,7 @@ public class SqlParser {
                 tok = tok(lexer, "into");
             }
         } else if (SqlKeywords.isIntoKeyword(tok)) {
-            // noop
+            // noop, needed to stop fall through to else
         } else {
             throw SqlException.$(lexer.lastTokenPosition(), "expected 'atomic' or 'into' or 'batch'");
         }

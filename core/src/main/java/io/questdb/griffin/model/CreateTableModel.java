@@ -46,7 +46,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private ExpressionNode likeTableName;
     private int maxUncommittedRows;
     private ExpressionNode name;
-    private long o3MaxLag;
+    private long o3MaxLag = -1;
     private ExpressionNode partitionBy;
     private QueryModel queryModel;
     private ExpressionNode timestamp;
@@ -102,6 +102,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         columnNames.clear();
         columnNameIndexMap.clear();
         ignoreIfExists = false;
+        o3MaxLag = -1;
     }
 
     public CharSequenceObjHashMap<ColumnCastModel> getColumnCastModels() {
@@ -289,7 +290,18 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.putAscii("create table ");
+        sink.putAscii("create");
+        if (!isAtomic()) {
+            sink.putAscii(" batch ");
+            sink.put(batchSize);
+            if (o3MaxLag != -1) {
+                sink.putAscii(" o3MaxLag ");
+                sink.put(o3MaxLag);
+            }
+        } else {
+            sink.putAscii(" atomic");
+        }
+        sink.putAscii(" table ");
         sink.put(getName().token);
         if (getQueryModel() != null) {
             sink.putAscii(" as (");

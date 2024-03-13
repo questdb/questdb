@@ -1525,6 +1525,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateAsSelectWithBatching() throws Exception {
+        assertCreateTable(
+                "create batch 10000 o3MaxLag 300000000 table tst as (select-choose a, b, t from (select-virtual [rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t] rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t from (long_sequence(100000))))",
+                "create batch 10000 table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000)))"
+        );
+    }
+
+    @Test
+    public void testCreateAsSelectWithBatchingAndLag() throws Exception {
+        assertCreateTable(
+                "create batch 10000 o3MaxLag 1000000 table tst as (select-choose a, b, t from (select-virtual [rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t] rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t from (long_sequence(100000))))",
+                "create batch 10000 o3MaxLag 1s table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000)))"
+        );
+    }
+
+    @Test
     public void testCreateAsSelectDuplicateColumn0() throws Exception {
         assertSyntaxError(
                 "create table tab as (select rnd_byte() b, rnd_boolean() b from long_sequence(1))",
@@ -1585,7 +1601,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateAsSelectTimestampNotRequired() throws SqlException {
         assertCreateTable(
-                "create table tst as (select-choose a, b, t from (select-virtual [rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t] rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t from (long_sequence(100000))))",
+                "create batch 8192 o3MaxLag 300000000 table tst as (select-choose a, b, t from (select-virtual [rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t] rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t from (long_sequence(100000))))",
                 "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000)))"
         );
     }
@@ -1668,7 +1684,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTable() throws SqlException {
         assertCreateTable(
-                "create table x (" +
+                "create atomic table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -1702,7 +1718,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableAsSelect() throws SqlException {
         assertCreateTable(
-                "create table X as (select-choose a, b, c from (select [a, b, c] from tab))",
+                "create batch 8192 o3MaxLag 300000000 table X as (select-choose a, b, c from (select [a, b, c] from tab))",
                 "create table X as ( select a, b, c from tab )",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1714,7 +1730,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableAsSelectIndex() throws SqlException {
         assertCreateTable(
-                "create table X as (select-choose a, b, c from (select [a, b, c] from tab)), index(b capacity 256)",
+                "create batch 8192 o3MaxLag 300000000 table X as (select-choose a, b, c from (select [a, b, c] from tab)), index(b capacity 256)",
                 "create table X as ( select a, b, c from tab ), index(b)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1727,7 +1743,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableAsSelectIndexCapacity() throws SqlException {
         assertCreateTable(
-                "create table X as (select-choose a, b, c from (select [a, b, c] from tab)), index(b capacity 64)",
+                "create batch 8192 o3MaxLag 300000000 table X as (select-choose a, b, c from (select [a, b, c] from tab)), index(b capacity 64)",
                 "create table X as ( select a, b, c from tab ), index(b capacity 64)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1740,7 +1756,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableAsSelectTimestamp() throws SqlException {
         assertCreateTable(
-                "create table X as (select-choose a, b, c from (select [a, b, c] from tab)) timestamp(b)",
+                "create batch 8192 o3MaxLag 300000000 table X as (select-choose a, b, c from (select [a, b, c] from tab)) timestamp(b)",
                 "create table X as ( select a, b, c from tab ) timestamp(b)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1772,7 +1788,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCacheCapacity() throws SqlException {
         assertCreateTable(
-                "create table x (" +
+                "create atomic table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -1808,7 +1824,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastCapacityDef() throws SqlException {
         assertCreateTable(
-                "create table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 16 cache)",
+                "create batch 8192 o3MaxLag 300000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 16 cache)",
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 16)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1822,7 +1838,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableCastDef() throws SqlException {
         // these numbers in expected string are position of type keyword
         assertCreateTable(
-                "create table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 128 cache)",
+                "create batch 8192 o3MaxLag 300000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 128 cache)",
                 "create table x as (tab), cast(a as double), cast(c as symbol)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1891,7 +1907,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexDef() throws SqlException {
         assertCreateTable(
-                "create table x as (select-choose a, b, c from (select [a, b, c] from tab)), index(c capacity 512), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache)",
+                "create batch 8192 o3MaxLag 300000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), index(c capacity 512), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache)",
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity 300)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1932,7 +1948,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastMultiSpaceMultiNewlineAndComment() throws SqlException {
         assertCreateTable(
-                "create table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:38), cast(c as SYMBOL:83 capacity 16 cache)",
+                "create batch 8192 o3MaxLag 300000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:38), cast(c as SYMBOL:83 capacity 16 cache)",
                 "create table x as (tab), cast   (a as double  ), cast\n--- this is a comment\n\n(c as symbol capacity 16\n)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1946,7 +1962,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableCastRoundedSymbolCapacityDef() throws SqlException {
         // 20 is rounded to next power of 2, which is 32
         assertCreateTable(
-                "create table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 cache)",
+                "create batch 8192 o3MaxLag 300000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 cache)",
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -2017,7 +2033,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableForKafka() throws SqlException {
         assertCreateTable(
-                "create table quickstart-events4 (" +
+                "create atomic table quickstart-events4 (" +
                         "flag BOOLEAN, " +
                         "id8 SHORT, " +
                         "id16 SHORT, " +
@@ -2052,7 +2068,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateTableIfNotExistsTableNameIsQuotedKeyword() throws SqlException {
-        assertModel("create table from (a INT)", "create table if not exists \"from\" (a int)", ExecutionModel.CREATE_TABLE);
+        assertModel("create atomic table from (a INT)", "create table if not exists \"from\" (a int)", ExecutionModel.CREATE_TABLE);
     }
 
     @Test
@@ -2077,7 +2093,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableInPlaceIndex() throws SqlException {
         assertCreateTable(
-                "create table x (" +
+                "create atomic table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -2113,7 +2129,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableInPlaceIndexAndBlockSize() throws SqlException {
         assertCreateTable(
-                "create table x (" +
+                "create atomic table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -2239,7 +2255,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableInPlaceIndexCapacityRounding() throws SqlException {
         assertCreateTable(
-                "create table x (" +
+                "create atomic table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -2274,52 +2290,52 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableInVolume() throws SqlException {
         Assume.assumeFalse(Os.isWindows()); // soft links are not supported in Windows
         assertCreateTable(
-                "create table tst0 (i INT) in volume 'volume'",
+                "create atomic table tst0 (i INT) in volume 'volume'",
                 "create table tst0 (i int) in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst1 (i INT) in volume 'volume'",
+                "create atomic table tst1 (i INT) in volume 'volume'",
                 "create table tst1 (i int) in volume volume"
         );
 
         assertCreateTable(
-                "create table tst2 (i INT, ts TIMESTAMP) timestamp(ts) in volume 'volume'",
+                "create atomic table tst2 (i INT, ts TIMESTAMP) timestamp(ts) in volume 'volume'",
                 "create table tst2 (i int, ts timestamp) timestamp(ts) in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create atomic table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
                 "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create atomic table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
                 "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day with maxUncommittedRows=7, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create atomic table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
                 "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create atomic table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
                 "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst7 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) in volume 'volume'",
+                "create atomic table tst7 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) in volume 'volume'",
                 "create table tst7 (i symbol, ts timestamp), index(i capacity 32) in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst8 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) in volume 'volume'",
+                "create atomic table tst8 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) in volume 'volume'",
                 "create table tst8 (i symbol, ts timestamp), index(i capacity 32) with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst8 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create atomic table tst8 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
                 "create table tst8 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
     }
@@ -2329,22 +2345,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
         Assume.assumeFalse(Os.isWindows()); // soft links are not supported in Windows
 
         assertCreateTable(
-                "create table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create atomic table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
                 "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day bypass wal in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create atomic table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
                 "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create atomic table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
                 "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create atomic table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
                 "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
     }
@@ -2415,22 +2431,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
         Assume.assumeFalse(Os.isWindows()); // soft links are not supported in Windows
 
         assertCreateTable(
-                "create table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
+                "create atomic table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
                 "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day wal in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
+                "create atomic table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
                 "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
+                "create atomic table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
                 "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
 
         assertCreateTable(
-                "create table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
+                "create atomic table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
                 "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'"
         );
     }
@@ -2545,7 +2561,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableLike() throws Exception {
         assertCreateTable(
-                "create table x (like y)",
+                "create batch 8192 table x (like y)",
                 "create table x (like y)"
         );
     }
@@ -2613,7 +2629,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableNoCache() throws SqlException {
         assertCreateTable(
-                "create table x (" +
+                "create atomic table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -2649,7 +2665,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableNoCacheIndex() throws SqlException {
         assertCreateTable(
-                "create table x (" +
+                "create atomic table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -2685,7 +2701,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableOutOfPlaceIndex() throws SqlException {
         assertCreateTable(
-                "create table x (" +
+                "create atomic table x (" +
                         "a SYMBOL capacity 128 cache index capacity 256," +
                         " b BYTE," +
                         " c SHORT," +
@@ -2723,7 +2739,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableOutOfPlaceIndexAndCapacity() throws SqlException {
         assertCreateTable(
-                "create table x (" +
+                "create atomic table x (" +
                         "a SYMBOL capacity 128 cache index capacity 16," +
                         " b BYTE," +
                         " c SHORT," +
@@ -2861,7 +2877,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableRoundedSymbolCapacity() throws SqlException {
         assertCreateTable(
-                "create table x (" +
+                "create atomic table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -2934,7 +2950,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateTableTableNameIsQuotedKeyword() throws SqlException {
-        assertModel("create table from (a INT)", "create table \"from\" (a int)", ExecutionModel.CREATE_TABLE);
+        assertModel("create atomic table from (a INT)", "create table \"from\" (a int)", ExecutionModel.CREATE_TABLE);
     }
 
     @Test
@@ -3023,7 +3039,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithGeoHash1() throws Exception {
         assertCreateTable(
-                "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY",
+                "create atomic table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY",
                 "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
         );
     }
@@ -3031,7 +3047,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithGeoHash2() throws Exception {
         assertCreateTable(
-                "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY",
+                "create atomic table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY",
                 "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
         );
     }
@@ -3097,7 +3113,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithO3() throws Exception {
         assertCreateTable(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",
+                "create atomic table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;"
         );
     }
