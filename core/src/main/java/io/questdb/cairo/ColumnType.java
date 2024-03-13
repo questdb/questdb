@@ -105,6 +105,7 @@ public final class ColumnType {
     // column type version as written to the metadata file
     public static final int VERSION = 426;
     static final int[] GEO_TYPE_SIZE_POW2;
+    private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;
     private static final int BITS_OFFSET = 8;
     private static final short[][] OVERLOAD_PRIORITY;
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
@@ -261,6 +262,24 @@ public final class ColumnType {
         return columnType == VARCHAR;
     }
 
+    public static void makeUtf16DefaultString() {
+        if (ALLOW_DEFAULT_STRING_CHANGE) {
+            typeNameMap.put(STRING, "STRING");
+            nameTypeMap.put("STRING", STRING);
+            typeNameMap.put(VARCHAR, "VARCHAR");
+            nameTypeMap.put("VARCHAR", VARCHAR);
+        }
+    }
+
+    public static void makeUtf8DefaultString() {
+        if (ALLOW_DEFAULT_STRING_CHANGE) {
+            typeNameMap.put(VARCHAR, "STRING");
+            nameTypeMap.put("STRING", VARCHAR);
+            typeNameMap.put(STRING, "VARCHAR");
+            nameTypeMap.put("VARCHAR", STRING);
+        }
+    }
+
     public static String nameOf(int columnType) {
         final int index = typeNameMap.keyIndex(columnType);
         if (index > -1) {
@@ -285,6 +304,10 @@ public final class ColumnType {
     public static int pow2SizeOfBits(int bits) {
         assert bits <= GEOLONG_MAX_BITS;
         return GEO_TYPE_SIZE_POW2[bits];
+    }
+
+    public static void resetStringToDefault() {
+        makeUtf16DefaultString();
     }
 
     public static int setDesignatedTimestampBit(int tsType, boolean designated) {

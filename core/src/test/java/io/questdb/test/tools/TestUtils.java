@@ -1036,6 +1036,23 @@ public final class TestUtils {
         return new SqlExecutionContextImpl(engine, workerCount).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), bindVariableService);
     }
 
+    public static void createTable(TableModel model, CairoConfiguration configuration, int tableVersion, int tableId, TableToken tableToken) {
+        try (
+                Path path = new Path();
+                MemoryMARW mem = Vm.getMARWInstance()
+        ) {
+            TableUtils.createTable(
+                    configuration,
+                    mem,
+                    path,
+                    model,
+                    tableVersion,
+                    tableId,
+                    tableToken.getDirName()
+            );
+        }
+    }
+
     public static void createTestPath(CharSequence root) {
         try (Path path = new Path().of(root).$()) {
             if (Files.exists(path)) {
@@ -1568,6 +1585,16 @@ public final class TestUtils {
         }
     }
 
+    private static void assertCharEquals(RecordMetadata metaL, RecordMetadata metaR, Record lr, Record rr, boolean symbolsAsStrings, int col) {
+        if (symbolsAsStrings && metaL.getColumnType(col) != metaR.getColumnType(col)) {
+            char right = readAsChar(metaR, rr, col);
+            char left = readAsChar(metaL, lr, col);
+            Assert.assertEquals(left, right);
+            return;
+        }
+        Assert.assertEquals(rr.getChar(col), lr.getChar(col));
+    }
+
     private static void assertColumnValues(
             RecordMetadata metadataExpected,
             RecordMetadata metadataActual,
@@ -1606,19 +1633,16 @@ public final class TestUtils {
                     case ColumnType.GEOINT:
                         Assert.assertEquals(rr.getGeoInt(i), lr.getGeoInt(i));
                         break;
-                    case ColumnType.STRING:
-                        CharSequence actual = symbolsAsStrings && ColumnType.isSymbol(metadataActual.getColumnType(i)) ? lr.getSymA(i) : lr.getStrA(i);
-                        CharSequence expected = rr.getStrA(i);
-                        TestUtils.assertEquals(expected, actual);
-                        break;
                     case ColumnType.SYMBOL:
-                        Assert.assertEquals(rr.getSymA(i), lr.getSymA(i));
+                    case ColumnType.STRING:
+                    case ColumnType.VARCHAR:
+                        assertStringEquals(metadataActual, metadataExpected, lr, rr, symbolsAsStrings, i);
                         break;
                     case ColumnType.SHORT:
                         Assert.assertEquals(rr.getShort(i), lr.getShort(i));
                         break;
                     case ColumnType.CHAR:
-                        Assert.assertEquals(rr.getChar(i), lr.getChar(i));
+                        assertCharEquals(metadataActual, metadataExpected, lr, rr, symbolsAsStrings, i);
                         break;
                     case ColumnType.GEOSHORT:
                         Assert.assertEquals(rr.getGeoShort(i), lr.getGeoShort(i));
@@ -1650,9 +1674,6 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
                         Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
                         break;
-                    case ColumnType.VARCHAR:
-                        Assert.assertTrue(Utf8s.equalsNc(rr.getVarcharA(i), lr.getVarcharA(i)));
-                        break;
                     default:
                         // Unknown record type.
                         assert false;
@@ -1672,18 +1693,6 @@ public final class TestUtils {
         }
     }
 
-    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
-        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
-        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
-            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
-            int columnType1 = metadataExpected.getColumnType(i);
-            columnType1 = symbolsAsStrings && ColumnType.isSymbol(columnType1) ? ColumnType.STRING : columnType1;
-            int columnType2 = metadataActual.getColumnType(i);
-            columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
-            Assert.assertEquals("Column type " + i, columnType1, columnType2);
-        }
-    }
-
     private static void assertEquals(Long256 expected, Long256 actual) {
         if (expected == actual) return;
         if (actual == null) {
@@ -1698,20 +1707,56 @@ public final class TestUtils {
         }
     }
 
-    public static void createTable(TableModel model, CairoConfiguration configuration, int tableVersion, int tableId, TableToken tableToken) {
-        try (
-                Path path = new Path();
-                MemoryMARW mem = Vm.getMARWInstance()
-        ) {
-            TableUtils.createTable(
-                    configuration,
-                    mem,
-                    path,
-                    model,
-                    tableVersion,
-                    tableId,
-                    tableToken.getDirName()
-            );
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
+        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
+        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
+            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
+            int columnType1 = metadataExpected.getColumnType(i);
+            columnType1 = symbolsAsStrings && (ColumnType.isSymbol(columnType1) || columnType1 == ColumnType.VARCHAR || columnType1 == ColumnType.CHAR) ? ColumnType.STRING : columnType1;
+            int columnType2 = metadataActual.getColumnType(i);
+            columnType2 = symbolsAsStrings && (ColumnType.isSymbol(columnType2) || columnType2 == ColumnType.VARCHAR || columnType2 == ColumnType.CHAR) ? ColumnType.STRING : columnType2;
+            Assert.assertEquals("Column type " + i, columnType1, columnType2);
+        }
+    }
+
+    private static void assertStringEquals(RecordMetadata metaL, RecordMetadata metaR, Record lr, Record rr, boolean symbolsAsStrings, int col) {
+        int colTypeL = metaL.getColumnType(col);
+        int colTypeR = metaR.getColumnType(col);
+        if (symbolsAsStrings && colTypeL != colTypeR) {
+            if (colTypeL != ColumnType.VARCHAR && colTypeR != ColumnType.VARCHAR) {
+                CharSequence left = readAsCharSequence(colTypeL, lr, col);
+                CharSequence right = readAsCharSequence(colTypeR, rr, col);
+                TestUtils.assertEquals(left, right);
+            } else {
+                if (colTypeL == ColumnType.VARCHAR) {
+                    Utf8Sequence left = lr.getVarcharA(col);
+                    CharSequence right = readAsCharSequence(colTypeR, rr, col);
+                    if (!Utf8s.equalsNc(right, left)) {
+                        Assert.fail("Expected " + right + ", but was: " + left);
+                    }
+                } else {
+                    CharSequence left = readAsCharSequence(colTypeL, lr, col);
+                    Utf8Sequence right = rr.getVarcharA(col);
+                    if (!Utf8s.equalsNc(left, right)) {
+                        Assert.fail("Expected " + right + ", but was: " + left);
+                    }
+                }
+            }
+            return;
+        }
+
+        switch (colTypeL) {
+            case ColumnType.SYMBOL:
+                TestUtils.assertEquals(rr.getSymA(col), lr.getSymA(col));
+                break;
+            case ColumnType.STRING:
+                TestUtils.assertEquals(rr.getStrA(col), lr.getStrA(col));
+                break;
+            case ColumnType.VARCHAR:
+                TestUtils.assertEquals(rr.getVarcharA(col), lr.getVarcharA(col));
+                break;
+            default:
+                throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(colTypeL));
         }
     }
 
@@ -1730,6 +1775,42 @@ public final class TestUtils {
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
         }
         return increment;
+    }
+
+    private static char readAsChar(RecordMetadata metaR, Record rr, int col) {
+        switch (metaR.getColumnType(col)) {
+            case ColumnType.CHAR:
+                return rr.getChar(col);
+            case ColumnType.SYMBOL:
+                CharSequence symbol = rr.getSymA(0);
+                Assert.assertTrue(symbol == null || symbol.length() == 1);
+                return symbol == null ? 0 : symbol.charAt(0);
+            case ColumnType.STRING:
+                CharSequence str = rr.getStrA(col);
+                Assert.assertTrue(str == null || str.length() == 1);
+                return rr.getStrA(col).charAt(0);
+            case ColumnType.VARCHAR:
+                Utf8Sequence vc = rr.getVarcharA(col);
+                Assert.assertTrue(vc == null || vc.size() == 1);
+                return vc == null ? 0 : vc.asAsciiCharSequence().charAt(0);
+            default:
+                throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(metaR.getColumnType(col)));
+        }
+    }
+
+    @Nullable
+    private static CharSequence readAsCharSequence(int columnType, Record rr, int col) {
+        switch (columnType) {
+            case ColumnType.SYMBOL:
+                return rr.getSymA(col);
+            case ColumnType.STRING:
+                return rr.getStrA(col);
+            case ColumnType.VARCHAR:
+                Utf8Sequence vc = rr.getVarcharA(col);
+                return vc == null ? null : vc.toString();
+            default:
+                throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(columnType));
+        }
     }
 
     private static String recordToString(Record record, RecordMetadata metadata, boolean symbolsAsStrings) {

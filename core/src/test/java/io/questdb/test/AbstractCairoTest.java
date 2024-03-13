@@ -402,6 +402,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.initGriffin(circuitBreaker);
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
+
+        ColumnType.makeUtf8DefaultString();
     }
 
     public static void snapshotMemoryUsage() {

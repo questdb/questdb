@@ -4363,7 +4363,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long srcOooHi,
             long srcOooMax,
             long oooTimestampMin,
-            long oooTimestampMax,
             long partitionTimestamp,
             long srcDataMax,
             boolean last,
@@ -4386,7 +4385,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     srcOooHi,
                     srcOooMax,
                     oooTimestampMin,
-                    oooTimestampMax,
                     partitionTimestamp,
                     maxTimestamp,
                     srcDataMax,
@@ -4413,7 +4411,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     srcOooHi,
                     srcOooMax,
                     oooTimestampMin,
-                    oooTimestampMax,
                     partitionTimestamp,
                     maxTimestamp,
                     srcDataMax,
@@ -5144,7 +5141,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (o3dstAuxOffset > 0) {
                     o3dstAuxMem.jumpTo(o3dstAuxOffset);
-                    o3dstDataOffset = columnTypeDriver.getDataVectorOffset(o3dstAuxMem.addressOf(o3dstAuxOffset), 0);
+                    o3dstDataOffset = columnTypeDriver.getDataVectorSizeAt(o3dstAuxMem.addressOf(0), dstRowCount - 1);
                 } else {
                     o3dstDataOffset = 0;
                 }
@@ -6041,7 +6038,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 srcOooHi,
                                 srcOooMax,
                                 o3TimestampMin,
-                                o3TimestampMax,
                                 partitionTimestamp,
                                 srcDataMax,
                                 last,

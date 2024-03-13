@@ -45,10 +45,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Rule;
+import org.junit.*;
 import org.junit.rules.Timeout;
 
 import java.util.concurrent.TimeUnit;
@@ -69,6 +66,11 @@ public class AbstractO3Test extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private RecordToRowCopier copier;
+
+    @BeforeClass
+    public static void setUpClass() {
+        ColumnType.makeUtf8DefaultString();
+    }
 
     @Before
     public void clearRecordToRowCopier() {
