@@ -363,6 +363,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi) {
+        if (rowLo > rowHi) {
+            return 0;
+        }
         if (rowLo > 0) {
             return getDataVectorSizeAt(auxMemAddr, rowHi) - getDataVectorOffset(auxMemAddr, rowLo);
         }
@@ -540,6 +543,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         }
         // size of the string at this offset
         final int size = (raw >> 4) & 0xffffff;
+        assert size > 6: String.format("size %,d <= 6, dataOffset %,d", size, dataOffset);
+
         return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
     }
 

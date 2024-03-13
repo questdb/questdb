@@ -427,7 +427,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     partCount++;
                     break;
                 default:
-                    break;
             }
 
             // offset 2
