@@ -372,6 +372,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstDataSize,
             boolean mixedIOFlag
     ) {
+        assert srcLo <= srcHi : String.format("srcLo %,d > srcHi %,d", srcLo, srcHi);
+
         // we can find out the edge of string column in one of two ways
         // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
         // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
