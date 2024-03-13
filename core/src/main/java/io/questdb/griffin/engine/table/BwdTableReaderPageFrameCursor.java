@@ -178,8 +178,9 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
                     long auxOffsetLo = columnTypeDriver.getAuxVectorOffset(partitionLoAdjusted);
                     long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
 
-                    long dataAddress = colMem.getPageAddress(0);
                     long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
+                    // some varsize columns may not have data memory (fully inlined)
+                    long dataAddress = dataSize > 0 ? colMem.getPageAddress(0) : 0;
 
                     columnPageAddress.setQuick(i * 2, dataAddress);
                     columnPageAddress.setQuick(i * 2 + 1, auxAddress + auxOffsetLo);
