@@ -425,11 +425,11 @@ public class PageAddressCacheRecord implements Record, Closeable {
     @Nullable
     private Utf8Sequence getVarchar(int columnIndex, DirectUtf8String utf8view, Utf8SplitString utf8SplitView) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        if (dataPageAddress == 0) {
+        final long auxPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
+        if (auxPageAddress == 0) {
             // Column top.
             return null;
         }
-        final long auxPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         return VarcharTypeDriver.getValue(
                 auxPageAddress,
                 dataPageAddress,
