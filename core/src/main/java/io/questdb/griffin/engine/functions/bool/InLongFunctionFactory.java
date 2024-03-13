@@ -66,6 +66,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                 case ColumnType.BYTE:
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
+                case ColumnType.VARCHAR:
                     break;
                 default:
                     throw SqlException.position(argPositions.get(i)).put("cannot compare LONG with type ").put(ColumnType.nameOf(func.getType()));
@@ -107,6 +108,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
+                case ColumnType.VARCHAR:
                     CharSequence tsValue = func.getStrA(null);
                     val = (tsValue != null) ? tryParseLong(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;
                     break;
@@ -239,6 +241,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                         break;
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
+                    case ColumnType.VARCHAR:
                         CharSequence str = func.getStrA(rec);
                         inVal = Numbers.parseLongQuiet(str);
                         break;

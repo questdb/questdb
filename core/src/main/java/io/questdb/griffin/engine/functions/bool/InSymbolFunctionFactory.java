@@ -65,6 +65,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.STRING:
+                case ColumnType.VARCHAR:
                     if (func.isRuntimeConstant()) {
                         // string bind variable case
                         if (deferredValues == null) {
