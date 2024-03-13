@@ -156,4 +156,37 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testOrderByIsAppliedAfterDistinctInt() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (x int)");
+
+            assertPlan(
+                    "select DISTINCT x from tab order by x DESC",
+                    "Sort light\n" +
+                            "  keys: [x desc]\n" +
+                            "    DistinctKey\n" +
+                            "        GroupBy vectorized: true workers: 1\n" +
+                            "          keys: [x]\n" +
+                            "          values: [count(*)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select DISTINCT x from tab order by x ASC",
+                    "Sort light\n" +
+                            "  keys: [x]\n" +
+                            "    DistinctKey\n" +
+                            "        GroupBy vectorized: true workers: 1\n" +
+                            "          keys: [x]\n" +
+                            "          values: [count(*)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
+            );
+        });
+    }
 }

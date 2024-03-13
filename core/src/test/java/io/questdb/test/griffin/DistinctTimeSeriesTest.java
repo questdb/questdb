@@ -204,4 +204,337 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testOrderByTimestampIsPushedDownForDistinctTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (x int, y long, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select DISTINCT ts from tab order by ts DESC",
+                    "DistinctTimeSeries\n" +
+                            "  keys: ts\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select DISTINCT ts from tab order by ts ASC",
+                    "DistinctTimeSeries\n" +
+                            "  keys: ts\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByTimestampIsPushedDownForDistinctTimestampAndOtherColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (x int, y long, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select DISTINCT ts, x, y from tab order by ts DESC",
+                    "DistinctTimeSeries\n" +
+                            "  keys: ts,x,y\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select DISTINCT ts, x, y from tab order by ts ASC",
+                    "DistinctTimeSeries\n" +
+                            "  keys: ts,x,y\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByMultipleColumnsIsNotPushedDownForDistinctTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (x int, y long, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select DISTINCT ts, x, y from tab order by ts, x DESC",
+                    "Sort light\n" +
+                            "  keys: [ts, x desc]\n" +
+                            "    DistinctTimeSeries\n" +
+                            "      keys: ts,x,y\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select DISTINCT ts, x, y from tab order by ts, x ASC",
+                    "Sort light\n" +
+                            "  keys: [ts, x]\n" +
+                            "    DistinctTimeSeries\n" +
+                            "      keys: ts,x,y\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByTimestampAndDistinctDoesNotIncludeTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (x int, y long, ts timestamp) timestamp(ts)");
+
+            assertException(
+                    "select DISTINCT x, y from tab order by ts DESC",
+                    39,
+                    "ORDER BY expressions must appear in select list."
+            );
+
+            assertException(
+                    "select DISTINCT x, y from tab order by ts ASC",
+                    39,
+                    "ORDER BY expressions must appear in select list."
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByColumnOtherThanTimestampIsNotPushedDown() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (x int, y long, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select DISTINCT ts, x from tab order by x DESC",
+                    "Sort light\n" +
+                            "  keys: [x desc]\n" +
+                            "    DistinctTimeSeries\n" +
+                            "      keys: ts,x\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select DISTINCT ts, x from tab order by x ASC",
+                    "Sort light\n" +
+                            "  keys: [x]\n" +
+                            "    DistinctTimeSeries\n" +
+                            "      keys: ts,x\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByTimestampIsPushedDownToSubQueryWithDistinctTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (x int, y long, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from (select DISTINCT ts from tab order by ts ASC) order by ts DESC",
+                    "DistinctTimeSeries\n" +
+                            "  keys: ts\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select * from (select DISTINCT ts from tab order by ts DESC) order by ts ASC",
+                    "DistinctTimeSeries\n" +
+                            "  keys: ts\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDistinctIncludingTimestampOverSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (x int, y long, ts timestamp) timestamp(ts)");
+            ddl("create table tab2 (x int, y long, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select DISTINCT ts, x, y from (tab WHERE x > y) order by ts DESC",
+                    "Sort light\n" +
+                            "  keys: [ts desc]\n" +
+                            "    DistinctTimeSeries\n" +
+                            "      keys: ts,x,y\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: y<x\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select DISTINCT ts, x, y from (SELECT tab.ts, tab.x, tab2.y FROM tab ASOF JOIN tab2) order by ts DESC",
+                    "Sort\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Distinct\n" +
+                            "      keys: ts,x,y\n" +
+                            "        SelectedRecord\n" +
+                            "            AsOf Join\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab2\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAliasIsHandledCorrectlyWhilePushingDownOrderByAdvice() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (x int, y long, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select DISTINCT ts as date from tab order by tab.ts DESC",
+                    "DistinctTimeSeries\n" +
+                            "  keys: date\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select DISTINCT ts as date from tab order by ts DESC",
+                    "DistinctTimeSeries\n" +
+                            "  keys: date\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select DISTINCT ts as date from tab order by date DESC",
+                    "DistinctTimeSeries\n" +
+                            "  keys: date\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select DISTINCT tab.ts as date from tab order by date DESC",
+                    "DistinctTimeSeries\n" +
+                            "  keys: date\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testPositionalNumbersInOrderByAreHandledCorrectlyWhilePushingDownOrderByAdvice() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (x int, y long, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select DISTINCT ts, x, y from tab order by 1 DESC",
+                    "DistinctTimeSeries\n" +
+                            "  keys: ts,x,y\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: tab\n"
+            );
+
+            assertPlan(
+                    "select DISTINCT ts, x, y from tab order by 1",
+                    "DistinctTimeSeries\n" +
+                            "  keys: ts,x,y\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByAdviceIsNotPushedDownForLtJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab1 (x int, y long, ts timestamp) timestamp(ts)");
+            ddl("create table tab2 (x int, y long, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select DISTINCT tab1.ts, tab1.x, tab2.x from tab1 LT JOIN tab2 order by tab1.ts DESC",
+                    "Sort\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Distinct\n" +
+                            "      keys: ts,x,x1\n" +
+                            "        SelectedRecord\n" +
+                            "            Lt Join\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab1\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab2\n"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByAdviceIsNotPushedDownForAsofJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab1 (x int, y long, ts timestamp) timestamp(ts)");
+            ddl("create table tab2 (x int, y long, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select DISTINCT tab1.ts, tab1.x, tab2.x from tab1 ASOF JOIN tab2 order by tab1.ts DESC",
+                    "Sort\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Distinct\n" +
+                            "      keys: ts,x,x1\n" +
+                            "        SelectedRecord\n" +
+                            "            AsOf Join\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab1\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab2\n"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByAdviceIsNotPushedDownForSpliceJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab1 (x int, y long, ts timestamp) timestamp(ts)");
+            ddl("create table tab2 (x int, y long, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select DISTINCT tab1.ts, tab1.x, tab2.x from tab1 SPLICE JOIN tab2 order by tab1.ts DESC",
+                    "Sort\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Distinct\n" +
+                            "      keys: ts,x,x1\n" +
+                            "        SelectedRecord\n" +
+                            "            Splice Join\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab1\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab2\n"
+            );
+        });
+    }
 }
