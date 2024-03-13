@@ -88,7 +88,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "  },\r\n" +
             "  {\r\n" +
             "    \"name\": \"DropOff_datetime\",\r\n" +
-            "    \"type\": \"STRING\"\r\n" +
+            "    \"type\": \"VARCHAR\"\r\n" +
             "  }\r\n" +
             "]\r\n" +
             "\r\n";
@@ -188,7 +188,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "B00014,,,,2017-02-01 15:33:00\r\n" +
             "B00014,,,,2017-02-01 15:45:00\r\n" +
             REQUEST_FOOTER;
-    private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+STRING)";
+    private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+VARCHAR)";
     private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
     private final String ValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
@@ -207,7 +207,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|              0  |                                              Col1  |                   STRING  |           0  |\r\n" +
             "|              1  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
-            "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
+            "|              2  |                                  DropOff_datetime  |                  VARCHAR  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
@@ -218,7 +218,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "\r\n" +
-            "0147\r\n" +
+            "0148\r\n" +
             "{\"status\":\"OK\"," +
             "\"location\":\"trips\"," +
             "\"rowsRejected\":0," +
@@ -229,7 +229,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "\"columns\":[" +
             "{\"name\":\"Col1\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
             "{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
-            "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
+            "{\"name\":\"DropOff_datetime\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0}" +
             "]}\r\n" +
             "00\r\n" +
             "\r\n";
@@ -263,7 +263,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "\r\n" +
-            "012a\r\n" +
+            "012b\r\n" +
             "{\"status\":\"OK\"," +
             "\"location\":\"trips\"," +
             "\"rowsRejected\":0," +
@@ -273,7 +273,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "\"columns\":[" +
             "{\"name\":\"Col1\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
             "{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
-            "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
+            "{\"name\":\"DropOff_datetime\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0}" +
             "]}\r\n" +
             "00\r\n" +
             "\r\n";
@@ -294,7 +294,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "|              0  |                                              Col1  |                   STRING  |           0  |\r\n" +
             "|              1  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
-            "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
+            "|              2  |                                  DropOff_datetime  |                  VARCHAR  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
@@ -305,7 +305,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "\r\n" +
-            "0186\r\n" +
+            "0187\r\n" +
             "{\"status\":\"OK\"," +
             "\"location\":\"trips\"," +
             "\"rowsRejected\":0," +
@@ -318,7 +318,7 @@ public class ImportIODispatcherTest extends AbstractTest {
             "\"columns\":[" +
             "{\"name\":\"Col1\",\"type\":\"STRING\",\"size\":0,\"errors\":0}," +
             "{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
-            "{\"name\":\"DropOff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
+            "{\"name\":\"DropOff_datetime\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0}" +
             "]}\r\n" +
             "00\r\n" +
             "\r\n";
@@ -466,14 +466,14 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .run((engine) -> new SendAndReceiveRequestBuilder().executeMany(executor -> {
                     executor.execute(
-                            ValidImportRequest1.replace("STRING", "SYMBOL"),
-                            ValidImportResponse1.replace("STRING", "SYMBOL")
+                            ValidImportRequest1.replace("VARCHAR", "SYMBOL"),
+                            ValidImportResponse1.replace("VARCHAR", "SYMBOL").replace(" SYMBOL", "  SYMBOL")
                     );
 
                     executor.executeWithStandardHeaders(
                             "GET /query?query=select+*+from+trips HTTP/1.1\r\n",
                             "051b\r\n" +
-                                    "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"},{\"name\":\"DropOff_datetime\",\"type\":\"SYMBOL\"}],\"timestamp\":-1,\"dataset\":[[\"B00008\",\"2017-02-01T00:30:00.000000Z\",null],[\"B00008\",\"2017-02-01T00:40:00.000000Z\",null],[\"B00009\",\"2017-02-01T00:50:00.000000Z\",null],[\"B00013\",\"2017-02-01T00:51:00.000000Z\",null],[\"B00013\",\"2017-02-01T01:41:00.000000Z\",null],[\"B00013\",\"2017-02-01T02:00:00.000000Z\",null],[\"B00013\",\"2017-02-01T03:53:00.000000Z\",null],[\"B00013\",\"2017-02-01T04:44:00.000000Z\",null],[\"B00013\",\"2017-02-01T05:05:00.000000Z\",null],[\"B00013\",\"2017-02-01T06:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T07:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T08:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T09:46:00.000000Z\",null],[\"B00014\",\"2017-02-01T10:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:26:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:55:00.000000Z\",null],[\"B00014\",\"2017-02-01T13:47:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:05:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:58:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:33:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:45:00.000000Z\",null]],\"count\":24}\r\n" +
+                                    "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"STRING\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"},{\"name\":\"DropOff_datetime\",\"type\":\"SYMBOL\"}],\"timestamp\":-1,\"dataset\":[[\"B00008\",\"2017-02-01T00:30:00.000000Z\",null],[\"B00008\",\"2017-02-01T00:40:00.000000Z\",null],[\"B00009\",\"2017-02-01T00:50:00.000000Z\",null],[\"B00013\",\"2017-02-01T00:51:00.000000Z\",null],[\"B00013\",\"2017-02-01T01:41:00.000000Z\",null],[\"B00013\",\"2017-02-01T02:00:00.000000Z\",null],[\"B00013\",\"2017-02-01T03:53:00.000000Z\",null],[\"B00013\",\"2017-02-01T04:44:00.000000Z\",null],[\"B00013\",\"2017-02-01T05:05:00.000000Z\",null],[\"B00013\",\"2017-02-01T06:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T07:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T08:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T09:46:00.000000Z\",null],[\"B00014\",\"2017-02-01T10:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:26:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:55:00.000000Z\",null],[\"B00014\",\"2017-02-01T13:47:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:05:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:58:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:33:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:45:00.000000Z\",null]],\"count\":24}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
@@ -817,7 +817,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                                 "create table trips (" +
                                         "Col1 STRING," +
                                         "Pickup_DateTime TIMESTAMP," +
-                                        "DropOff_datetime STRING" +
+                                        "DropOff_datetime VARCHAR" +
                                         ") timestamp(Pickup_DateTime) partition by DAY WAL",
                                 sqlExecutionContext
                         );
