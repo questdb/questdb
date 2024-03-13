@@ -105,13 +105,13 @@ public final class ColumnType {
     // column type version as written to the metadata file
     public static final int VERSION = 426;
     static final int[] GEO_TYPE_SIZE_POW2;
+    private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;
     private static final int BITS_OFFSET = 8;
     private static final short[][] OVERLOAD_PRIORITY;
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
-    private static final boolean ALLOW_DEFAULT_STRING_CHANGE = true;
 
     private ColumnType() {
     }
@@ -126,24 +126,6 @@ public final class ColumnType {
                 return VarcharTypeDriver.INSTANCE;
             default:
                 throw CairoException.critical(0).put("there is no driver to type: ").put(columnType);
-        }
-    }
-
-    public static void makeUtf16DefaultString() {
-        if (ALLOW_DEFAULT_STRING_CHANGE) {
-            typeNameMap.put(STRING, "STRING");
-            nameTypeMap.put("STRING", STRING);
-            typeNameMap.put(VARCHAR, "VARCHAR");
-            nameTypeMap.put("VARCHAR", VARCHAR);
-        }
-    }
-
-    public static void makeUtf8DefaultString() {
-        if (ALLOW_DEFAULT_STRING_CHANGE) {
-            typeNameMap.put(VARCHAR, "STRING");
-            nameTypeMap.put("STRING", VARCHAR);
-            typeNameMap.put(STRING, "VARCHAR");
-            nameTypeMap.put("VARCHAR", STRING);
         }
     }
 
@@ -278,6 +260,24 @@ public final class ColumnType {
 
     public static boolean isVarchar(int columnType) {
         return columnType == VARCHAR;
+    }
+
+    public static void makeUtf16DefaultString() {
+        if (ALLOW_DEFAULT_STRING_CHANGE) {
+            typeNameMap.put(STRING, "STRING");
+            nameTypeMap.put("STRING", STRING);
+            typeNameMap.put(VARCHAR, "VARCHAR");
+            nameTypeMap.put("VARCHAR", VARCHAR);
+        }
+    }
+
+    public static void makeUtf8DefaultString() {
+        if (ALLOW_DEFAULT_STRING_CHANGE) {
+            typeNameMap.put(VARCHAR, "STRING");
+            nameTypeMap.put("STRING", VARCHAR);
+            typeNameMap.put(STRING, "VARCHAR");
+            nameTypeMap.put("VARCHAR", STRING);
+        }
     }
 
     public static String nameOf(int columnType) {

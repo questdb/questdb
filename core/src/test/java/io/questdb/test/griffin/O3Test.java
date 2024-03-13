@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -38,8 +39,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
@@ -6944,11 +6944,22 @@ public class O3Test extends AbstractO3Test {
 
             // Here we're trying to make sure that null setters write to the currently active O3 memory.
             long ts = engine.getConfiguration().getMicrosecondClock().getTicks();
+            int columnType = w.getMetadata().getColumnType(0);
+            Utf8StringSink utf8Sequence = new Utf8StringSink();
+            utf8Sequence.put("Lorem ipsum dolor sit amet, consectetur adipiscing elit.");
+
             for (int i = 0; i < commits; i++) {
                 for (int j = 0; j < rows; j++) {
                     r = w.newRow(ts);
                     if (j % 2 == 0) {
-                        r.putStr(0, "Lorem ipsum dolor sit amet, consectetur adipiscing elit.");
+                        switch (columnType) {
+                            case ColumnType.STRING:
+                                r.putStr(0, "Lorem ipsum dolor sit amet, consectetur adipiscing elit.");
+                                break;
+                            case ColumnType.VARCHAR:
+                                r.putVarchar(0, utf8Sequence);
+                                break;
+                        }
                     }
                     r.append();
                     if (j % 100 == 0) {
@@ -8103,22 +8114,7 @@ public class O3Test extends AbstractO3Test {
                 0
         );
 
-        int longColIndex = -1;
-        int symColIndex = -1;
-        int strColIndex = -1;
-        for (int i = 0; i < tableModel.getColumnCount(); i++) {
-            switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
-                case ColumnType.LONG:
-                    longColIndex = i;
-                    break;
-                case ColumnType.SYMBOL:
-                    symColIndex = i;
-                    break;
-                case ColumnType.STRING:
-                    strColIndex = i;
-                    break;
-            }
-        }
+
 
         int idBatchSize = 3 * 1024 * 1024 + 1;
         long batchOnDiskSize = (long) ColumnType.sizeOf(ColumnType.LONG) * idBatchSize;
@@ -8129,10 +8125,39 @@ public class O3Test extends AbstractO3Test {
 
         long start = IntervalUtils.parseFloorPartialTimestamp("2021-10-09T10:00:00");
         String[] varCol = new String[]{"aldfjkasdlfkj", "2021-10-10T12:00:00", "12345678901234578"};
+        Utf8Sequence[] varcharCol = new Utf8Sequence[]{
+                new Utf8String("aldfjkasdlfkj"),
+                new Utf8String("2021-10-10T12:00:00"),
+                new Utf8String("12345678901234578")
+        };
+
+        int longColIndex = -1;
+        int symColIndex = -1;
+        int strColIndex = -1;
+        int varcharColIndex = -1;
 
         // Add 2 batches
         int iterations = 2;
         try (TableWriter o3 = TestUtils.getWriter(engine, "x")) {
+
+            TableMetadata metadata = o3.getMetadata();
+            for (int i = 0; i < metadata.getColumnCount(); i++) {
+                switch (metadata.getColumnType(i)) {
+                    case ColumnType.LONG:
+                        longColIndex = i;
+                        break;
+                    case ColumnType.SYMBOL:
+                        symColIndex = i;
+                        break;
+                    case ColumnType.STRING:
+                        strColIndex = i;
+                        break;
+                    case ColumnType.VARCHAR:
+                        varcharColIndex = i;
+                        break;
+                }
+            }
+
             for (int i = 0; i < iterations; i++) {
                 for (int id = 0; id < idBatchSize; id++) {
                     // We leave start + idBatchSize out to insert it O3 later
@@ -8140,7 +8165,11 @@ public class O3Test extends AbstractO3Test {
                     TableWriter.Row row = o3.newRow(timestamp);
                     row.putLong(longColIndex, timestamp);
                     row.putSym(symColIndex, "test");
-                    row.putStr(strColIndex, varCol[id % varCol.length]);
+                    if (strColIndex > -1) {
+                        row.putStr(strColIndex, varCol[id % varCol.length]);
+                    } else {
+                        row.putVarchar(varcharColIndex, varcharCol[id % varCol.length]);
+                    }
                     row.append();
                 }
 
@@ -8155,7 +8184,11 @@ public class O3Test extends AbstractO3Test {
             TableWriter.Row row = o3.newRow(timestamp);
             row.putLong(longColIndex, timestamp);
             row.putSym(symColIndex, "test");
-            row.putStr(strColIndex, varCol[0]);
+            if (strColIndex > -1) {
+                row.putStr(strColIndex, varCol[0]);
+            } else {
+                row.putVarchar(varcharColIndex, varcharCol[0]);
+            }
             row.append();
 
             o3.commit();
