@@ -656,7 +656,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                      RecordCursor cursor = fac.getCursor(sqlExecutionContext)
                 ) {
                     TestUtils.assertCursor(
-                            "čćžšđçğéíáýůř:VARCHAR\t2024-02-27T00:00:00.000000Z:TIMESTAMP\n",
+                            "čćžšđçğéíáýůř:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\t2024-02-27T00:00:00.000000Z:TIMESTAMP\n",
                             cursor, fac.getMetadata(), false, true, sink);
                 }
             }

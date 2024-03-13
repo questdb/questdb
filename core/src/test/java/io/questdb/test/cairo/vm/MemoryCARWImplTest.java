@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.vm;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryCARWImpl;
@@ -35,12 +36,24 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
 
 public class MemoryCARWImplTest {
+
+    @AfterClass
+    public static void afterClass() {
+        ColumnType.resetStringToDefault();
+    }
+
+    @BeforeClass
+    public static void beforeClass() {
+        ColumnType.makeUtf16DefaultString();
+    }
 
     @Test
     public void testBinSequence() {
