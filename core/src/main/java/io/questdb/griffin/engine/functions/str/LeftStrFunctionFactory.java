@@ -38,43 +38,50 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
-public class LeftFunctionFactory implements FunctionFactory {
+public class LeftStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "left(SI)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         final Function strFunc = args.getQuick(0);
         final Function countFunc = args.getQuick(1);
         if (countFunc.isConstant()) {
             int count = countFunc.getInt(null);
             if (count != Numbers.INT_NaN) {
-                return new LeftStrConstCountFunction(strFunc, count);
+                return new ConstCountFunc(strFunc, count);
             } else {
                 return StrConstant.NULL;
             }
         }
-        return new LeftStrFunction(strFunc, countFunc);
+        return new Func(strFunc, countFunc);
     }
 
     private static int getPos(int len, int count) {
         return count > -1 ? Math.max(0, Math.min(len, count)) : Math.max(0, len + count);
     }
 
-    private static class LeftStrConstCountFunction extends StrFunction implements UnaryFunction {
+    private static class ConstCountFunc extends StrFunction implements UnaryFunction {
 
         private final int count;
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function strFunc;
 
-        public LeftStrConstCountFunction(Function strFunc, int count) {
+        public ConstCountFunc(Function strFunc, int count) {
             this.strFunc = strFunc;
             this.count = count;
         }
@@ -85,11 +92,6 @@ public class LeftFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrA(Record rec) {
-            return getStr0(rec, sink);
-        }
-
-        @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
             CharSequence str = strFunc.getStrA(rec);
             if (str != null) {
@@ -97,6 +99,11 @@ public class LeftFunctionFactory implements FunctionFactory {
                 final int pos = getPos(len);
                 utf16Sink.put(str, 0, pos);
             }
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            return getStr0(rec, sink);
         }
 
         @Override
@@ -116,7 +123,7 @@ public class LeftFunctionFactory implements FunctionFactory {
         }
 
         private int getPos(int len) {
-            return LeftFunctionFactory.getPos(len, count);
+            return LeftStrFunctionFactory.getPos(len, count);
         }
 
         @Nullable
@@ -133,14 +140,14 @@ public class LeftFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class LeftStrFunction extends StrFunction implements BinaryFunction {
+    private static class Func extends StrFunction implements BinaryFunction {
 
         private final Function countFunc;
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function strFunc;
 
-        public LeftStrFunction(Function strFunc, Function countFunc) {
+        public Func(Function strFunc, Function countFunc) {
             this.strFunc = strFunc;
             this.countFunc = countFunc;
         }
@@ -163,7 +170,7 @@ public class LeftFunctionFactory implements FunctionFactory {
         @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
             final CharSequence str = strFunc.getStrA(rec);
-            final int count = this.countFunc.getInt(rec);
+            final int count = countFunc.getInt(rec);
             if (str != null && count != Numbers.INT_NaN) {
                 final int len = str.length();
                 final int pos = getPos(len, count);
@@ -183,7 +190,7 @@ public class LeftFunctionFactory implements FunctionFactory {
 
         @Override
         public int getStrLen(Record rec) {
-            int count = this.countFunc.getInt(rec);
+            int count = countFunc.getInt(rec);
             int len = strFunc.getStrLen(rec);
             if (len != TableUtils.NULL_LEN && count != Numbers.INT_NaN) {
                 return getPos(len, count);
@@ -194,7 +201,7 @@ public class LeftFunctionFactory implements FunctionFactory {
         @Nullable
         private StringSink getStr0(Record rec, StringSink sink) {
             final CharSequence str = strFunc.getStrA(rec);
-            final int count = this.countFunc.getInt(rec);
+            final int count = countFunc.getInt(rec);
             if (str != null && count != Numbers.INT_NaN) {
                 final int len = str.length();
                 final int pos = getPos(len, count);
@@ -205,5 +212,4 @@ public class LeftFunctionFactory implements FunctionFactory {
             return null;
         }
     }
-
 }

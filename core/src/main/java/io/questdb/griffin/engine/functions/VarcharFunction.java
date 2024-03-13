@@ -35,8 +35,8 @@ import io.questdb.std.Long256;
 import io.questdb.std.str.*;
 
 public abstract class VarcharFunction implements ScalarFunction {
-    private final StringSink utf16sinkA = new StringSink();
-    private final StringSink utf16sinkB = new StringSink();
+    private final StringSink utf16SinkA = new StringSink();
+    private final StringSink utf16SinkB = new StringSink();
 
     @Override
     public final BinarySequence getBin(Record rec) {
@@ -166,9 +166,9 @@ public abstract class VarcharFunction implements ScalarFunction {
         if (utf8seq.isAscii()) {
             return utf8seq.asAsciiCharSequence();
         }
-        utf16sinkA.clear();
-        Utf8s.utf8ToUtf16(utf8seq, utf16sinkA);
-        return utf16sinkA;
+        utf16SinkA.clear();
+        Utf8s.utf8ToUtf16(utf8seq, utf16SinkA);
+        return utf16SinkA;
     }
 
     @Override
@@ -180,9 +180,9 @@ public abstract class VarcharFunction implements ScalarFunction {
         if (utf8seq.isAscii()) {
             return utf8seq.asAsciiCharSequence();
         }
-        utf16sinkB.clear();
-        Utf8s.utf8ToUtf16(utf8seq, utf16sinkB);
-        return utf16sinkB;
+        utf16SinkB.clear();
+        Utf8s.utf8ToUtf16(utf8seq, utf16SinkB);
+        return utf16SinkB;
     }
 
     @Override

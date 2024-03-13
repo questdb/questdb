@@ -494,6 +494,52 @@ public final class Utf8s {
         }
     }
 
+    /**
+     * Copies a substring of the given UTF-8 string.
+     *
+     * @param seq    input UTF-8 string
+     * @param charLo character start (note: not in bytes, but in actual characters)
+     * @param charHi character end (exclusive; note: not in bytes, but in actual characters)
+     * @param sink   destination sink
+     * @return number of copied bytes or -1 if the input is not valid UTF-8
+     */
+    public static int strCpy(@NotNull Utf8Sequence seq, int charLo, int charHi, @NotNull Utf8Sink sink) {
+        if (seq.isAscii()) {
+            for (int i = charLo; i < charHi; i++) {
+                sink.put(seq.byteAt(i));
+            }
+            return charHi - charLo;
+        }
+
+        int charPos = 0;
+        int bytesCopied = 0;
+        for (int i = 0, hi = seq.size(); i < hi && charPos < charHi; charPos++) {
+            byte b = seq.byteAt(i);
+            if (b < 0) {
+                int n = validateUtf8MultiByte(seq, i, b);
+                if (n == -1) {
+                    // UTF-8 error
+                    return -1;
+                }
+                if (charPos >= charLo) {
+                    sink.put(b);
+                    for (int j = 1; j < n; j++) {
+                        sink.put(seq.byteAt(i + j));
+                    }
+                    bytesCopied += n;
+                }
+                i += n;
+            } else {
+                if (charPos >= charLo) {
+                    sink.put(b);
+                    bytesCopied++;
+                }
+                i++;
+            }
+        }
+        return bytesCopied;
+    }
+
     public static void strCpyAscii(char @NotNull [] srcChars, int srcLo, int srcLen, long destAddr) {
         for (int i = 0; i < srcLen; i++) {
             Unsafe.getUnsafe().putByte(destAddr + i, (byte) srcChars[i + srcLo]);
@@ -650,6 +696,10 @@ public final class Utf8s {
      * Decodes bytes from the given UTF-8 sink into char sink.
      * Note: operation might fail in the middle and leave sink in inconsistent state.
      *
+     * @param seq   input sequence
+     * @param seqLo character bytes start in input sequence
+     * @param seqHi character bytes end in input sequence (exclusive)
+     * @param sink  destination sink
      * @return true if input is proper UTF-8 and false otherwise.
      */
     public static boolean utf8ToUtf16(@NotNull Utf8Sequence seq, int seqLo, int seqHi, @NotNull Utf16Sink sink) {
