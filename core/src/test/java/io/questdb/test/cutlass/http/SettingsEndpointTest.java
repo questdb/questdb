@@ -14,6 +14,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class SettingsEndpointTest extends AbstractBootstrapTest {
+    private static final String SETTINGS_PAYLOAD = "{}";
 
     @Before
     public void setUp() {
@@ -29,18 +30,20 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertSettingsRequest(httpClient, "{}");
+                    assertSettingsRequest(httpClient);
+                    assertSettingsRequest(httpClient, "version=v2");
                 }
             }
         });
     }
 
-    private void assertSettingsRequest(
-            HttpClient httpClient,
-            String expectedHttpResponse
-    ) {
+    private void assertSettingsRequest(HttpClient httpClient) {
+        assertSettingsRequest(httpClient, null);
+    }
+
+    private void assertSettingsRequest(HttpClient httpClient, String params) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-        request.GET().url("/settings");
+        request.GET().url("/settings" + (params != null ? "?" + params : ""));
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
             responseHeaders.await();
 
@@ -54,7 +57,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
             }
 
-            TestUtils.assertEquals(expectedHttpResponse, sink.toString());
+            TestUtils.assertEquals(SETTINGS_PAYLOAD, sink.toString());
             sink.clear();
         }
     }

@@ -32,29 +32,47 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.net.HttpURLConnection;
 
 public class SettingsProcessor implements HttpRequestProcessor {
+    private static final Utf8String V2 = new Utf8String("v2");
+    private static final Utf8String VERSION = new Utf8String("version");
     private final Utf8StringSink sink = new Utf8StringSink();
+    private final Utf8StringSink sinkV2 = new Utf8StringSink();
 
     public SettingsProcessor(CairoConfiguration cairoConfiguration) {
         final CharSequenceObjHashMap<CharSequence> settings = new CharSequenceObjHashMap<>();
         cairoConfiguration.populateSettings(settings);
 
         sink.putAscii('{');
+        sinkV2.putAscii('{');
         final ObjList<CharSequence> keys = settings.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final CharSequence key = keys.getQuick(i);
             final CharSequence value = settings.get(key);
-            sink.putQuoted(key).putAscii(':').putQuoted(value);
+            sink.putQuoted(key).putAscii(':');
+            if (Chars.startsWith(value, '"')) {
+                // json string type
+                sink.put(value);
+            } else {
+                // other json types (boolean, number) need quotes in v1
+                sink.putQuoted(value);
+            }
+            sinkV2.putQuoted(key).putAscii(':').put(value);
             if (i != n - 1) {
                 sink.putAscii(',');
+                sinkV2.putAscii(',');
             }
         }
         sink.putAscii('}');
+        sinkV2.putAscii('}');
     }
 
     @Override
@@ -64,10 +82,13 @@ public class SettingsProcessor implements HttpRequestProcessor {
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final Utf8Sequence version = context.getRequestHeader().getUrlParam(VERSION);
+        final Utf8StringSink payload = version != null && Utf8s.equals(version, V2) ? sinkV2 : sink;
+
         final HttpChunkedResponse r = context.getChunkedResponse();
         r.status(HttpURLConnection.HTTP_OK, "application/json");
         r.sendHeader();
-        r.put(sink);
+        r.put(payload);
         r.sendChunk(true);
     }
 }
