@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -111,7 +110,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
             // Start with ILP disabled
             try (final ServerMain serverMain = new ServerMain(bootstrap)) {
                 serverMain.start();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.TCP)
                         .address("localhost")
                         .port(9023)
                         .build()) {
@@ -128,7 +127,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
             // Start with ILP enabled
             try (final ServerMain serverMain = new ServerMain(bootstrap)) {
                 serverMain.start();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.TCP)
                         .address("localhost")
                         .port(9023)
                         .build()) {

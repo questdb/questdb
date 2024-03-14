@@ -104,7 +104,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         String address = "127.0.0.1:" + bindPort;
         runInContext(r -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address(address)
                     .enableAuth(AUTH_KEY_ID1).authToken(TOKEN)
                     .build()) {
@@ -118,7 +118,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testBuilderPlainText_addressWithExplicitIpAndPort() throws Exception {
         runInContext(r -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
@@ -133,7 +133,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testBuilderPlainText_addressWithHostnameAndPort() throws Exception {
         String address = "localhost:" + bindPort;
         runInContext(r -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address(address)
                     .build()) {
                 sender.table("mytable").longColumn("my int field", 42).atNow();
@@ -147,7 +147,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testBuilderPlainText_addressWithIpAndPort() throws Exception {
         String address = "127.0.0.1:" + bindPort;
         runInContext(r -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address(address)
                     .build()) {
                 sender.table("mytable").longColumn("my int field", 42).atNow();
@@ -190,7 +190,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testCloseImpliesFlush() throws Exception {
         runInContext(r -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
@@ -238,7 +238,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testDouble_edgeValues() throws Exception {
         runInContext(r -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
@@ -265,7 +265,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testExplicitTimestampColumnIndexIsCleared() throws Exception {
         runInContext(r -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
@@ -308,7 +308,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .timestamp();
             AbstractCairoTest.create(model);
 
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
@@ -346,7 +346,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .timestamp();
             AbstractCairoTest.create(model);
 
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
@@ -376,7 +376,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .timestamp();
             AbstractCairoTest.create(model);
 
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
@@ -404,7 +404,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .timestamp();
             AbstractCairoTest.create(model);
 
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
@@ -468,7 +468,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         String tableName = "myTable";
         runInContext(r -> {
             send(tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.TCP)
                         .address("127.0.0.1")
                         .port(bindPort)
                         .build()) {
@@ -584,7 +584,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testWriteAllTypes() throws Exception {
         runInContext(r -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
@@ -612,7 +612,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testWriteLongMinMax() throws Exception {
         runInContext(r -> {
             String table = "table";
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
@@ -672,7 +672,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     private void assertSymbolsCannotBeWrittenAfterOtherType(Consumer<Sender> otherTypeWriter) throws Exception {
         runInContext(r -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
@@ -698,7 +698,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             AbstractCairoTest.create(model);
 
             // this sender fails as the string is not UUID
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
@@ -711,7 +711,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
 
             // this sender succeeds as the string is in the UUID format
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {

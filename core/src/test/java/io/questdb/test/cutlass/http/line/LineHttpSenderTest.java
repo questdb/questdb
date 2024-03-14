@@ -66,9 +66,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
-                        .http()
                         .build()
                 ) {
                     sender.table("ex_tbl")
@@ -228,9 +227,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
-                        .http()
                         .build()
                 ) {
                     sender.table("ex_tbl")
@@ -270,9 +268,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
-                        .http()
                         .build()
                 ) {
                     sender.table("ex_tbl")
@@ -355,9 +352,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         int i = 0;
 
         int port = serverMain.getHttpServerPort();
-        try (Sender sender = Sender.builder()
+        try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                 .address("localhost:" + port)
-                .http()
                 .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                 .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
                 .build()
