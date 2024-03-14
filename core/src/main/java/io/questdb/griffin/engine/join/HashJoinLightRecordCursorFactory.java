@@ -77,6 +77,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
+    }
+
+    @Override
     public int getScanDirection() {
         return masterFactory.getScanDirection();
     }
