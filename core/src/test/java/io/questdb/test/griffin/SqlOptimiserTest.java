@@ -1106,6 +1106,111 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testNonprefixedAdviceFromDifferentTables() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab1 (\n" +
+                    "    id int,\n" +
+                    "    a int\n" +
+                    "  );\n");
+
+            ddl("create table tab2 (\n" +
+                    "    id int,\n" +
+                    "    b int\n" +
+                    "  );");
+
+            assertPlan(
+                    "select a, b\n" +
+                            "            from tab1 join tab2 on tab1.id = tab2.id\n" +
+                            "            order by a, b",
+                    "Sort\n" +
+                            "  keys: [a, b]\n" +
+                            "    SelectedRecord\n" +
+                            "        Hash Join Light\n" +
+                            "          condition: tab2.id=tab1.id\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab1\n" +
+                            "            Hash\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab2\n"
+            );
+        });
+    }
+
+    @Test
+    public void testNonprefixedAdviceFromTheSameTable() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab1 (\n" +
+                    "    id int,\n" +
+                    "    a int\n" +
+                    "  );\n");
+
+            ddl("create table tab2 (\n" +
+                    "    id int,\n" +
+                    "    b int\n" +
+                    "  );");
+
+            assertPlan(
+                    "select a, b\n" +
+                            "from tab1 join tab2 on tab1.id = tab2.id\n" +
+                            "order by a desc " +
+                            "limit 10",
+                    "Limit lo: 10\n" +
+                            "    Sort\n" +
+                            "      keys: [a desc]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: tab2.id=tab1.id\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab1\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab2\n"
+            );
+        });
+    }
+
+    @Test
+    public void testNonprefixedAdviceFromTheSameTableWithTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab1 (\n" +
+                    "    id int,\n" +
+                    "    a int,\n" +
+                    "    ts timestamp\n" +
+                    "  ) timestamp(ts);\n");
+
+            ddl("create table tab2 (\n" +
+                    "    id int,\n" +
+                    "    b int\n" +
+                    "  );");
+
+            assertPlan(
+                    "select a, b\n" +
+                            "from tab1 join tab2 on tab1.id = tab2.id\n" +
+                            "order by a desc, ts " +
+                            "limit 10",
+                    "SelectedRecord\n" +
+                            "    Limit lo: 10\n" +
+                            "        Sort\n" +
+                            "          keys: [a desc, ts]\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Join Light\n" +
+                            "                  condition: tab2.id=tab1.id\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab1\n" +
+                            "                    Hash\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: tab2\n"
+            );
+        });
+    }
+
     protected QueryModel compileModel(String query, int modelType) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);

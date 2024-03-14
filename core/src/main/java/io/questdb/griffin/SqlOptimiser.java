@@ -3032,7 +3032,9 @@ public class SqlOptimiser implements Mutable {
             QueryModel jm2 = jm1.getJoinModels().getQuiet(1);
             // if order by advice has no table prefixes, we preserve original behaviour and pass it on.
             if (!orderByAdviceHasDot) {
-                setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
+                if (allAdviceIsForThisTable(jm1, orderByAdvice)) {
+                    setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
+                }
                 optimiseOrderBy(jm1, orderByMnemonic);
                 return;
             }
@@ -3078,6 +3080,25 @@ public class SqlOptimiser implements Mutable {
             // recursive call
             optimiseOrderBy(jm1, orderByMnemonic);
         }
+    }
+
+
+    /**
+     * Checks that all the order by advice tokens appear as columns for this join model.
+     * @param model model to check
+     * @param orderByAdvice advice
+     * @return all order by advice appears in model columns list
+     */
+    private boolean allAdviceIsForThisTable(QueryModel model, ObjList<ExpressionNode> orderByAdvice) {
+        CharSequence alias;
+        LowerCaseCharSequenceObjHashMap<QueryColumn> columnMap = model.getAliasToColumnMap();
+        for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
+            alias = orderByAdvice.getQuick(i).token;
+            if (!columnMap.contains(alias)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
