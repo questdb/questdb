@@ -133,7 +133,7 @@ results using the `cpu-only` use case with 12 workers on 48 CPUs and 96GB RAM:
   </a>
 </div>
 
-Competing TSDBs like InfluxDB and Timescale take a performance hit as the number of hosts grows. By contrast, not only does QuestDB soar above the competition at any host count, it maintains its high ingestion speed as cardinality increases.
+This benchmark measures the ingestion rate (rows/second) for different numbers of hosts: 100, 1K, 100K and 10M total. The larger the number of hosts, the higher the cardinality of the dataset. QuestDB maintains its ingestion speed above 2.4M rows/s even as the number of hosts increases. By contrast, as the dataset cardinality increases, InfluxDB and TimescaleDB take a performance hit, with the ingestion rate degrading significantly.
 
 ## Resources
 
