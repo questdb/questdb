@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 
 public class InCharFunctionFactory implements FunctionFactory {
     @Override
@@ -66,9 +67,15 @@ public class InCharFunctionFactory implements FunctionFactory {
             Function func = args.getQuick(i);
             if (ColumnType.isChar(func.getType())) {
                 set.add(func.getChar(null));
-            } else if (ColumnType.isString(func.getType()) || ColumnType.isVarchar(func.getType())) {
+            } else if (ColumnType.isString(func.getType())) {
                 // Implicitly cast empty string literal ('') to zero char
                 if (func.getStrLen(null) != 0) {
+                    throw SqlException.$(argPositions.getQuick(i), "CHAR constant expected");
+                }
+                set.add(CharConstant.ZERO.getChar(null));
+            } else if (ColumnType.isVarchar(func.getType())) {
+                Utf8Sequence seq = func.getVarcharA(null);
+                if (seq != null && seq.size() != 0) {
                     throw SqlException.$(argPositions.getQuick(i), "CHAR constant expected");
                 }
                 set.add(CharConstant.ZERO.getChar(null));
