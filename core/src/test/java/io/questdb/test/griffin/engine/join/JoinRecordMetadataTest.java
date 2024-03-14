@@ -99,15 +99,17 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         Assert.assertEquals(ColumnType.INT, metadata.getColumnType("a.x"));
         Assert.assertEquals(ColumnType.VARCHAR, metadata.getColumnType("c.vch"));
 
+        String varcharType = ColumnType.nameOf(ColumnType.VARCHAR);
+        String stringType = ColumnType.nameOf(ColumnType.STRING);
         String expected = "a.x:INT\n" +
                 "a.y:DOUBLE\n" +
                 "a.m:DOUBLE\n" +
                 "b.x:DOUBLE\n" +
                 "b.y:BINARY\n" +
                 "b.z:FLOAT\n" +
-                "c.x:STRING\n" +
-                "c.vch:VARCHAR\n" +
-                "z.m:STRING\n";
+                "c.x:" + stringType + "\n" +
+                "c.vch:" + varcharType + "\n" +
+                "z.m:" + stringType + "\n";
 
         StringSink sink = new StringSink();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {

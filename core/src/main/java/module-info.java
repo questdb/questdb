@@ -695,6 +695,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountStrGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountVarcharGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountSymbolGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountDistinctStringGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountDistinctSymbolGroupByFunctionFactory,
