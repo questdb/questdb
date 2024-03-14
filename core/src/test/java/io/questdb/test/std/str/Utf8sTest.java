@@ -689,9 +689,9 @@ public class Utf8sTest {
                     utf8Sink.put(right);
 
                     if (left.equals(right)) {
-                        Assert.assertTrue("expected equals " + right, Utf8s.equalsNc(left, utf8Sink));
+                        Assert.assertTrue("expected equals " + right, Utf8s.equalsUtf16Nc(left, utf8Sink));
                     } else {
-                        Assert.assertFalse("expected not equals " + right, Utf8s.equalsNc(left, utf8Sink));
+                        Assert.assertFalse("expected not equals " + right, Utf8s.equalsUtf16Nc(left, utf8Sink));
                     }
                 }
             }

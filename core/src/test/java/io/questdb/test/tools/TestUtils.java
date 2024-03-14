@@ -1731,13 +1731,13 @@ public final class TestUtils {
                 if (colTypeL == ColumnType.VARCHAR) {
                     Utf8Sequence left = lr.getVarcharA(col);
                     CharSequence right = readAsCharSequence(colTypeR, rr, col);
-                    if (!Utf8s.equalsNc(right, left)) {
+                    if (!Utf8s.equalsUtf16Nc(right, left)) {
                         Assert.fail("Expected " + right + ", but was: " + left);
                     }
                 } else {
                     CharSequence left = readAsCharSequence(colTypeL, lr, col);
                     Utf8Sequence right = rr.getVarcharA(col);
-                    if (!Utf8s.equalsNc(left, right)) {
+                    if (!Utf8s.equalsUtf16Nc(left, right)) {
                         Assert.fail("Expected " + right + ", but was: " + left);
                     }
                 }

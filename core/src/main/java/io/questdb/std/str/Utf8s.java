@@ -254,14 +254,6 @@ public final class Utf8s {
         return true;
     }
 
-    public static boolean equalsNc(CharSequence l, Utf8Sequence r) {
-        if (l == null || r == null) {
-            return l == r;
-        }
-
-        return equalsUtf16(l, r);
-    }
-
     public static boolean equalsNc(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
         if (l == null && r == null) {
             return true;
@@ -279,15 +271,12 @@ public final class Utf8s {
     }
 
     public static boolean equalsUtf16(CharSequence l, Utf8Sequence r) {
-        int ui = 0, un = r.size();
-        int ci = 0, cn = l.length();
-
-        return equalsUtf16(l, ui, un, r, ci, cn);
+        return equalsUtf16(l, 0, l.length(), r, 0, r.size());
     }
 
-    public static boolean equalsUtf16(CharSequence l, int ui, int un, Utf8Sequence r, int ci, int cn) {
+    public static boolean equalsUtf16(CharSequence c, int ci, int cn, Utf8Sequence u, int ui, int un) {
         while (ui < un && ci < cn) {
-            int bytes = utf16Equals(l, ci, cn, r, ui, un);
+            int bytes = utf16Equals(c, ci, cn, u, ui, un);
             switch (bytes) {
                 case 4:
                     // 4 bytes decoded from UTF-8 sequence
@@ -297,14 +286,23 @@ public final class Utf8s {
                 case 2:
                 case 3:
                     // 1,2,3 bytes decoded from UTF-8 sequence
-                    ui += bytes;
                     ci++;
+                    ui += bytes;
                     break;
                 default:
+                    // Not equal or malformed
                     return false;
             }
         }
         return ui == un && ci == cn;
+    }
+
+    public static boolean equalsUtf16Nc(CharSequence l, Utf8Sequence r) {
+        if (l == null || r == null) {
+            return l == r;
+        }
+
+        return equalsUtf16(l, r);
     }
 
     public static int getUtf8Codepoint(int b1, int b2, int b3, int b4) {
@@ -1013,15 +1011,15 @@ public final class Utf8s {
     }
 
     private static int utf16Equals(CharSequence c, int ci, int cn, Utf8Sequence u, int ui, int un) {
-        byte b = u.byteAt(ui++);
+        byte b = u.byteAt(ui);
         if ((b & 0x80) == 0x00) {
-            return ci < cn && c.charAt(ci) == b ? 1 : -1;
+            return c.charAt(ci) == b ? 1 : -1;
         } else if ((b & 0xE0) == 0xC0) {
-            return utf16Equals2Bytes(c, ci, cn, b, u, ui, un);
+            return utf16Equals2Bytes(c, ci, cn, b, u, ui + 1, un);
         } else if ((b & 0xF0) == 0xE0) {
-            return utf16Equals3Bytes(c, ci, cn, b, u, ui, un);
+            return utf16Equals3Bytes(c, ci, cn, b, u, ui + 1, un);
         }
-        return utf16Equals4Bytes(c, ci, cn, b, u, ui, un);
+        return utf16Equals4Bytes(c, ci, cn, b, u, ui + 1, un);
     }
 
     private static int utf16Equals2Bytes(CharSequence c, int ci, int cn, byte b1, Utf8Sequence u, int ui, int un) {

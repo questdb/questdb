@@ -106,7 +106,7 @@ public class EqVarcharStrFunctionFactory implements FunctionFactory {
                 return negated != (b == null);
             }
 
-            return negated != Utf8s.equalsNc(a, b);
+            return negated != Utf8s.equalsUtf16Nc(a, b);
         }
 
         @Override
