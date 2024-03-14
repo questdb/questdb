@@ -126,12 +126,14 @@ compares QuestDB to other open source time series databases spanning functionali
 
 Here are high-cardinality
 [Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
-results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB RAM:
+results using the `cpu-only` use case with 12 workers on 48 CPUs and 96GB RAM:
 
 <div align="center">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/questdb7.3.10-tsbs-benchmark.png" width="600"/>
   </a>
 </div>
+
+Competing TSDBs like InfluxDB and Timescale take a performance hit as the number of hosts grows. By contrast, not only does QuestDB soar above the competition at any host count, it maintains its high ingestion speed as cardinality increases.
 
 ## Resources
 
