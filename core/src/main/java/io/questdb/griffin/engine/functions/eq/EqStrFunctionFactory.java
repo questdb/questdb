@@ -85,7 +85,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
         return new ConstCheckFunc(varFunc, constValue);
     }
 
-    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+    public static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final CharSequence constant;
 

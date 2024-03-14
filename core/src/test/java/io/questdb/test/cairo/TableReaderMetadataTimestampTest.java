@@ -49,9 +49,9 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "varchar:VARCHAR\n" +
+                "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n" +
                 "timestamp:TIMESTAMP\n" +
-                "str:STRING\n";
+                "str:" + ColumnType.nameOf(ColumnType.STRING) + "\n";
 
         assertThatTimestampRemains((w) -> {
             w.removeColumn("str");
@@ -85,11 +85,11 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "float:FLOAT\n" +
                 "timestamp:TIMESTAMP\n" +
                 "long:LONG\n" +
-                "str:STRING\n" +
+                "str:" + ColumnType.nameOf(ColumnType.STRING) + "\n" +
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "date:DATE\n" +
-                "varchar:VARCHAR\n";
+                "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n";
         assertThatTimestampRemains((w) -> w.removeColumn("bin"), expected, 5, 5, 12);
     }
 
@@ -108,7 +108,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "varchar:VARCHAR\n" +
+                "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n" +
                 "timestamp:TIMESTAMP\n";
         assertThatTimestampRemains((w) -> w.removeColumn("str"), expected, 12, 11, 12);
     }
@@ -190,12 +190,12 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                             "double:DOUBLE\n" +
                             "float:FLOAT\n" +
                             "long:LONG\n" +
-                            "str:STRING\n" +
+                            "str:" + ColumnType.nameOf(ColumnType.STRING) + "\n" +
                             "sym:SYMBOL\n" +
                             "bool:BOOLEAN\n" +
                             "bin:BINARY\n" +
                             "date:DATE\n" +
-                            "varchar:VARCHAR\n";
+                            "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n";
 
                     TestUtils.assertEquals(expected, sink);
                     Assert.assertEquals(-1, metadata.getTimestampIndex());
