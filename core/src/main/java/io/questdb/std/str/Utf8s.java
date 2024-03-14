@@ -637,29 +637,30 @@ public final class Utf8s {
         return s == null ? null : Utf8String.newInstance(s);
     }
 
+
     /**
      * A specialised function to decode a single UTF-8 character.
-     * Used when it doesn't make sense to allocate a temporary sink
+     * Used when it doesn't make sense to allocate a temporary sink.
      *
-     * @param lo character bytes start
-     * @param hi character bytes end
+     * @param seq input sequence
      * @return an integer-encoded tuple (decoded number of bytes, character in UTF-16 encoding, stored as short type)
      */
-    public static int utf8CharDecode(long lo, long hi) {
-        if (lo < hi) {
-            byte b1 = Unsafe.getUnsafe().getByte(lo);
+    public static int utf8CharDecode(Utf8Sequence seq) {
+        int size = seq.size();
+        if (size > 0) {
+            byte b1 = seq.byteAt(0);
             if (b1 < 0) {
-                if (b1 >> 5 == -2 && (b1 & 30) != 0 && hi - lo > 1) {
-                    byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+                if (b1 >> 5 == -2 && (b1 & 30) != 0 && size > 1) {
+                    byte b2 = seq.byteAt(1);
                     if (isNotContinuation(b2)) {
                         return 0;
                     }
                     return Numbers.encodeLowHighShorts((short) 2, (short) (b1 << 6 ^ b2 ^ 3968));
                 }
 
-                if (b1 >> 4 == -2 && hi - lo > 2) {
-                    byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-                    byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+                if (b1 >> 4 == -2 && size > 2) {
+                    byte b2 = seq.byteAt(1);
+                    byte b3 = seq.byteAt(2);
                     if (isMalformed3(b1, b2, b3)) {
                         return 0;
                     }

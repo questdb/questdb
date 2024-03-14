@@ -449,7 +449,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                 if (entityValue.size() == 1 && entityValue.byteAt(0) > -1) {
                                     offset = buffer.addChar(offset, (char) entityValue.byteAt(0));
                                 } else if (stringToCharCastAllowed) {
-                                    int encodedResult = Utf8s.utf8CharDecode(entityValue.lo(), entityValue.hi());
+                                    int encodedResult = Utf8s.utf8CharDecode(entityValue);
                                     if (Numbers.decodeLowShort(encodedResult) > 0) {
                                         offset = buffer.addChar(offset, (char) Numbers.decodeHighShort(encodedResult));
                                     } else {

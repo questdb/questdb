@@ -42,8 +42,8 @@ import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
@@ -522,12 +522,10 @@ public class SqlUtil {
             return 0;
         }
 
-        // todo: this is not efficient, we should construct char directly from Utf8Sequence bytes
-        // when implementing this watch out for codepoints which cannot be represented as char - surrogate pairs etc
-        StringSink sink = Misc.getThreadLocalSink();
-        sink.put(value);
-        if (sink.length() == 1) {
-            return sink.charAt(0);
+        int encodedResult = Utf8s.utf8CharDecode(value);
+        short consumedBytes = Numbers.decodeLowShort(encodedResult);
+        if (consumedBytes == value.size()) {
+            return (char) Numbers.decodeHighShort(encodedResult);
         }
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.CHAR);
     }
