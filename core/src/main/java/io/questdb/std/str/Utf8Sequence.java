@@ -51,7 +51,8 @@ public interface Utf8Sequence {
     byte byteAt(int index);
 
     /**
-     * @return true if all characters in the string are ASCII.
+     * @return true if all characters in the string are ASCII. This is a best-effort flag, i.e. it may have
+     * false value while the actual string has ASCII characters only.
      */
     default boolean isAscii() {
         return false;

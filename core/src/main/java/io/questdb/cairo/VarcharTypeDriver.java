@@ -121,19 +121,25 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * This is unsafe method, and it is assumed that the memory address is valid and has enough space to store the header and UTF8 bytes.
      * The number of bytes to be written can be obtained from {@link #getSingleMemValueByteCount(Utf8Sequence)}
      *
-     * @param dataMemAddr memory address to store header and UTF8 bytes in
-     * @param value       the UTF8 string to be stored
+     * @param dataMemAddr    memory address to store header and UTF8 bytes in
+     * @param value          the UTF8 string to be stored
+     * @param eraseAsciiFlag when set to true, the written sequence will have ASCII flag set to false;
+     *                       when set to false, the output flag will have the same value as {@code value.isAscii()}.
      */
-    public static void appendValue(long dataMemAddr, @Nullable Utf8Sequence value) {
+    public static void appendValue(long dataMemAddr, @Nullable Utf8Sequence value, boolean eraseAsciiFlag) {
         if (value == null) {
             Unsafe.getUnsafe().putInt(dataMemAddr, TableUtils.NULL_LEN); // NULL
             return;
         }
         final int hi = value.size();
-        final boolean ascii = value.isAscii();
         value.writeTo(dataMemAddr + Integer.BYTES, 0, hi);
-        // ASCII flag is signaled with the highest bit
-        Unsafe.getUnsafe().putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
+        if (eraseAsciiFlag) {
+            Unsafe.getUnsafe().putInt(dataMemAddr, hi);
+        } else {
+            final boolean ascii = value.isAscii();
+            // ASCII flag is signaled with the highest bit
+            Unsafe.getUnsafe().putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
+        }
     }
 
     public static long getDataOffset(long auxEntry) {
@@ -194,7 +200,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static DirectUtf8Sequence getValue(long dataMemAddr, @NotNull DirectUtf8String sequence) {
         int header = Unsafe.getUnsafe().getInt(dataMemAddr);
-        assert header != 0;
         if (isNull(header)) {
             return null;
         }
@@ -543,7 +548,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         }
         // size of the string at this offset
         final int size = (raw >> 4) & 0xffffff;
-        assert size > 6: String.format("size %,d <= 6, dataOffset %,d", size, dataOffset);
+        assert size > 6 : String.format("size %,d <= 6, dataOffset %,d", size, dataOffset);
 
         return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
     }
