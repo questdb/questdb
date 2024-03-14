@@ -24,7 +24,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testConfiguration() throws Exception {
+    public void testSettings() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 serverMain.start();
