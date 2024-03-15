@@ -114,6 +114,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int createAsSelectRetryCount;
     private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
+    private final int defaultSeqPartTxnCount;
     private final boolean defaultSymbolCacheFlag;
     private final int defaultSymbolCapacity;
     private final int detachedMkdirMode;
@@ -233,7 +234,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferLimit;
     private final int rollBufferSize;
     private final String root;
-    private final int sqlSampleByIndexSearchPageSize;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
@@ -298,6 +298,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelGroupByEnabled;
     private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
+    private final boolean sqlSampleByDefaultAlignment;
+    private final int sqlSampleByIndexSearchPageSize;
     private final int sqlSmallMapKeyCapacity;
     private final int sqlSmallMapPageSize;
     private final int sqlSortKeyMaxPages;
@@ -320,7 +322,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
     private final int systemO3ColumnMemorySize;
-    private final boolean sqlSampleByDefaultAlignment;
     private final String systemTableNamePrefix;
     private final long systemWalWriterDataAppendPageSize;
     private final long systemWalWriterEventAppendPageSize;
@@ -383,7 +384,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
     private long cairoSqlCopyMaxIndexChunkSize;
-    private final int defaultSeqPartTxnCount;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private int forceRecvFragmentationChunkSize;
@@ -754,7 +754,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.defaultSeqPartTxnCount = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
             // maintain deprecated property name for the time being
-            this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT, 64);
+            this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT, 256);
             this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_CONNECTION_LIMIT, this.httpNetConnectionLimit);
             this.httpNetConnectionHint = getBoolean(properties, env, PropertyKey.HTTP_NET_CONNECTION_HINT, false);
             // deprecated
@@ -1591,6 +1591,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         void onReady(int address, int port);
     }
 
+    public static class JsonPropertyValueFormatter {
+        public static String bool(boolean value) {
+            return Boolean.toString(value);
+        }
+
+        public static String integer(int value) {
+            return Integer.toString(value);
+        }
+
+        public static String str(String value) {
+            return value != null ? '"' + value + '"' : "null";
+        }
+    }
+
     public static class PropertyValidator {
         protected final Map<ConfigPropertyKey, String> deprecatedSettings = new HashMap<>();
         protected final Map<String, String> obsoleteSettings = new HashMap<>();
@@ -1867,7 +1881,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         };
 
 
-
         @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
@@ -2047,6 +2060,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getDefaultSeqPartTxnCount() {
+            return defaultSeqPartTxnCount;
+        }
+
+        @Override
         public boolean getDefaultSymbolCacheFlag() {
             return defaultSymbolCacheFlag;
         }
@@ -2054,11 +2072,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getDefaultSymbolCapacity() {
             return defaultSymbolCapacity;
-        }
-
-        @Override
-        public int getDefaultSeqPartTxnCount() {
-            return defaultSeqPartTxnCount;
         }
 
         @Override
@@ -2339,6 +2352,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull String getRoot() {
             return root;
+        }
+
+        @Override
+        public boolean getSampleByDefaultAlignmentCalendar() {
+            return sqlSampleByDefaultAlignment;
         }
 
         @Override
@@ -2879,9 +2897,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isSqlParallelGroupByEnabled() {
             return sqlParallelGroupByEnabled;
         }
-
-        @Override
-        public boolean getSampleByDefaultAlignmentCalendar() { return sqlSampleByDefaultAlignment; };
 
         @Override
         public boolean isTableTypeConversionEnabled() {
