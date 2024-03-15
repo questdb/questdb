@@ -116,6 +116,19 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testBuilderAuthSuccess_confString() throws Exception {
+        authKeyId = AUTH_KEY_ID1;
+        String address = "127.0.0.1:" + bindPort;
+        runInContext(r -> {
+            try (Sender sender = Sender.fromConfig("tcp::addr=" + address + ";user=" + AUTH_KEY_ID1 + ";token=" + TOKEN + ";")) {
+                sender.table("mytable").longColumn("my int field", 42).atNow();
+                sender.flush();
+            }
+            assertTableExistsEventually(engine, "mytable");
+        });
+    }
+
+    @Test
     public void testBuilderPlainText_addressWithExplicitIpAndPort() throws Exception {
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)

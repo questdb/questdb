@@ -7,7 +7,7 @@ import java.time.temporal.ChronoUnit;
 
 public class BasicExample {
     public static void main(String[] args) {
-        try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost:9009").build()) {
+        try (Sender sender = Sender.fromConfig("tcp::addr=localhost:9009;")) {
             sender.table("inventors")
                     .symbol("born", "Austrian Empire")
                     .timestampColumn("birthday", Instant.parse("1856-07-10T00:00:00.00Z"))
