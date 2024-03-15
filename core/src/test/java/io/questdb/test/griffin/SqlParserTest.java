@@ -7964,7 +7964,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "  os SYMBOL capacity 256 CACHE,\n" +
                 "  arch SYMBOL capacity 256 CACHE,\n" +
                 "  team SYMBOL capacity 256 CACHE,\n" +
-                "  service SYMBOL capacity 256 CACHE,\n" +
+                " 'service' SYMBOL capacity 256 CACHE,\n" +
                 "  service_version SYMBOL capacity 256 CACHE,\n" +
                 "  service_environment SYMBOL capacity 256 CACHE,\n" +
                 "  usage_user LONG,\n" +
