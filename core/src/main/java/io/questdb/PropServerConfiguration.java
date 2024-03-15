@@ -1591,6 +1591,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         void onReady(int address, int port);
     }
 
+    public static class JsonPropertyValueFormatter {
+        public static String bool(boolean value) {
+            return Boolean.toString(value);
+        }
+
+        public static String integer(int value) {
+            return Integer.toString(value);
+        }
+
+        public static String str(String value) {
+            return value != null ? '"' + value + '"' : "null";
+        }
+    }
+
     public static class PropertyValidator {
         protected final Map<ConfigPropertyKey, String> deprecatedSettings = new HashMap<>();
         protected final Map<String, String> obsoleteSettings = new HashMap<>();
@@ -2883,8 +2897,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isSqlParallelGroupByEnabled() {
             return sqlParallelGroupByEnabled;
         }
-
-        ;
 
         @Override
         public boolean isTableTypeConversionEnabled() {
