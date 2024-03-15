@@ -1337,34 +1337,74 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  and   el.CreateDate >= '2016-01-01T00:00:00Z'\n" +
                             "  and   el.CreateDate <= '2016-01-01T10:00:00Z'");
         });
+    }
 
-        /*
+    @Test
+    public void testNonprefixedAdviceFromOneTableWithOrderingAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab1 (\n" +
+                    "    id int,\n" +
+                    "    a int," +
+                    "    ts timestamp\n" +
+                    "  ) timestamp(ts);\n");
 
+            ddl("create table tab2 (\n" +
+                    "    id int,\n" +
+                    "    b int," +
+                    "    ts timestamp\n" +
+                    "  ) timestamp(ts);");
 
+            // No top level sort needed, sort is by tab1.ts
+            assertPlan(
+                    "select tab1.id, tab1.ts as b\n" +
+                            "from tab1 join tab2 on tab1.id = tab2.id\n" +
+                            "order by b",
+                    "SelectedRecord\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: tab2.id=tab1.id\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab1\n" +
+                            "        Hash\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab2\n"
+            );
+        });
+    }
 
+    @Test
+    public void testNonprefixedAdviceFromOneTableWithOrderingPosition() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab1 (\n" +
+                    "    id int,\n" +
+                    "    a int," +
+                    "    ts timestamp\n" +
+                    "  ) timestamp(ts);\n");
 
+            ddl("create table tab2 (\n" +
+                    "    id int,\n" +
+                    "    b int," +
+                    "    ts timestamp\n" +
+                    "  ) timestamp(ts);");
 
-explain
-SELECT  1
-FROM    WorkflowEvent el
-
-JOIN    WorkflowEventAction ep0
-  ON    el.CreateDate = ep0.CreateDate
-  and   el.Id = ep0.WorkflowEventId
-  and   ep0.ActionTypeId = 13
-  and   ep0.Message = '2'
-
-join    WorkflowEventAction ep
-  on    el.CreateDate = ep.CreateDate
-  and   el.Id = ep.WorkflowEventId
-  and   ep.ActionTypeId = 8
-
-WHERE   el.UserId = 19
-  and   el.TenantId = 24024
-  and   el.EventTypeId = 1
-  and   el.CreateDate >= to_timestamp('2024-01-26T18:26:14.000000Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')
-  and   el.CreateDate <= to_timestamp('2024-01-26T18:47:49.994262Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')
-         */
+            // No top level sort needed, sort is by tab1.ts
+            assertPlan(
+                    "select tab1.id, tab1.ts as b\n" +
+                            "from tab1 join tab2 on tab1.id = tab2.id\n" +
+                            "order by 2",
+                    "SelectedRecord\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: tab2.id=tab1.id\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab1\n" +
+                            "        Hash\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab2\n"
+            );
+        });
     }
 
     protected QueryModel compileModel(String query, int modelType) throws SqlException {
