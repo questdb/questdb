@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
