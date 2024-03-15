@@ -34,19 +34,16 @@ import static io.questdb.cairo.ColumnType.VARCHAR_AUX_SHL;
 
 public class VarcharTypeDriver implements ColumnTypeDriver {
     public static final VarcharTypeDriver INSTANCE = new VarcharTypeDriver();
-    // Maximum string size in bytes that we can fully inline into auxiliary memory. In such case
-    // There is no need to store any part of the string in the data memory.
-    // When a string size is longer than this value, we store a first few bytes in the auxiliary memory
-    // and the rest in the data memory.
-    public static final int UTF8_STORAGE_INLINE_BYTES = 9;
-    // When a string does not fully fit into the auxiliary memory the we store first few bytes
-    // in the auxiliary memory and the rest in the data memory.
-    // This constant defines the number of bytes that we store in the auxiliary memory
-    // Must be kept in sync with Java_io_questdb_std_Vect_sortVarcharColumn.
-    public static final int UTF8_STORAGE_SPLIT_BYTE = 6;
-    // the longest varchar in bytes we can encode into aux and data memory
-    // the length is encoded into 28 bits
-    private static final int UTF8_MAX_LENGTH_BYTES = 1 << 28; // exclusive
+    // Maximum byte length that we can fully inline into auxiliary memory. In this case
+    // there is no need to store any part of the string in data memory.
+    // When the string is longer than this, we store the first few bytes in auxiliary memory,
+    // and the full value in data memory.
+    public static final int VARCHAR_MAX_BYTES_FULLY_INLINED = 9;
+    // We store a prefix of this many bytes in auxiliary memory when the value is too large to inline.
+    public static final int VARCHAR_INLINED_PREFIX_BYTES = 6;
+    public static final long VARCHAR_MAX_COLUMN_SIZE = 1L << 48;
+    // The exclusive limit on the byte length of a varchar value. The length is encoded in 28 bits.
+    private static final int VARCHAR_LENGTH_LIMIT_BYTES = 1 << 28;
 
     /**
      * Appends UTF8 varchar type to the data and aux vectors.
@@ -59,8 +56,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         final long offset;
         if (value != null) {
             int size = value.size();
-            if (size <= UTF8_STORAGE_INLINE_BYTES) {
-                // we can inline up to 15 bytes, which is what we do here
+            if (size <= VARCHAR_MAX_BYTES_FULLY_INLINED) {
+                // we can inline up to 9 bytes, which is what we do here
                 int flags = 1; // flags are 4 bits, 1 = inlined
                 if (value.isAscii()) {
                     flags |= 2; // ascii flag
@@ -68,11 +65,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 // size is compressed to 4 bits
                 auxMem.putByte((byte) ((size << 4) | flags));
                 auxMem.putVarchar(value, 0, size);
-                auxMem.skip(UTF8_STORAGE_INLINE_BYTES - size);
+                auxMem.skip(VARCHAR_MAX_BYTES_FULLY_INLINED - size);
                 offset = dataMem.getAppendOffset();
             } else {
-                if (size >= UTF8_MAX_LENGTH_BYTES) {
-                    throw CairoException.critical(0).put("varchar value is too long [size=").put(size).put(", max=").put(UTF8_MAX_LENGTH_BYTES).put(']');
+                if (size >= VARCHAR_LENGTH_LIMIT_BYTES) {
+                    throw CairoException.critical(0).put("varchar value is too long [size=")
+                            .put(size).put(", max=").put(VARCHAR_LENGTH_LIMIT_BYTES).put(']');
                 }
 
                 int flags = 0;  // not inlined
@@ -81,11 +79,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 }
                 auxMem.putInt((size << 4) | flags);
 
-                // value size is over 8 bytes
-                auxMem.putVarchar(value, 0, UTF8_STORAGE_SPLIT_BYTE);
-                offset = dataMem.putVarchar(value, UTF8_STORAGE_SPLIT_BYTE, size);
-                if (offset >= 281474976710656L) {
-                    throw CairoException.critical(0).put("varchar data column is too large [offset=").put(offset).put(", max=").put(281474976710656L).put(']');
+                // value size is over 9 bytes
+                auxMem.putVarchar(value, 0, VARCHAR_INLINED_PREFIX_BYTES);
+                offset = dataMem.putVarchar(value, 0, size);
+                if (offset >= VARCHAR_MAX_COLUMN_SIZE) {
+                    throw CairoException.critical(0).put("varchar data column is too large [offset=")
+                            .put(offset).put(", max=").put(VARCHAR_MAX_COLUMN_SIZE).put(']');
                 }
             }
         } else {
@@ -165,7 +164,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         }
         // size of the string at this offset
         final int size = (raw >> 4) & 0xffffff;
-        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
+        return dataOffset + size;
     }
 
     public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
@@ -224,26 +223,16 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             int size = (raw >> 4) & 0x0f;
             return ab == 1 ? auxMem.getVarcharA(auxOffset + 1, size, ascii) : auxMem.getVarcharB(auxOffset + 1, size, ascii);
         }
-        // string is split, prefix is in auxMem and the suffix is in data mem
-        Utf8SplitString utf8SplitString = ab == 1 ? auxMem.borrowUtf8SplitStringA() : auxMem.borrowUtf8SplitStringB();
-
-        if (utf8SplitString != null) {
-            return utf8SplitString.of(
-                    auxMem.addressOf(auxOffset + 4),
-                    dataMem.addressOf(getDataOffset(auxMem, auxOffset)),
-                    (raw >> 4) & 0xffffff,
-                    ascii
-            );
-        }
-        return null;
+        int size = (raw >> 4) & 0xffffff;
+        long dataOffset = getDataOffset(auxMem, auxOffset);
+        return ab == 1 ? dataMem.getVarcharA(dataOffset, size, ascii) :  dataMem.getVarcharB(dataOffset, size, ascii);
     }
 
     public static Utf8Sequence getValue(
             long auxAddr,
             long dataAddr,
             long row,
-            DirectUtf8String utf8view,
-            Utf8SplitString utf8SplitView
+            DirectUtf8String utf8view
     ) {
         long auxEntry = auxAddr + (row << VARCHAR_AUX_SHL);
         int raw = Unsafe.getUnsafe().getInt(auxEntry);
@@ -262,13 +251,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             int size = (raw >> 4) & 0x0f;
             return utf8view.of(auxEntry + 1, auxEntry + size + 1, ascii);
         }
-        // string is split, prefix is in aux mem and the suffix is in data mem
-        return utf8SplitView.of(
-                auxEntry + 4,
-                dataAddr + getDataOffset(auxEntry),
-                (raw >> 4) & 0xffffff,
-                ascii
-        );
+        long lo = dataAddr + getDataOffset(auxEntry);
+        int size = (raw >> 4) & 0xffffff;
+        return utf8view.of(lo, lo + size, ascii);
     }
 
     @Override
@@ -401,7 +386,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         }
         // size of the string at this offset
         final int size = (raw >> 4) & 0xffffff;
-        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
+        return dataOffset + size;
     }
 
     @Override
@@ -550,7 +535,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         final int size = (raw >> 4) & 0xffffff;
         assert size > 6 : String.format("size %,d <= 6, dataOffset %,d", size, dataOffset);
 
-        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
+        return dataOffset + size;
     }
 
     private static boolean isAscii(int header) {

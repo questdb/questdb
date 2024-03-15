@@ -311,8 +311,7 @@ public class Utf8sTest {
         ) {
             final Utf8StringSink utf8Sink = new Utf8StringSink();
             int len = 1024;
-            int dataSize = len - VarcharTypeDriver.UTF8_STORAGE_SPLIT_BYTE;
-            int n = (Integer.MAX_VALUE / dataSize) + dataSize;
+            int n = Integer.MAX_VALUE / len + len;
             LongList expectedOffsets = new LongList(n);
             for (int i = 0; i < n; i++) {
                 utf8Sink.clear();

@@ -1223,9 +1223,9 @@ Java_io_questdb_std_Vect_sortVarcharColumn(JNIEnv *env, jclass cl, jlong mergedT
         tgt_aux[2 * i] = a1;
         tgt_aux[2 * i + 1] = (offset << 16) | (a2 & 0xffff);
         const int64_t flags = a1 & 0x0f;
-        if ((flags & 5) == 0) { // not inlined and not null
-            // 6 bytes are inlined - must be kept in sync with Utf8s#UTF8_STORAGE_SPLIT_BYTE
-            const int64_t size = ((a1 >> 4) & 0xffffff) - 6;
+        if ((flags & 5) == 0) {
+            // not inlined and not null
+            const int64_t size = ((a1 >> 4) & 0xffffff);
             platform_memcpy(reinterpret_cast<void *>(tgt_data + offset), reinterpret_cast<const void *>(src_data + (a2 >> 16)),
                             size);
             offset += size;

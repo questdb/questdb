@@ -90,12 +90,6 @@ public class MemoryPARWImpl implements MemoryARW {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public Utf8SplitString borrowUtf8SplitStringA() {
-        // paged memory does not support reading UTF8 strings from
-        throw new UnsupportedOperationException();
-    }
-
     public void clear() {
         releaseAllPagesButFirst();
         appendPointer = -1;
@@ -368,6 +362,16 @@ public class MemoryPARWImpl implements MemoryARW {
 
     public final int getStrLen(long offset) {
         return getInt(offset);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
     }
 
     public boolean isMapped(long offset, long len) {

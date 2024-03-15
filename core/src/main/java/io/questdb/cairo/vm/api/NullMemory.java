@@ -125,6 +125,16 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
+    public Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean isMapped(long offset, long len) {
         return false;
     }

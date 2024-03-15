@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8SplitString;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -197,7 +196,6 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                 sink
         );
 
-        final Utf8SplitString utf8SplitView = new Utf8SplitString();
         final DirectUtf8String utf8view = new DirectUtf8String();
 
         final StringSink actualSink = new StringSink();
@@ -212,7 +210,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                     final long auxTopAddress = frame.getIndexPageAddress(1);
                     final long count = frame.getPartitionHi() - frame.getPartitionLo();
                     for (int row = 0; row < count; row++) {
-                        actualSink.put(VarcharTypeDriver.getValue(auxTopAddress, dataTopAddress, row, utf8view, utf8SplitView));
+                        actualSink.put(VarcharTypeDriver.getValue(auxTopAddress, dataTopAddress, row, utf8view));
                         actualSink.put('\n');
                     }
                 }

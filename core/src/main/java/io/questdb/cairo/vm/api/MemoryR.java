@@ -29,10 +29,8 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8SplitString;
-import org.jetbrains.annotations.NotNull;
 import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.Utf8Sequence;
 
 import java.io.Closeable;
 
@@ -40,14 +38,6 @@ import java.io.Closeable;
 public interface MemoryR extends Closeable {
 
     long addressOf(long offset);
-
-    default Utf8SplitString borrowUtf8SplitStringA() {
-        throw new UnsupportedOperationException();
-    }
-
-    default Utf8SplitString borrowUtf8SplitStringB() {
-        throw new UnsupportedOperationException();
-    }
 
     @Override
     void close();
@@ -112,17 +102,9 @@ public interface MemoryR extends Closeable {
 
     int getStrLen(long offset);
 
-    default @NotNull Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
-        // paged memory and NULL memory do not support reading varchar columns
-        // use contiguous memory implementation
-        throw new UnsupportedOperationException();
-    }
+    Utf8Sequence getVarcharA(long offset, int size, boolean ascii);
 
-    default @NotNull Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
-        // paged memory and NULL memory do not support reading varchar columns
-        // use contiguous memory implementation
-        throw new UnsupportedOperationException();
-    }
+    Utf8Sequence getVarcharB(long offset, int size, boolean ascii);
 
     long offsetInPage(long offset);
 
