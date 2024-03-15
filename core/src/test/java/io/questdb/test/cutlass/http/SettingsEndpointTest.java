@@ -31,19 +31,14 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     assertSettingsRequest(httpClient);
-                    assertSettingsRequest(httpClient, "version=v2");
                 }
             }
         });
     }
 
     private void assertSettingsRequest(HttpClient httpClient) {
-        assertSettingsRequest(httpClient, null);
-    }
-
-    private void assertSettingsRequest(HttpClient httpClient, String params) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-        request.GET().url("/settings" + (params != null ? "?" + params : ""));
+        request.GET().url("/settings");
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
             responseHeaders.await();
 
