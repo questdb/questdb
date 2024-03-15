@@ -45,11 +45,11 @@ public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements 
         addAll(that);
     }
 
-    private Utf8SequenceHashSet(int initialCapacity) {
+    public Utf8SequenceHashSet(int initialCapacity) {
         this(initialCapacity, 0.4);
     }
 
-    private Utf8SequenceHashSet(int initialCapacity, double loadFactor) {
+    public Utf8SequenceHashSet(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
         list = new ObjList<>(free);
         clear();
