@@ -202,8 +202,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             LOG.info().$("[fd=").$(context.getFd()).$("] data is in cold storage, will retry").$();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (CairoException e) {
+            int code = 400;
+            if (e.isAuthorizationError()) {
+                code = 403;
+            } else if (e.isInterruption()) {
+                code = 408;
+            }
             internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
-                    e.isAuthorizationError() ? 403 : 400, e, state, context.getMetrics()
+                    code, e, state, context.getMetrics()
             );
             readyForNextRequest(context);
             if (e.isEntityDisabled()) {
