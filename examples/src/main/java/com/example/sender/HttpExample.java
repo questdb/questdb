@@ -37,13 +37,13 @@ public class HttpExample {
                     .timestampColumn("birthday", Instant.parse("1856-07-10T00:00:00.00Z"))
                     .longColumn("id", 0)
                     .stringColumn("name", "Nicola Tesla")
-                    .at(System.nanoTime(), ChronoUnit.NANOS);
+                    .at(System.currentTimeMillis(), ChronoUnit.MILLIS);
             sender.table("inventors")
                     .symbol("born", "USA")
                     .timestampColumn("birthday", Instant.parse("1847-02-11T00:00:00.00Z"))
                     .longColumn("id", 1)
                     .stringColumn("name", "Thomas Alva Edison")
-                    .at(System.nanoTime(), ChronoUnit.NANOS);
+                    .at(System.currentTimeMillis(), ChronoUnit.MILLIS);
         }
     }
 }
