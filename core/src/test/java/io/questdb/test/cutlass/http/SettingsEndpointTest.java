@@ -33,7 +33,20 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testSettings() throws Exception {
+    public void testSettingsOSS() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertSettingsRequest(httpClient, "{}");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSettingsWithProps() throws Exception {
         final Bootstrap bootstrap = new Bootstrap(
                 new PropBootstrapConfiguration() {
                     @Override
@@ -71,13 +84,13 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertSettingsRequest(httpClient);
+                    assertSettingsRequest(httpClient, SETTINGS_PAYLOAD);
                 }
             }
         });
     }
 
-    private void assertSettingsRequest(HttpClient httpClient) {
+    private void assertSettingsRequest(HttpClient httpClient, String expectedHttpResponse) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
         request.GET().url("/settings");
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
@@ -93,7 +106,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
             }
 
-            TestUtils.assertEquals(SETTINGS_PAYLOAD, sink.toString());
+            TestUtils.assertEquals(expectedHttpResponse, sink.toString());
             sink.clear();
         }
     }
