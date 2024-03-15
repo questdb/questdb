@@ -453,10 +453,10 @@ public class SqlOptimiser implements Mutable {
         distinctModel.addBottomUpColumn(innerColumn);
     }
 
-    private void addJoinContext(QueryModel parent, JoinContext context) {
+    private void addJoinContext(QueryModel parent, JoinContext context) throws SqlException {
         QueryModel jm = parent.getJoinModels().getQuick(context.slaveIndex);
         JoinContext other = jm.getContext();
-        if (other == null) {
+        if (other == null || other.slaveIndex == -1) {
             jm.setContext(context);
         } else {
             jm.setContext(mergeContexts(parent, other, context));
@@ -2284,8 +2284,10 @@ public class SqlOptimiser implements Mutable {
         return expr;
     }
 
-    private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) {
-        assert a.slaveIndex == b.slaveIndex;
+    private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) throws SqlException {
+        if (a.slaveIndex != b.slaveIndex) {
+            throw SqlException.$(parent.getModelPosition(), "Master/slave index mismatch.");
+        }
 
         deletedContexts.clear();
         JoinContext r = contextPool.next();
@@ -3250,7 +3252,7 @@ public class SqlOptimiser implements Mutable {
         copyColumnsFromMetadata(model, tableFactory.getMetadata(), true);
     }
 
-    private void processEmittedJoinClauses(QueryModel model) {
+    private void processEmittedJoinClauses(QueryModel model) throws SqlException {
         // pick up join clauses emitted at initial analysis stage
         // as we merge contexts at this level no more clauses is to be emitted
         for (int i = 0, k = emittedJoinClauses.size(); i < k; i++) {

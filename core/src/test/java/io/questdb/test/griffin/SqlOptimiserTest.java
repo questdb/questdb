@@ -1211,6 +1211,162 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testOrderByAdviceWithMultipleJoinsAndFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'WorkflowEvent' (\n" +
+                    "  CreateDate timestamp,\n" +
+                    "  Id uuid,\n" +
+                    "  TenantId int,\n" +
+                    "  UserId int,\n" +
+                    "  EventTypeId int\n" +
+                    ") timestamp (CreateDate) partition by hour wal;");
+
+            ddl("CREATE TABLE 'WorkflowEventAction' (\n" +
+                    "  CreateDate TIMESTAMP,\n" +
+                    "  WorkflowEventId UUID,\n" +
+                    "  ActionTypeId INT,\n" +
+                    "  Message STRING\n" +
+                    ") timestamp (CreateDate) PARTITION BY HOUR WAL;");
+
+            insert("insert into WorkflowEventAction (CreateDate, WorkflowEventId, ActionTypeId, Message) values" +
+                    " ('2016-01-01T00:00:00Z', to_uuid(1, 1), 13, '2')");
+            insert("insert into WorkflowEvent (CreateDate, Id, TenantId, UserId, EventTypeId) values ('2016-01-01T00:00:00Z', to_uuid(1, 1), 24024, 19, 1)");
+            drainWalQueue();
+
+            assertPlan(
+                    "SELECT  1\n" +
+                            "FROM    WorkflowEvent el\n" +
+                            "\n" +
+                            "LEFT JOIN WorkflowEventAction ep0\n" +
+                            "  ON    el.CreateDate = ep0.CreateDate\n" +
+                            "  and   el.Id = ep0.WorkflowEventId\n" +
+                            "  and   ep0.ActionTypeId = 13\n" +
+                            "  and   ep0.Message = '2'\n" +
+                            "\n" +
+                            "LEFT JOIN    WorkflowEventAction ep\n" +
+                            "  on    el.CreateDate = ep.CreateDate\n" +
+                            "  and   el.Id = ep.WorkflowEventId\n" +
+                            "  and   ep.ActionTypeId = 8\n" +
+                            "\n" +
+                            "WHERE   el.UserId = 19\n" +
+                            "  and   el.TenantId = 24024\n" +
+                            "  and   el.EventTypeId = 1\n" +
+                            "  and   el.CreateDate >= to_timestamp('2016-01-01T00:00:00Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')\n" +
+                            "  and   el.CreateDate <= to_timestamp('2016-01-01T10:00:00Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')",
+                    "VirtualRecord\n" +
+                            "  functions: [1]\n" +
+                            "    Hash Outer Join Light\n" +
+                            "      condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate\n" +
+                            "      filter: ep.ActionTypeId=8\n" +
+                            "        Hash Outer Join Light\n" +
+                            "          condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate\n" +
+                            "          filter: (ep0.ActionTypeId=13 and ep0.Message='2')\n" +
+                            "            Empty table\n" +
+                            "            Hash\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: WorkflowEventAction\n" +
+                            "        Hash\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: WorkflowEventAction\n"
+            );
+
+            assertQuery("select-virtual 1 1 from (select [Id, CreateDate, UserId, TenantId, EventTypeId] from WorkflowEvent el timestamp (CreateDate) join (select [WorkflowEventId, CreateDate, ActionTypeId, Message] from WorkflowEventAction ep0 timestamp (CreateDate) where ActionTypeId = 13 and Message = '2') ep0 on ep0.WorkflowEventId = el.Id and ep0.CreateDate = el.CreateDate join (select [WorkflowEventId, CreateDate, ActionTypeId] from WorkflowEventAction ep timestamp (CreateDate) where ActionTypeId = 8) ep on ep.WorkflowEventId = el.Id and ep.CreateDate = el.CreateDate where UserId = 19 and TenantId = 24024 and EventTypeId = 1 and CreateDate >= to_timestamp('2024-01-26T18:26:14.000000Z','yyyy-MM-ddTHH:mm:ss.SSSUUUZ') and CreateDate <= to_timestamp('2024-01-26T18:47:49.994262Z','yyyy-MM-ddTHH:mm:ss.SSSUUUZ')) el", "SELECT  1\n" +
+                    "FROM    WorkflowEvent el\n" +
+                            "\n" +
+                            "JOIN    WorkflowEventAction ep0\n" +
+                            "  ON    el.CreateDate = ep0.CreateDate\n" +
+                            "  and   el.Id = ep0.WorkflowEventId\n" +
+                            "  and   ep0.ActionTypeId = 13\n" +
+                            "  and   ep0.Message = '2'\n" +
+                            "\n" +
+                            "join    WorkflowEventAction ep\n" +
+                            "  on    el.CreateDate = ep.CreateDate\n" +
+                            "  and   el.Id = ep.WorkflowEventId\n" +
+                            "  and   ep.ActionTypeId = 8\n" +
+                            "\n" +
+                            "WHERE   el.UserId = 19\n" +
+                            "  and   el.TenantId = 24024\n" +
+                            "  and   el.EventTypeId = 1\n" +
+                            "  and   el.CreateDate >= to_timestamp('2024-01-26T18:26:14.000000Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')\n" +
+                            "  and   el.CreateDate <= to_timestamp('2024-01-26T18:47:49.994262Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')");
+
+            assertSql("1\n", "SELECT  1\n" +
+                    "FROM    WorkflowEvent el\n" +
+                    "\n" +
+                    "JOIN    WorkflowEventAction ep0\n" +
+                    "  ON    el.CreateDate = ep0.CreateDate\n" +
+                    "  and   el.Id = ep0.WorkflowEventId\n" +
+                    "  and   ep0.ActionTypeId = 13\n" +
+                    "  and   ep0.Message = '2'\n" +
+                    "\n" +
+                    "JOIN    WorkflowEventAction ep\n" +
+                    "  on    el.CreateDate = ep.CreateDate\n" +
+                    "  and   el.Id = ep.WorkflowEventId\n" +
+                    "  and   ep.ActionTypeId = 8\n" +
+                    "\n" +
+                    "WHERE   el.UserId = 19\n" +
+                    "  and   el.TenantId = 24024\n" +
+                    "  and   el.EventTypeId = 1\n" +
+                    "  and   el.CreateDate >= to_timestamp('2024-01-26T18:26:14.000000Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ') \n" +
+                    "  and   el.CreateDate <= to_timestamp('2024-01-26T18:47:49.994262Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')");
+
+
+            assertSql("CreateDate\tId\tTenantId\tUserId\tEventTypeId\tCreateDate1\tWorkflowEventId\tActionTypeId\tMessage\tCreateDate2\tWorkflowEventId1\tActionTypeId1\tMessage1\n" +
+                            "2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t24024\t19\t1\t2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t13\t2\t\t\tNaN\t\n",
+
+                    "SELECT  *\n" +
+                    "FROM    WorkflowEvent el\n" +
+                            "\n" +
+                            "LEFT JOIN WorkflowEventAction ep0\n" +
+                            "  ON    el.CreateDate = ep0.CreateDate\n" +
+                            "  and   el.Id = ep0.WorkflowEventId\n" +
+                            "  and   ep0.ActionTypeId = 13\n" +
+                            "  and   ep0.Message = '2'\n" +
+                            "\n" +
+                            "LEFT JOIN WorkflowEventAction ep\n" +
+                            "  on    el.CreateDate = ep.CreateDate\n" +
+                            "  and   el.Id = ep.WorkflowEventId\n" +
+                            "  and   ep.ActionTypeId = 8\n" +
+                            "\n" +
+                            "WHERE   el.UserId = 19\n" +
+                            "  and   el.TenantId = 24024\n" +
+                            "  and   el.EventTypeId = 1\n" +
+                            "  and   el.CreateDate >= '2016-01-01T00:00:00Z'\n" +
+                            "  and   el.CreateDate <= '2016-01-01T10:00:00Z'");
+        });
+
+        /*
+
+
+
+
+
+explain
+SELECT  1
+FROM    WorkflowEvent el
+
+JOIN    WorkflowEventAction ep0
+  ON    el.CreateDate = ep0.CreateDate
+  and   el.Id = ep0.WorkflowEventId
+  and   ep0.ActionTypeId = 13
+  and   ep0.Message = '2'
+
+join    WorkflowEventAction ep
+  on    el.CreateDate = ep.CreateDate
+  and   el.Id = ep.WorkflowEventId
+  and   ep.ActionTypeId = 8
+
+WHERE   el.UserId = 19
+  and   el.TenantId = 24024
+  and   el.EventTypeId = 1
+  and   el.CreateDate >= to_timestamp('2024-01-26T18:26:14.000000Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')
+  and   el.CreateDate <= to_timestamp('2024-01-26T18:47:49.994262Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')
+         */
+    }
+
     protected QueryModel compileModel(String query, int modelType) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
