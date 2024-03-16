@@ -49,7 +49,7 @@ public class SettingsProcessor implements HttpRequestProcessor {
         for (int i = 0, n = keys.size(); i < n; i++) {
             final CharSequence key = keys.getQuick(i);
             final CharSequence value = settings.get(key);
-            sink.putQuote().escapeJsonStr(key).putQuote().putAscii(':').putQuote().escapeJsonStr(value).putQuote();
+            sink.putQuoted(key).putAscii(':').put(value);
             if (i != n - 1) {
                 sink.putAscii(',');
             }
