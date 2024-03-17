@@ -62,7 +62,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 if (value.isAscii()) {
                     flags |= 2; // ascii flag
                 }
-                // size is compressed to 4 bits
+                // size is known to be at most 4 bits
                 auxMem.putByte((byte) ((size << 4) | flags));
                 auxMem.putVarchar(value, 0, size);
                 auxMem.skip(VARCHAR_MAX_BYTES_FULLY_INLINED - size);
@@ -78,8 +78,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                     flags |= 2; // ascii flag
                 }
                 auxMem.putInt((size << 4) | flags);
-
-                // value size is over 9 bytes
                 auxMem.putVarchar(value, 0, VARCHAR_INLINED_PREFIX_BYTES);
                 offset = dataMem.putVarchar(value, 0, size);
                 if (offset >= VARCHAR_MAX_COLUMN_SIZE) {
@@ -90,7 +88,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         } else {
             // 4 = NULL
             auxMem.putInt(4);
-            auxMem.skip(6);
+            auxMem.skip(VARCHAR_INLINED_PREFIX_BYTES);
             offset = dataMem.getAppendOffset();
         }
         // write 48 bit offset (little-endian)
