@@ -386,9 +386,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         assert srcDataOffset >= 0;
         // copy this before it changes
         final long len = columnTypeDriver.getDataVectorSize(srcAuxAddr, srcLo, srcHi);
+        LOG.info().$(String.format("columnType %d srcLo %,d srcHi %,d srcDataOffset %,d dstDataOffset %,d len %,d dstDataSize %,d dst_diff %,d",
+                columnType, srcLo, srcHi, srcDataOffset, dstDataOffset, len, dstDataSize, dstDataOffset + len - Math.abs(dstDataSize))).$();
         assert len <= Math.abs(dstDataSize) - dstDataOffset :
-                String.format("len %,d dstDataSize %,d dstDataOffset %,d srcLo %,d srcHi %,d\n",
-                        len, dstDataSize, dstDataOffset, srcLo, srcHi);
+                String.format("columnType %d srcLo %,d srcHi %,d srcDataOffset %,d dstDataOffset %,d len %,d dstDataSize %,d dst_diff %,d",
+                        columnType, srcLo, srcHi, srcDataOffset, dstDataOffset, len, dstDataSize, dstDataOffset + len - Math.abs(dstDataSize));
         final long offset = dstDataOffset + dstDataAdjust;
         if (mixedIOFlag) {
             if (ff.write(Math.abs(dstDataFd), srcDataAddr + srcDataOffset, len, offset) != len) {
