@@ -382,8 +382,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
         ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
-        final long lo = columnTypeDriver.getDataVectorOffset(srcAuxAddr, srcLo);
-        assert lo >= 0;
+        final long srcDataOffset = columnTypeDriver.getDataVectorOffset(srcAuxAddr, srcLo);
+        assert srcDataOffset >= 0;
         // copy this before it changes
         final long len = columnTypeDriver.getDataVectorSize(srcAuxAddr, srcLo, srcHi);
         assert len <= Math.abs(dstDataSize) - dstDataOffset :
@@ -391,13 +391,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         len, dstDataSize, dstDataOffset, srcLo, srcHi);
         final long offset = dstDataOffset + dstDataAdjust;
         if (mixedIOFlag) {
-            if (ff.write(Math.abs(dstDataFd), srcDataAddr + lo, len, offset) != len) {
+            if (ff.write(Math.abs(dstDataFd), srcDataAddr + srcDataOffset, len, offset) != len) {
                 throw CairoException.critical(ff.errno()).put("cannot copy var data column prefix [fd=").put(dstDataFd).put(", offset=").put(offset).put(", len=").put(len).put(']');
             }
         } else {
-            Vect.memcpy(dstDataAddr + dstDataOffset, srcDataAddr + lo, len);
+            Vect.memcpy(dstDataAddr + dstDataOffset, srcDataAddr + srcDataOffset, len);
         }
-        if (lo == offset) {
+        if (srcDataOffset == offset) {
             columnTypeDriver.o3copyAuxVector(
                     ff,
                     srcAuxAddr,
@@ -409,7 +409,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     mixedIOFlag
             );
         } else {
-            columnTypeDriver.shiftCopyAuxVector(lo - offset, srcAuxAddr, srcLo, srcHi, dstAuxAddr);
+            columnTypeDriver.shiftCopyAuxVector(srcDataOffset - offset, srcAuxAddr, srcLo, srcHi, dstAuxAddr);
         }
     }
 
