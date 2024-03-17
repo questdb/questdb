@@ -44,6 +44,8 @@ public class PageAddressCacheRecord implements Record, Closeable {
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
+    private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
+    private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
     private final DirectUtf8String utf8viewA = new DirectUtf8String();
     private final DirectUtf8String utf8viewB = new DirectUtf8String();
     private int frameIndex;
@@ -323,12 +325,12 @@ public class PageAddressCacheRecord implements Record, Closeable {
 
     @Override
     public Utf8Sequence getVarcharA(int columnIndex) {
-        return getVarchar(columnIndex, utf8viewA);
+        return getVarchar(columnIndex, utf8viewA, utf8SplitViewA);
     }
 
     @Override
     public Utf8Sequence getVarcharB(int columnIndex) {
-        return getVarchar(columnIndex, utf8viewB);
+        return getVarchar(columnIndex, utf8viewB, utf8SplitViewB);
     }
 
     public void of(SymbolTableSource symbolTableSource, PageAddressCache pageAddressCache) {
@@ -421,7 +423,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Nullable
-    private Utf8Sequence getVarchar(int columnIndex, DirectUtf8String utf8view) {
+    private Utf8Sequence getVarchar(int columnIndex, DirectUtf8String utf8view, Utf8SplitString utf8SplitView) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         final long auxPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         if (auxPageAddress == 0) {
@@ -432,7 +434,8 @@ public class PageAddressCacheRecord implements Record, Closeable {
                 auxPageAddress,
                 dataPageAddress,
                 rowIndex,
-                utf8view
+                utf8view,
+                utf8SplitView
         );
     }
 }

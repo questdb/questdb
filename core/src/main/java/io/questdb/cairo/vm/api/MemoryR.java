@@ -31,6 +31,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 
 import java.io.Closeable;
 
@@ -38,6 +39,14 @@ import java.io.Closeable;
 public interface MemoryR extends Closeable {
 
     long addressOf(long offset);
+
+    default Utf8SplitString borrowUtf8SplitStringA() {
+        throw new UnsupportedOperationException();
+    }
+
+    default Utf8SplitString borrowUtf8SplitStringB() {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     void close();

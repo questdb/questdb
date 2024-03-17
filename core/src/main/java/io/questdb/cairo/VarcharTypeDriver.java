@@ -221,16 +221,26 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             int size = (raw >> 4) & 0x0f;
             return ab == 1 ? auxMem.getVarcharA(auxOffset + 1, size, ascii) : auxMem.getVarcharB(auxOffset + 1, size, ascii);
         }
-        int size = (raw >> 4) & 0xffffff;
-        long dataOffset = getDataOffset(auxMem, auxOffset);
-        return ab == 1 ? dataMem.getVarcharA(dataOffset, size, ascii) :  dataMem.getVarcharB(dataOffset, size, ascii);
+        // string is split, prefix is in auxMem and the suffix is in data mem
+        Utf8SplitString utf8SplitString = ab == 1 ? auxMem.borrowUtf8SplitStringA() : auxMem.borrowUtf8SplitStringB();
+
+        if (utf8SplitString != null) {
+            return utf8SplitString.of(
+                    auxMem.addressOf(auxOffset + 4),
+                    dataMem.addressOf(getDataOffset(auxMem, auxOffset)),
+                    (raw >> 4) & 0xffffff,
+                    ascii
+            );
+        }
+        return null;
     }
 
     public static Utf8Sequence getValue(
             long auxAddr,
             long dataAddr,
             long row,
-            DirectUtf8String utf8view
+            DirectUtf8String utf8view,
+            Utf8SplitString utf8SplitView
     ) {
         long auxEntry = auxAddr + (row << VARCHAR_AUX_SHL);
         int raw = Unsafe.getUnsafe().getInt(auxEntry);
@@ -249,9 +259,13 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             int size = (raw >> 4) & 0x0f;
             return utf8view.of(auxEntry + 1, auxEntry + size + 1, ascii);
         }
-        long lo = dataAddr + getDataOffset(auxEntry);
-        int size = (raw >> 4) & 0xffffff;
-        return utf8view.of(lo, lo + size, ascii);
+        // string is split, prefix is in aux mem and the suffix is in data mem
+        return utf8SplitView.of(
+                auxEntry + 4,
+                dataAddr + getDataOffset(auxEntry),
+                (raw >> 4) & 0xffffff,
+                ascii
+        );
     }
 
     @Override

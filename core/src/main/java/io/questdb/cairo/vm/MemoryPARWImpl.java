@@ -90,6 +90,12 @@ public class MemoryPARWImpl implements MemoryARW {
         throw new UnsupportedOperationException();
     }
 
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringA() {
+        // paged memory does not support reading UTF8 strings from
+        throw new UnsupportedOperationException();
+    }
+
     public void clear() {
         releaseAllPagesButFirst();
         appendPointer = -1;
