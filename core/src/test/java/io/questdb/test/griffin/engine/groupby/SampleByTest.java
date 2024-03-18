@@ -2763,6 +2763,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleBadFunction() throws Exception {
+        String stringType = ColumnType.nameOf(ColumnType.STRING);
         assertException(
                 "select b, sumx(a, 'ab') k from x sample by 3h fill(none)",
                 "create table x as " +
@@ -2775,12 +2776,13 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 0,
-                "inconvertible value: `ab` [STRING -> DOUBLE]"
+                "inconvertible value: `ab` [" + stringType + " -> DOUBLE]"
         );
     }
 
     @Test
     public void testSampleBadFunctionInterpolated() throws Exception {
+        String stringType = ColumnType.nameOf(ColumnType.STRING);
         assertException(
                 "select b, sumx(a, 'ac') k from x sample by 3h fill(linear)",
                 "create table x as " +
@@ -2793,7 +2795,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 0,
-                "inconvertible value: `ac` [STRING -> DOUBLE]"
+                "inconvertible value: `ac` [" + stringType + " -> DOUBLE]"
         );
     }
 

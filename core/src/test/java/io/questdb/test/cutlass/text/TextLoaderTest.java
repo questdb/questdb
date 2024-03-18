@@ -3137,7 +3137,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "15\tbaz\t1970-01-01T00:00:00.000003Z\n";
 
             configureLoaderDefaults(textLoader);
-            String varcharTypeName = ColumnType.nameOf(ColumnType.VARCHAR);
+            String varcharTypeName = ColumnType.nameOf(ColumnType.tagOf("varchar"));
             playText(textLoader, csv, 1024, expected, "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"" + varcharTypeName + "\"},{\"index\":2,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
                     3,
                     3);

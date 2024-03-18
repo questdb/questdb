@@ -30,7 +30,7 @@ import io.questdb.std.ObjectFactory;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.VarcharTypeDriver.UTF8_STORAGE_SPLIT_BYTE;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
 
 /**
  * An immutable flyweight for a UTF-8 string stored in native memory.
@@ -50,7 +50,7 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte(index < UTF8_STORAGE_SPLIT_BYTE ? lo1 + index : lo2 + index - UTF8_STORAGE_SPLIT_BYTE);
+        return Unsafe.getUnsafe().getByte((index < VARCHAR_INLINED_PREFIX_BYTES ? lo1 : lo2) + index);
     }
 
     @Override

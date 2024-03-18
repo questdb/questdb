@@ -34,19 +34,16 @@ import static io.questdb.cairo.ColumnType.VARCHAR_AUX_SHL;
 
 public class VarcharTypeDriver implements ColumnTypeDriver {
     public static final VarcharTypeDriver INSTANCE = new VarcharTypeDriver();
-    // Maximum string size in bytes that we can fully inline into auxiliary memory. In such case
-    // There is no need to store any part of the string in the data memory.
-    // When a string size is longer than this value, we store a first few bytes in the auxiliary memory
-    // and the rest in the data memory.
-    public static final int UTF8_STORAGE_INLINE_BYTES = 9;
-    // When a string does not fully fit into the auxiliary memory the we store first few bytes
-    // in the auxiliary memory and the rest in the data memory.
-    // This constant defines the number of bytes that we store in the auxiliary memory
-    // Must be kept in sync with Java_io_questdb_std_Vect_sortVarcharColumn.
-    public static final int UTF8_STORAGE_SPLIT_BYTE = 6;
-    // the longest varchar in bytes we can encode into aux and data memory
-    // the length is encoded into 28 bits
-    private static final int UTF8_MAX_LENGTH_BYTES = 1 << 28; // exclusive
+    // Maximum byte length that we can fully inline into auxiliary memory. In this case
+    // there is no need to store any part of the string in data memory.
+    // When the string is longer than this, we store the first few bytes in auxiliary memory,
+    // and the full value in data memory.
+    public static final int VARCHAR_MAX_BYTES_FULLY_INLINED = 9;
+    // We store a prefix of this many bytes in auxiliary memory when the value is too large to inline.
+    public static final int VARCHAR_INLINED_PREFIX_BYTES = 6;
+    public static final long VARCHAR_MAX_COLUMN_SIZE = 1L << 48;
+    // The exclusive limit on the byte length of a varchar value. The length is encoded in 28 bits.
+    private static final int VARCHAR_LENGTH_LIMIT_BYTES = 1 << 28;
 
     /**
      * Appends UTF8 varchar type to the data and aux vectors.
@@ -59,20 +56,21 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         final long offset;
         if (value != null) {
             int size = value.size();
-            if (size <= UTF8_STORAGE_INLINE_BYTES) {
-                // we can inline up to 15 bytes, which is what we do here
+            if (size <= VARCHAR_MAX_BYTES_FULLY_INLINED) {
+                // we can inline up to 9 bytes, which is what we do here
                 int flags = 1; // flags are 4 bits, 1 = inlined
                 if (value.isAscii()) {
                     flags |= 2; // ascii flag
                 }
-                // size is compressed to 4 bits
+                // size is known to be at most 4 bits
                 auxMem.putByte((byte) ((size << 4) | flags));
                 auxMem.putVarchar(value, 0, size);
-                auxMem.skip(UTF8_STORAGE_INLINE_BYTES - size);
+                auxMem.skip(VARCHAR_MAX_BYTES_FULLY_INLINED - size);
                 offset = dataMem.getAppendOffset();
             } else {
-                if (size >= UTF8_MAX_LENGTH_BYTES) {
-                    throw CairoException.critical(0).put("varchar value is too long [size=").put(size).put(", max=").put(UTF8_MAX_LENGTH_BYTES).put(']');
+                if (size >= VARCHAR_LENGTH_LIMIT_BYTES) {
+                    throw CairoException.critical(0).put("varchar value is too long [size=")
+                            .put(size).put(", max=").put(VARCHAR_LENGTH_LIMIT_BYTES).put(']');
                 }
 
                 int flags = 0;  // not inlined
@@ -80,18 +78,17 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                     flags |= 2; // ascii flag
                 }
                 auxMem.putInt((size << 4) | flags);
-
-                // value size is over 8 bytes
-                auxMem.putVarchar(value, 0, UTF8_STORAGE_SPLIT_BYTE);
-                offset = dataMem.putVarchar(value, UTF8_STORAGE_SPLIT_BYTE, size);
-                if (offset >= 281474976710656L) {
-                    throw CairoException.critical(0).put("varchar data column is too large [offset=").put(offset).put(", max=").put(281474976710656L).put(']');
+                auxMem.putVarchar(value, 0, VARCHAR_INLINED_PREFIX_BYTES);
+                offset = dataMem.putVarchar(value, 0, size);
+                if (offset >= VARCHAR_MAX_COLUMN_SIZE) {
+                    throw CairoException.critical(0).put("varchar data column is too large [offset=")
+                            .put(offset).put(", max=").put(VARCHAR_MAX_COLUMN_SIZE).put(']');
                 }
             }
         } else {
             // 4 = NULL
             auxMem.putInt(4);
-            auxMem.skip(6);
+            auxMem.skip(VARCHAR_INLINED_PREFIX_BYTES);
             offset = dataMem.getAppendOffset();
         }
         // write 48 bit offset (little-endian)
@@ -121,19 +118,25 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * This is unsafe method, and it is assumed that the memory address is valid and has enough space to store the header and UTF8 bytes.
      * The number of bytes to be written can be obtained from {@link #getSingleMemValueByteCount(Utf8Sequence)}
      *
-     * @param dataMemAddr memory address to store header and UTF8 bytes in
-     * @param value       the UTF8 string to be stored
+     * @param dataMemAddr    memory address to store header and UTF8 bytes in
+     * @param value          the UTF8 string to be stored
+     * @param eraseAsciiFlag when set to true, the written sequence will have ASCII flag set to false;
+     *                       when set to false, the output flag will have the same value as {@code value.isAscii()}.
      */
-    public static void appendValue(long dataMemAddr, @Nullable Utf8Sequence value) {
+    public static void appendValue(long dataMemAddr, @Nullable Utf8Sequence value, boolean eraseAsciiFlag) {
         if (value == null) {
             Unsafe.getUnsafe().putInt(dataMemAddr, TableUtils.NULL_LEN); // NULL
             return;
         }
         final int hi = value.size();
-        final boolean ascii = value.isAscii();
         value.writeTo(dataMemAddr + Integer.BYTES, 0, hi);
-        // ASCII flag is signaled with the highest bit
-        Unsafe.getUnsafe().putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
+        if (eraseAsciiFlag) {
+            Unsafe.getUnsafe().putInt(dataMemAddr, hi);
+        } else {
+            final boolean ascii = value.isAscii();
+            // ASCII flag is signaled with the highest bit
+            Unsafe.getUnsafe().putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
+        }
     }
 
     public static long getDataOffset(long auxEntry) {
@@ -159,7 +162,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         }
         // size of the string at this offset
         final int size = (raw >> 4) & 0xffffff;
-        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
+        return dataOffset + size;
     }
 
     public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
@@ -194,7 +197,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static DirectUtf8Sequence getValue(long dataMemAddr, @NotNull DirectUtf8String sequence) {
         int header = Unsafe.getUnsafe().getInt(dataMemAddr);
-        assert header != 0;
         if (isNull(header)) {
             return null;
         }
@@ -396,7 +398,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         }
         // size of the string at this offset
         final int size = (raw >> 4) & 0xffffff;
-        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
+        return dataOffset + size;
     }
 
     @Override
@@ -543,9 +545,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         }
         // size of the string at this offset
         final int size = (raw >> 4) & 0xffffff;
-        assert size > 6: String.format("size %,d <= 6, dataOffset %,d", size, dataOffset);
+        assert size > 6 : String.format("size %,d <= 6, dataOffset %,d", size, dataOffset);
 
-        return dataOffset + size - UTF8_STORAGE_SPLIT_BYTE;
+        return dataOffset + size;
     }
 
     private static boolean isAscii(int header) {

@@ -189,7 +189,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length,
                 timestampIndex,
-                "STRING"
+                ColumnType.nameOf(ColumnType.STRING)
         );
     }
 

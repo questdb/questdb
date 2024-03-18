@@ -121,14 +121,13 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return getStr(offset, csviewB);
     }
 
-    @Override
-    @NotNull
+    @Override @NotNull
     public Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
         return getVarchar(offset, size, utf8viewA, ascii);
     }
 
-    @Override
-    public @NotNull Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
+    @Override @NotNull
+    public Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
         return getVarchar(offset, size, utf8viewB, ascii);
     }
 

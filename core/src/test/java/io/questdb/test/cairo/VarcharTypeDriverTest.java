@@ -56,14 +56,14 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     VarcharTypeDriver.appendValue(dataMem, auxMem, null);
                     VarcharTypeDriver.appendValue(dataMem, auxMem, new Utf8String("foobarbaz - bazbarfoo"));
 
-                    Assert.assertEquals(15, driver.getDataVectorSize(auxMem.addressOf(0), 0, 1));
+                    Assert.assertEquals(21, driver.getDataVectorSize(auxMem.addressOf(0), 0, 1));
 
                     Assert.assertEquals(0, driver.getDataVectorSizeAt(auxMem.addressOf(0), 0));
-                    Assert.assertEquals(15, driver.getDataVectorSizeAt(auxMem.addressOf(0), 1));
+                    Assert.assertEquals(21, driver.getDataVectorSizeAt(auxMem.addressOf(0), 1));
 
                     Assert.assertEquals(0, driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), -1));
                     Assert.assertEquals(0, driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), 0));
-                    Assert.assertEquals(15, driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), 1));
+                    Assert.assertEquals(21, driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), 1));
                 }
             }
         });
@@ -324,8 +324,8 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     final int len = i % 20;
                     char ch = (char) ('a' + i);
                     utf8Sink.repeat(ch, len);
-                    if (utf8Sink.size() > VarcharTypeDriver.UTF8_STORAGE_INLINE_BYTES) {
-                        expectedUsedSize += (utf8Sink.size() - VarcharTypeDriver.UTF8_STORAGE_SPLIT_BYTE);
+                    if (utf8Sink.size() > VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED) {
+                        expectedUsedSize += utf8Sink.size();
                     }
                     VarcharTypeDriver.appendValue(dataMem, auxMem, utf8Sink);
                 }
@@ -356,8 +356,8 @@ public class VarcharTypeDriverTest extends AbstractTest {
                         final int len = i % 40;
                         char ch = (char) ('A' + i);
                         utf8Sink.repeat(ch, len);
-                        if (utf8Sink.size() > VarcharTypeDriver.UTF8_STORAGE_INLINE_BYTES) {
-                            expectedUsedSize += (utf8Sink.size() - VarcharTypeDriver.UTF8_STORAGE_SPLIT_BYTE);
+                        if (utf8Sink.size() > VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED) {
+                            expectedUsedSize += utf8Sink.size();
                         }
                         VarcharTypeDriver.appendValue(dataMem, auxMem, utf8Sink);
                     }

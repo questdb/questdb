@@ -117,11 +117,9 @@ void merge_copy_varchar_column(
             // not inlined and not null
             auto originalOffset = secondWord >> 16;
             auto len = (firstWord >> 4) & 0xffffff;
-            // todo: make sure to keep the constant in-sync with Java
-            auto lenInDataMem = len - 6;
             auto data = src_var[bit] + originalOffset;
-            __MEMCPY(dst_var + dst_var_offset, data, lenInDataMem);
-            dst_var_offset += lenInDataMem;
+            __MEMCPY(dst_var + dst_var_offset, data, len);
+            dst_var_offset += len;
         }
         dst_fix[l * 2] = firstWord;
         dst_fix[l * 2 + 1] = rellocatedSecondWord;

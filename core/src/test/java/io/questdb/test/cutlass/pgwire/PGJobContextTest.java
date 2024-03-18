@@ -126,6 +126,7 @@ public class PGJobContextTest extends BasePGTest {
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
+    private static String stringTypeName;
     private static List<Object[]> datesArr;
     private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
@@ -151,6 +152,7 @@ public class PGJobContextTest extends BasePGTest {
                 .map(i -> i * Timestamps.HOUR_MICROS / 1000L)
                 .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new java.util.Date(ts))});
         datesArr = dates.collect(Collectors.toList());
+        stringTypeName = ColumnType.nameOf(ColumnType.STRING);
     }
 
     @Before
@@ -2067,7 +2069,7 @@ if __name__ == "__main__":
                 try (ResultSet ignore1 = ps.executeQuery()) {
                     Assert.fail();
                 } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "inconvertible value: `` [STRING -> DOUBLE]");
+                    TestUtils.assertContains(e.getMessage(), "inconvertible value: `` ["+ stringTypeName +" -> DOUBLE]");
                 }
             }
 
@@ -2076,7 +2078,7 @@ if __name__ == "__main__":
                 try (ResultSet ignore1 = ps.executeQuery()) {
                     Assert.fail();
                 } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "inconvertible value: `cha-cha-cha` [STRING -> DOUBLE]");
+                    TestUtils.assertContains(e.getMessage(), "inconvertible value: `cha-cha-cha` ["+ stringTypeName +" -> DOUBLE]");
                 }
             }
 
@@ -6537,7 +6539,7 @@ nodejs code:
                         statement.executeQuery();
                     } catch (PSQLException ex) {
                         caught = true;
-                        Assert.assertEquals("ERROR: inconvertible value: `abcd` [STRING -> TIMESTAMP]", ex.getMessage());
+                        Assert.assertEquals("ERROR: inconvertible value: `abcd` ["+ stringTypeName +" -> TIMESTAMP]", ex.getMessage());
                     }
                 }
 
@@ -6749,12 +6751,12 @@ nodejs code:
         String no5AndNull = "1\n2\n3\n4\n6\n7\n8\n9\n";
 
         final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
-
+        final String strType = ColumnType.nameOf(ColumnType.STRING).toLowerCase();
         for (String tsOption : tsOptions) {
             assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
                 drop("drop table if exists tab");
                 ddl("create table tab (s symbol index, ts timestamp) " + tsOption);
-                insert("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ");
+                insert("insert into tab select case when x = 10 then null::"+strType+" else x::"+strType+" end, x::timestamp from long_sequence(10) ");
                 drainWalQueue();
 
                 ResultProducer sameVal =
@@ -7997,7 +7999,7 @@ create table tab as (
             connection.prepareStatement("INSERT INTO tab VALUES (null, 4)").execute();
             connection.commit();
             mayDrainWalQueue();
-
+            final String stringType = ColumnType.nameOf(ColumnType.STRING).toLowerCase();
             String query = "SELECT * FROM tab WHERE to_str(ts,'EE') in (?,'Wednesday',?)";
             try (PreparedStatement stmt = connection.prepareStatement("explain " + query)) {
                 stmt.setString(1, "Tuesday");
@@ -8007,7 +8009,7 @@ create table tab as (
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter workers: 2\n" +
-                                    "  filter: (to_str(ts) in [Wednesday] or to_str(ts) in [$0::string,$1::string])\n" +
+                                    "  filter: (to_str(ts) in [Wednesday] or to_str(ts) in [$0::"+stringType+",$1::"+stringType+"])\n" +
                                     "    DataFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: tab\n",
@@ -10743,7 +10745,7 @@ create table tab as (
                         try (ResultSet ignore1 = ps.executeQuery()) {
                             Assert.fail();
                         } catch (PSQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "inconvertible value: `` [STRING -> DOUBLE]");
+                            TestUtils.assertContains(e.getMessage(), "inconvertible value: `` ["+ stringTypeName +" -> DOUBLE]");
                         }
                     }
 
@@ -10752,7 +10754,7 @@ create table tab as (
                         try (ResultSet ignore1 = ps.executeQuery()) {
                             Assert.fail();
                         } catch (PSQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "inconvertible value: `cah-cha-cha` [STRING -> DOUBLE]");
+                            TestUtils.assertContains(e.getMessage(), "inconvertible value: `cah-cha-cha` ["+ stringTypeName +" -> DOUBLE]");
                         }
                     }
 
@@ -11482,10 +11484,21 @@ create table tab as (
                                     Assert.assertTrue(record.getDouble(6) != record.getDouble(6));
                                 }
 
+                                final int strType = ColumnType.typeOf("STRING");
                                 if (rnd.nextInt() % 4 > 0) {
-                                    TestUtils.assertEquals("hello21", record.getStrA(7));
+                                    if (strType == ColumnType.VARCHAR) {
+                                        sink.clear();
+                                        record.getVarchar(7, sink);
+                                        TestUtils.assertEquals("hello21", sink);
+                                    } else {
+                                        TestUtils.assertEquals("hello21", record.getStrA(7));
+                                    }
                                 } else {
-                                    Assert.assertNull(record.getStrA(7));
+                                    if (strType == ColumnType.VARCHAR) {
+                                        Assert.assertNull(record.getVarcharA(7));
+                                    } else {
+                                        Assert.assertNull(record.getStrA(7));
+                                    }
                                 }
 
                                 if (rnd.nextInt() % 4 > 0) {
