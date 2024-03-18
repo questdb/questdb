@@ -593,6 +593,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory,
 //                  'all'
             io.questdb.griffin.engine.functions.bool.AllNotEqStrFunctionFactory,
+            io.questdb.griffin.engine.functions.bool.AllNotEqVarcharFunctionFactory,
 //                  'agg' group by function
             io.questdb.griffin.engine.functions.groupby.StringAggGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.StringAggVarcharGroupByFunctionFactory,

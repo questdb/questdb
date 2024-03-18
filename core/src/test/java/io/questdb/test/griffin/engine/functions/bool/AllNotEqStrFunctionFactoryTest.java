@@ -77,6 +77,23 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatchVarcharColumn() throws Exception {
+        assertQuery(
+                "a\n" +
+                        "aaa\n" +
+                        "aaa\n" +
+                        "bbb\n" +
+                        "ccc\n" +
+                        "ccc\n",
+                "select * from tab where a <> all('{abc,xyz}'::text[])",
+                "create table tab as (select rnd_varchar('aaa', 'bbb', 'ccc') a from long_sequence(5));",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testNoMatch() throws Exception {
         assertQuery(
                 "a\n",
