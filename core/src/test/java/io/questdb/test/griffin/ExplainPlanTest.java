@@ -9269,16 +9269,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") " +
                             "order by ts desc",
                     "Limit lo: 10\n" +
-                            "    Sort\n" +
-                            "      keys: [ts desc]\n" +
-                            "        SelectedRecord\n" +
-                            "            Cross Join\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: a\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: a\n"
+                            "    SelectedRecord\n" +
+                            "        Cross Join\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: a\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n"
             );
         });
     }
