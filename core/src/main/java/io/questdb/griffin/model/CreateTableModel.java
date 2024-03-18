@@ -53,6 +53,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private CharSequence volumeAlias;
     private boolean walEnabled;
     private long batchSize = -1;
+    private long batchO3MaxLag = -1;
 
     private CreateTableModel() {
 
@@ -156,6 +157,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return o3MaxLag;
     }
 
+    public long getBatchO3MaxLag() {
+        return batchO3MaxLag;
+    }
+
     @Override
     public int getPartitionBy() {
         return partitionBy == null ? PartitionBy.NONE : PartitionBy.fromString(partitionBy.token);
@@ -256,6 +261,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public void setO3MaxLag(long o3MaxLag) {
         this.o3MaxLag = o3MaxLag;
+    }
+
+    public void setBatchO3MaxLag(long batchO3MaxLag) {
+        this.batchO3MaxLag = batchO3MaxLag;
     }
 
     public void setPartitionBy(ExpressionNode partitionBy) {

@@ -3126,6 +3126,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "too few arguments for '=' [found=1,expected=2]"
         );
     }
+// insert batch 1000 o3maxlo 1203102 into table
+    // create batch 1000 03maxlag etc. table
+    // create batch 1000 o3maxLag 300000000 <-- >--
+
 
     @Test
     public void testCreateTableWithPartialParameter2() throws Exception {
