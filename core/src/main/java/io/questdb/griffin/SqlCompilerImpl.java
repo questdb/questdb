@@ -1642,7 +1642,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
             copier.copy(record, row);
             row.append();
-            if (++rowCount > deadline) {
+            if (++rowCount >= deadline) {
                 writer.ic(o3MaxLag);
                 deadline = rowCount + batchSize;
             }
@@ -1671,7 +1671,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.TIMESTAMP));
             copier.copy(record, row);
             row.append();
-            if (++rowCount > deadline) {
+            if (++rowCount >= deadline) {
                 writer.ic(o3MaxLag);
                 deadline = rowCount + batchSize;
             }
