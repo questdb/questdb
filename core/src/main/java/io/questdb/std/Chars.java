@@ -283,6 +283,28 @@ public final class Chars {
         return equalsCharsIgnoreCase(l, r, ll);
     }
 
+    /**
+     * Case-insensitive comparison of two char sequences, with subsequence over second.
+     *
+     * @param l left sequence
+     * @param r right sequence
+     * @param rLo right sequence lower bound
+     * @param rHi right sequence upper bound
+     * @return true if sequences match exactly (ignoring char case)
+     */
+    public static boolean equalsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int rLo, int rHi) {
+        if (l == r) {
+            return true;
+        }
+
+        int ll;
+        if ((ll = l.length()) != rHi - rLo) {
+            return false;
+        }
+
+        return equalsCharsIgnoreCase(l, r, ll, rLo, rHi);
+    }
+
     public static boolean equalsIgnoreCaseNc(@NotNull CharSequence l, @Nullable CharSequence r) {
         return r != null && equalsIgnoreCase(l, r);
     }
@@ -367,6 +389,10 @@ public final class Chars {
 
     public static boolean equalsNc(@NotNull CharSequence l, @Nullable CharSequence r) {
         return r != null && equals(l, r);
+    }
+
+    public static boolean equalsNc(CharSequence l, CharSequence r, int rLo, int rHi) {
+        return l != null && equals(l, r, rLo, rHi);
     }
 
     public static int hashCode(@NotNull CharSequence value, int lo, int hi) {
@@ -1142,6 +1168,16 @@ public final class Chars {
     private static boolean equalsCharsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int len) {
         for (int i = 0; i < len; i++) {
             if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean equalsCharsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int len, int rLo, int rHi) {
+        assert len == (rHi-rLo);
+        for (int i = 0; i < len; i++) {
+            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i + rLo))) {
                 return false;
             }
         }

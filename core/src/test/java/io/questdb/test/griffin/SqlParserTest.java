@@ -6836,18 +6836,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testOrderByPropagation() throws SqlException {
         assertQuery(
                 "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from " +
-                        "(select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from " +
-                        "(select [contactId] from (select-distinct [contactId] contactId from (select-choose [contactId] contactId from " +
-                        "(select-choose [contactId, groupId] contactId, groupId, timestamp from " +
-                        "(select [groupId, contactId] from contact_events latest on timestamp partition by contactId) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist) " +
-                        "except " +
-                        "select-choose [_id contactId] _id contactId from " +
-                        "(select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from " +
-                        "(select [notRealType, _id] from contacts latest on timestamp partition by _id) where notRealType = 'bot') contactlist) C " +
-                        "join " +
-                        "select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from " +
-                        "(select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from " +
-                        "(select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts latest on timestamp partition by _id)) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
+    "(select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, " +
+                "contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, " +
+                        "contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, " +
+                        "contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, " +
+                        "contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, " +
+                        "timestamp from (select [contactId] from (select-distinct [contactId] contactId from (select-choose [contactId] contactId from (select-choose [contactId, groupId, timestamp] " +
+                        "contactId, groupId, timestamp from (select [groupId, contactId, timestamp] from contact_events latest on timestamp partition by contactId) where groupId = 'qIqlX6qESMtTQXikQA46' order by timestamp) " +
+                        "eventlist) except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, " +
+                        "longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts latest on timestamp partition by _id) where notRealType = 'bot') contactlist) " +
+                        "C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] " +
+                        "from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, " +
+                        "customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from " +
+                        "(select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from " +
+                        "contacts latest on timestamp partition by _id) order by timestamp) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
+
                 "WITH \n" +
                         "contactlist AS (SELECT * FROM contacts LATEST ON timestamp PARTITION BY _id ORDER BY timestamp),\n" +
                         "eventlist AS (SELECT * FROM contact_events LATEST ON timestamp PARTITION BY contactId ORDER BY timestamp),\n" +
@@ -7928,7 +7931,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "  os SYMBOL capacity 256 CACHE,\n" +
                 "  arch SYMBOL capacity 256 CACHE,\n" +
                 "  team SYMBOL capacity 256 CACHE,\n" +
-                "  service SYMBOL capacity 256 CACHE,\n" +
+                " 'service' SYMBOL capacity 256 CACHE,\n" +
                 "  service_version SYMBOL capacity 256 CACHE,\n" +
                 "  service_environment SYMBOL capacity 256 CACHE,\n" +
                 "  usage_user LONG,\n" +
