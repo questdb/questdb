@@ -49,10 +49,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     public CairoConfigurationWrapper(@NotNull CairoConfiguration delegate) {
         this.delegate = delegate;
     }
-    
-    protected CairoConfiguration getDelegate() {
-        return delegate;
-    }
 
     @Override
     public boolean attachPartitionCopy() {
@@ -227,6 +223,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return getDelegate().getDefaultDateLocale();
+    }
+
+    @Override
+    public int getDefaultSeqPartTxnCount() {
+        return getDelegate().getDefaultSeqPartTxnCount();
     }
 
     @Override
@@ -525,6 +526,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getSampleByDefaultAlignmentCalendar() {
+        return getDelegate().getSampleByDefaultAlignmentCalendar();
+    }
+
+    @Override
     public int getSampleByIndexSearchPageSize() {
         return getDelegate().getSampleByIndexSearchPageSize();
     }
@@ -547,6 +553,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getSpinLockTimeout() {
         return getDelegate().getSpinLockTimeout();
+    }
+
+    @Override
+    public int getSqlAsOfJoinLookAhead() {
+        return getDelegate().getSqlAsOfJoinLookAhead();
     }
 
     @Override
@@ -835,6 +846,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSystemWalEventAppendPageSize() {
+        return getDelegate().getSystemWalEventAppendPageSize();
+    }
+
+    @Override
     public long getTableRegistryAutoReloadFrequency() {
         return getDelegate().getTableRegistryAutoReloadFrequency();
     }
@@ -892,6 +908,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return getDelegate().getWalEnabledDefault();
+    }
+
+    @Override
+    public long getWalEventAppendPageSize() {
+        return getDelegate().getWalEventAppendPageSize();
     }
 
     @Override
@@ -1076,5 +1097,9 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
         getDelegate().populateSettings(settings);
+    }
+
+    protected CairoConfiguration getDelegate() {
+        return delegate;
     }
 }

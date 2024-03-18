@@ -148,6 +148,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    int getDefaultSeqPartTxnCount();
+
     int getDetachedMkDirMode();
 
     int getDoubleToStrCastScale();
@@ -346,6 +348,8 @@ public interface CairoConfiguration {
 
     long getSpinLockTimeout();
 
+    int getSqlAsOfJoinLookAhead();
+
     int getSqlCharacterStoreCapacity();
 
     int getSqlCharacterStoreSequencePoolCapacity();
@@ -467,6 +471,8 @@ public interface CairoConfiguration {
 
     long getSystemWalDataAppendPageSize();
 
+    long getSystemWalEventAppendPageSize();
+
     long getTableRegistryAutoReloadFrequency();
 
     int getTableRegistryCompactionThreshold();
@@ -491,6 +497,8 @@ public interface CairoConfiguration {
     long getWalApplyTableTimeQuota();
 
     long getWalDataAppendPageSize();
+
+    long getWalEventAppendPageSize();
 
     boolean getWalEnabledDefault();
 
@@ -574,6 +582,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterPreTouchEnabled();
 
     boolean isSqlParallelGroupByEnabled();
+
+    boolean getSampleByDefaultAlignmentCalendar();
 
     boolean isTableTypeConversionEnabled();
 

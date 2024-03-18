@@ -252,6 +252,12 @@ public abstract class HttpClient implements QuietCloseable {
         private int state;
         private boolean urlEncode = false;
 
+        public Request DELETE() {
+            assert state == STATE_REQUEST;
+            state = STATE_URL;
+            return put("DELETE ");
+        }
+
         public Request GET() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
@@ -436,6 +442,14 @@ public abstract class HttpClient implements QuietCloseable {
             }
             eol();
             return this;
+        }
+
+        public int getContentLength() {
+            if (contentStart > -1) {
+                return (int) (ptr - contentStart);
+            } else {
+                return 0;
+            }
         }
 
         public Request url(CharSequence url) {
@@ -750,11 +764,10 @@ public abstract class HttpClient implements QuietCloseable {
             clear();
         }
 
-        public ChunkedResponse getChunkedResponse() {
-            return chunkedResponse;
-        }
-
         public Response getResponse() {
+            if (isChunked()) {
+                return chunkedResponse;
+            }
             return response;
         }
 

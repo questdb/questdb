@@ -43,12 +43,12 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putFloat(valueIndex, arg.getFloat(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         float min = mapValue.getFloat(valueIndex);
         float next = arg.getFloat(record);
         if (next < min || Float.isNaN(min)) {
@@ -79,11 +79,6 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public boolean isConstant() {
         return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
@@ -119,5 +114,10 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

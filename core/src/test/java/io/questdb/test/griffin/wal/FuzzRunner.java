@@ -42,7 +42,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
@@ -241,7 +240,7 @@ public class FuzzRunner {
         }
     }
 
-    public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
+    public void applyToWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
         ObjList<WalWriter> writers = new ObjList<>();
         for (int i = 0; i < walWriterCount; i++) {
             writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
@@ -273,6 +272,10 @@ public class FuzzRunner {
         }
 
         Misc.freeObjList(writers);
+    }
+
+    public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
+        applyToWal(transactions, tableName, walWriterCount, applyRnd);
         drainWalQueue(applyRnd, tableName);
     }
 
@@ -388,6 +391,10 @@ public class FuzzRunner {
                 return generateSet(rnd, sequencerMetadata, tableMetadata, start, end, tableName);
             }
         }
+    }
+
+    public int getTransactionCount() {
+        return transactionCount;
     }
 
     public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
@@ -578,7 +585,7 @@ public class FuzzRunner {
             } catch (Throwable e) {
                 errors.add(e);
             } finally {
-                Path.clearThreadLocals();
+                TableUtils.clearThreadLocals();
             }
         });
     }
@@ -656,7 +663,7 @@ public class FuzzRunner {
         } catch (Throwable e) {
             errors.add(e);
         } finally {
-            Path.clearThreadLocals();
+            TableUtils.clearThreadLocals();
         }
     }
 
@@ -689,7 +696,7 @@ public class FuzzRunner {
             errors.add(e);
         } finally {
             Misc.freeObjList(readers);
-            Path.clearThreadLocals();
+            TableUtils.clearThreadLocals();
         }
     }
 
@@ -704,7 +711,7 @@ public class FuzzRunner {
         } catch (Throwable e) {
             errors.add(e);
         } finally {
-            Path.clearThreadLocals();
+            TableUtils.clearThreadLocals();
         }
     }
 

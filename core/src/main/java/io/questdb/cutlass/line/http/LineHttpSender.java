@@ -55,8 +55,11 @@ public final class LineHttpSender implements Sender {
     private static final int RETRY_MAX_JITTER_MS = 10;
     private final String authToken;
     private final int autoFlushRows;
+    private final int baseTimeoutMillis;
+    private final long flushIntervalNanos;
     private final String host;
     private final long maxRetriesNanos;
+    private final long minRequestThroughput;
     private final String password;
     private final int port;
     private final CharSequence questdbVersion;
@@ -66,12 +69,24 @@ public final class LineHttpSender implements Sender {
     private final String username;
     private HttpClient client;
     private boolean closed;
+    private long flushAfterNanos = Long.MAX_VALUE;
     private JsonErrorParser jsonErrorParser;
     private long pendingRows;
     private HttpClient.Request request;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(String host, int port, HttpClientConfiguration clientConfiguration, ClientTlsConfiguration tlsConfig, int autoFlushRows, String authToken, String username, String password, long maxRetriesNanos) {
+    public LineHttpSender(String host,
+                          int port,
+                          HttpClientConfiguration clientConfiguration,
+                          ClientTlsConfiguration tlsConfig,
+                          int autoFlushRows,
+                          String authToken,
+                          String username,
+                          String password,
+                          long maxRetriesNanos,
+                          long minRequestThroughput,
+                          long flushIntervalNanos
+    ) {
         assert authToken == null || (username == null && password == null);
         this.maxRetriesNanos = maxRetriesNanos;
         this.host = host;
@@ -80,6 +95,9 @@ public final class LineHttpSender implements Sender {
         this.authToken = authToken;
         this.username = username;
         this.password = password;
+        this.minRequestThroughput = minRequestThroughput;
+        this.flushIntervalNanos = flushIntervalNanos;
+        this.baseTimeoutMillis = clientConfiguration.getTimeout();
         if (tlsConfig != null) {
             this.client = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
             this.url = "https://" + host + ":" + port + PATH;
@@ -117,7 +135,7 @@ public final class LineHttpSender implements Sender {
                 state = RequestState.EMPTY;
                 break;
         }
-        if (++pendingRows == autoFlushRows) {
+        if (rowAdded()) {
             flush();
         }
     }
@@ -167,13 +185,12 @@ public final class LineHttpSender implements Sender {
     }
 
     @TestOnly
-    public Sender putRawMessage(CharSequence msg) {
+    public void putRawMessage(CharSequence msg) {
         request.put(msg); // message must include trailing \n
         state = RequestState.EMPTY;
-        if (++pendingRows == autoFlushRows) {
+        if (rowAdded()) {
             flush();
         }
-        return this;
     }
 
     @Override
@@ -243,10 +260,10 @@ public final class LineHttpSender implements Sender {
         if (!response.isChunked()) {
             return;
         }
-        ChunkedResponse chunkedRsp = response.getChunkedResponse();
-        Chunk chunk;
-        while ((chunk = chunkedRsp.recv()) != null) {
-            sink.putUtf8(chunk.lo(), chunk.hi());
+        Response chunkedRsp = response.getResponse();
+        Fragment fragment;
+        while ((fragment = chunkedRsp.recv()) != null) {
+            sink.putUtf8(fragment.lo(), fragment.hi());
         }
     }
 
@@ -285,9 +302,9 @@ public final class LineHttpSender implements Sender {
         if (!response.isChunked()) {
             return;
         }
-        ChunkedResponse chunkedRsp = response.getChunkedResponse();
+        Response chunkedRsp = response.getResponse();
         while ((chunkedRsp.recv()) != null) {
-            // we don't care about the response, just consume it so it won't stay in the socket receive buffer
+            // we don't care about the response, just consume it, so it won't stay in the socket receive buffer
         }
     }
 
@@ -337,10 +354,27 @@ public final class LineHttpSender implements Sender {
 
         long retryingDeadlineNanos = Long.MIN_VALUE;
         int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
+        int contentLen = request.getContentLength();
+        int actualTimeoutMillis = baseTimeoutMillis;
+        if (minRequestThroughput > 0) {
+            long throughputTimeoutBonusMillis = (contentLen * 1_000L / minRequestThroughput);
+            if (throughputTimeoutBonusMillis + actualTimeoutMillis > Integer.MAX_VALUE) {
+                actualTimeoutMillis = Integer.MAX_VALUE;
+            } else {
+                actualTimeoutMillis += (int) throughputTimeoutBonusMillis;
+            }
+        }
         for (; ; ) {
             try {
-                HttpClient.ResponseHeaders response = request.send();
-                response.await();
+                long beforeRequest = System.nanoTime();
+                HttpClient.ResponseHeaders response = request.send(actualTimeoutMillis);
+                long elapsedNanos = System.nanoTime() - beforeRequest;
+                int remainingMillis = actualTimeoutMillis - (int) (elapsedNanos / 1_000_000L);
+                if (remainingMillis <= 0) {
+                    throw new HttpClientException("Request timed out");
+                }
+
+                response.await(remainingMillis);
                 DirectUtf8Sequence statusCode = response.getStatusCode();
                 if (isSuccessResponse(statusCode)) {
                     consumeChunkedResponse(response); // if any
@@ -370,6 +404,7 @@ public final class LineHttpSender implements Sender {
                 if (nowNanos >= retryingDeadlineNanos) {
                     // we did our best, give up
                     pendingRows = 0;
+                    flushAfterNanos = Long.MAX_VALUE;
                     request = newRequest();
                     throw new LineSenderException("Could not flush buffer: ").put(url).put(" Connection Failed").put(": ").put(e.getMessage());
                 }
@@ -377,6 +412,7 @@ public final class LineHttpSender implements Sender {
             }
         }
         pendingRows = 0;
+        flushAfterNanos = System.nanoTime() + flushIntervalNanos;
         request = newRequest();
     }
 
@@ -421,8 +457,23 @@ public final class LineHttpSender implements Sender {
         return r;
     }
 
+    /**
+     * @return true if flush is required
+     */
+    private boolean rowAdded() {
+        long nowNanos = System.nanoTime();
+        if (flushAfterNanos == Long.MAX_VALUE) {
+            flushAfterNanos = nowNanos + flushIntervalNanos;
+        } else if (flushAfterNanos - nowNanos < 0) {
+            return true;
+        }
+        pendingRows++;
+        return pendingRows == autoFlushRows;
+    }
+
     private void throwOnHttpErrorResponse(DirectUtf8Sequence statusCode, HttpClient.ResponseHeaders response) {
         // be ready for next request
+        flushAfterNanos = Long.MAX_VALUE;
         pendingRows = 0;
         request = newRequest();
 
@@ -449,7 +500,7 @@ public final class LineHttpSender implements Sender {
                 jsonErrorParser = new JsonErrorParser();
             }
             jsonErrorParser.reset();
-            LineSenderException ex = jsonErrorParser.toException(response.getChunkedResponse(), statusCode);
+            LineSenderException ex = jsonErrorParser.toException(response.getResponse(), statusCode);
             client.disconnect();
             throw ex;
         }
@@ -618,19 +669,19 @@ public final class LineHttpSender implements Sender {
             jsonSink.clear();
         }
 
-        LineSenderException toException(ChunkedResponse chunkedRsp, DirectUtf8Sequence httpStatus) {
-            Chunk chunk;
+        LineSenderException toException(Response chunkedRsp, DirectUtf8Sequence httpStatus) {
+            Fragment fragment;
             LineSenderException exception = new LineSenderException("Could not flush buffer: ");
-            while ((chunk = chunkedRsp.recv()) != null) {
+            while ((fragment = chunkedRsp.recv()) != null) {
                 try {
-                    jsonSink.putUtf8(chunk.lo(), chunk.hi());
-                    lexer.parse(chunk.lo(), chunk.hi(), this);
+                    jsonSink.putUtf8(fragment.lo(), fragment.hi());
+                    lexer.parse(fragment.lo(), fragment.hi(), this);
                 } catch (JsonException e) {
                     // we failed to parse JSON, but we still want to show the error message.
                     // if we cannot parse it then we show the whole response as is.
                     // let's make sure we have the whole message - there might be more chunks
-                    while ((chunk = chunkedRsp.recv()) != null) {
-                        jsonSink.putUtf8(chunk.lo(), chunk.hi());
+                    while ((fragment = chunkedRsp.recv()) != null) {
+                        jsonSink.putUtf8(fragment.lo(), fragment.hi());
                     }
                     exception.put(jsonSink).put(" [http-status=").put(httpStatus.asAsciiCharSequence()).put(']');
                     reset();

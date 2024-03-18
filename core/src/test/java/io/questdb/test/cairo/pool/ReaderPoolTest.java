@@ -35,7 +35,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestFilesFacade;
@@ -59,9 +58,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     @Before
     public void setUpInstance() {
-        try (TableModel model = new TableModel(configuration, "u", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = new TableModel(configuration, "u", PartitionBy.NONE).col("ts", ColumnType.DATE);
+        AbstractCairoTest.create(model);
         uTableToken = engine.verifyTableName("u");
     }
 
@@ -162,9 +160,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testBasicCharSequence() throws Exception {
 
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
+        AbstractCairoTest.create(model);
         sink.clear();
         sink.put("x");
         TableToken xTableToken = engine.verifyTableName(sink);
@@ -189,9 +186,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testClosePoolWhenReaderIsOut() throws Exception {
         assertWithPool(pool -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-                CreateTableTestUtils.create(model);
-            }
+            TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
+            AbstractCairoTest.create(model);
 
             try (TableReader reader = pool.get(engine.verifyTableName("x"))) {
                 Assert.assertNotNull(reader);
@@ -262,9 +258,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
         final TableToken[] names = new TableToken[readerCount];
         for (int i = 0; i < readerCount; i++) {
             String name = "x" + i;
-            try (TableModel model = new TableModel(configuration, name, PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-                CreateTableTestUtils.create(model);
-            }
+            TableModel model = new TableModel(configuration, name, PartitionBy.NONE).col("ts", ColumnType.DATE);
+            AbstractCairoTest.create(model);
             names[i] = engine.verifyTableName(name);
         }
 
@@ -315,9 +310,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
         for (int i = 0; i < readerCount; i++) {
             String name = "x" + i;
-            try (TableModel model = new TableModel(configuration, name, PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-                CreateTableTestUtils.create(model);
-            }
+            TableModel model = new TableModel(configuration, name, PartitionBy.NONE).col("ts", ColumnType.DATE);
+            AbstractCairoTest.create(model);
 
             try (TableWriter w = newOffPoolWriter(configuration, name, metrics)) {
                 for (int k = 0; k < 10; k++) {
@@ -328,9 +322,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 w.commit();
             }
 
-            sink.clear();
             try (TableReader r = newOffPoolReader(configuration, name)) {
-                printer.print(r.getCursor(), r.getMetadata(), true, sink);
+                println(r.getMetadata(), r.getCursor());
             }
             expectedRows[i] = sink.toString();
             expectedRowsMap.put(name, expectedRows[i]);
@@ -419,9 +412,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleLock() throws Exception {
-        try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE);
+        AbstractCairoTest.create(model);
         TableToken xyzTableToken = engine.verifyTableName("xyz");
 
         assertWithPool(pool -> {
@@ -444,9 +436,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     @Test
     public void testGetAndCloseRace() throws Exception {
-        try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CreateTableTestUtils.create(model);
-        }
+        TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE);
+        AbstractCairoTest.create(model);
         TableToken xyzTableToken = engine.verifyTableName("xyz");
 
         for (int i = 0; i < 100; i++) {
@@ -613,9 +604,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             @Override
             public void run(ReaderPool pool) throws Exception {
-                try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-                    CreateTableTestUtils.create(model);
-                }
+                TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
+                AbstractCairoTest.create(model);
                 final TableToken nameX = engine.verifyTableName("x");
 
                 final int N = 10_000;
@@ -739,9 +729,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testLockRaceAgainstGet() throws Exception {
         assertWithPool(pool -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-                CreateTableTestUtils.create(model);
-            }
+            TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
+            AbstractCairoTest.create(model);
 
             TableToken xTableToken = engine.verifyTableName("x");
             for (int k = 0; k < 10; k++) {
@@ -789,14 +778,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testLockUnlock() throws Exception {
         // create tables
-
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CreateTableTestUtils.create(model);
-        }
-
-        try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-            CreateTableTestUtils.create(model);
-        }
+        AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE));
+        AbstractCairoTest.create(new TableModel(configuration, "y", PartitionBy.NONE).col("ts", ColumnType.DATE));
 
         assertWithPool(pool -> {
             TableReader x, y;

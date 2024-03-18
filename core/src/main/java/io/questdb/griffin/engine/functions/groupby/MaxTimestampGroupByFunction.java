@@ -44,12 +44,12 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putTimestamp(valueIndex, arg.getTimestamp(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.maxLong(valueIndex, arg.getTimestamp(record));
     }
 
@@ -79,11 +79,6 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return UnaryFunction.super.isReadThreadSafe();
     }
@@ -92,7 +87,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcMax = srcValue.getLong(valueIndex);
         long destMax = destValue.getLong(valueIndex);
-        if (srcMax > destMax || destMax == Numbers.LONG_NaN) {
+        if (srcMax > destMax) {
             destValue.putLong(valueIndex, srcMax);
         }
     }
@@ -111,5 +106,10 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

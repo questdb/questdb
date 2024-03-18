@@ -1112,13 +1112,12 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateMultiPartitionedTableSamePartitionManyFrames() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel tml = new TableModel(configuration, "up", PartitionBy.DAY)) {
-                tml.col("xint", ColumnType.INT).col("xsym", ColumnType.SYMBOL).indexed(true, 256).timestamp("ts");
-                if (walEnabled) {
-                    tml.wal();
-                }
-                createPopulateTable(tml, 10, "2020-01-01", 2);
+            TableModel tml = new TableModel(configuration, "up", PartitionBy.DAY);
+            tml.col("xint", ColumnType.INT).col("xsym", ColumnType.SYMBOL).indexed(true, 256).timestamp("ts");
+            if (walEnabled) {
+                tml.wal();
             }
+            createPopulateTable(tml, 10, "2020-01-01", 2);
 
             update("UPDATE up SET xint = -1000 WHERE ts in '2020-01-01T00;6h;12h;24'");
             assertSql("xint\txsym\tts\n" +
@@ -1194,13 +1193,12 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateMultipartitionedTable() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel tml = new TableModel(configuration, "up", PartitionBy.DAY)) {
-                tml.col("xint", ColumnType.INT).col("xsym", ColumnType.SYMBOL).indexed(true, 256).timestamp("ts");
-                if (walEnabled) {
-                    tml.wal();
-                }
-                createPopulateTable(tml, 5, "2020-01-01", 2);
+            TableModel tml = new TableModel(configuration, "up", PartitionBy.DAY);
+            tml.col("xint", ColumnType.INT).col("xsym", ColumnType.SYMBOL).indexed(true, 256).timestamp("ts");
+            if (walEnabled) {
+                tml.wal();
             }
+            createPopulateTable(tml, 5, "2020-01-01", 2);
 
             update("UPDATE up SET xint = -1000 WHERE ts > '2020-01-02T14'");
             assertSql("xint\txsym\tts\n" +
@@ -2478,7 +2476,7 @@ public class UpdateTest extends AbstractCairoTest {
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 Assert.assertEquals(indexed, cursor.isUsingIndex());
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                println(factory, cursor);
             }
             TestUtils.assertEquals("symCol\tts\tx\n" +
                     "VTJ\t1970-01-01T00:00:00.000000Z\t1\n" +
@@ -2578,7 +2576,7 @@ public class UpdateTest extends AbstractCairoTest {
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 Assert.assertEquals(indexed, cursor.isUsingIndex());
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                println(factory, cursor);
             }
             TestUtils.assertEquals(
                     "symCol\tts\tx\n" +

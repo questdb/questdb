@@ -244,6 +244,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getDefaultSeqPartTxnCount() {
+        return 0;
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return 509;
     }
@@ -525,6 +530,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getSampleByDefaultAlignmentCalendar() {
+        return true;
+    }
+
+    @Override
     public boolean getSimulateCrashEnabled() {
         return false;
     }
@@ -542,6 +552,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getSpinLockTimeout() {
         return 5000;
+    }
+
+    @Override
+    public int getSqlAsOfJoinLookAhead() {
+        return 100;
     }
 
     @Override
@@ -828,7 +843,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSystemWalDataAppendPageSize() {
-        return 256 * 1024;
+        return 16 * 1024;
+    }
+
+    @Override
+    public long getSystemWalEventAppendPageSize() {
+        return 128 * 1024;
     }
 
     @Override
@@ -889,6 +909,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return false;
+    }
+
+    @Override
+    public long getWalEventAppendPageSize() {
+        return 64 * 1024;
     }
 
     @Override

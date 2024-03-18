@@ -55,23 +55,23 @@ public class LtIPv4FunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new LtIPv4FunctionFactory.LtIPv4Function(args.getQuick(0), args.getQuick(1));
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    static class LtIPv4Function extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
+    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
+        private final Function leftFunc;
+        private final Function rightFunc;
 
-        public LtIPv4Function(Function left, Function right) {
-            this.left = left;
-            this.right = right;
+        public Func(Function leftFunc, Function rightFunc) {
+            this.leftFunc = leftFunc;
+            this.rightFunc = rightFunc;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            long left = Numbers.ipv4ToLong(this.left.getIPv4(rec));
+            long left = Numbers.ipv4ToLong(leftFunc.getIPv4(rec));
             if (left != Numbers.IPv4_NULL) {
-                long right = Numbers.ipv4ToLong(this.right.getIPv4(rec));
+                long right = Numbers.ipv4ToLong(rightFunc.getIPv4(rec));
                 if (right != Numbers.IPv4_NULL) {
                     return negated == (left >= right);
                 }
@@ -81,23 +81,23 @@ public class LtIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public Function getLeft() {
-            return left;
+            return leftFunc;
         }
 
         @Override
         public Function getRight() {
-            return right;
+            return rightFunc;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(left);
+            sink.val(leftFunc);
             if (negated) {
                 sink.val(">=");
             } else {
                 sink.val('<');
             }
-            sink.val(right);
+            sink.val(rightFunc);
         }
     }
 }

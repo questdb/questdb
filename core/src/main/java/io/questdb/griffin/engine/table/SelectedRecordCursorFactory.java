@@ -97,8 +97,8 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean supportPageFrameCursor() {
-        return base.supportPageFrameCursor();
+    public boolean supportsPageFrameCursor() {
+        return base.supportsPageFrameCursor();
     }
 
     @Override

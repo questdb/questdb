@@ -44,7 +44,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
         if (value != Numbers.INT_NaN) {
             mapValue.putLong(valueIndex, value);
@@ -56,7 +56,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
         if (value != Numbers.INT_NaN) {
             mapValue.addLong(valueIndex, arg.getInt(record));
@@ -87,11 +87,6 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     @Override
     public boolean isConstant() {
         return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
@@ -129,5 +124,10 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

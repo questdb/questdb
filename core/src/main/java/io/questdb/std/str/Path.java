@@ -25,6 +25,7 @@
 package io.questdb.std.str;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
@@ -44,7 +45,7 @@ import java.io.Closeable;
 public class Path implements Utf8Sink, LPSZ, Closeable {
     public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
-    public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
+    public static final Closeable THREAD_LOCAL_CLEANER = TableUtils::clearThreadLocals;
     private static final byte NULL = (byte) 0;
     private static final int OVERHEAD = 4;
     private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
@@ -70,11 +71,19 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     public static void clearThreadLocals() {
-        Misc.free(PATH);
-        Misc.free(PATH2);
+        // It could be PATH.get.close(); but this would generated JDK failures on MacOS (SIGABRT)
+        // when running tests. Despite all the effort to find the exact cause, it was not possible
+        // and this is the best solution so far. This approach will remove the thread local
+        // on close and the next time a new object is created.
+        PATH.close();
+        PATH2.close();
     }
 
     public static Path getThreadLocal(CharSequence root) {
+        return PATH.get().of(root);
+    }
+
+    public static Path getThreadLocal(Utf8Sequence root) {
         return PATH.get().of(root);
     }
 
@@ -302,15 +311,6 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     @Override
-    public Path putUtf8(long lo, long hi) {
-        final int size = Bytes.checkedLoHiSize(lo, hi, this.size());
-        checkExtend(size);
-        Vect.memcpy(tailPtr, lo, size);
-        tailPtr += size;
-        return this;
-    }
-
-    @Override
     public Path put(@Nullable CharSequence cs) {
         Utf8Sink.super.put(cs);
         return this;
@@ -352,6 +352,15 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         } else {
             Utf8Sink.super.putAscii(c);
         }
+        return this;
+    }
+
+    @Override
+    public Path putUtf8(long lo, long hi) {
+        final int size = Bytes.checkedLoHiSize(lo, hi, this.size());
+        checkExtend(size);
+        Vect.memcpy(tailPtr, lo, size);
+        tailPtr += size;
         return this;
     }
 

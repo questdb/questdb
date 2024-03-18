@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -40,9 +41,9 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -130,7 +131,7 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 final StringSink readerSink = UpdateConcurrentTest.readerSink.get();
                 readerSink.clear();
-                TestUtils.printColumn(record, metadata, i, readerSink);
+                CursorPrinter.printColumn(record, metadata, i, readerSink);
                 CharSequence[] expectedValueArray = expectedValues.get(i);
                 CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
                 if (!validators.get(i).validate(expectedValue, readerSink)) {
@@ -196,7 +197,7 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
                         LOG.error().$("writer error ").$(th).$();
                         exceptions.add(th);
                     }
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                 });
                 threads.add(writer);
                 writer.start();
@@ -240,7 +241,7 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
                         exceptions.add(th);
                     }
 
-                    Path.clearThreadLocals();
+                    TableUtils.clearThreadLocals();
                 });
                 threads.add(reader);
                 reader.start();

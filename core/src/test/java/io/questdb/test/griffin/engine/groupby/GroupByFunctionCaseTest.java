@@ -45,7 +45,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, false);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, false);
     }
 
     @Test
@@ -223,12 +223,13 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                             "    AND venue in ('CBS', 'FUS', 'LMX', 'BTS')\n" +
                             "  SAMPLE BY 1h \n" +
                             "  ALIGN TO CALENDAR TIME ZONE 'UTC'",
-                    "VirtualRecord\n" +
-                            "  functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]\n" +
-                            "    SampleBy\n" +
-                            "      keys: [candle_st,venue]\n" +
-                            "      values: [count(*),sum(qty*price),sum(qty)]\n" +
-                            "        SelectedRecord\n" +
+                    "Sort light\n" +
+                            "  keys: [candle_st]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [candle_st,venue]\n" +
+                            "          values: [count(*),sum(qty*price),sum(qty)]\n" +
                             "            Async Filter workers: 1\n" +
                             "              filter: (instrument_key ~ ETH.USD.S..*? and venue in [CBS,FUS,LMX,BTS])\n" +
                             "                DataFrame\n" +

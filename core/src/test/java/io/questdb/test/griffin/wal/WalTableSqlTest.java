@@ -260,6 +260,27 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddWalTxnsExceedingSequencerChunks() throws Exception {
+        int txnChunk = 64;
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, txnChunk);
+        String tableName = testName.getMethodName() + "Â";
+        ddl("create table " + tableName + " as (" +
+                "select x, " +
+                " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                " from long_sequence(1)" +
+                ") timestamp(ts) partition by DAY WAL"
+        );
+
+        int n = (int) (2.5 * txnChunk);
+        for (int i = 0; i < n; i++) {
+            insert("insert into " + tableName + " values (" + i + ", '2022-02-24T01')");
+        }
+        drainWalQueue();
+        assertSql("count\n" +
+                (n + 1) + "\n", "select count(*) from " + tableName);
+    }
+
+    @Test
     public void testApplyFromLag() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -390,8 +411,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
             tw.ofRW(p.$(), PartitionBy.DAY);
             Assert.assertEquals(0, tw.getLagRowCount());
             Assert.assertEquals(0, tw.getLagTxnCount());
-            Assert.assertEquals(0, tw.getLagMinTimestamp());
-            Assert.assertEquals(0, tw.getLagMaxTimestamp());
+            Assert.assertEquals(Long.MAX_VALUE, tw.getLagMinTimestamp());
+            Assert.assertEquals(Long.MIN_VALUE, tw.getLagMaxTimestamp());
             // Mess again
 
             tw.setLagTxnCount(1);
@@ -411,8 +432,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
             tw.ofRW(p.$(), PartitionBy.DAY);
             Assert.assertEquals(0, tw.getLagRowCount());
             Assert.assertEquals(0, tw.getLagTxnCount());
-            Assert.assertEquals(0, tw.getLagMinTimestamp());
-            Assert.assertEquals(0, tw.getLagMaxTimestamp());
+            Assert.assertEquals(Long.MAX_VALUE, tw.getLagMinTimestamp());
+            Assert.assertEquals(Long.MIN_VALUE, tw.getLagMaxTimestamp());
         }
     }
 
@@ -1256,8 +1277,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
 
 
-            Overrides overrides = node1.getConfigurationOverrides();
-            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+            node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
             runApplyOnce();
 
             TableToken token = engine.verifyTableName(tableName);
@@ -1649,11 +1669,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
                 txReader.unsafeLoadAll();
 
-                Assert.assertEquals(2, txReader.getLagTxnCount());
-                Assert.assertEquals(2, txReader.getLagRowCount());
-                Assert.assertFalse(txReader.isLagOrdered());
-                Assert.assertEquals("2022-02-24T00:00:00.000Z", Timestamps.toString(txReader.getLagMinTimestamp()));
-                Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMaxTimestamp()));
+                Assert.assertEquals(0, txReader.getLagTxnCount());
+                Assert.assertEquals(0, txReader.getLagRowCount());
+                Assert.assertTrue(txReader.isLagOrdered());
+                Assert.assertEquals(Long.MAX_VALUE, txReader.getLagMinTimestamp());
+                Assert.assertEquals(Long.MIN_VALUE, txReader.getLagMaxTimestamp());
             }
         });
     }

@@ -43,7 +43,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -186,8 +185,6 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path();
-                 TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                         .col("symCol", ColumnType.SYMBOL);
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
                      public long getSymbolCacheWaitUsBeforeReload() {
@@ -195,7 +192,9 @@ public class SymbolCacheTest extends AbstractCairoTest {
                      }
                  })
             ) {
-                CreateTableTestUtils.create(model);
+                TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                        .col("symCol", ColumnType.SYMBOL);
+                AbstractCairoTest.create(model);
                 DirectUtf8String dus = new DirectUtf8String();
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 TableToken tableToken = engine.verifyTableName(tableName);
@@ -367,8 +366,6 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path();
-                 TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                         .col("symCol", ColumnType.SYMBOL);
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
                      public long getSymbolCacheWaitUsBeforeReload() {
@@ -376,7 +373,9 @@ public class SymbolCacheTest extends AbstractCairoTest {
                      }
                  })
             ) {
-                CreateTableTestUtils.create(model);
+                TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                        .col("symCol", ColumnType.SYMBOL);
+                AbstractCairoTest.create(model);
                 DirectUtf8String dus = new DirectUtf8String();
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 TableToken tableToken = engine.verifyTableName(tableName);
@@ -430,9 +429,6 @@ public class SymbolCacheTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl();
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path();
-                 TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                         .col("symCol1", ColumnType.SYMBOL)
-                         .col("symCol2", ColumnType.SYMBOL);
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
                      public long getSymbolCacheWaitUsBeforeReload() {
@@ -440,7 +436,10 @@ public class SymbolCacheTest extends AbstractCairoTest {
                      }
                  })
             ) {
-                CreateTableTestUtils.create(model);
+                TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                        .col("symCol1", ColumnType.SYMBOL)
+                        .col("symCol2", ColumnType.SYMBOL);
+                AbstractCairoTest.create(model);
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 DirectUtf8String dus = new DirectUtf8String();
                 TableToken tableToken = engine.verifyTableName(tableName);
@@ -590,8 +589,6 @@ public class SymbolCacheTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl();
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path();
-                 TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                         .col("symCol", ColumnType.SYMBOL);
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
                      public long getSymbolCacheWaitUsBeforeReload() {
@@ -599,7 +596,9 @@ public class SymbolCacheTest extends AbstractCairoTest {
                      }
                  })
             ) {
-                CreateTableTestUtils.create(model);
+                TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                        .col("symCol", ColumnType.SYMBOL);
+                AbstractCairoTest.create(model);
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 DirectUtf8String dus = new DirectUtf8String();
                 TableToken tableToken = engine.verifyTableName(tableName);
@@ -673,8 +672,6 @@ public class SymbolCacheTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl();
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path();
-                 TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                         .col("symCol", ColumnType.SYMBOL);
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
                      public long getSymbolCacheWaitUsBeforeReload() {
@@ -682,7 +679,9 @@ public class SymbolCacheTest extends AbstractCairoTest {
                      }
                  })
             ) {
-                CreateTableTestUtils.create(model);
+                TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                        .col("symCol", ColumnType.SYMBOL);
+                AbstractCairoTest.create(model);
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 DirectUtf8String dus = new DirectUtf8String();
                 TableToken tableToken = engine.verifyTableName(tableName);
@@ -744,10 +743,9 @@ public class SymbolCacheTest extends AbstractCairoTest {
     }
 
     private void createTable(String tableName) {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-            model.timestamp();
-            TestUtils.create(model, engine);
-        }
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
+        model.timestamp();
+        TestUtils.create(model, engine);
     }
 
     private static class Holder implements Mutable {

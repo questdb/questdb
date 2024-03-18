@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -207,6 +208,58 @@ public class SnapshotTest extends AbstractCairoTest {
 
             // Dropped column should be there.
             assertSql(expectedAllColumns, "select * from " + tableName);
+        });
+    }
+
+    @Test
+    public void testRecoverSnapshotSupportsSnapshotTxtFile() throws Exception {
+        final int partitionCount = 10;
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
+            );
+
+            ddl("snapshot prepare");
+
+            insert(
+                    "insert into " + tableName +
+                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
+            );
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+
+            // create snapshot.txt file
+            FilesFacade ff = configuration.getFilesFacade();
+            path.trimTo(rootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT);
+            int fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+            Assert.assertTrue(fd > 0);
+
+            try {
+                try (DirectUtf8Sink utf8 = new DirectUtf8Sink(3)) {
+                    utf8.put(snapshotId);
+                    ff.write(fd, utf8.ptr(), utf8.size(), 0);
+                    ff.truncate(fd, utf8.size());
+                }
+            } finally {
+                ff.close(fd);
+            }
+            Assert.assertEquals(ff.length(path), restartedId.length());
+
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.recoverSnapshot();
+
+            // Data inserted after PREPARE SNAPSHOT should be discarded.
+            assertSql(
+                    "count\n" +
+                            partitionCount + "\n",
+                    "select count() from " + tableName
+            );
         });
     }
 
@@ -791,7 +844,7 @@ public class SnapshotTest extends AbstractCairoTest {
             Thread controlThread1 = new Thread(() -> {
                 currentMicros = interval;
                 job.drain(0);
-                Path.clearThreadLocals();
+                TableUtils.clearThreadLocals();
             });
 
             controlThread1.start();
@@ -806,7 +859,7 @@ public class SnapshotTest extends AbstractCairoTest {
             Thread controlThread2 = new Thread(() -> {
                 currentMicros = 2 * interval;
                 job.drain(0);
-                Path.clearThreadLocals();
+                TableUtils.clearThreadLocals();
             });
 
             controlThread2.start();

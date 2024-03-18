@@ -44,6 +44,7 @@ public class PageFrameReduceTask implements Closeable {
 
     // Used to pass the list of column page frame addresses to a JIT-compiled filter.
     private final DirectLongList columns;
+    private final DirectLongList varLenIndexes;
     private final StringSink errorMsg = new StringSink();
     private final DirectLongList filteredRows; // Used for TYPE_FILTER.
     private final long pageFrameQueueCapacity;
@@ -56,6 +57,7 @@ public class PageFrameReduceTask implements Closeable {
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
         this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
         this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+        this.varLenIndexes = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
         this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
     }
 
@@ -63,10 +65,15 @@ public class PageFrameReduceTask implements Closeable {
     public void close() {
         Misc.free(filteredRows);
         Misc.free(columns);
+        Misc.free(varLenIndexes);
     }
 
     public DirectLongList getColumns() {
         return columns;
+    }
+
+    public DirectLongList getVarLenIndexes() {
+        return varLenIndexes;
     }
 
     public CharSequence getErrorMsg() {
@@ -129,6 +136,7 @@ public class PageFrameReduceTask implements Closeable {
     public void resetCapacities() {
         filteredRows.resetCapacity();
         columns.resetCapacity();
+        varLenIndexes.resetCapacity();
     }
 
     public void setErrorMsg(Throwable th) {
@@ -169,5 +177,33 @@ public class PageFrameReduceTask implements Closeable {
         }
 
         frameSequence = null;
+    }
+
+    public void populateJitData() {
+        PageAddressCache pageAddressCache = getPageAddressCache();
+        final long columnCount = pageAddressCache.getColumnCount();
+        if (columns.getCapacity() < columnCount) {
+            columns.setCapacity(columnCount);
+        }
+        columns.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            columns.add(pageAddressCache.getPageAddress(getFrameIndex(), columnIndex));
+        }
+
+        if (varLenIndexes.getCapacity() < columnCount) {
+            varLenIndexes.setCapacity(columnCount);
+        }
+        varLenIndexes.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            varLenIndexes.add(
+                    pageAddressCache.isVarLenColumn(columnIndex)
+                            ? pageAddressCache.getIndexPageAddress(getFrameIndex(), columnIndex)
+                            : 0
+            );
+        }
+        final long rowCount = getFrameRowCount();
+        if (filteredRows.getCapacity() < rowCount) {
+            filteredRows.setCapacity(rowCount);
+        }
     }
 }

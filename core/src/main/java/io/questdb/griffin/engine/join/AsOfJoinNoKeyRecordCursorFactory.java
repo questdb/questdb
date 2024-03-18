@@ -39,7 +39,6 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             int columnSplit
-
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         this.cursor = new AsOfLightJoinRecordCursor(
@@ -63,6 +62,11 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
             Misc.free(masterCursor);
             throw e;
         }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override

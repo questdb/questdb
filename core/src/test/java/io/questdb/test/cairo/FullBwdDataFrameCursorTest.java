@@ -28,11 +28,10 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -66,13 +65,11 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 "1530831067\t1904508147\t1975-01-01T00:00:00.000000Z\n";
         assertMemoryLeak(() -> {
 
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.INT).
                     col("b", ColumnType.INT).
-                    timestamp()
-            ) {
-                CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            AbstractCairoTest.create(model);
 
 
             Rnd rnd = new Rnd();
@@ -136,7 +133,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
             record.jumpTo(frame.getPartitionIndex(), 0);
             for (long index = frame.getRowHi() - 1, lo = frame.getRowLo() - 1; index > lo; index--) {
                 record.setRecordIndex(index);
-                printer.print(record, cursor.getTableReader().getMetadata(), sink);
+                CursorPrinter.println(record, cursor.getTableReader().getMetadata(), sink);
             }
         }
     }

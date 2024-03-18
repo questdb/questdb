@@ -64,7 +64,7 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final BitSet set;
         if (sets.size() <= setIndex) {
             sets.extendAndSet(setIndex, set = new BitSet(setInitialCapacity));
@@ -84,7 +84,7 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final BitSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final int val = arg.getInt(record);
         if (val != VALUE_IS_NULL) {
@@ -146,11 +146,6 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
     public boolean isReadThreadSafe() {
         return false;
     }
@@ -180,6 +175,11 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 
     @Override

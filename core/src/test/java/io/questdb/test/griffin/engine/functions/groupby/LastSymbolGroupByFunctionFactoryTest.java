@@ -82,7 +82,7 @@ public class LastSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "\tkl2\t1970-01-03T09:00:00.000000Z\n" +
                         "PEHN\tl1\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\tss4\t1970-01-03T09:00:00.000000Z\n",
-                "select b, last(a) a, k from x sample by 3h",
+                "select b, last(a) a, k from x sample by 3h align to first observation",
                 "create table x as " +
                         "(" +
                         "select" +

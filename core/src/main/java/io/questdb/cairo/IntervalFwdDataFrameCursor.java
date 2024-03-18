@@ -45,17 +45,15 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
     @Override
     public DataFrame next() {
         // order of logical operations is important
-        // we are not calculating partition rages when intervals are empty
+        // we are not calculating partition ranges when intervals are empty
         while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
             long rowCount = reader.openPartition(partitionLo);
             if (rowCount > 0) {
-
                 final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
-
 
                 final long partitionTimestampLo = column.getLong(0);
                 // interval is wholly above partition, skip interval

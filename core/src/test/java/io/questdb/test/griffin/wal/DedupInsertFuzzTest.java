@@ -34,7 +34,8 @@ import io.questdb.log.LogRecord;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.cairo.LogRecordSinkAdapter;
+import io.questdb.cairo.LogRecordSinkAdapter;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
@@ -495,15 +496,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
                             LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
                             LogRecord record = log.xDebugW().$("java.lang.AssertionError: expected:<");
-                            printer.printHeaderNoNl(factory.getMetadata(), recordSinkAdapter.of(record));
+                            CursorPrinter.printHeader(factory.getMetadata(), recordSinkAdapter.of(record));
                             record.$();
-                            printer.print(dedupWrapper, factory.getMetadata(), false, log);
+                            CursorPrinter.println(dedupWrapper, factory.getMetadata(), false, log);
 
                             record = log.xDebugW().$("> but was:<");
-                            printer.printHeaderNoNl(factory2.getMetadata(), recordSinkAdapter.of(record));
+                            CursorPrinter.printHeader(factory2.getMetadata(), recordSinkAdapter.of(record));
                             record.$();
 
-                            printer.print(actualCursor, factory2.getMetadata(), false, log);
+                            CursorPrinter.println(actualCursor, factory2.getMetadata(), false, log);
                             log.xDebugW().$(">").$();
                             throw e;
                         }
@@ -1065,7 +1066,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
         private void printRecordToSink(Record record, StringSink currentRecordKeys) {
             for (int i = 0; i < keyColumns.size(); i++) {
-                TestUtils.printColumn(record, metadata, keyColumns.get(i), currentRecordKeys, false, false, "<null>");
+                CursorPrinter.printColumn(record, metadata, keyColumns.get(i), currentRecordKeys, false, false, "<null>");
                 currentRecordKeys.put('\t');
             }
         }

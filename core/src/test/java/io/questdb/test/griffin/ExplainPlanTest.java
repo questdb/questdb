@@ -33,6 +33,8 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
+import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
@@ -47,6 +49,8 @@ import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.date.*;
 import io.questdb.griffin.engine.functions.eq.*;
+import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
+import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
@@ -284,8 +288,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a asof join b on ts where a.i = b.ts::int",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts::int\n" +
-                            "        AsOf Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        AsOf Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -306,8 +309,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select ts, ts1, i, i1 from (select * from a asof join b on ts ) where i/10 = i1",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i/10=b.i\n" +
-                            "        AsOf Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        AsOf Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -327,8 +329,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a asof join b on ts",
                     "SelectedRecord\n" +
-                            "    AsOf Join Light\n" +
-                            "      condition: b.ts=a.ts\n" +
+                            "    AsOf Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -348,8 +349,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a asof join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
-                            "    AsOf Join Light\n" +
-                            "      condition: _xQdbA1.ts=a.ts\n" +
+                            "    AsOf Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -370,8 +370,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
-                            "    AsOf Join Light\n" +
-                            "      condition: _xQdbA1.ts=a.ts\n" +
+                            "    AsOf Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -396,10 +395,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "asof join b on ts " +
                             "asof join a c on ts",
                     "SelectedRecord\n" +
-                            "    AsOf Join Light\n" +
-                            "      condition: c.ts=a.ts\n" +
-                            "        AsOf Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        AsOf Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -426,7 +423,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "where a.i = b.i",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.i\n" +
-                            "        AsOf Join\n" +
+                            "        AsOf Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -467,13 +464,75 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKey() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( i int, ts timestamp) timestamp(ts)");
-            ddl("create table b ( i int, ts timestamp) timestamp(ts)");
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a asof join b where a.i > 0",
+                    "SelectedRecord\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: 0<i\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinNoKeyFast1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertPlan(
                     "select * from a asof join b",
                     "SelectedRecord\n" +
-                            "    AsOf Join\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinNoKeyFast2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a asof join b on(ts)",
+                    "SelectedRecord\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAsOfJoinNoKeyFast3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (ts timestamp, i int) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a asof join b on(ts)",
+                    "SelectedRecord\n" +
+                            "    AsOf Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -1211,13 +1270,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  from tab\n" +
                             "  where id = 'XXX' \n" +
                             "  sample by 15m ALIGN to CALENDAR\n",
-                    "SampleByFirstLast\n" +
-                            "  keys: [ts, id]\n" +
-                            "  values: [last(val)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
-                            "        Index forward scan on: id\n" +
-                            "          filter: id=1\n" +
-                            "        Frame forward scan on: tab\n"
+                    "Sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [ts,id]\n" +
+                            "      values: [last(val)]\n" +
+                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "            Index forward scan on: id\n" +
+                            "              filter: id=1\n" +
+                            "            Frame forward scan on: tab\n"
             );
 
         });
@@ -1659,14 +1720,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "and timestamp > dateadd('m', -30, now())) " +
                         "timestamp(x))",
                 "SelectedRecord\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async JIT Group By workers: 1\n" +
                         "      values: [last(timestamp),last(price)]\n" +
-                        "        Async JIT Filter workers: 1\n" +
-                        "          filter: symbol='BTC-USD'\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Interval forward scan on: trades\n" +
-                        "                  intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
+                        "      filter: symbol='BTC-USD'\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Interval forward scan on: trades\n" +
+                        "              intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
         );
     }
 
@@ -2061,7 +2121,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
         final StringSink sink = new StringSink();
 
-        IntObjHashMap<ObjList<Function>> constFuncs = new IntObjHashMap<ObjList<Function>>();
+        IntObjHashMap<ObjList<Function>> constFuncs = new IntObjHashMap<>();
         constFuncs.put(ColumnType.BOOLEAN, list(BooleanConstant.TRUE, BooleanConstant.FALSE));
         constFuncs.put(ColumnType.BYTE, list(new ByteConstant((byte) 1)));
         constFuncs.put(ColumnType.SHORT, list(new ShortConstant((short) 2)));
@@ -2093,7 +2153,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         GenericRecordMetadata cursorMetadata = new GenericRecordMetadata();
         cursorMetadata.add(new TableColumnMetadata("s", ColumnType.STRING));
         constFuncs.put(ColumnType.CURSOR, list(new CursorFunction(new EmptyTableRecordCursorFactory(cursorMetadata) {
-            public boolean supportPageFrameCursor() {
+            public boolean supportsPageFrameCursor() {
                 return true;
             }
         })));
@@ -2247,7 +2307,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 args.add(new CharConstant('s'));
                             } else if (factory instanceof EqIntStrCFunctionFactory && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("1"));
-                            } else if (factory instanceof EqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                            } else if (isIPv4StrFactory(factory) && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("10.8.6.5"));
                             } else if (factory instanceof ContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("12.6.5.10/24"));
@@ -2260,6 +2320,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             } else if (factory instanceof RndIPv4CCFunctionFactory) {
                                 args.add(new StrConstant("4.12.22.11/12"));
                                 args.add(new IntConstant(2));
+                            } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
+                                args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                             } else if (!useConst) {
                                 args.add(colFuncs.get(sigArgType));
                             } else if (factory instanceof WalTransactionsFunctionFactory && sigArgType == ColumnType.STRING) {
@@ -2276,11 +2338,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                         argPositions.setAll(args.size(), 0);
 
-                        //TODO: test with partition by, order by and various frame modes
+                        // TODO: test with partition by, order by and various frame modes
                         if (factory.isWindow()) {
                             sqlExecutionContext.configureWindowContext(null, null, null, false, DataFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
                         }
-                        Function function = null;
+                        Function function;
                         try {
                             function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
                             function.toPlan(planSink);
@@ -2319,7 +2381,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
-    @Test // only none, single int|symbol key cases are vectorized
+    @Test
     public void testGroupByBoolean() throws Exception {
         assertPlan(
                 "create table a (l long, b boolean)",
@@ -2349,7 +2411,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // only none, single int|symbol key cases are vectorized
+    @Test
     public void testGroupByBooleanWithFilter() throws Exception {
         assertPlan(
                 "create table a (l long, b boolean)",
@@ -2364,7 +2426,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // only none, single int|symbol key cases are vectorized
+    @Test
     public void testGroupByDouble() throws Exception {
         assertPlan(
                 "create table a (l long, d double)",
@@ -2379,7 +2441,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // only none, single int|symbol key cases are vectorized
+    @Test
     public void testGroupByFloat() throws Exception {
         assertPlan(
                 "create table a (l long, f float)",
@@ -2394,7 +2456,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test //special case
+    @Test // special case
     public void testGroupByHour() throws Exception {
         assertPlan(
                 "create table a (ts timestamp, d double)",
@@ -2441,6 +2503,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByInt3() throws Exception {
+        assertPlan(
+                "create table a (i int, l long)",
+                "select i, max(l) - min(l) delta from a group by i",
+                "VirtualRecord\n" +
+                        "  functions: [i,max-min]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [i]\n" +
+                        "      values: [min(l),max(l)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
     public void testGroupByIntOperation() throws Exception {
         assertPlan(
                 "create table a (i int, d double)",
@@ -2462,12 +2540,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (s symbol, ts timestamp) timestamp(ts) partition by year;",
                 "select s as symbol, count() from a",
                 "GroupBy vectorized: true workers: 1\n" +
-                        "  keys: [symbol]\n" +
+                        "  keys: [s]\n" +
                         "  values: [count(*)]\n" +
-                        "    SelectedRecord\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n"
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 
@@ -2563,7 +2640,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // only none, single int|symbol key cases are vectorized
+    @Test
     public void testGroupByLong() throws Exception {
         assertPlan(
                 "create table a ( l long, d double)",
@@ -2707,7 +2784,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByNotKeyed1() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select min(d) from a",
                 "GroupBy vectorized: true\n" +
                         "  values: [min(d)]\n" +
@@ -2720,7 +2797,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByNotKeyed10() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select max(i) from (select * from a join a b on i )",
                 "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
@@ -2740,10 +2817,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByNotKeyed11() throws Exception {
         assertPlan(
-                "create table a ( gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))",
+                "create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))",
                 "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2753,12 +2831,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByNotKeyed12() throws Exception {
         assertPlan(
-                "create table a ( gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)",
+                "create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)",
                 "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42",
-                "GroupBy vectorized: false\n" +
+                "Async JIT Group By workers: 1\n" +
                         "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
-                        "    Async JIT Filter workers: 1\n" +
-                        "      filter: 42<i\n" +
+                        "  filter: 42<i\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByNotKeyed13() throws Exception {
+        assertPlan(
+                "create table a (i int)",
+                "select max(i) - min(i) from a",
+                "VirtualRecord\n" +
+                        "  functions: [max-min]\n" +
+                        "    GroupBy vectorized: true\n" +
+                        "      values: [min(i),max(i)]\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
@@ -2768,7 +2860,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // expressions in aggregates disable vectorized impl
     public void testGroupByNotKeyed2() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select min(d), max(d*d) from a",
                 "Async Group By workers: 1\n" +
                         "  values: [min(d),max(d*d)]\n" +
@@ -2782,7 +2874,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // expressions in aggregates disable vectorized impl
     public void testGroupByNotKeyed3() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select max(d+1) from a",
                 "Async Group By workers: 1\n" +
                         "  values: [max(d+1)]\n" +
@@ -2796,7 +2888,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByNotKeyed4() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select count(*), max(i), min(d) from a",
                 "GroupBy vectorized: true\n" +
                         "  values: [count(*),max(i),min(d)]\n" +
@@ -2806,13 +2898,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // constant values used in aggregates disable vectorization
+    @Test
     public void testGroupByNotKeyed5() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select first(10), last(d), avg(10), min(10), max(10) from a",
-                "GroupBy vectorized: false\n" +
+                "Async Group By workers: 1\n" +
                         "  values: [first(10),last(d),avg(10),min(10),max(10)]\n" +
+                        "  filter: null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -2822,7 +2915,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // group by on filtered data is not vectorized
     public void testGroupByNotKeyed6() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select max(i) from a where i < 10",
                 "Async JIT Group By workers: 1\n" +
                         "  values: [max(i)]\n" +
@@ -2836,7 +2929,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // order by is ignored and grouped by - vectorized
     public void testGroupByNotKeyed7() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select max(i) from (select * from a order by d)",
                 "GroupBy vectorized: true\n" +
                         "  values: [max(i)]\n" +
@@ -2849,7 +2942,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // order by can't be ignored; group by is not vectorized
     public void testGroupByNotKeyed8() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select max(i) from (select * from a order by d limit 10)",
                 "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
@@ -2864,7 +2957,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // TODO: group by could be vectorized for union tables and result merged
     public void testGroupByNotKeyed9() throws Exception {
         assertPlan(
-                "create table a ( i int, d double)",
+                "create table a (i int, d double)",
                 "select max(i) from (select * from a union all select * from a)",
                 "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
@@ -2919,6 +3012,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupBySymbol2() throws Exception {
+        assertPlan(
+                "create table a (l long, s symbol)",
+                "select s, max(l) - min(l) a from a",
+                "VirtualRecord\n" +
+                        "  functions: [s,max-min]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [s]\n" +
+                        "      values: [min(l),max(l)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
         );
     }
 
@@ -3453,7 +3562,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "   from long_sequence(100)" +
                     ") timestamp(ts) partition by hour");
 
-            String sql = "with yy as (select ts, max(s) s from tab sample by 1h) " +
+            String sql = "with yy as (select ts, max(s) s from tab sample by 1h ALIGN TO FIRST OBSERVATION) " +
                     "select * from yy latest on ts partition by s limit 10";
             assertPlan(
                     sql,
@@ -3715,12 +3824,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from (select ts, i as i1, i as i2 from a ) where 0 < i1 and i2 < 10 latest on ts partition by i1",
                 "LatestBy light order_by_timestamp: true\n" +
                         "    SelectedRecord\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              filter: (0<i and i<10)\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n"
+                        "        Async JIT Filter workers: 1\n" +
+                        "          filter: (0<i and i<10)\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n"
         );
     }
 
@@ -3730,11 +3838,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts);",
                 "select ts, i as i1, i as i2 from a where 0 < i and i < 10 latest on ts partition by i",
                 "SelectedRecord\n" +
-                        "    SelectedRecord\n" +
-                        "        LatestByAllFiltered\n" +
-                        "            Row backward scan\n" +
-                        "              filter: (0<i and i<10)\n" +
-                        "            Frame backward scan on: a\n"
+                        "    LatestByAllFiltered\n" +
+                        "        Row backward scan\n" +
+                        "          filter: (0<i and i<10)\n" +
+                        "        Frame backward scan on: a\n"
         );
     }
 
@@ -4331,10 +4438,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
-            compile("  CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
+            compile("CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
 
             String[] joinTypes = {"LEFT", "LT", "ASOF"};
-            String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join", "AsOf Join"};
+            String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join Fast Scan", "AsOf Join Fast Scan"};
 
             for (int i = 0; i < joinTypes.length; i++) {
                 // do not push down predicate to the 'right' table of left join but apply it after join
@@ -4558,8 +4665,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2",
                     "SelectedRecord\n" +
                             "    Filter filter: a.ts::long*a.i<b.ts::long*b.i\n" +
-                            "        Lt Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4579,8 +4685,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join b on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "      condition: b.ts=a.ts\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4603,8 +4708,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4625,8 +4729,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4647,7 +4750,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4667,8 +4770,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "      condition: _xQdbA1.ts=a.ts\n" +
+                            "    Lt Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4709,6 +4811,88 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtJoinNoKey1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a lt join b where a.i > 0",
+                    "SelectedRecord\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: 0<i\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLtJoinNoKey2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a lt join b",
+                    "SelectedRecord\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLtJoinNoKey3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (i int, ts timestamp) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a lt join b on(ts)",
+                    "SelectedRecord\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLtJoinNoKey4() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (ts timestamp, i int) timestamp(ts)");
+            ddl("create table b (i int, ts timestamp) timestamp(ts)");
+
+            assertPlan(
+                    "select * from a lt join b on(ts)",
+                    "SelectedRecord\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+        });
+    }
+
+    @Test
     public void testLtOfJoin3() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -4717,8 +4901,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "      condition: _xQdbA1.ts=a.ts\n" +
+                            "    Lt Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -4743,10 +4926,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "lt join b on ts " +
                             "lt join a c on ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "      condition: c.ts=a.ts\n" +
-                            "        Lt Join Light\n" +
-                            "          condition: b.ts=a.ts\n" +
+                            "    Lt Join Fast Scan\n" +
+                            "        Lt Join Fast Scan\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -5229,20 +5410,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * " +
                     "from full_range";
 
-            String expectedPlan = "SelectedRecord\n" +
-                    "    Sort\n" +
-                    "      keys: [timestamp]\n" +
+            String expectedPlan = "Sort\n" +
+                    "  keys: [timestamp]\n" +
+                    "    Union\n" +
                     "        Union\n" +
-                    "            Union\n" +
-                    "                DataFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: gas_prices\n" +
-                    "                VirtualRecord\n" +
-                    "                  functions: [915148800000000,null]\n" +
-                    "                    long_sequence count: 1\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: gas_prices\n" +
                     "            VirtualRecord\n" +
-                    "              functions: [1676851200000000,null]\n" +
-                    "                long_sequence count: 1\n";
+                    "              functions: [915148800000000,null]\n" +
+                    "                long_sequence count: 1\n" +
+                    "        VirtualRecord\n" +
+                    "          functions: [1676851200000000,null]\n" +
+                    "            long_sequence count: 1\n";
             assertPlan(query, expectedPlan);
             assertPlan(query + " order by timestamp", expectedPlan);
         });
@@ -6001,7 +6181,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // no where clause, distinct column
             assertPlan("SELECT count_distinct(s) FROM test",
                     "Count\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    Async JIT Group By workers: 1\n" +
                             "      keys: [s]\n" +
                             "      filter: s is not null\n" +
                             "        DataFrame\n" +
@@ -6092,12 +6272,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleBy() throws Exception {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select first(i) from a sample by 1h",
+                "select first(i) from a sample by 1h align to first observation",
                 "SampleBy\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select first(i) from a sample by 1h align to calendar",
+                "SelectedRecord\n" +
+                        "    Sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [ts]\n" +
+                        "          values: [first(i)]\n" +
+                        "          filter: null\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n"
         );
     }
 
@@ -6105,7 +6299,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillLinear() throws Exception {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select first(i) from a sample by 1h fill(linear)",
+                "select first(i) from a sample by 1h fill(linear) align to first observation",
+                "SampleBy\n" +
+                        "  fill: linear\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select first(i) from a sample by 1h fill(linear) align to calendar",
                 "SampleBy\n" +
                         "  fill: linear\n" +
                         "  values: [first(i)]\n" +
@@ -6119,7 +6323,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillNull() throws Exception {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select first(i) from a sample by 1h fill(null)",
+                "select first(i) from a sample by 1h fill(null) align to first observation",
+                "SampleBy\n" +
+                        "  fill: null\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select first(i) from a sample by 1h fill(null) align to calendar",
                 "SampleBy\n" +
                         "  fill: null\n" +
                         "  values: [first(i)]\n" +
@@ -6133,7 +6347,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillPrevKeyed() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
-                "select s, first(i) from a sample by 1h fill(prev)",
+                "select s, first(i) from a sample by 1h fill(prev) align to first observation",
+                "SampleBy\n" +
+                        "  fill: prev\n" +
+                        "  keys: [s]\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select s, first(i) from a sample by 1h fill(prev) align to calendar",
                 "SampleBy\n" +
                         "  fill: prev\n" +
                         "  keys: [s]\n" +
@@ -6148,7 +6373,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillPrevNotKeyed() throws Exception {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select first(i) from a sample by 1h fill(prev)",
+                "select first(i) from a sample by 1h fill(prev) align to first observation",
+                "SampleByFillPrev\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select first(i) from a sample by 1h fill(prev) align to calendar",
                 "SampleByFillPrev\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
@@ -6161,7 +6395,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillValueKeyed() throws Exception {
         assertPlan(
                 "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
-                "select s, first(i) from a sample by 1h fill(1)",
+                "select s, first(i) from a sample by 1h fill(1) align to first observation",
+                "SampleBy\n" +
+                        "  fill: value\n" +
+                        "  keys: [s]\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select s, first(i) from a sample by 1h fill(1) align to calendar",
                 "SampleBy\n" +
                         "  fill: value\n" +
                         "  keys: [s]\n" +
@@ -6176,7 +6421,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillValueNotKeyed() throws Exception {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
-                "select first(i) from a sample by 1h fill(1)",
+                "select first(i) from a sample by 1h fill(1) align to first observation",
+                "SampleBy\n" +
+                        "  fill: value\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select first(i) from a sample by 1h fill(1) align to calendar",
                 "SampleBy\n" +
                         "  fill: value\n" +
                         "  values: [first(i)]\n" +
@@ -6194,7 +6449,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "from a " +
                         "where sym in ('S') " +
                         "and   ts > 0::timestamp and ts < 100::timestamp " +
-                        "sample by 1h",
+                        "sample by 1h align to first observation",
                 "SampleByFirstLast\n" +
                         "  keys: [sym]\n" +
                         "  values: [first(i), last(s), first(l)]\n" +
@@ -6204,19 +6459,52 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Interval forward scan on: a\n" +
                         "          intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000099Z\")]\n"
         );
+
+        assertPlan(
+                "select sym, first(i), last(s), first(l) " +
+                        "from a " +
+                        "where sym in ('S') " +
+                        "and   ts > 0::timestamp and ts < 100::timestamp " +
+                        "sample by 1h align to calendar",
+                "SelectedRecord\n" +
+                        "    Sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        GroupBy vectorized: false\n" +
+                        "          keys: [sym,ts]\n" +
+                        "          values: [first(i),last(s),first(l)]\n" +
+                        "            DeferredSingleSymbolFilterDataFrame\n" +
+                        "                Index forward scan on: sym deferred: true\n" +
+                        "                  filter: sym='S'\n" +
+                        "                Interval forward scan on: a\n" +
+                        "                  intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000099Z\")]\n"
+        );
     }
 
     @Test
     public void testSampleByKeyed0() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, i, first(i) from a sample by 1h",
+                "select l, i, first(i) from a sample by 1h align to first observation",
                 "SampleBy\n" +
                         "  keys: [l,i]\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select l, i, first(i) from a sample by 1h align to calendar",
+                "SelectedRecord\n" +
+                        "    Sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [l,i,ts]\n" +
+                        "          values: [first(i)]\n" +
+                        "          filter: null\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n"
         );
     }
 
@@ -6224,7 +6512,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByKeyed1() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, i, first(i) from a sample by 1h",
+                "select l, i, first(i) from a sample by 1h align to first observation",
                 "SampleBy\n" +
                         "  keys: [l,i]\n" +
                         "  values: [first(i)]\n" +
@@ -6232,13 +6520,38 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
+
+        assertPlan(
+                "select l, i, first(i) from a sample by 1h align to calendar",
+                "SelectedRecord\n" +
+                        "    Sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [l,i,ts]\n" +
+                        "          values: [first(i)]\n" +
+                        "          filter: null\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n"
+        );
     }
 
     @Test
     public void testSampleByKeyed2() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, first(i) from a sample by 1h fill(null)",
+                "select l, first(i) from a sample by 1h fill(null) align to first observation",
+                "SampleBy\n" +
+                        "  fill: null\n" +
+                        "  keys: [l]\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select l, first(i) from a sample by 1h fill(null) align to calendar",
                 "SampleBy\n" +
                         "  fill: null\n" +
                         "  keys: [l]\n" +
@@ -6253,7 +6566,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByKeyed3() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, first(i) from a sample by 1d fill(linear)",
+                "select l, first(i) from a sample by 1d fill(linear) align to first observation",
+                "SampleBy\n" +
+                        "  fill: linear\n" +
+                        "  keys: [l]\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select l, first(i) from a sample by 1d fill(linear) align to calendar",
                 "SampleBy\n" +
                         "  fill: linear\n" +
                         "  keys: [l]\n" +
@@ -6268,7 +6592,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByKeyed4() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, first(i), last(i) from a sample by 1d fill(1,2)",
+                "select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation",
+                "SampleBy\n" +
+                        "  fill: value\n" +
+                        "  keys: [l]\n" +
+                        "  values: [first(i),last(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select l, first(i), last(i) from a sample by 1d fill(1,2) align to calendar",
                 "SampleBy\n" +
                         "  fill: value\n" +
                         "  keys: [l]\n" +
@@ -6283,7 +6618,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByKeyed5() throws Exception {
         assertPlan(
                 "create table a ( i int, l long, ts timestamp) timestamp(ts);",
-                "select l, first(i), last(i) from a sample by 1d fill(prev,prev)",
+                "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to first observation",
+                "SampleBy\n" +
+                        "  fill: value\n" +
+                        "  keys: [l]\n" +
+                        "  values: [first(i),last(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+
+        assertPlan(
+                "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to calendar",
                 "SampleBy\n" +
                         "  fill: value\n" +
                         "  keys: [l]\n" +
@@ -6349,7 +6695,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count(*) from (select * from a lt join a b) ",
                 "Count\n" +
                         "    SelectedRecord\n" +
-                        "        Lt Join\n" +
+                        "        Lt Join Fast Scan\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -6366,7 +6712,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count(*) from (select * from a asof join a b) ",
                 "Count\n" +
                         "    SelectedRecord\n" +
-                        "        AsOf Join\n" +
+                        "        AsOf Join Fast Scan\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -7603,7 +7949,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         compile("insert into a select x,x::timestamp from long_sequence(10)");
 
         assertPlan(
-                "select ts, count(*)  from a sample by 1s limit -5",
+                "select ts, count(*)  from a sample by 1s ALIGN TO FIRST OBSERVATION limit -5",
                 "Limit lo: -5\n" +
                         "    SampleBy\n" +
                         "      values: [count(*)]\n" +
@@ -8191,6 +8537,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testSelectWithJittedFilter27() throws Exception {
+        assertPlan(
+                "create table tab ( s string, ts timestamp);",
+                "select * from tab where s = null ",
+                "Async JIT Filter workers: 1\n" +
+                        "  filter: s is null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
+        );
+    }
+
     @Test // TODO: this one should use jit !
     public void testSelectWithJittedFilter3() throws Exception {
         assertPlan(
@@ -8559,19 +8918,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // jit filter doesn't work for string type
-    public void testSelectWithNonJittedFilter8() throws Exception {
-        assertPlan(
-                "create table tab ( s string, ts timestamp);",
-                "select * from tab where s = null ",
-                "Async Filter workers: 1\n" +
-                        "  filter: s is null\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
-        );
-    }
-
     @Test // jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter9() throws Exception {
         assertPlan(
@@ -8707,13 +9053,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "SelectedRecord\n" +
                         "    Filter filter: l1*i2!=0\n" +
                         "        SelectedRecord\n" +
-                        "            SelectedRecord\n" +
-                        "                Async Filter workers: 1\n" +
-                        "                  limit: 100\n" +
-                        "                  filter: l::short<i\n" +
-                        "                    DataFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: a\n"
+                        "            Async Filter workers: 1\n" +
+                        "              limit: 100\n" +
+                        "              filter: l::short<i\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: a\n"
         );
     }
 
@@ -8732,10 +9077,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Sort light lo: 100 partiallySorted: true\n" +
                         "          keys: [ts1, l1]\n" +
                         "            SelectedRecord\n" +
-                        "                SelectedRecord\n" +
-                        "                    DataFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: a\n"
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: a\n"
         );
     }
 
@@ -8765,15 +9109,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "from a where l::short<i ) " +
                         "where mil + mini> 1 ",
                 "Filter filter: 1<mil+mini\n" +
-                        "    GroupBy vectorized: false\n" +
+                        "    Async Group By workers: 1\n" +
                         "      keys: [k]\n" +
                         "      values: [max(i*l),min(l),min(i)]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: l::short<i\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: a\n"
+                        "      filter: l::short<i\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
         );
     }
 
@@ -8816,7 +9158,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Sort light lo: 10 partiallySorted: true\n" +
                             "          keys: [ts, l]\n" +
                             "            DataFrame\n" +
@@ -8840,7 +9182,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "lt join " +
                             "(select * from a) order by ts asc",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Limit lo: 10\n" +
                             "            Sort light\n" +
                             "              keys: [ts, l]\n" +
@@ -8892,7 +9234,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "lt join (select * from a) " +
                             "order by ts asc",
                     "SelectedRecord\n" +
-                            "    Lt Join\n" +
+                            "    Lt Join Fast Scan\n" +
                             "        Limit lo: 10\n" +
                             "            Sort\n" +
                             "              keys: [ts, l]\n" +
@@ -8927,16 +9269,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") " +
                             "order by ts desc",
                     "Limit lo: 10\n" +
-                            "    Sort\n" +
-                            "      keys: [ts desc]\n" +
-                            "        SelectedRecord\n" +
-                            "            Cross Join\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: a\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: a\n"
+                            "    SelectedRecord\n" +
+                            "        Cross Join\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: a\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n"
             );
         });
     }
@@ -9890,6 +10230,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
+    private static boolean isIPv4StrFactory(FunctionFactory factory) {
+        if (factory instanceof SwappingArgsFunctionFactory) {
+            return isIPv4StrFactory(((SwappingArgsFunctionFactory) factory).getDelegate());
+        }
+        if (factory instanceof NegatingFunctionFactory) {
+            return isIPv4StrFactory(((NegatingFunctionFactory) factory).getDelegate());
+        }
+        return factory instanceof EqIPv4FunctionFactory
+                || factory instanceof EqStrIPv4FunctionFactory
+                || factory instanceof EqIPv4StrFunctionFactory
+                || factory instanceof LtIPv4StrFunctionFactory
+                || factory instanceof LtStrIPv4FunctionFactory;
+    }
+
     private void assertBindVarPlan(String type) throws SqlException {
         assertPlan(
                 "select * from t where x = :v1 ",
@@ -9944,7 +10298,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private <T> ObjList<T> list(T... values) {
-        return new ObjList<T>(values);
+        return new ObjList<>(values);
     }
 
     private void test2686Prepare() throws Exception {

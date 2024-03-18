@@ -38,7 +38,6 @@ import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectString;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -55,15 +54,13 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             TableToken tableToken;
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, N / 4).
                     col("i", ColumnType.INT).
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
-            ) {
-                tableToken = CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            tableToken = AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final String[] symbols = new String[N];
@@ -190,13 +187,11 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, maxSize);
 
         TestUtils.assertMemoryLeak(() -> {
-            TableToken tableToekn;
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).
+            TableToken tableToken;
+            TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).
                     col("i", ColumnType.INT).
-                    timestamp()
-            ) {
-                tableToekn = CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            tableToken = AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final long increment = 1000000 * 60L * 4;
@@ -244,7 +239,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tableToekn, TableUtils.ANY_TABLE_VERSION, metadata)) {
+                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata)) {
                     DataFrameRowCursorFactory rowCursorFactory = new DataFrameRowCursorFactory(); // stub RowCursorFactory
                     DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(
                             configuration,
@@ -259,7 +254,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             true
                     );
 
-                    Assert.assertTrue(factory.supportPageFrameCursor());
+                    Assert.assertTrue(factory.supportsPageFrameCursor());
 
                     long ts = (rowCount + 1) * increment;
                     int rowIndex = rowCount - 1;
@@ -309,12 +304,10 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             TableToken tt;
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).
+            TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).
                     col("i", ColumnType.INT).
-                    timestamp()
-            ) {
-                tt = CreateTableTestUtils.create(model);
-            }
+                    timestamp();
+            tt = AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
             final long increment = 1000000 * 60L * 4;
@@ -369,7 +362,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             true
                     );
 
-                    Assert.assertTrue(factory.supportPageFrameCursor());
+                    Assert.assertTrue(factory.supportsPageFrameCursor());
 
                     rnd.reset();
                     long ts = 0;

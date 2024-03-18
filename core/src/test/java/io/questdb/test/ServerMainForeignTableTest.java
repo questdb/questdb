@@ -30,6 +30,7 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -550,7 +551,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 RecordCursorFactory factory = cc.getRecordCursorFactory();
                 RecordCursor cursor = factory.getCursor(context)
         ) {
-            TestUtils.printCursor(cursor, factory.getMetadata(), true, resultSink, printer);
+            RecordMetadata metadata = factory.getMetadata();
+            CursorPrinter.println(cursor, metadata, resultSink);
             String expected = tableToken.getTableName() + "\tts\tDAY\t500000\t600000000\t" + true + '\t' + tableToken.getDirName();
             if (inVolume) {
                 expected += " (->)";
@@ -589,7 +591,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     throw new RuntimeException(unexpected);
                 }
             } finally {
-                Path.clearThreadLocals();
+                TableUtils.clearThreadLocals();
                 haltLatch.countDown();
             }
         }, threadName);
@@ -624,20 +626,17 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         sink.put('\n');
         compiler.compile(sink.toString(), context);
 
-        try (
-                TableModel tableModel = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)
-                        .col("investmentMill", ColumnType.LONG)
-                        .col("ticketThous", ColumnType.INT)
-                        .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
-                        .timestamp("ts")
-        ) {
-            // todo: replace with metadata
-            if (isWal) {
-                tableModel.wal();
-            }
-            CharSequence insert = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
-            compiler.compile(insert, context);
+        TableModel tableModel = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)
+                .col("investmentMill", ColumnType.LONG)
+                .col("ticketThous", ColumnType.INT)
+                .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
+                .timestamp("ts");
+        // todo: replace with metadata
+        if (isWal) {
+            tableModel.wal();
         }
+        CharSequence insert = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
+        compiler.compile(insert, context);
         return engine.verifyTableName(tableName);
     }
 

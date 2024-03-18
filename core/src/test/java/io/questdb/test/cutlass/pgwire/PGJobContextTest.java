@@ -3090,7 +3090,7 @@ if __name__ == "__main__":
                                         }
                                     } finally {
                                         // release native path memory used by the job
-                                        Path.PATH.get().close();
+                                        Path.clearThreadLocals();
                                         stopped.countDown();
                                     }
                                 }, "wal_job");
@@ -3120,17 +3120,12 @@ if __name__ == "__main__":
                                         throw new RuntimeException("Query to cancel failed!", queryError.get());
                                     }
                                 }
-                            } finally {
-                                registryListener.queryFound.countDown();
                             }
 
                             try (PreparedStatement stmt = connection.prepareStatement("cancel query " + queryId)) {
                                 stmt.executeUpdate();
-                            } catch (SQLException e) {
-                                // ignore errors showing that statement is completed
-                                if (!Chars.contains(e.getMessage(), "query to cancel not found in registry")) {
-                                    throw e;
-                                }
+                            } finally {
+                                registryListener.queryFound.countDown();
                             }
                             start = System.currentTimeMillis();
 
@@ -3191,7 +3186,8 @@ if __name__ == "__main__":
                 ResultSet rs = pstmt.executeQuery();
                 sink.clear();
                 assertResultSet("query_id[BIGINT],worker_id[BIGINT],worker_pool[VARCHAR],username[VARCHAR],query_start[TIMESTAMP],state_change[TIMESTAMP],state[VARCHAR],is_wal[BIT],query[VARCHAR]\n",
-                        sink, rs);
+                        sink, rs
+                );
             }
         });
     }
@@ -10744,67 +10740,183 @@ create table tab as (
 
                     // single key value in filter
 
-                    sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id = ? and timestamp > ?")) {
-                        ps.setString(1, "d1");
-                        ps.setTimestamp(2, createTimestamp(1));
-                        try (ResultSet rs = ps.executeQuery()) {
-                            assertResultSet(
-                                    "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                            "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
-                                    sink,
-                                    rs
-                            );
+                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id = ? and timestamp > ? order by timestamp, value desc")) {
+                        for (int i = 0; i < 3; i++) {
+                            ps.setString(1, "d1");
+                            ps.setTimestamp(2, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // try querying non-existing symbol
+                            ps.setString(1, "foobar");
+                            ps.setTimestamp(2, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // and then an existing one
+                            ps.setString(1, "d2");
+                            ps.setTimestamp(2, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d2,c1,201.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
                         }
                     }
 
-                    sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id != ? and timestamp > ?")) {
-                        ps.setString(1, "d1");
-                        ps.setTimestamp(2, createTimestamp(1));
-                        try (ResultSet rs = ps.executeQuery()) {
-                            assertResultSet(
-                                    "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                            "d2,c1,201.3,1970-01-01 00:00:00.000002\n",
-                                    sink,
-                                    rs
-                            );
+                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id != ? and timestamp > ? order by timestamp, value desc")) {
+                        for (int i = 0; i < 3; i++) {
+                            ps.setString(1, "d1");
+                            ps.setTimestamp(2, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d2,c1,201.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // try querying non-existing symbol
+                            ps.setString(1, "foobar");
+                            ps.setTimestamp(2, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // and then an existing one
+                            ps.setString(1, "d2");
+                            ps.setTimestamp(2, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
                         }
                     }
 
                     // multiple key values in filter
 
-                    sink.clear();
                     try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id in (?, ?) and timestamp > ? order by timestamp, value desc")) {
-                        ps.setString(1, "d1");
-                        ps.setString(2, "d2");
-                        ps.setTimestamp(3, createTimestamp(0));
-                        try (ResultSet rs = ps.executeQuery()) {
-                            assertResultSet(
-                                    "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                            "d2,c1,201.2,1970-01-01 00:00:00.000001\n" +
-                                            "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
-                                            "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
-                                            "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
-                                    sink,
-                                    rs
-                            );
+                        for (int i = 0; i < 3; i++) {
+                            ps.setString(1, "d1");
+                            ps.setString(2, "d2");
+                            ps.setTimestamp(3, createTimestamp(0));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d2,c1,201.2,1970-01-01 00:00:00.000001\n" +
+                                                "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
+                                                "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // try querying non-existing symbols
+                            ps.setString(1, "foobar");
+                            ps.setString(2, "barbaz");
+                            ps.setTimestamp(3, createTimestamp(0));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // and then an existing duplicate one
+                            ps.setString(1, "d2");
+                            ps.setString(2, "d2");
+                            ps.setTimestamp(3, createTimestamp(0));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d2,c1,201.2,1970-01-01 00:00:00.000001\n" +
+                                                "d2,c1,201.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
                         }
                     }
 
-                    sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id not in (?, ?) and timestamp > ?")) {
-                        ps.setString(1, "d2");
-                        ps.setString(2, "d3");
-                        ps.setTimestamp(3, createTimestamp(0));
-                        try (ResultSet rs = ps.executeQuery()) {
-                            assertResultSet(
-                                    "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                            "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
-                                            "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
-                                    sink,
-                                    rs
-                            );
+                    try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id not in (?, ?) and timestamp > ? order by timestamp, value desc")) {
+                        for (int i = 0; i < 3; i++) {
+                            ps.setString(1, "d2");
+                            ps.setString(2, "d3");
+                            ps.setTimestamp(3, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // try querying non-existing symbols
+                            ps.setString(1, "foobar");
+                            ps.setString(2, "barbaz");
+                            ps.setTimestamp(3, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+
+                            // and then an existing duplicate one
+                            ps.setString(1, "d2");
+                            ps.setString(2, "d2");
+                            ps.setTimestamp(2, createTimestamp(1));
+                            try (ResultSet rs = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                                "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
+                                        sink,
+                                        rs
+                                );
+                            }
                         }
                     }
                 }
@@ -10908,8 +11020,15 @@ create table tab as (
                     assertEquals(testSize, stmt.getFetchSize());
 
                     try {
+                        // wait for disconnect timer to trigger
+                        while (connection.isValid(10)) {
+                            // in theory, we do not need to execute the query here, but if the line is removed
+                            // connection.isValid() does not always detect that the connection is closed (or it takes a very long time)
+                            stmt.executeQuery();
+                            Os.sleep(250);
+                        }
                         stmt.executeQuery();
-                        Assert.fail();
+                        Assert.fail("Exception is not thrown");
                     } catch (PSQLException ex) {
                         // expected
                         Assert.assertNotNull(ex);

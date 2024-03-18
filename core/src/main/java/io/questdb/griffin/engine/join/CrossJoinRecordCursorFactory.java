@@ -42,7 +42,6 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             int columnSplit
-
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         this.cursor = new CrossJoinRecordCursor(columnSplit);
@@ -61,6 +60,11 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             Misc.free(slaveCursor);
             throw ex;
         }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override

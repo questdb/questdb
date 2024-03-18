@@ -422,7 +422,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
                     "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                     "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
-                    "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d"
+                    "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
             );
 
             String lastReadOnlyPartitionName = "2022-10-20";
@@ -464,7 +464,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
                     "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                     "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
-                    "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d"
+                    "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
             );
 
             // drop active partition
@@ -473,7 +473,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
                     "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
                     "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
-                    "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d"
+                    "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
             );
 
             // the previously read-only partition becomes now the active partition, and cannot be written to
@@ -541,7 +541,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
                             "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                             "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n" +
-                            "2022-10-21T20:00:00.202312Z\t2022-10-21T20:00:00.202312Z\t1\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d"
+                            "2022-10-21T20:00:00.202312Z\t2022-10-21T20:00:00.202312Z\t1\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -710,18 +710,17 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             String otherLocation = "CON-CHIN-CHINA";
             int txn = 0;
             TableToken tableToken;
-            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                tableToken = createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                                .timestamp("ts"),
-                        10000,
-                        partitionName[0],
-                        partitionCount
-                );
-            }
+            TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY);
+            tableToken = createPopulateTable(
+                    1,
+                    src.col("l", ColumnType.LONG)
+                            .col("i", ColumnType.INT)
+                            .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                            .timestamp("ts"),
+                    10000,
+                    partitionName[0],
+                    partitionCount
+            );
             txn++;
             assertSql("min\tmax\tcount\n" +
                     expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
@@ -1162,18 +1161,17 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     private TableToken createPopulateTable(String tableName, int partitionCount) throws Exception {
         TableToken tableToken;
-        try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-            tableToken = createPopulateTable(
-                    1,
-                    src.col("l", ColumnType.LONG)
-                            .col("i", ColumnType.INT)
-                            .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                            .timestamp("ts"),
-                    10000,
-                    "2022-10-17",
-                    partitionCount
-            );
-        }
+        TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY);
+        tableToken = createPopulateTable(
+                1,
+                src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                        .timestamp("ts"),
+                10000,
+                "2022-10-17",
+                partitionCount
+        );
         return tableToken;
     }
 

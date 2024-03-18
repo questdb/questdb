@@ -212,6 +212,14 @@ public class Bootstrap {
         }
     }
 
+    public static String[] getServerMainArgs(CharSequence root) {
+        return new String[]{
+                "-d",
+                Chars.toString(root),
+                SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION
+        };
+    }
+
     public static CharSequenceObjHashMap<String> processArgs(String... args) {
         final int n = args.length;
         if (n == 0) {
@@ -275,13 +283,14 @@ public class Bootstrap {
     }
 
     public void extractSite() throws IOException {
-        URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
+        final byte[] buffer = new byte[1024 * 1024];
+        final URL resource = getResourceClass().getResource(getPublicZipPath());
         if (resource == null) {
-            log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
+            log.infoW().$("Web Console build [").$(getPublicZipPath()).$("] not found").$();
+            extractConfDir(buffer);
         } else {
             long thisVersion = resource.openConnection().getLastModified();
             final String publicDir = rootDirectory + Files.SEPARATOR + "public";
-            final byte[] buffer = new byte[1024 * 1024];
 
             boolean extracted = false;
             final String oldSwVersion = getPublicVersion(publicDir);
@@ -449,7 +458,7 @@ public class Bootstrap {
     }
 
     private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
-        try (final InputStream is = ServerMain.class.getResourceAsStream(PUBLIC_ZIP)) {
+        try (final InputStream is = getResourceClass().getResourceAsStream(getPublicZipPath())) {
             if (is != null) {
                 try (ZipInputStream zip = new ZipInputStream(is)) {
                     ZipEntry ze;
@@ -462,10 +471,14 @@ public class Bootstrap {
                     }
                 }
             } else {
-                log.errorW().$("could not find site [resource=").$(PUBLIC_ZIP).$(']').$();
+                log.errorW().$("could not find site [resource=").$(getPublicZipPath()).$(']').$();
             }
         }
         setPublicVersion(publicDir, thisVersion);
+        extractConfDir(buffer);
+    }
+
+    private void extractConfDir(byte[] buffer) throws IOException {
         copyConfResource(rootDirectory, false, buffer, "conf/date.formats", log);
         try {
             copyConfResource(rootDirectory, true, buffer, "conf/mime.types", log);
@@ -601,6 +614,14 @@ public class Bootstrap {
                 r.$('\t').$("http://").$ip(bindIP).$(':').$(bindPort).$('\n').$();
             }
         }
+    }
+
+    protected String getPublicZipPath() {
+        return PUBLIC_ZIP;
+    }
+
+    protected Class<?> getResourceClass() {
+        return ServerMain.class;
     }
 
     public static class BootstrapException extends RuntimeException {

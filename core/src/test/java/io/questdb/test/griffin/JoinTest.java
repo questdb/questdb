@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
@@ -1718,7 +1719,7 @@ public class JoinTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c")) {
                 Assert.assertNotNull(factory);
                 sink.clear();
-                printer.printHeader(factory.getMetadata(), sink);
+                CursorPrinter.println(factory.getMetadata(), sink);
                 TestUtils.assertEquals("x\tx1\tx2\n", sink);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertEquals(Long.MAX_VALUE, cursor.size());
@@ -4042,9 +4043,9 @@ public class JoinTest extends AbstractCairoTest {
                     "  SELECT ts, SUM(price * qty) / SUM(qty) vwap\n" +
                     "  FROM trade\n" +
                     "  WHERE instrument = 'A'\n" +
-                    "  SAMPLE by 5m ALIGN TO CALENDAR\n" +
+                    "  SAMPLE by 5m ALIGN TO FIRST OBSERVATION\n" +
                     ") \n" +
-                    "SPLICE JOIN trade ", "left side of splice join doesn't support random access", 137);
+                    "SPLICE JOIN trade ", "left side of splice join doesn't support random access", 146);
 
             assertFailure("SELECT *\n" +
                     "FROM trade " +
@@ -4053,7 +4054,7 @@ public class JoinTest extends AbstractCairoTest {
                     "  SELECT ts, SUM(price * qty) / SUM(qty) vwap\n" +
                     "  FROM trade\n" +
                     "  WHERE instrument = 'A'\n" +
-                    "  SAMPLE BY 5m ALIGN TO CALENDAR\n" +
+                    "  SAMPLE BY 5m ALIGN TO FIRST OBSERVATION\n" +
                     ") \n", "right side of splice join doesn't support random access", 20);
         });
     }

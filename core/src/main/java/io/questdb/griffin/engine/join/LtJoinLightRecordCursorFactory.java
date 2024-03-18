@@ -57,7 +57,8 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
-            JoinContext joinContext) {
+            JoinContext joinContext
+    ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
@@ -86,6 +87,11 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             Misc.free(cursor);
             throw e;
         }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override

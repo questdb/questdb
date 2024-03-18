@@ -173,10 +173,29 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "c\tтри\t1970-01-01T00:00:05.000000Z\n" +
                         "f\tтри\t1970-01-01T00:00:05.000000Z\n" +
                         "e\tедно\t1970-01-01T00:00:05.000000Z\n",
-                "select a, max(s), ts from x sample by 5s",
+                "select a, max(s), ts from x sample by 5s align to first observation",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('едно','две','три') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false
+        );
+        assertQuery(
+                "a\tmax\tts\n" +
+                        "a\tтри\t1970-01-01T00:00:00.000000Z\n" +
+                        "b\tтри\t1970-01-01T00:00:00.000000Z\n" +
+                        "c\tтри\t1970-01-01T00:00:00.000000Z\n" +
+                        "d\tедно\t1970-01-01T00:00:00.000000Z\n" +
+                        "e\tтри\t1970-01-01T00:00:00.000000Z\n" +
+                        "f\tтри\t1970-01-01T00:00:00.000000Z\n" +
+                        "a\tтри\t1970-01-01T00:00:05.000000Z\n" +
+                        "b\tтри\t1970-01-01T00:00:05.000000Z\n" +
+                        "c\tтри\t1970-01-01T00:00:05.000000Z\n" +
+                        "d\tтри\t1970-01-01T00:00:05.000000Z\n" +
+                        "e\tедно\t1970-01-01T00:00:05.000000Z\n" +
+                        "f\tтри\t1970-01-01T00:00:05.000000Z\n",
+                "select a, max(s), ts from x sample by 5s align to calendar order by 3, 1",
+                "ts",
+                true,
+                true
         );
     }
 }

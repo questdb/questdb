@@ -32,19 +32,15 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByCharSink;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
-    private static final int INITIAL_SINK_CAPACITY = 16;
-    private static final int LIST_CLEAR_THRESHOLD = 64;
-
     protected final Function arg;
-    protected final ObjList<DirectUtf16Sink> sinks = new ObjList<>();
+    protected final GroupByCharSink sink = new GroupByCharSink();
     protected int valueIndex;
-    private int sinkIndex = 0;
 
     public FirstStrGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -52,52 +48,25 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
 
     @Override
     public void clear() {
-        // Free extra sinks.
-        if (sinks.size() > LIST_CLEAR_THRESHOLD) {
-            for (int i = LIST_CLEAR_THRESHOLD, n = sinks.size(); i < n; i++) {
-                sinks.getAndSetQuick(i, null).close();
-            }
-            sinks.setPos(LIST_CLEAR_THRESHOLD);
-        }
-        // Reset capacity on the remaining ones.
-        for (int i = 0, n = sinks.size(); i < n; i++) {
-            DirectUtf16Sink sink = sinks.getQuick(i);
-            if (sink != null) {
-                sink.resetCapacity();
-            }
-        }
-        sinkIndex = 0;
+        sink.of(0);
     }
 
     @Override
-    public void close() {
-        Misc.freeObjListAndClear(sinks);
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        final DirectUtf16Sink sink;
-        final CharSequence str = arg.getStr(record);
-        final int strLen = str != null ? str.length() : 0;
-
-        if (sinks.size() <= sinkIndex) {
-            sinks.extendAndSet(sinkIndex, sink = new DirectUtf16Sink(Math.max(INITIAL_SINK_CAPACITY, strLen)));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        final CharSequence val = arg.getStr(record);
+        if (val == null) {
+            mapValue.putLong(valueIndex + 1, 0);
+            mapValue.putBool(valueIndex + 2, true);
         } else {
-            sink = sinks.getQuick(sinkIndex);
-            sink.clear();
+            sink.of(0).put(val);
+            mapValue.putLong(valueIndex + 1, sink.ptr());
+            mapValue.putBool(valueIndex + 2, false);
         }
-
-        if (str != null) {
-            sink.put(str);
-            mapValue.putBool(valueIndex + 1, false);
-        } else {
-            mapValue.putBool(valueIndex + 1, true);
-        }
-        mapValue.putInt(valueIndex, sinkIndex++);
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         // empty
     }
 
@@ -113,11 +82,12 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
 
     @Override
     public CharSequence getStr(Record rec) {
-        final boolean nullValue = rec.getBool(valueIndex + 1);
+        final boolean nullValue = rec.getBool(valueIndex + 2);
         if (nullValue) {
             return null;
         }
-        return sinks.getQuick(rec.getInt(valueIndex));
+        final long ptr = rec.getLong(valueIndex + 1);
+        return ptr == 0 ? null : sink.of(ptr);
     }
 
     @Override
@@ -136,7 +106,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     }
 
     @Override
-    public boolean isParallelismSupported() {
+    public boolean isReadThreadSafe() {
         return false;
     }
 
@@ -146,15 +116,34 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     }
 
     @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT); // sink index
+        columnTypes.add(ColumnType.LONG);    // row id
+        columnTypes.add(ColumnType.LONG);    // sink pointer
         columnTypes.add(ColumnType.BOOLEAN); // null flag
     }
 
     @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        sink.setAllocator(allocator);
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putBool(valueIndex + 1, true);
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, true);
     }
 
     @Override
@@ -163,8 +152,12 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     }
 
     @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
+    }
+
+    @Override
     public void toTop() {
         UnaryFunction.super.toTop();
-        sinkIndex = 0;
     }
 }

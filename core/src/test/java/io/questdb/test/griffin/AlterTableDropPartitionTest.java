@@ -50,12 +50,12 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
                     ddl(
                             "create table x as (" +
-                            "select x as i," +
-                            "x as j," +
-                            "x as g," +
-                            "timestamp_sequence('2018-01-01', 72000000L) ts " +
-                            "from long_sequence(1000)" +
-                            ") timestamp (ts) partition by DAY"
+                                    "select x as i," +
+                                    "x as j," +
+                                    "x as g," +
+                                    "timestamp_sequence('2018-01-01', 72000000L) ts " +
+                                    "from long_sequence(1000)" +
+                                    ") timestamp (ts) partition by DAY"
                     );
 
                     ddl("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(20)");
@@ -156,16 +156,16 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     public void testDropPartitionListWithMixedWeekDayFormats() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table trade as (" +
-                            "select" +
-                            "  rnd_symbol('A', 'B', 'C') sym," +
-                            "  rnd_long(1, 10000000000, 0) px," +
-                            "  rnd_float() * 100 leverage," +
-                            "  rnd_timestamp(" +
-                            "    to_timestamp('2022-06-01', 'yyyy-MM-dd')," +
-                            "    to_timestamp('2024-01-03', 'yyyy-MM-dd')," +
-                            "    0) ts" +
-                            "  from long_sequence(360)" +
-                            "), index(sym capacity 128) timestamp(ts) partition by week;");
+                    "select" +
+                    "  rnd_symbol('A', 'B', 'C') sym," +
+                    "  rnd_long(1, 10000000000, 0) px," +
+                    "  rnd_float() * 100 leverage," +
+                    "  rnd_timestamp(" +
+                    "    to_timestamp('2022-06-01', 'yyyy-MM-dd')," +
+                    "    to_timestamp('2024-01-03', 'yyyy-MM-dd')," +
+                    "    0) ts" +
+                    "  from long_sequence(360)" +
+                    "), index(sym capacity 128) timestamp(ts) partition by week;");
             assertSql(
                     "year\tweek_of_year\twoy\n" +
                             "2024\t1\t2024-W01\n" +
@@ -390,10 +390,9 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     public void testDropPartitionWithColumnTop() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "x";
-            try (TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)) {
-                tm.col("inn", ColumnType.INT).timestamp("ts");
-                createPopulateTable(tm, 100, "2022-02-24", 3);
-            }
+            TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY);
+            tm.col("inn", ColumnType.INT).timestamp("ts");
+            createPopulateTable(tm, 100, "2022-02-24", 3);
 
             compile("alter table x add column lo LONG");
             compile("insert into x " +
@@ -423,10 +422,8 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     public void testDropPartitionWithO3Version() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "x";
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)
-            ) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY);
                 tm.timestamp();
                 TestUtils.createPopulateTable(compiler, sqlExecutionContext, tm, 100, "2020-01-01", 5);
             }
@@ -454,10 +451,9 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     public void testDropPartitionWriteInOrder() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "x";
-            try (TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.HOUR)) {
-                tm.col("x", ColumnType.INT).timestamp("ts");
-                createPopulateTable(tm, 1, "2022-12-12T09:05", 1);
-            }
+            TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.HOUR);
+            tm.col("x", ColumnType.INT).timestamp("ts");
+            createPopulateTable(tm, 1, "2022-12-12T09:05", 1);
 
             assertReader("x\tts\n" +
                     "1\t2022-12-12T10:04:59.000000Z\n", "x");
@@ -843,7 +839,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try {
                 createX("YEAR", 720000000);
-                select(sql);
+                select(sql).close();
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -1009,64 +1005,63 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     ) throws Exception {
         final int totalPartitionRowCount = insertIterations * partitionRowCount;
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", partitionBy)) {
-                createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .timestamp("ts"),
-                        insertIterations,
-                        totalRowsPerIteration,
-                        startDate,
-                        partitionCount
-                );
+            TableModel src = new TableModel(configuration, "src", partitionBy);
+            createPopulateTable(
+                    1,
+                    src.col("l", ColumnType.LONG)
+                            .col("i", ColumnType.INT)
+                            .timestamp("ts"),
+                    insertIterations,
+                    totalRowsPerIteration,
+                    startDate,
+                    partitionCount
+            );
 
-                engine.clear();
+            engine.clear();
 
-                try (final TableReader reader = getReader(src.getName())) {
-                    long sum = 0;
-                    int colIndex = 0;
-                    boolean opened = false;
-                    if (partitionToCheck > -1) {
-                        Assert.assertEquals(totalPartitionRowCount, reader.openPartition(partitionToCheck));
-                        opened = true;
+            try (final TableReader reader = getReader(src.getName())) {
+                long sum = 0;
+                int colIndex = 0;
+                boolean opened = false;
+                if (partitionToCheck > -1) {
+                    Assert.assertEquals(totalPartitionRowCount, reader.openPartition(partitionToCheck));
+                    opened = true;
 
-                        // read first column on first partition
-                        colIndex = TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionToCheck), 0);
-                        Assert.assertTrue(colIndex > 0); // This can change with refactoring, test has to be updated to get col index correctly
-                        sum = readSumLongColumn(reader, totalPartitionRowCount, colIndex);
-                        long expectedSumFrom0ToPartitionCount = (long) (insertIterations * (partitionRowCount * (partitionRowCount + 1.0) / 2.0));
-                        Assert.assertEquals(expectedSumFrom0ToPartitionCount, sum);
+                    // read first column on first partition
+                    colIndex = TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionToCheck), 0);
+                    Assert.assertTrue(colIndex > 0); // This can change with refactoring, test has to be updated to get col index correctly
+                    sum = readSumLongColumn(reader, totalPartitionRowCount, colIndex);
+                    long expectedSumFrom0ToPartitionCount = (long) (insertIterations * (partitionRowCount * (partitionRowCount + 1.0) / 2.0));
+                    Assert.assertEquals(expectedSumFrom0ToPartitionCount, sum);
+                }
+
+                // Delete partition directory
+                String dirToDelete = insertIterations > 1 ? partitionDirBaseName + "." + (insertIterations - 1) : partitionDirBaseName;
+                TableToken tableToken = engine.verifyTableName(src.getName());
+                File dir = new File(Paths.get(root, tableToken.getDirName(), dirToDelete).toString());
+                deleteDir(dir);
+
+                if (opened) {
+                    // Should not affect open partition
+                    reader.reload();
+                    long sum2 = readSumLongColumn(reader, totalPartitionRowCount, colIndex);
+                    Assert.assertEquals(sum, sum2);
+                }
+
+                if (expected == null) {
+                    // Don't check that partition open fails if it's already opened
+                    Assert.assertEquals(totalPartitionRowCount, reader.openPartition(deletedPartitionIndex));
+                } else {
+                    // Should throw something meaningful
+                    try {
+                        reader.openPartition(deletedPartitionIndex);
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getMessage(), expected);
                     }
 
-                    // Delete partition directory
-                    String dirToDelete = insertIterations > 1 ? partitionDirBaseName + "." + (insertIterations - 1) : partitionDirBaseName;
-                    TableToken tableToken = engine.verifyTableName(src.getName());
-                    File dir = new File(Paths.get(root, tableToken.getDirName(), dirToDelete).toString());
-                    deleteDir(dir);
-
-                    if (opened) {
-                        // Should not affect open partition
-                        reader.reload();
-                        long sum2 = readSumLongColumn(reader, totalPartitionRowCount, colIndex);
-                        Assert.assertEquals(sum, sum2);
-                    }
-
-                    if (expected == null) {
-                        // Don't check that partition open fails if it's already opened
-                        Assert.assertEquals(totalPartitionRowCount, reader.openPartition(deletedPartitionIndex));
-                    } else {
-                        // Should throw something meaningful
-                        try {
-                            reader.openPartition(deletedPartitionIndex);
-                            Assert.fail();
-                        } catch (CairoException ex) {
-                            TestUtils.assertContains(ex.getMessage(), expected);
-                        }
-
-                        if (partitionBy != PartitionBy.NONE) {
-                            ddl("ALTER TABLE " + src.getName() + " DROP PARTITION LIST '" + partitionDirBaseName + "';", sqlExecutionContext);
-                        }
+                    if (partitionBy != PartitionBy.NONE) {
+                        ddl("ALTER TABLE " + src.getName() + " DROP PARTITION LIST '" + partitionDirBaseName + "';", sqlExecutionContext);
                     }
                 }
             }

@@ -63,7 +63,6 @@ public class WalWriter implements TableWriterAPI {
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
     private final CairoConfiguration configuration;
-    private final long dataAppendPageSize;
     private final DdlListener ddlListener;
     private final WalWriterEvents events;
     private final FilesFacade ff;
@@ -133,11 +132,6 @@ public class WalWriter implements TableWriterAPI {
         this.metrics = metrics;
         this.open = true;
         this.symbolMapMem = Vm.getMARInstance(configuration.getCommitMode());
-        if (tableToken.isSystem()) {
-            this.dataAppendPageSize = configuration.getSystemWalDataAppendPageSize();
-        } else {
-            this.dataAppendPageSize = configuration.getWalDataAppendPageSize();
-        }
 
         try {
             lockWal();
@@ -155,7 +149,7 @@ public class WalWriter implements TableWriterAPI {
             initialSymbolCounts = new AtomicIntList(columnCount);
             localSymbolIds = new IntList(columnCount);
 
-            events = new WalWriterEvents(ff);
+            events = new WalWriterEvents(configuration);
             events.of(symbolMaps, initialSymbolCounts, symbolMapNullFlags);
 
             configureColumns();
@@ -1099,6 +1093,10 @@ public class WalWriter implements TableWriterAPI {
         return metadata.getMetadataVersion();
     }
 
+    private long getDataAppendPageSize() {
+        return tableToken.isSystem() ? configuration.getSystemWalDataAppendPageSize() : configuration.getWalDataAppendPageSize();
+    }
+
     private MemoryMA getPrimaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getPrimaryColumnIndex(column));
@@ -1112,7 +1110,7 @@ public class WalWriter implements TableWriterAPI {
     private long getSequencerTxn() {
         long seqTxn;
         do {
-            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn);
+            seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
             if (seqTxn == NO_TXN) {
                 applyMetadataChangeLog(Long.MAX_VALUE);
             }
@@ -1179,7 +1177,7 @@ public class WalWriter implements TableWriterAPI {
             mem1.of(
                     ff,
                     dFile(path.trimTo(pathTrimToLen), name),
-                    dataAppendPageSize,
+                    getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
                     configuration.getWriterFileOpenOpts(),
@@ -1192,7 +1190,7 @@ public class WalWriter implements TableWriterAPI {
                 mem2.of(
                         ff,
                         iFile(path.trimTo(pathTrimToLen), name),
-                        dataAppendPageSize,
+                        getDataAppendPageSize(),
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
                         configuration.getWriterFileOpenOpts(),
@@ -1245,7 +1243,7 @@ public class WalWriter implements TableWriterAPI {
 
             segmentRowCount = 0;
             metadata.switchTo(path, segmentPathLen, isTruncateFilesOnClose());
-            events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose());
+            events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose(), tableToken.isSystem());
             if (commitMode != CommitMode.NOSYNC) {
                 events.sync();
             }
@@ -1394,7 +1392,7 @@ public class WalWriter implements TableWriterAPI {
             events.rollback();
         }
         path.trimTo(rootLen).slash().put(newSegmentId);
-        events.openEventFile(path, path.size(), isTruncateFilesOnClose());
+        events.openEventFile(path, path.size(), isTruncateFilesOnClose(), tableToken.isSystem());
         if (isCommittingData) {
             // When current transaction is not a data transaction but a column add transaction
             // there is no need to add a record about it to the new segment event file.
@@ -1730,7 +1728,7 @@ public class WalWriter implements TableWriterAPI {
                     if (securityContext != null) {
                         ddlListener.onColumnAdded(securityContext, metadata.getTableToken(), columnName);
                     }
-                    LOG.info().$("added column to WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
+                    LOG.info().$("added column to WAL [path=").$(path).$(", columnName=").utf8(columnName).$(", type=").$(ColumnType.nameOf(columnType)).I$();
                 } else {
                     throw CairoException.critical(0).put("column '").put(columnName)
                             .put("' was added, cannot apply commit because of concurrent table definition change");
@@ -1942,6 +1940,11 @@ public class WalWriter implements TableWriterAPI {
         public void putGeoStr(int columnIndex, CharSequence hash) {
             final int type = metadata.getColumnType(columnIndex);
             WriterRowUtils.putGeoStr(columnIndex, hash, type, this);
+        }
+
+        @Override
+        public void putIPv4(int columnIndex, int value) {
+            putInt(columnIndex, value);
         }
 
         @Override

@@ -24,7 +24,5 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Mutable;
-
-public interface MutableUtf16Sink extends Utf16Sink, CharSequence, Mutable {
+public interface MutableUtf16Sink extends Utf16Sink, CharSequence, MutableCharSink<Utf16Sink> {
 }

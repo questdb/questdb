@@ -44,12 +44,12 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putInt(valueIndex, arg.getIPv4(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         long min = Numbers.ipv4ToLong(mapValue.getIPv4(valueIndex));
         long next = Numbers.ipv4ToLong(arg.getIPv4(record));
         if (next != Numbers.IPv4_NULL && (next < min || min == Numbers.IPv4_NULL)) {
@@ -80,11 +80,6 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     @Override
     public boolean isConstant() {
         return false;
-    }
-
-    @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
     }
 
     @Override
@@ -120,5 +115,10 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     @Override
     public void setValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

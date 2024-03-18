@@ -24,10 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnIndexerJob;
-import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -38,6 +35,7 @@ import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
@@ -58,6 +56,9 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 import java.io.File;
 import java.security.PublicKey;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements Closeable {
@@ -69,6 +70,7 @@ public class ServerMain implements Closeable {
     private final Log log;
     private final Metrics metrics;
     private final AtomicBoolean running = new AtomicBoolean();
+    private HttpServer httpServer;
     private boolean initialized;
     private WorkerPoolManager workerPoolManager;
 
@@ -93,6 +95,40 @@ public class ServerMain implements Closeable {
             freeOnExit.close();
             throw th;
         }
+    }
+
+    public static ServerMain create(String root, Map<String, String> env) {
+        final Map<String, String> newEnv = new HashMap<>(System.getenv());
+        newEnv.putAll(env);
+        PropBootstrapConfiguration bootstrapConfiguration = new PropBootstrapConfiguration() {
+            @Override
+            public Map<String, String> getEnv() {
+                return newEnv;
+            }
+        };
+
+        return new ServerMain(new Bootstrap(bootstrapConfiguration, Bootstrap.getServerMainArgs(root)));
+    }
+
+    public static ServerMain createWithoutWalApplyJob(String root, Map<String, String> env) {
+        final Map<String, String> newEnv = new HashMap<>(System.getenv());
+        newEnv.putAll(env);
+        PropBootstrapConfiguration bootstrapConfiguration = new PropBootstrapConfiguration() {
+            @Override
+            public Map<String, String> getEnv() {
+                return newEnv;
+            }
+        };
+
+        return new ServerMain(new Bootstrap(bootstrapConfiguration, Bootstrap.getServerMainArgs(root))) {
+            @Override
+            protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
+            }
+        };
+    }
+
+    public static ServerMain create(String root) {
+        return new ServerMain(Bootstrap.getServerMainArgs(root));
     }
 
     public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
@@ -177,6 +213,14 @@ public class ServerMain implements Closeable {
         return "QDB_" + propertyPath.replace('.', '_').toUpperCase();
     }
 
+    public void awaitTable(String tableName) {
+        getEngine().awaitTable(tableName, 30, TimeUnit.SECONDS);
+    }
+
+    public void awaitTxn(String tableName, long txn) {
+        getEngine().awaitTxn(tableName, txn, 1, TimeUnit.SECONDS);
+    }
+
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
@@ -196,6 +240,13 @@ public class ServerMain implements Closeable {
             throw new IllegalStateException("close was called");
         }
         return engine;
+    }
+
+    public int getHttpServerPort() {
+        if (httpServer != null) {
+            return httpServer.getPort();
+        }
+        throw CairoException.nonCritical().put("http server is not running");
     }
 
     public WorkerPoolManager getWorkerPoolManager() {
@@ -277,7 +328,7 @@ public class ServerMain implements Closeable {
 
                         if (walSupported) {
                             sharedPool.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));
-                            final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
+                            final WalPurgeJob walPurgeJob = config.getFactoryProvider().getWalJobFactory().createWalPurgeJob(engine);
                             engine.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
                             walPurgeJob.delayByHalfInterval();
                             sharedPool.assign(walPurgeJob);
@@ -327,7 +378,7 @@ public class ServerMain implements Closeable {
         }
 
         // http
-        freeOnExit.register(services().createHttpServer(
+        freeOnExit.register(httpServer = services().createHttpServer(
                 config.getHttpServerConfiguration(),
                 engine,
                 workerPoolManager,

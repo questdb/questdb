@@ -44,7 +44,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -332,7 +331,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
             RecordCursorFactory factory,
             SqlExecutionContext sqlExecutionContext,
             StringSink sink,
-            RecordCursorPrinter printer,
             LongList rows
     ) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -346,7 +344,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             cursor,
                             factory.getMetadata(),
                             sink,
-                            printer,
                             rows,
                             factory.fragmentedSymbolTables()
                     )
@@ -363,7 +360,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
             SqlExecutionContext sqlExecutionContext
     ) throws Exception {
         StringSink sink = new StringSink();
-        RecordCursorPrinter printer = new RecordCursorPrinter();
         LongList rows = new LongList();
         if (
                 assertCursor(
@@ -371,7 +367,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
                         factory,
                         sqlExecutionContext,
                         sink,
-                        printer,
                         rows
                 )
         ) {
@@ -383,7 +378,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 factory,
                 sqlExecutionContext,
                 sink,
-                printer,
                 rows
         );
     }

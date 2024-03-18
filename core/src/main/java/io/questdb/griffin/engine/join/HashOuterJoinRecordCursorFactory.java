@@ -55,7 +55,6 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordSink slaveChainSink,
             int columnSplit,
             JoinContext joinContext
-
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         RecordChain slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
@@ -84,6 +83,11 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             Misc.free(masterCursor);
             throw e;
         }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override

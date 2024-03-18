@@ -96,6 +96,11 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
+    }
+
+    @Override
     public int getScanDirection() {
         return masterFactory.getScanDirection();
     }
@@ -142,7 +147,9 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
                 RecordValueSink valueSink,
-                ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster, IntList slaveColumnIndex
+                ColumnFilter masterTableKeyColumns,
+                int slaveWrappedOverMaster,
+                IntList slaveColumnIndex
         ) {
             super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex);
             this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, slaveWrappedOverMaster, masterTableKeyColumns);

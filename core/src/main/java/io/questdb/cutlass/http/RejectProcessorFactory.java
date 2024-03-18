@@ -22,10 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.client;
+package io.questdb.cutlass.http;
 
-public interface ChunkedResponse {
-    Chunk recv();
+import io.questdb.cutlass.http.processors.RejectProcessor;
 
-    Chunk recv(int timeout);
+public interface RejectProcessorFactory {
+    RejectProcessor getRejectProcessor(HttpConnectionContext context);
 }

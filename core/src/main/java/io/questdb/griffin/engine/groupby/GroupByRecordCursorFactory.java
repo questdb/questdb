@@ -150,6 +150,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isDataMapBuilt;
         private boolean isOpen;
+        private long rowId;
 
         public GroupByRecordCursor(
                 CairoConfiguration configuration,
@@ -203,6 +204,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.managedCursor = managedCursor;
             Function.init(keyFunctions, managedCursor, executionContext);
             isDataMapBuilt = false;
+            rowId = 0;
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            isDataMapBuilt = false;
+            rowId = 0;
         }
 
         private void buildDataMap() {
@@ -213,9 +222,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 mapSink.copy(baseRecord, key);
                 MapValue value = key.createValue();
                 if (value.isNew()) {
-                    groupByFunctionsUpdater.updateNew(value, baseRecord);
+                    groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
                 } else {
-                    groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                    groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                 }
             }
             super.of(dataMap.getCursor());

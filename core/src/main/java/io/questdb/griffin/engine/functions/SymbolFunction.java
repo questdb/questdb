@@ -181,11 +181,6 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
         return ColumnType.SYMBOL;
     }
 
-    @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
     public abstract boolean isSymbolTableStatic();
 
     /**
@@ -198,5 +193,10 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     @Nullable
     public SymbolTable newSymbolTable() {
         return null;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 }

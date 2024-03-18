@@ -39,7 +39,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
@@ -51,7 +50,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 
-import java.net.URISyntaxException;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -98,17 +96,15 @@ public class O3Test extends AbstractO3Test {
         executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             final String tableName = "ABC";
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                     .col("productId", ColumnType.INT)
                     .col("productName", ColumnType.STRING)
                     .col("category", ColumnType.SYMBOL)
                     .col("price", ColumnType.DOUBLE)
                     .timestamp()
-                    .col("supplier", ColumnType.SYMBOL)
-            ) {
+                    .col("supplier", ColumnType.SYMBOL);
 
-                TestUtils.create(model, engine);
-            }
+            TestUtils.create(model, engine);
 
             AtomicInteger errorCount = new AtomicInteger();
             short[] columnTypes = new short[]{ColumnType.INT, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.DOUBLE};
@@ -148,7 +144,7 @@ public class O3Test extends AbstractO3Test {
                         e.printStackTrace();
                         errorCount.incrementAndGet();
                     } finally {
-                        Path.clearThreadLocals();
+                        TableUtils.clearThreadLocals();
                         LOG.info().$("write is done").$();
                     }
                 });
@@ -1224,9 +1220,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -2254,7 +2248,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
 
         // merge in the middle, however data prefix is such
         // that we can deal with by reducing column top rather than copying columns
@@ -2450,7 +2444,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
 
         //
         // ----- last partition
@@ -2606,7 +2600,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
 
         //
         // ----- last partition
@@ -2761,7 +2755,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -2901,7 +2895,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -3286,7 +3280,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
 
         compiler.compile(
                 "create table x as (" +
@@ -3729,7 +3723,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table 'привет от штиблет' as (" +
                         "select" +
@@ -3857,7 +3851,7 @@ public class O3Test extends AbstractO3Test {
                 "'привет от штиблет'",
                 "/o3/testColumnTopMidOOOData.txt"
         );
-        printSqlResult(compiler, sqlExecutionContext, "select count() from 'привет от штиблет'");
+        engine.print("select count() from 'привет от штиблет'", sink, sqlExecutionContext);
         TestUtils.assertEquals(sink2, sink);
 
         try (
@@ -4040,9 +4034,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -4214,9 +4206,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -4454,9 +4444,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -4603,9 +4591,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -4869,9 +4855,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -5003,7 +4987,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertXCount(compiler, executionContext);
-        assertMaxTimestamp(engine, compiler, executionContext, "select max(ts) from y");
+        assertMaxTimestamp(engine, executionContext);
     }
 
     private static void testPartitionedDataAppendOODataIndexed0(
@@ -5080,9 +5064,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -5159,9 +5141,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -5248,9 +5228,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -5258,7 +5236,7 @@ public class O3Test extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -5423,9 +5401,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -5501,9 +5477,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -5742,7 +5716,7 @@ public class O3Test extends AbstractO3Test {
                 sink2
         );
         assertXCount(compiler, sqlExecutionContext);
-        assertMaxTimestamp(engine, compiler, sqlExecutionContext, "select max(ts) from y");
+        assertMaxTimestamp(engine, sqlExecutionContext);
     }
 
     private static void testPartitionedDataOOIntoLastIndexSearchBug0(
@@ -5858,9 +5832,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6077,9 +6049,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6162,9 +6132,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6270,9 +6238,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6375,9 +6341,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6482,9 +6446,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -6531,11 +6493,11 @@ public class O3Test extends AbstractO3Test {
 
         final String sqlTemplate = "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,ts,l,n,t,m from ";
 
-        printSqlResult(compiler, sqlExecutionContext, sqlTemplate + "y");
+        engine.print(sqlTemplate + "y", sink, sqlExecutionContext);
 
         String expected = Chars.toString(sink);
 
-        printSqlResult(compiler, sqlExecutionContext, sqlTemplate + "x");
+        engine.print(sqlTemplate + "x", sink, sqlExecutionContext);
         TestUtils.assertEquals(expected, sink);
 
         assertIndexConsistencySink(compiler, sqlExecutionContext);
@@ -6568,7 +6530,7 @@ public class O3Test extends AbstractO3Test {
             w.commit();
         }
 
-        printSqlResult(compiler, sqlExecutionContext, "x");
+        engine.print("x", sink, sqlExecutionContext);
 
         final String expected = "a\tb\tc\tts\n" +
                 "NaN\tNaN\t10\t2013-02-10T00:05:00.000000Z\n" +
@@ -6609,7 +6571,7 @@ public class O3Test extends AbstractO3Test {
             w.commit();
         }
 
-        printSqlResult(compiler, sqlExecutionContext, "select count() from x");
+        engine.print("select count() from x", sink, sqlExecutionContext);
 
         final String expected = "count\n" + (commits * rows) + "\n";
 
@@ -6692,9 +6654,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -7397,9 +7357,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
 
         dropTableY(compiler, sqlExecutionContext);
@@ -7417,9 +7375,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
 
         dropTableY(compiler, sqlExecutionContext);
@@ -7437,9 +7393,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -7671,9 +7625,7 @@ public class O3Test extends AbstractO3Test {
 
         assertMaxTimestamp(
                 engine,
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from y"
+                sqlExecutionContext
         );
     }
 
@@ -7683,33 +7635,32 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, NumericException {
         CairoConfiguration configuration = engine.getConfiguration();
-        try (TableModel x = new TableModel(configuration, "x", PartitionBy.DAY)) {
-            TestUtils.createPopulateTable(
-                    compiler,
-                    sqlExecutionContext,
-                    x.col("id", ColumnType.LONG)
-                            .col("ok", ColumnType.DOUBLE)
-                            .timestamp("ts"),
-                    10,
-                    "2020-01-01",
-                    1
-            );
+        TableModel x = new TableModel(configuration, "x", PartitionBy.DAY);
+        TestUtils.createPopulateTable(
+                compiler,
+                sqlExecutionContext,
+                x.col("id", ColumnType.LONG)
+                        .col("ok", ColumnType.DOUBLE)
+                        .timestamp("ts"),
+                10,
+                "2020-01-01",
+                1
+        );
 
-            // Insert OOO to create partition dir 2020-01-01.1
-            CairoEngine.insert(compiler, "insert into x values(1, 100.0, '2020-01-01T00:01:00')", sqlExecutionContext);
-            TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
-                    "count\n" +
-                            "11\n"
-            );
+        // Insert OOO to create partition dir 2020-01-01.1
+        CairoEngine.insert(compiler, "insert into x values(1, 100.0, '2020-01-01T00:01:00')", sqlExecutionContext);
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
+                "count\n" +
+                        "11\n"
+        );
 
-            // Close and open writer. Partition dir 2020-01-01.1 should not be purged
-            engine.releaseAllWriters();
-            CairoEngine.insert(compiler, "insert into x values(2, 101.0, '2020-01-01T00:02:00')", sqlExecutionContext);
-            TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
-                    "count\n" +
-                            "12\n"
-            );
-        }
+        // Close and open writer. Partition dir 2020-01-01.1 should not be purged
+        engine.releaseAllWriters();
+        CairoEngine.insert(compiler, "insert into x values(2, 101.0, '2020-01-01T00:02:00')", sqlExecutionContext);
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
+                "count\n" +
+                        "12\n"
+        );
     }
 
     private static void testWriterOpensUnmappedPage(
@@ -7718,88 +7669,87 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, NumericException {
         CairoConfiguration configuration = engine.getConfiguration();
-        try (TableModel tableModel = new TableModel(configuration, "x", PartitionBy.DAY)) {
-            tableModel
-                    .col("id", ColumnType.LONG)
-                    .col("str", ColumnType.STRING)
-                    .col("sym", ColumnType.SYMBOL).indexed(true, 2)
-                    .timestamp("ts");
+        TableModel tableModel = new TableModel(configuration, "x", PartitionBy.DAY);
+        tableModel
+                .col("id", ColumnType.LONG)
+                .col("str", ColumnType.STRING)
+                .col("sym", ColumnType.SYMBOL).indexed(true, 2)
+                .timestamp("ts");
 
-            TestUtils.createPopulateTable(
-                    "x",
-                    compiler,
-                    sqlExecutionContext,
-                    tableModel,
-                    0,
-                    "2021-10-09",
-                    0
-            );
+        TestUtils.createPopulateTable(
+                "x",
+                compiler,
+                sqlExecutionContext,
+                tableModel,
+                0,
+                "2021-10-09",
+                0
+        );
 
-            int longColIndex = -1;
-            int symColIndex = -1;
-            int strColIndex = -1;
-            for (int i = 0; i < tableModel.getColumnCount(); i++) {
-                switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
-                    case ColumnType.LONG:
-                        longColIndex = i;
-                        break;
-                    case ColumnType.SYMBOL:
-                        symColIndex = i;
-                        break;
-                    case ColumnType.STRING:
-                        strColIndex = i;
-                        break;
+        int longColIndex = -1;
+        int symColIndex = -1;
+        int strColIndex = -1;
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
+                case ColumnType.LONG:
+                    longColIndex = i;
+                    break;
+                case ColumnType.SYMBOL:
+                    symColIndex = i;
+                    break;
+                case ColumnType.STRING:
+                    strColIndex = i;
+                    break;
+            }
+        }
+
+        int idBatchSize = 3 * 1024 * 1024 + 1;
+        long batchOnDiskSize = (long) ColumnType.sizeOf(ColumnType.LONG) * idBatchSize;
+        long mappedPageSize = configuration.getDataAppendPageSize();
+        Assert.assertTrue("Batch size must be greater than mapped page size", batchOnDiskSize > mappedPageSize);
+        long pageSize = configuration.getMiscAppendPageSize();
+        Assert.assertNotEquals("Batch size must be unaligned with page size", 0, batchOnDiskSize % pageSize);
+
+        long start = IntervalUtils.parseFloorPartialTimestamp("2021-10-09T10:00:00");
+        String[] varCol = new String[]{"aldfjkasdlfkj", "2021-10-10T12:00:00", "12345678901234578"};
+
+        // Add 2 batches
+        int iterations = 2;
+        try (TableWriter o3 = TestUtils.getWriter(engine, "x")) {
+            for (int i = 0; i < iterations; i++) {
+                for (int id = 0; id < idBatchSize; id++) {
+                    // We leave start + idBatchSize out to insert it O3 later
+                    long timestamp = start + i * idBatchSize + id + i;
+                    TableWriter.Row row = o3.newRow(timestamp);
+                    row.putLong(longColIndex, timestamp);
+                    row.putSym(symColIndex, "test");
+                    row.putStr(strColIndex, varCol[id % varCol.length]);
+                    row.append();
+                }
+
+                // Commit only the first batch
+                if (i == 0) {
+                    o3.commit();
                 }
             }
 
-            int idBatchSize = 3 * 1024 * 1024 + 1;
-            long batchOnDiskSize = (long) ColumnType.sizeOf(ColumnType.LONG) * idBatchSize;
-            long mappedPageSize = configuration.getDataAppendPageSize();
-            Assert.assertTrue("Batch size must be greater than mapped page size", batchOnDiskSize > mappedPageSize);
-            long pageSize = configuration.getMiscAppendPageSize();
-            Assert.assertNotEquals("Batch size must be unaligned with page size", 0, batchOnDiskSize % pageSize);
+            // Append one more row out of order
+            long timestamp = start + idBatchSize;
+            TableWriter.Row row = o3.newRow(timestamp);
+            row.putLong(longColIndex, timestamp);
+            row.putSym(symColIndex, "test");
+            row.putStr(strColIndex, varCol[0]);
+            row.append();
 
-            long start = IntervalUtils.parseFloorPartialTimestamp("2021-10-09T10:00:00");
-            String[] varCol = new String[]{"aldfjkasdlfkj", "2021-10-10T12:00:00", "12345678901234578"};
+            o3.commit();
+        }
 
-            // Add 2 batches
-            int iterations = 2;
-            try (TableWriter o3 = TestUtils.getWriter(engine, "x")) {
-                for (int i = 0; i < iterations; i++) {
-                    for (int id = 0; id < idBatchSize; id++) {
-                        // We leave start + idBatchSize out to insert it O3 later
-                        long timestamp = start + i * idBatchSize + id + i;
-                        TableWriter.Row row = o3.newRow(timestamp);
-                        row.putLong(longColIndex, timestamp);
-                        row.putSym(symColIndex, "test");
-                        row.putStr(strColIndex, varCol[id % varCol.length]);
-                        row.append();
-                    }
-
-                    // Commit only the first batch
-                    if (i == 0) {
-                        o3.commit();
-                    }
-                }
-
-                // Append one more row out of order
-                long timestamp = start + idBatchSize;
-                TableWriter.Row row = o3.newRow(timestamp);
-                row.putLong(longColIndex, timestamp);
-                row.putSym(symColIndex, "test");
-                row.putStr(strColIndex, varCol[0]);
-                row.append();
-
-                o3.commit();
-            }
-
-            TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
-                    "count\n" + (2 * idBatchSize + 1) + "\n"
-            );
-            engine.releaseAllReaders();
-            try (TableWriter o3 = TestUtils.getWriter(engine, "x")) {
-                o3.truncate();
-            }
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
+                "count\n" + (2 * idBatchSize + 1) + "\n"
+        );
+        engine.releaseAllReaders();
+        try (TableWriter o3 = TestUtils.getWriter(engine, "x")) {
+            o3.truncate();
         }
     }
 

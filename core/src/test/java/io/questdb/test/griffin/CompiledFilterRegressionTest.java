@@ -24,11 +24,10 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -545,6 +544,24 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertGeneratedQueryNullable("select * from x", ddl, gen);
     }
 
+    @Test
+    public void testStringNullComparison() throws Exception {
+        final String ddl = "create table x as (select" +
+                " timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_str(2, 1, 5, 3) string_value," +
+                " rnd_bin(1, 32, 3) binary_value" +
+                " from long_sequence(1000)) timestamp(k)";
+        final FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("string_value", "binary_value")
+                .withEqualityOperator()
+                .withAnyOf("null")
+                .withBooleanOperator()
+                .withAnyOf("string_value", "binary_value")
+                .withEqualityOperator()
+                .withAnyOf("null");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
     private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen, boolean notNull) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
@@ -620,7 +637,8 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         try (final RecordCursorFactory factory = select(query)) {
             Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, jitSink, printer);
+                RecordMetadata metadata = factory.getMetadata();
+                CursorPrinter.println(cursor, metadata, jitSink);
             }
         }
     }
@@ -632,7 +650,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select(query)) {
             Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
             try (CountingRecordCursor cursor = new CountingRecordCursor(factory.getCursor(sqlExecutionContext))) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                println(factory, cursor);
                 resultSize = cursor.count();
             }
         }

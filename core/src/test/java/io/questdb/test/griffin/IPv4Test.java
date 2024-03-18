@@ -34,20 +34,6 @@ import org.junit.Test;
 public class IPv4Test extends AbstractCairoTest {
 
     @Test
-    public void ipv4NullTest() throws Exception {
-        ddl("create table x (b ipv4)");
-        insert("insert into x values('128.0.0.0')");
-        insert("insert into x values('0.0.0.0')");
-
-        assertSql(
-                "b\n" +
-                        "128.0.0.0\n" +
-                        "\n",
-                "x"
-        );
-    }
-
-    @Test
     public void testAggregateByIPv4() throws Exception {
         assertQuery(
                 "ip\tsum\n" +
@@ -73,27 +59,49 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testAlterTableIPv4NullCol() throws Exception {
-        ddl("create table test (col1 ipv4)");
-        insert("insert into test values ('0.0.0.1')");
-        ddl("alter table test add col2 ipv4");
+        assertMemoryLeak(() -> {
+            ddl("create table test (col1 ipv4)");
+            insert("insert into test values ('0.0.0.1')");
+            ddl("alter table test add col2 ipv4");
 
-        assertSql(
-                "col1\tcol2\n" +
-                        "0.0.0.1\t\n",
-                "test"
-        );
+            assertSql(
+                    "col1\tcol2\n" +
+                            "0.0.0.1\t\n",
+                    "test"
+            );
+        });
+    }
+
+    @Test
+    public void testBindVariableInEqFilterInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr("ip", "foobar");
+            assertException("x where b = :ip", 0, "invalid ipv4 format: foobar");
+        });
     }
 
     @Test
     public void testBitAndStr() throws Exception {
-        assertSql("column\n" +
-                "2.0.0.0\n", "select ipv4 '2.1.1.1' & '2.2.2.2'");
+        assertSql(
+                "column\n" +
+                        "2.0.0.0\n",
+                "select ipv4 '2.1.1.1' & '2.2.2.2'"
+        );
     }
 
     @Test
     public void testBitAndStr2() throws Exception {
-        assertSql("column\n" +
-                "2.0.0.0\n", "select '2.2.2.2' & ipv4 '2.1.1.1'");
+        assertSql(
+                "column\n" +
+                        "2.0.0.0\n",
+                "select '2.2.2.2' & ipv4 '2.1.1.1'"
+        );
     }
 
     @Test
@@ -520,6 +528,21 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantInEqFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+            assertSql(
+                    "b\n" +
+                            "192.168.0.1\n",
+                    "x where b = '192.168.0.1'"
+            );
+        });
+    }
+
+    @Test
     public void testContainsIPv4FunctionFactoryError() throws Exception {
         ddl("create table t (ip ipv4)");
         assertException("select * from t where ip << '1.1.1.1/35'", 28, "invalid argument: 1.1.1.1/35");
@@ -787,6 +810,12 @@ public class IPv4Test extends AbstractCairoTest {
     public void testGreaterThanEqIPv4Null2() throws Exception {
         assertSql("column\n" +
                 "false\n", "select ipv4 '34.11.45.3' >= null");
+    }
+
+    @Test
+    public void testGreaterThanEqIPv4Null3() throws Exception {
+        assertSql("column\n" +
+                "false\n", "select null >= ipv4 '34.11.45.3'");
     }
 
     @Test
@@ -4209,6 +4238,60 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexedBindVariableInEqFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "192.168.0.1");
+            assertSql(
+                    "b\n" +
+                            "192.168.0.1\n",
+                    "x where b = $1"
+            );
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInLtFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "192.168.0.1");
+            assertSql(
+                    "b\n" +
+                            "127.0.0.1\n",
+                    "x where b < $1"
+            );
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInLtFilter2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "192.168.0.1");
+            assertSql(
+                    "b\n" +
+                            "255.255.255.255\n",
+                    "x where $1 < b"
+            );
+        });
+    }
+
+    @Test
     public void testInnerJoinIPv4() throws Exception {
         ddl("create table test as (select rnd_ipv4('1.1.1.1/32', 0) ip, 1 count from long_sequence(5))");
         ddl("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))");
@@ -4538,6 +4621,14 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidConstantInEqFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4, a string)");
+            assertException("x where b = 'foobar'", 0, "invalid ipv4 format: foobar");
+        });
+    }
+
+    @Test
     public void testLastIPv4() throws Exception {
         ddl("create table test as (select rnd_ipv4('10.5/16', 2) ip, rnd_symbol('ab', '$a', 'ac') sym from long_sequence(20))");
         assertSql(
@@ -4743,6 +4834,60 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testNamedBindVariableInEqFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr("ip", "192.168.0.1");
+            assertSql(
+                    "b\n" +
+                            "192.168.0.1\n",
+                    "x where b = :ip"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedBindVariableInLtFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr("ip", "192.168.0.1");
+            assertSql(
+                    "b\n" +
+                            "127.0.0.1\n",
+                    "x where b < :ip"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedBindVariableInLtFilter2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr("ip", "192.168.0.1");
+            assertSql(
+                    "b\n" +
+                            "255.255.255.255\n",
+                    "x where :ip < b"
+            );
+        });
+    }
+
+    @Test
     public void testNegContainsIPv4FunctionFactoryError() throws Exception {
         ddl("create table t (ip ipv4)");
         assertException("select * from t where '1.1.1.1/35' >> ip", 22, "invalid argument: 1.1.1.1/35");
@@ -4775,6 +4920,22 @@ public class IPv4Test extends AbstractCairoTest {
         assertSql("netmask\n255.255.255.254\n", "select netmask('1.1.1.1/31');");
         assertSql("netmask\n255.255.255.255\n", "select netmask('1.1.1.1/32');");
         assertSql("netmask\n\n", "select netmask('1.1.1.1/33');");
+    }
+
+    @Test
+    public void testNull() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('128.0.0.0')");
+            insert("insert into x values('0.0.0.0')");
+
+            assertSql(
+                    "b\n" +
+                            "128.0.0.0\n" +
+                            "\n",
+                    "x"
+            );
+        });
     }
 
     @Test
@@ -5022,7 +5183,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "241.248.184.75\t1970-01-01T00:00:00.000001Z\t334\n" +
                         "254.93.251.9\t1970-01-01T00:00:00.000001Z\t810\n" +
                         "255.95.177.227\t1970-01-01T00:00:00.000001Z\t44\n",
-                "select ip, ts, sum(bytes) from test sample by 1y order by 2,1",
+                "select ip, ts, sum(bytes) from test sample by 1y align to first observation order by 2,1",
                 "create table test as " +
                         "(" +
                         "  select" +
@@ -5035,6 +5196,88 @@ public class IPv4Test extends AbstractCairoTest {
                 true,
                 false
         );
+
+        assertQuery(
+                "ip\tts\tsum\n" +
+                        "12.214.12.100\t1970-01-01T00:00:00.000000Z\t598\n" +
+                        "24.123.12.210\t1970-01-01T00:00:00.000000Z\t95\n" +
+                        "25.107.51.160\t1970-01-01T00:00:00.000000Z\t827\n" +
+                        "50.214.139.184\t1970-01-01T00:00:00.000000Z\t574\n" +
+                        "55.211.206.129\t1970-01-01T00:00:00.000000Z\t785\n" +
+                        "63.60.82.184\t1970-01-01T00:00:00.000000Z\t37\n" +
+                        "66.56.51.126\t1970-01-01T00:00:00.000000Z\t904\n" +
+                        "67.22.249.199\t1970-01-01T00:00:00.000000Z\t203\n" +
+                        "71.73.196.29\t1970-01-01T00:00:00.000000Z\t741\n" +
+                        "73.153.126.70\t1970-01-01T00:00:00.000000Z\t772\n" +
+                        "74.196.176.71\t1970-01-01T00:00:00.000000Z\t740\n" +
+                        "79.15.250.138\t1970-01-01T00:00:00.000000Z\t850\n" +
+                        "92.26.178.136\t1970-01-01T00:00:00.000000Z\t7\n" +
+                        "97.159.145.120\t1970-01-01T00:00:00.000000Z\t352\n" +
+                        "105.218.160.179\t1970-01-01T00:00:00.000000Z\t986\n" +
+                        "111.221.228.130\t1970-01-01T00:00:00.000000Z\t531\n" +
+                        "113.132.124.243\t1970-01-01T00:00:00.000000Z\t522\n" +
+                        "114.126.117.26\t1970-01-01T00:00:00.000000Z\t71\n" +
+                        "128.225.84.244\t1970-01-01T00:00:00.000000Z\t313\n" +
+                        "129.172.181.73\t1970-01-01T00:00:00.000000Z\t25\n" +
+                        "136.166.51.222\t1970-01-01T00:00:00.000000Z\t580\n" +
+                        "144.131.72.77\t1970-01-01T00:00:00.000000Z\t369\n" +
+                        "146.16.210.119\t1970-01-01T00:00:00.000000Z\t383\n" +
+                        "150.153.88.133\t1970-01-01T00:00:00.000000Z\t849\n" +
+                        "164.74.203.45\t1970-01-01T00:00:00.000000Z\t678\n" +
+                        "164.153.242.17\t1970-01-01T00:00:00.000000Z\t906\n" +
+                        "165.166.233.251\t1970-01-01T00:00:00.000000Z\t332\n" +
+                        "170.90.236.206\t1970-01-01T00:00:00.000000Z\t572\n" +
+                        "171.30.189.77\t1970-01-01T00:00:00.000000Z\t238\n" +
+                        "171.117.213.66\t1970-01-01T00:00:00.000000Z\t720\n" +
+                        "180.36.62.54\t1970-01-01T00:00:00.000000Z\t528\n" +
+                        "180.48.50.141\t1970-01-01T00:00:00.000000Z\t136\n" +
+                        "180.91.244.55\t1970-01-01T00:00:00.000000Z\t906\n" +
+                        "181.82.42.148\t1970-01-01T00:00:00.000000Z\t539\n" +
+                        "186.33.243.40\t1970-01-01T00:00:00.000000Z\t659\n" +
+                        "187.63.210.97\t1970-01-01T00:00:00.000000Z\t424\n" +
+                        "187.139.150.80\t1970-01-01T00:00:00.000000Z\t580\n" +
+                        "188.239.72.25\t1970-01-01T00:00:00.000000Z\t513\n" +
+                        "201.100.238.229\t1970-01-01T00:00:00.000000Z\t318\n" +
+                        "205.123.179.216\t1970-01-01T00:00:00.000000Z\t167\n" +
+                        "212.102.182.127\t1970-01-01T00:00:00.000000Z\t984\n" +
+                        "212.159.205.29\t1970-01-01T00:00:00.000000Z\t23\n" +
+                        "216.150.248.30\t1970-01-01T00:00:00.000000Z\t563\n" +
+                        "224.99.254.121\t1970-01-01T00:00:00.000000Z\t619\n" +
+                        "227.40.250.157\t1970-01-01T00:00:00.000000Z\t903\n" +
+                        "230.202.108.161\t1970-01-01T00:00:00.000000Z\t171\n" +
+                        "231.146.30.59\t1970-01-01T00:00:00.000000Z\t766\n" +
+                        "241.248.184.75\t1970-01-01T00:00:00.000000Z\t334\n" +
+                        "254.93.251.9\t1970-01-01T00:00:00.000000Z\t810\n" +
+                        "255.95.177.227\t1970-01-01T00:00:00.000000Z\t44\n",
+                "select ip, ts, sum(bytes) from test sample by 1y align to calendar order by 2,1",
+                "ts",
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testStrColumnInEqFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4, a string)");
+            assertException("x where b = a", 12, "STRING constant expected");
+        });
+    }
+
+    @Test
+    public void testStrColumnInLtFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4, a string)");
+            assertException("x where b < a", 12, "STRING constant expected");
+        });
+    }
+
+    @Test
+    public void testStrColumnInLtFilter2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4, a string)");
+            assertException("x where b > a", 12, "STRING constant expected");
+        });
     }
 
     @Test

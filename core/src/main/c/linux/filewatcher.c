@@ -65,7 +65,7 @@ static uintptr_t setup(const char *filepath) {
     
     
     /* make copy of filepath for dirname/basename usage, otherwise they segfault*/
-    char filepath_copy[strlen(filepath)];
+    char filepath_copy[strlen(filepath)+1];
     strcpy(filepath_copy, filepath);
 
 
