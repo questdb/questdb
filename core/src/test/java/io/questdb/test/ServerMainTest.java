@@ -110,7 +110,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
             // Start with ILP disabled
             try (final ServerMain serverMain = new ServerMain(bootstrap)) {
                 serverMain.start();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.TCP)
                         .address("localhost")
                         .port(9023)
                         .build()) {
@@ -127,7 +127,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
             // Start with ILP enabled
             try (final ServerMain serverMain = new ServerMain(bootstrap)) {
                 serverMain.start();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.TCP)
                         .address("localhost")
                         .port(9023)
                         .build()) {

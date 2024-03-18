@@ -71,9 +71,8 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 int port = tlsProxy.getListeningPort();
                 String address = "localhost:" + port;
                 long count = 100_000;
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address(address)
-                        .http()
                         .enableTls()
                         .advancedTls()
                         .disableCertificateValidation()
@@ -105,9 +104,8 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
                 String adress = "localhost:" + port;
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address(adress)
-                        .http()
                         .enableTls()
                         .advancedTls()
                         .disableCertificateValidation()
@@ -164,9 +162,8 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
                 String address = "localhost:" + port;
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address(address)
-                        .http()
                         .enableTls()
                         .advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                         .build()) {
@@ -189,9 +186,8 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
                 String address = "localhost:" + port;
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address(address)
-                        .http()
                         .enableTls()
                         .advancedTls().disableCertificateValidation()
                         .retryTimeoutMillis(500)
@@ -226,9 +222,8 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
                 String address = "localhost:" + port;
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address(address)
-                        .http()
                         .enableTls()
                         .advancedTls().disableCertificateValidation()
                         .build()) {
@@ -266,9 +261,8 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
                 String address = "localhost:" + port;
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address(address)
-                        .http()
                         .enableTls()
                         .retryTimeoutMillis(1000)
                         .build()

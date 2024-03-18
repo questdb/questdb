@@ -2,9 +2,9 @@ package com.example.sender;
 
 import io.questdb.client.Sender;
 
-public class AuthTlsExample {
+public class HttpsAuthExample {
     public static void main(String[] args) {
-        try (Sender sender = Sender.fromConfig("tcps::addr=clever-black-363-c1213c97.ilp.b04c.questdb.net:32074;user=admin;token=GwBXoGG5c6NoUTLXnzMxw_uNiVa8PKobzx5EiuylMW0;")) {
+        try (Sender sender = Sender.fromConfig("https::addr=localhost:9000;username=Aladdin;password=OpenSesame;")) {
             sender.table("weather_sensor")
                     .symbol("id", "toronto1")
                     .doubleColumn("temperature", 23.5)

@@ -53,14 +53,11 @@ import java.util.concurrent.TimeUnit;
 /**
  * Influx Line Protocol client to feed data to a remote QuestDB instance.
  * <p>
- * This client supports both HTTP and TCP protocols. In most cases you should prefer HTTP protocol as it provides
- * stronger transactional guarantees and better feedback in case of errors.
- * <p>
- * Use {@link #builder()} method to create a new instance.
+ * Use {@link #builder(Transport)} or {@link #fromConfig(CharSequence)} method to create a new instance.
  * <br>
  * How to use the Sender:
  * <ol>
- *     <li>Obtain an instance via {@link #builder()}</li>
+ *     <li>Obtain an instance via {@link #builder(Transport)} or {@link #fromConfig(CharSequence)}</li>
  *     <li>Use {@link #table(CharSequence)} to select a table</li>
  *     <li>Use {@link #symbol(CharSequence, CharSequence)} to add all symbols. You must add symbols before adding other columns.</li>
  *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)},
@@ -70,9 +67,6 @@ import java.util.concurrent.TimeUnit;
  *     {@link #atNow()} which will add a timestamp on a server.</li>
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
  * </ol>
- * <br>
- * Sender supports both HTTP and TCP transports. It defaults to TCP transport. To use HTTP transport you must call
- * {@link LineSenderBuilder#http()} method.
  * <p>
  * Sender implements the <code>java.io.Closeable</code> interface. Thus, you must call the {@link #close()} method
  * when you no longer need it.
@@ -80,17 +74,75 @@ import java.util.concurrent.TimeUnit;
  * Thread-safety: Sender is not thread-safe. Each thread-safe needs its own instance, or you have to implement
  * a mechanism for passing Sender instances among thread. An object pool could have this role.
  * <br>
+ * This client supports both HTTP and TCP protocols. In most cases you should prefer HTTP protocol as it provides
+ * stronger transactional guarantees and better feedback in case of errors.
+ * <p>
  * Error-handling: Most errors throw an instance of {@link LineSenderException}.
  */
 public interface Sender extends Closeable {
 
     /**
-     * Construct a Builder object to create a new Sender instance.
+     * Transport to use for communication with a QuestDB server.
+     */
+    enum Transport {
+        /**
+         * Use HTTP transport to communicate with a QuestDB server.
+         * <p>
+         * This transport is suitable for most use-cases. It provides stronger transactional guarantees and better
+         * feedback in case of errors.
+         */
+        HTTP,
+
+        /**
+         * Use TCP transport to communicate with a QuestDB server.
+         * <p>
+         * Most users should not need to use this transport. It's left for compatibility with older versions of QuestDB
+         * and for use-cases where HTTP transport is not suitable, when communicating with a QuestDB server over a high-latency
+         * network
+         */
+        TCP
+    }
+
+    /**
+     * Create a Sender builder instance from a configuration string.
+     * <br>
+     * This allows to use the configuration string as a template for creating a Sender builder instance and then
+     * tune options which are not available in the configuration string. Configurations options specified in the
+     * configuration string cannot be overridden via the builder methods.
+     * <p>
+     * <b>Example 1</b><br>
+     * This example creates a Sender instance that connects to a QuestDB server over HTTP transport. The created Sender
+     * will auto-flush data when number of buffered rows reaches 1000.
+     * <code>http::addr=localhost:9000;auto_flush_rows=1000;</code>
+     * <br>
+     * <b>Example 2</b><br>
+     * This example creates a Sender instance that connects to a QuestDB server over TCP transport.
+     * <code>tcp::addr=localhost:9009;</code>
+     * <p>
+     * Refer to <a href="https://questdb.io/docs/reference/clients/overview/">QuestDB documentation</a> for a full list
+     * of configuration options.
      *
+     * @param configurationString configuration string
+     * @return Sender instance
+     * @see #fromEnv()
+     * @see #builder(CharSequence)
+     */
+    static LineSenderBuilder builder(CharSequence configurationString) {
+        return new LineSenderBuilder().fromConfig(configurationString);
+    }
+
+    /**
+     * Construct a Builder object to create a new Sender instance with a specific transport.
+     * <p>
+     * HTTP transport is suitable for most use-cases. It provides stronger transactional guarantees and better feedback
+     * in case of errors. The TCP transport is left for compatibility with older versions of QuestDB and for use-cases
+     * where HTTP transport is not suitable, when communicating with a QuestDB server over a high-latency network.
+     *
+     * @param transport transport to use
      * @return Builder object to create a new Sender instance.
      */
-    static LineSenderBuilder builder() {
-        return new LineSenderBuilder();
+    static LineSenderBuilder builder(Transport transport) {
+        return new LineSenderBuilder(transport == Transport.HTTP ? LineSenderBuilder.PROTOCOL_HTTP : LineSenderBuilder.PROTOCOL_TCP);
     }
 
     /**
@@ -113,10 +165,11 @@ public interface Sender extends Closeable {
      * @param configurationString configuration string
      * @return Sender instance
      * @see #fromEnv()
+     * @see #fromConfig(CharSequence)
      * @see LineSenderBuilder#fromConfig(CharSequence)
      */
     static Sender fromConfig(CharSequence configurationString) {
-        return builder().fromConfig(configurationString).build();
+        return builder(configurationString).build();
     }
 
     /**
@@ -302,9 +355,8 @@ public interface Sender extends Closeable {
      * <br>
      * Example usage for HTTP transport:
      * <pre>{@code
-     * try (Sender sender = Sender.builder()
+     * try (Sender sender = Sender.builder(Sender.Transport.HTTP)
      *  .address("localhost:9000")
-     *  .http()
      *  .build()) {
      *      sender.table(tableName).column("value", 42).atNow();
      *      sender.flush();
@@ -313,9 +365,8 @@ public interface Sender extends Closeable {
      * <br>
      * Example usage for HTTP transport and TLS:
      * <pre>{@code
-     * try (Sender sender = Sender.builder()
+     * try (Sender sender = Sender.builder(Sender.Transport.HTTP)
      *  .address("localhost:9000")
-     *  .http()
      *  .enableTls()
      *  .build()) {
      *    sender.table(tableName).column("value", 42).atNow();
@@ -325,15 +376,16 @@ public interface Sender extends Closeable {
      * <br>
      * Example usage for TCP transport and TLS:
      * <pre>{@code
-     * try (Sender sender = Sender.builder()
+     * try (Sender sender = Sender.builder(Sender.Transport.TCP)
      *  .address("localhost:9000")
-     *  .http()
      *  .enableTls()
      *  .build()) {
      *    sender.table(tableName).column("value", 42).atNow();
      *    sender.flush();
      *   }
      * }</pre>
+     *
+     * @see Sender#fromConfig(CharSequence) for creating a Sender directly from a configuration String
      */
     final class LineSenderBuilder {
         private static final int AUTO_FLUSH_DISABLED = 0;
@@ -393,6 +445,10 @@ public interface Sender extends Closeable {
 
         private LineSenderBuilder() {
 
+        }
+
+        private LineSenderBuilder(int protocol) {
+            this.protocol = protocol;
         }
 
         /**
@@ -698,7 +754,7 @@ public interface Sender extends Closeable {
          * @return this instance for method chaining
          * @see #fromConfig(CharSequence)
          */
-        public LineSenderBuilder fromConfig(CharSequence configurationString) {
+        private LineSenderBuilder fromConfig(CharSequence configurationString) {
             if (Chars.isBlank(configurationString)) {
                 throw new LineSenderException("configuration string cannot be empty nor null");
             }
@@ -892,7 +948,7 @@ public interface Sender extends Closeable {
          *
          * @return an instance of {@link LineSenderBuilder} for further configuration
          */
-        public LineSenderBuilder http() {
+        private LineSenderBuilder http() {
             if (protocol != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("protocol was already configured ")
                         .put("[protocol=").put(protocol).put("]");
@@ -1088,20 +1144,12 @@ public interface Sender extends Closeable {
             return this;
         }
 
-        /**
-         * Use TCP protocol as transport.
-         * <br>
-         * Configures the Sender to use the TCP protocol. This is the default transport.
-         *
-         * @return an instance of {@link LineSenderBuilder} for further configuration
-         */
-        public LineSenderBuilder tcp() {
+        private void tcp() {
             if (protocol != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("protocol was already configured ")
                         .put("[protocol=").put(protocol).put("]");
             }
             protocol = PROTOCOL_TCP;
-            return this;
         }
 
         private static int getValue(CharSequence configurationString, int pos, StringSink sink, String name) {
