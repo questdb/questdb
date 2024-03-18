@@ -50,7 +50,12 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampAscOrderBatched() throws Exception {
-        testCreatePartitionedTableAsSelectWithOrderBy("order by ts asc", 1);
+        testCreatePartitionedTableAsSelectWithOrderBy("order by ts asc", 1, "");
+    }
+
+    @Test
+    public void testCreatePartitionedTableAsSelectTimestampAscOrderBatchedAndLagged() throws Exception {
+        testCreatePartitionedTableAsSelectWithOrderBy("order by ts asc", 1, "1000ms");
     }
 
     @Test
@@ -60,7 +65,12 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampDescOrderBatched() throws Exception {
-        testCreatePartitionedTableAsSelectWithOrderBy("order by ts desc", 1);
+        testCreatePartitionedTableAsSelectWithOrderBy("order by ts desc", 1, "");
+    }
+
+    @Test
+    public void testCreatePartitionedTableAsSelectTimestampDescOrderBatchedAndLagged() throws Exception {
+        testCreatePartitionedTableAsSelectWithOrderBy("order by ts desc", 1, "1000ms");
     }
 
     @Test
@@ -70,7 +80,12 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampNoOrderBatched() throws Exception {
-        testCreatePartitionedTableAsSelectWithOrderBy("", 1);
+        testCreatePartitionedTableAsSelectWithOrderBy("", 1, "");
+    }
+
+    @Test
+    public void testCreatePartitionedTableAsSelectTimestampNoOrderBatchedAndLagged() throws Exception {
+        testCreatePartitionedTableAsSelectWithOrderBy("", 1, "1000ms");
     }
 
     private void createSrcTable() throws SqlException {
@@ -103,7 +118,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
         });
     }
 
-    private void testCreatePartitionedTableAsSelectWithOrderBy(String orderByClause, int batchSize) throws Exception {
+    private void testCreatePartitionedTableAsSelectWithOrderBy(String orderByClause, int batchSize, String o3MaxLag) throws Exception {
         assertMemoryLeak(() -> {
             createSrcTable();
 
@@ -111,6 +126,10 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
             if (batchSize != -1) {
                 sql += "batch " + batchSize;
+            }
+
+            if (!o3MaxLag.isEmpty()) {
+                sql += " o3MaxLag " + o3MaxLag;
             }
 
             sql += " table dest as ";
