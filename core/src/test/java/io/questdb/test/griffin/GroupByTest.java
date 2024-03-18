@@ -2313,6 +2313,43 @@ public class GroupByTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSumOverSumColumn() throws Exception {
+        ddl("create table \"avg\" as (" +
+                "select rnd_symbol('A', 'B', 'C') category, " +
+                "rnd_double() sum, " +
+                "rnd_double() count, " +
+                "timestamp_sequence(0, 100000000000) timestamp " +
+                "from long_sequence(20)" +
+                ") timestamp(timestamp) partition by DAY");
+
+        String query = "select sum(\"sum\"), sum(\"count\"), \"category\" from \"avg\" group by \"category\" order by 3";
+        assertQuery(
+                "sum\tsum1\tcategory\n" +
+                        "1.920104572218119\t0.9826178313717698\tA\n" +
+                        "2.0117879412419453\t3.362073294894596\tB\n" +
+                        "6.020496469863701\t5.702005218155505\tC\n",
+                query,
+                null,
+                true,
+                true
+        );
+
+        assertPlan(
+                query,
+                "Sort light\n" +
+                        "  keys: [category]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [sum,sum1,category]\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
+                        "          keys: [category]\n" +
+                        "          values: [sum(sum),sum(count)]\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: avg\n"
+        );
+    }
+
     private void assertError(String query, String errorMessage) {
         try {
             assertQuery(null, query,
