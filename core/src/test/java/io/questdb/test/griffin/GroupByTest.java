@@ -24,7 +24,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -2316,7 +2315,6 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testSumOverSumColumn() throws Exception {
-        TestMatchFunctionFactory.clear();
         ddl("create table \"avg\" as (" +
                 "select rnd_symbol('A', 'B', 'C') category, " +
                 "rnd_double() sum, " +
