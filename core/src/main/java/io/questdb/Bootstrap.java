@@ -54,7 +54,7 @@ import java.util.zip.ZipInputStream;
 public class Bootstrap {
 
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
-    private static final String CONFIG_FILE = "/server.conf";
+    public static final String CONFIG_FILE = "/server.conf";
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
@@ -65,12 +65,14 @@ public class Bootstrap {
     private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
     private final String rootDirectory;
+    public final String[] args;
 
     public Bootstrap(String... args) {
         this(new PropBootstrapConfiguration(), args);
     }
 
     public Bootstrap(BootstrapConfiguration bootstrapConfiguration, String... args) {
+        this.args = args;
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
