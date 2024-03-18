@@ -303,9 +303,9 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         if (!isAtomic()) {
             sink.putAscii(" batch ");
             sink.put(batchSize);
-            if (o3MaxLag != -1) {
+            if (batchO3MaxLag != -1) {
                 sink.putAscii(" o3MaxLag ");
-                sink.put(o3MaxLag);
+                sink.put(batchO3MaxLag);
             }
         } else {
             sink.putAscii(" atomic");
