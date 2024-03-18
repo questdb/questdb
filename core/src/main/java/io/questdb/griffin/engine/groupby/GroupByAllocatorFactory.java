@@ -24,28 +24,24 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.TestOnly;
+import io.questdb.cairo.CairoConfiguration;
 
-/**
- * Specialized allocator used in GROUP BY functions.
- * <p>
- * Note: implementations are not necessarily thread-safe.
- */
-public interface GroupByAllocator extends QuietCloseable {
+public class GroupByAllocatorFactory {
 
-    /**
-     * @return allocated chunks total (bytes).
-     */
-    @TestOnly
-    long allocated();
+    private GroupByAllocatorFactory() {
+    }
 
-    /**
-     * Best-effort free memory operation. The memory shouldn't be used after it was called.
-     */
-    void free(long ptr, long size);
+    public static GroupByAllocator createThreadSafeAllocator(CairoConfiguration configuration) {
+        return new GroupByAllocatorImpl(
+                configuration.getGroupByAllocatorDefaultChunkSize(),
+                configuration.getGroupByAllocatorMaxChunkSize()
+        );
+    }
 
-    long malloc(long size);
-
-    long realloc(long ptr, long oldSize, long newSize);
+    public static GroupByAllocator createThreadUnsafeAllocator(CairoConfiguration configuration) {
+        return new GroupByAllocatorArena(
+                configuration.getGroupByAllocatorDefaultChunkSize(),
+                configuration.getGroupByAllocatorMaxChunkSize()
+        );
+    }
 }
