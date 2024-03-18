@@ -47,6 +47,9 @@ public class InsertIntoSelectBenchmark {
     @Param({"1000000000"})
     public String size;
 
+    @Param({"8192", "16384", "32786", "131072"})
+    public String batchSize;
+
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(InsertIntoSelectBenchmark.class.getSimpleName())
@@ -81,7 +84,7 @@ public class InsertIntoSelectBenchmark {
     @Benchmark
     @Fork(0)
     public void testInsertIntoSelectBatched() {
-        executeDdl("insert batch 8192 into test1 select * from long_sequence(" + size + ") as l", configuration);
+        executeDdl("insert batch " + batchSize + "into test1 select * from long_sequence(" + size + ") as l", configuration);
     }
 
     private void executeDdl(String ddl, CairoConfiguration configuration) {

@@ -581,6 +581,7 @@ public class SqlParser {
         if (Chars.equals(tok, '(')) {
             tok = tok(lexer, "like");
             if (isLikeKeyword(tok)) {
+                model.setBatchSize(-1);
                 parseLikeTableName(lexer, model);
                 return model;
             } else {
@@ -597,6 +598,7 @@ public class SqlParser {
         // if not CREATE ... AS SELECT, make it atomic
         if (!isCreateAsSelect) {
             model.setBatchSize(-1);
+            model.setBatchO3MaxLag(-1);
 
             // if we use atomic or batch keywords, then throw an error
             if (atomicSpecified || batchSpecified) {

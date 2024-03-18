@@ -50,6 +50,10 @@ public class CreateTableAsSelectBenchmark {
     @Param({"1000000000"})
     public String size;
 
+
+    @Param({"8192", "16384", "32786", "131072"})
+    public String batchSize;
+
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(CreateTableAsSelectBenchmark.class.getSimpleName())
@@ -69,17 +73,17 @@ public class CreateTableAsSelectBenchmark {
         executeDdl("drop table test1", configuration);
     }
 
-    @Benchmark
-    @BenchmarkMode(Mode.AverageTime)
-    public void testCreateAsSelectAtomic() {
-        executeDdl("create atomic table if not exists test1 as ( select x::long as l, x::timestamp as ts from long_sequence(" + size + ") as x ) timestamp(ts) partition by none bypass wal", configuration);
-        executeDdl("select count(*) from test1", configuration);
-    }
+//    @Benchmark
+//    @BenchmarkMode(Mode.AverageTime)
+//    public void testCreateAsSelectAtomic() {
+//        executeDdl("create atomic table if not exists test1 as ( select x::long as l, x::timestamp as ts from long_sequence(" + size + ") as x ) timestamp(ts) partition by none bypass wal", configuration);
+//        executeDdl("select count(*) from test1", configuration);
+//    }
 
     @Benchmark
     @BenchmarkMode(Mode.AverageTime)
     public void testCreateAsSelectBatched() {
-        executeDdl("create batch 8192 table if not exists test1 as ( select x::long as l, x::timestamp as ts from long_sequence(" + size + ") as x ) timestamp(ts) partition by none bypass wal", configuration);
+        executeDdl("create batch " + batchSize + " table if not exists test1 as ( select x::long as l, x::timestamp as ts from long_sequence(" + size + ") as x ) timestamp(ts) partition by none bypass wal", configuration);
         executeDdl("select count(*) from test1", configuration);
     }
 
