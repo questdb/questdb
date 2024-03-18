@@ -75,7 +75,7 @@ public final class Unsafe {
             return ptr;
         } catch (OutOfMemoryError oom) {
             System.err.printf(
-                    "Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=%d",
+                    "Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=%d\n",
                     MEM_USED.get(), size, memoryTag);
             throw oom;
         }

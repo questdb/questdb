@@ -31,9 +31,9 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.NotNull;
 
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final RecordMetadata METADATA;
     public static final int N_NAME_COL = 0;
     public static final int N_TYPE_COL = N_NAME_COL + 1;
     private static final int N_INDEXED_COL = N_TYPE_COL + 1;
@@ -42,6 +42,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private static final int N_SYMBOL_CAPACITY_COL = N_SYMBOL_CACHED_COL + 1;
     private static final int N_DESIGNATED_COL = N_SYMBOL_CAPACITY_COL + 1;
     private static final int N_UPSERT_KEY_COL = N_DESIGNATED_COL + 1;
+    private static final RecordMetadata METADATA;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final TableToken tableToken;
     private final int tokenPosition;
@@ -93,17 +94,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             return false;
         }
 
-        @Override
-        public long size() {
-            return -1;
-        }
-
-        @Override
-        public void toTop() {
-            columnIndex = -1;
-        }
-
-        public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken,  int tokenPosition) {
+        public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
             try {
                 reader = executionContext.getReader(tableToken);
             } catch (CairoException e) {
@@ -116,6 +107,16 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, CharSequence tableName) {
             return of(executionContext, executionContext.getTableTokenIfExists(tableName), -1);
+        }
+
+        @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
+        public void toTop() {
+            columnIndex = -1;
         }
 
         public class ShowColumnsRecord implements Record {
@@ -159,7 +160,8 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            @NotNull
+            public CharSequence getStrA(int col) {
                 if (col == N_NAME_COL) {
                     return reader.getMetadata().getColumnName(columnIndex);
                 }
@@ -171,12 +173,12 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override
             public int getStrLen(int col) {
-                return getStr(col).length();
+                return getStrA(col).length();
             }
         }
     }

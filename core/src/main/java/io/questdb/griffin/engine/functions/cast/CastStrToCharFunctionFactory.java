@@ -50,20 +50,13 @@ public class CastStrToCharFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToCharFunction {
-        private final Function arg;
-
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
         public char getChar(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             return value == null || value.length() == 0 ? 0 : value.charAt(0);
         }
     }

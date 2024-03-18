@@ -42,7 +42,7 @@ public class DateTruncFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function kindFunction = args.getQuick(0);
-        CharSequence kind = kindFunction.getStr(null);
+        CharSequence kind = kindFunction.getStrA(null);
         Function innerFunction = args.getQuick(1);
         if (kind == null) {
             throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");

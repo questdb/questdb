@@ -430,14 +430,14 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
             // store user
             if (PGKeywords.isUser(nameLo, nameHi - nameLo)) {
                 CharacterStoreEntry e = characterStore.newEntry();
-                e.put(dus.of(valueLo, valueHi));
+                e.put(dus.of(valueLo, valueHi, false));
                 this.username = e.toImmutable();
             }
             boolean parsed = true;
             if (PGKeywords.isOptions(nameLo, nameHi - nameLo)) {
                 if (PGKeywords.startsWithTimeoutOption(valueLo, valueHi - valueLo)) {
                     try {
-                        dus.of(valueLo + 21, valueHi);
+                        dus.of(valueLo + 21, valueHi, false);
                         long statementTimeout = Numbers.parseLong(dus);
                         optionsListener.setStatementTimeout(statementTimeout);
                     } catch (NumericException ex) {
@@ -448,9 +448,9 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
                 }
             }
             if (parsed) {
-                LOG.debug().$("property [name=").$(dus.of(nameLo, nameHi)).$(", value=").$(dus.of(valueLo, valueHi)).$(']').$();
+                LOG.debug().$("property [name=").$(dus.of(nameLo, nameHi, false)).$(", value=").$(dus.of(valueLo, valueHi, false)).$(']').$();
             } else {
-                LOG.info().$("invalid property [name=").$(dus.of(nameLo, nameHi)).$(", value=").$(dus.of(valueLo, valueHi)).$(']').$();
+                LOG.info().$("invalid property [name=").$(dus.of(nameLo, nameHi, false)).$(", value=").$(dus.of(valueLo, valueHi, false)).$(']').$();
             }
         }
         characterStore.clear();

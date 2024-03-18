@@ -122,7 +122,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     ) {
                         Record record = cursor.getRecord();
                         while (cursor.hasNext()) {
-                            TestUtils.assertEquals(value, record.getSym(1));
+                            TestUtils.assertEquals(value, record.getSymA(1));
                         }
                     }
                 }

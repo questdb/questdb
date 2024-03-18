@@ -102,4 +102,6 @@ public interface LineTcpReceiverConfiguration {
     boolean isStringToCharCastAllowed();
 
     boolean isSymbolAsFieldSupported();
+
+    boolean isUseLegacyStringDefault();
 }

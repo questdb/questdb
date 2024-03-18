@@ -30,7 +30,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Checks that implicit string/symbol -> timestamp conversion works only for literals.
+ * Checks that implicit string/symbol/varchar -> timestamp conversion works only for literals.
  */
 public class ImplicitToTimestampCastTest extends AbstractCairoTest {
 

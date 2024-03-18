@@ -61,24 +61,24 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
+    public void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         if (sourceColumn.getStorageType() == COLUMN_CONTIGUOUS_FILE) {
             sourceLo -= sourceColumn.getColumnTop();
             sourceHi -= sourceColumn.getColumnTop();
-            offset -= columnTop;
+            appendOffsetRowCount -= columnTop;
 
             assert sourceLo >= 0;
             assert sourceHi >= 0;
-            assert offset >= 0;
+            assert appendOffsetRowCount >= 0;
 
             if (sourceHi > 0) {
                 int sourceFd = sourceColumn.getPrimaryFd();
                 long length = sourceHi << shl;
-                TableUtils.allocateDiskSpaceToPage(ff, fd, (offset + sourceHi) << shl);
+                TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount + sourceHi) << shl);
                 if (mixedIOFlag) {
-                    if (ff.copyData(sourceFd, fd, sourceLo << shl, offset << shl, length) != length) {
+                    if (ff.copyData(sourceFd, fd, sourceLo << shl, appendOffsetRowCount << shl, length) != length) {
                         throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
-                                .put(", destOffset=").put(offset << shl)
+                                .put(", destOffset=").put(appendOffsetRowCount << shl)
                                 .put(", size=").put(length)
                                 .put(", fileSize=").put(ff.length(fd))
                                 .put(", srcFd=").put(sourceFd)
@@ -94,7 +94,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                     long dstAddress = 0;
                     try {
                         srcAddress = TableUtils.mapAppendColumnBuffer(ff, sourceFd, sourceLo << shl, length, false, MEMORY_TAG);
-                        dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, offset << shl, length, true, MEMORY_TAG);
+                        dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, length, true, MEMORY_TAG);
 
                         Vect.memcpy(dstAddress, srcAddress, length);
 
@@ -106,7 +106,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                             TableUtils.mapAppendColumnBufferRelease(ff, srcAddress, sourceLo << shl, length, MEMORY_TAG);
                         }
                         if (dstAddress != 0) {
-                            TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, offset << shl, length, MEMORY_TAG);
+                            TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, length, MEMORY_TAG);
                         }
                     }
                 }
@@ -117,21 +117,21 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
-    public void appendNulls(long offset, long count, int commitMode) {
-        offset -= columnTop;
-        assert offset >= 0;
-        assert count >= 0;
+    public void appendNulls(long rowCount, long sourceColumnTop, int commitMode) {
+        rowCount -= columnTop;
+        assert rowCount >= 0;
+        assert sourceColumnTop >= 0;
 
-        if (count > 0) {
-            TableUtils.allocateDiskSpaceToPage(ff, fd, (offset + count) << shl);
-            long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, offset << shl, count << shl, true, MEMORY_TAG);
+        if (sourceColumnTop > 0) {
+            TableUtils.allocateDiskSpaceToPage(ff, fd, (rowCount + sourceColumnTop) << shl);
+            long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, rowCount << shl, sourceColumnTop << shl, true, MEMORY_TAG);
             try {
-                TableUtils.setNull(columnType, mappedAddress, count);
+                TableUtils.setNull(columnType, mappedAddress, sourceColumnTop);
                 if (commitMode != CommitMode.NOSYNC) {
-                    TableUtils.msync(ff, mappedAddress, count << shl, commitMode == CommitMode.ASYNC);
+                    TableUtils.msync(ff, mappedAddress, sourceColumnTop << shl, commitMode == CommitMode.ASYNC);
                 }
             } finally {
-                TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, offset << shl, count << shl, MEMORY_TAG);
+                TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, rowCount << shl, sourceColumnTop << shl, MEMORY_TAG);
             }
         }
     }

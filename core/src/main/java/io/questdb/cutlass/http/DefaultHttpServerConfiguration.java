@@ -312,5 +312,10 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         public boolean isSymbolAsFieldSupported() {
             return lineHttpProcessorConfiguration.isSymbolAsFieldSupported();
         }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return true;
+        }
     }
 }

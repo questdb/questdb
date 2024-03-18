@@ -420,9 +420,9 @@ public class BindVariableServiceImplTest {
     @Test
     public void testNamedSetStrToStrNoDefine() throws SqlException {
         bindVariableService.setStr("x", "hello_x");
-        TestUtils.assertEquals("hello_x", bindVariableService.getFunction(":x").getStr(null));
+        TestUtils.assertEquals("hello_x", bindVariableService.getFunction(":x").getStrA(null));
         bindVariableService.setStr("x", "hello_y");
-        TestUtils.assertEquals("hello_y", bindVariableService.getFunction(":x").getStr(null));
+        TestUtils.assertEquals("hello_y", bindVariableService.getFunction(":x").getStrA(null));
     }
 
     @Test
@@ -695,34 +695,34 @@ public class BindVariableServiceImplTest {
     public void testSetStrToBoolean() throws SqlException {
         bindVariableService.define(0, ColumnType.STRING, 0);
         bindVariableService.setBoolean(0, true);
-        TestUtils.assertEquals("true", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("true", bindVariableService.getFunction(0).getStrA(null));
         bindVariableService.setBoolean(0, false);
-        TestUtils.assertEquals("false", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("false", bindVariableService.getFunction(0).getStrA(null));
     }
 
     @Test
     public void testSetStrToByte() throws SqlException {
         bindVariableService.define(0, ColumnType.STRING, 0);
         bindVariableService.setByte(0, (byte) 22);
-        TestUtils.assertEquals("22", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("22", bindVariableService.getFunction(0).getStrA(null));
     }
 
     @Test
     public void testSetStrToLong256() throws SqlException {
         bindVariableService.define(0, ColumnType.STRING, 0);
         bindVariableService.setLong256(0, 888, 777, 6666, 5555);
-        TestUtils.assertEquals("0x15b30000000000001a0a00000000000003090000000000000378", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("0x15b30000000000001a0a00000000000003090000000000000378", bindVariableService.getFunction(0).getStrA(null));
         bindVariableService.setLong256(0);
-        TestUtils.assertEquals("", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("", bindVariableService.getFunction(0).getStrA(null));
 
     }
 
     @Test
     public void testSetStrVarToShort() throws SqlException {
         bindVariableService.setStr(0, "ello");
-        TestUtils.assertEquals("ello", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("ello", bindVariableService.getFunction(0).getStrA(null));
         bindVariableService.setShort(0, (short) 5);
-        TestUtils.assertEquals("5", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("5", bindVariableService.getFunction(0).getStrA(null));
     }
 
     @Test
@@ -784,62 +784,62 @@ public class BindVariableServiceImplTest {
     public void testStrVarSetToChar() throws SqlException {
         bindVariableService.setStr(0);
         bindVariableService.setStr(0, "perfecto");
-        TestUtils.assertEquals("perfecto", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("perfecto", bindVariableService.getFunction(0).getStrA(null));
 
         bindVariableService.setChar(0, 'R');
-        TestUtils.assertEquals("R", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("R", bindVariableService.getFunction(0).getStrA(null));
     }
 
     @Test
     public void testStrVarSetToFloat() throws SqlException {
         bindVariableService.setStr(0);
         bindVariableService.setStr(0, "1000.88");
-        TestUtils.assertEquals("1000.88", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("1000.88", bindVariableService.getFunction(0).getStrA(null));
 
         bindVariableService.setFloat(0, 451f);
-        TestUtils.assertEquals("451.0000", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("451.0000", bindVariableService.getFunction(0).getStrA(null));
 
         bindVariableService.setFloat(0, Float.NaN);
-        Assert.assertNull(bindVariableService.getFunction(0).getStr(null));
+        Assert.assertNull(bindVariableService.getFunction(0).getStrA(null));
     }
 
     @Test
     public void testStrVarSetToLong() throws SqlException {
         bindVariableService.setStr(0);
         bindVariableService.setStr(0, "perfecto");
-        TestUtils.assertEquals("perfecto", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("perfecto", bindVariableService.getFunction(0).getStrA(null));
 
         bindVariableService.setLong(0, 450);
-        TestUtils.assertEquals("450", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("450", bindVariableService.getFunction(0).getStrA(null));
 
         bindVariableService.setLong(0, Numbers.LONG_NaN);
-        Assert.assertNull(bindVariableService.getFunction(0).getStr(null));
+        Assert.assertNull(bindVariableService.getFunction(0).getStrA(null));
     }
 
     @Test
     public void testStringVarSetToDouble() throws SqlException {
         bindVariableService.setStr(0);
         bindVariableService.setStr(0, "test1");
-        TestUtils.assertEquals("test1", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("test1", bindVariableService.getFunction(0).getStrA(null));
         TestUtils.assertEquals("test1", bindVariableService.getFunction(0).getStrB(null));
         Assert.assertEquals(5, bindVariableService.getFunction(0).getStrLen(null));
         bindVariableService.setDouble(0, 123.456d);
-        TestUtils.assertEquals("123.456", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("123.456", bindVariableService.getFunction(0).getStrA(null));
         bindVariableService.setDouble(0, Double.NaN);
-        Assert.assertNull(bindVariableService.getFunction(0).getStr(null));
+        Assert.assertNull(bindVariableService.getFunction(0).getStrA(null));
     }
 
     @Test
     public void testStringVarSetToInt() throws SqlException {
         bindVariableService.setStr(0);
         bindVariableService.setStr(0, "test1");
-        TestUtils.assertEquals("test1", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("test1", bindVariableService.getFunction(0).getStrA(null));
 
         bindVariableService.setInt(0, 450);
-        TestUtils.assertEquals("450", bindVariableService.getFunction(0).getStr(null));
+        TestUtils.assertEquals("450", bindVariableService.getFunction(0).getStrA(null));
 
         bindVariableService.setInt(0, Numbers.INT_NaN);
-        Assert.assertNull(bindVariableService.getFunction(0).getStr(null));
+        Assert.assertNull(bindVariableService.getFunction(0).getStrA(null));
     }
 
     @Test

@@ -48,7 +48,7 @@ public class NullConstantTest {
         Assert.assertEquals(StrConstant.NULL.getStrLen(null), constant.getStrLen(null));
 
         Assert.assertEquals(IntConstant.NULL.getInt(null), constant.getInt(null));
-        Assert.assertEquals(StrConstant.NULL.getStr(null), constant.getStr(null));
+        Assert.assertEquals(StrConstant.NULL.getStrA(null), constant.getStrA(null));
         Assert.assertEquals(StrConstant.NULL.getStrB(null), constant.getStrB(null));
         Assert.assertEquals(SymbolConstant.NULL.getSymbol(null), constant.getSymbol(null));
         Assert.assertEquals(SymbolConstant.NULL.getSymbolB(null), constant.getSymbolB(null));
@@ -96,7 +96,7 @@ public class NullConstantTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStrWithIndex() {
-        NullConstant.NULL.getStr(null, 0);
+        NullConstant.NULL.getStrA(null, 0);
     }
 
     @Test(expected = UnsupportedOperationException.class)

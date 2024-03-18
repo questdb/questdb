@@ -66,6 +66,7 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                 case ColumnType.DOUBLE:
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
+                case ColumnType.VARCHAR:
                     break;
                 default:
                     throw SqlException.position(0).put("cannot compare DOUBLE with type ").put(ColumnType.nameOf(func.getType()));
@@ -102,7 +103,8 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
-                    CharSequence tsValue = func.getStr(null);
+                case ColumnType.VARCHAR:
+                    CharSequence tsValue = func.getStrA(null);
                     val = (tsValue != null) ? tryParseDouble(tsValue, argPositions.getQuick(i)) : Double.NaN;
                     break;
             }
@@ -173,7 +175,8 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                         break;
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
-                        val = Numbers.parseDoubleQuiet(func.getStr(rec));
+                    case ColumnType.VARCHAR:
+                        val = Numbers.parseDoubleQuiet(func.getStrA(rec));
                         break;
                 }
                 if (Numbers.equals(val, argVal)) {

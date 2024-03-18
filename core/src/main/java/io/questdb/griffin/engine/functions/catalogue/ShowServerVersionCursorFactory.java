@@ -63,18 +63,18 @@ public class ShowServerVersionCursorFactory extends AbstractRecordCursorFactory 
     private static class ShowServerVersionRecordCursor implements RecordCursor {
         private final Record record = new Record() {
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 return col == 0 ? SERVER_VERSION : null;
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override
             public int getStrLen(int col) {
-                CharSequence s = getStr(col);
+                CharSequence s = getStrA(col);
                 return s != null ? s.length() : -1;
             }
         };

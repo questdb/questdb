@@ -647,12 +647,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 return null;
             }
 
             @Override
-            public void getStr(int col, Utf16Sink sink) {
+            public void getStr(int col, Utf16Sink utf16Sink) {
             }
 
             @Override
@@ -666,7 +666,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public CharSequence getSym(int col) {
+            public CharSequence getSymA(int col) {
                 return pageFrameCursor.getSymbolTable(symbolTableSkewIndex.getQuick(col)).valueOf(getInt(col));
             }
 

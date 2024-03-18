@@ -76,6 +76,16 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
         return putAt(keyIndex(key), key, value);
     }
 
+    public void putAll(Utf8SequenceIntHashMap other) {
+        Utf8Sequence[] otherKeys = other.keys;
+        int[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (otherKeys[i] != noEntryKey) {
+                put(otherKeys[i], otherValues[i]);
+            }
+        }
+    }
+
     public boolean putAt(int index, Utf8Sequence key, int value) {
         if (index < 0) {
             values[-index - 1] = value;
@@ -109,7 +119,7 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
 
     public void removeAt(int index) {
         if (index < 0) {
-            Utf8String key = keys[-index - 1];
+            Utf8Sequence key = keys[-index - 1];
             super.removeAt(index);
             list.remove(key);
         }
@@ -133,10 +143,10 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
         free = capacity = newCapacity;
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
 
-        Utf8String[] oldKeys = keys;
+        Utf8Sequence[] oldKeys = keys;
         int[] oldHashCodes = hashCodes;
         int[] oldValues = values;
-        this.keys = new Utf8String[len];
+        this.keys = new Utf8Sequence[len];
         this.hashCodes = new int[len];
         this.values = new int[len];
         Arrays.fill(keys, null);
@@ -144,7 +154,7 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            Utf8String key = oldKeys[i];
+            Utf8Sequence key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
                 keys[index] = key;

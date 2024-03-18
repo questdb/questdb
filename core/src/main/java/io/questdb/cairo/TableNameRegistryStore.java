@@ -271,9 +271,9 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         while (currentOffset < mapMem) {
             int operation = memory.getInt(currentOffset);
             currentOffset += Integer.BYTES;
-            String tableName = Chars.toString(memory.getStr(currentOffset));
+            String tableName = Chars.toString(memory.getStrA(currentOffset));
             currentOffset += Vm.getStorageLength(tableName);
-            String dirName = Chars.toString(memory.getStr(currentOffset));
+            String dirName = Chars.toString(memory.getStrA(currentOffset));
             currentOffset += Vm.getStorageLength(dirName);
             int tableId = memory.getInt(currentOffset);
             currentOffset += Integer.BYTES;
@@ -439,9 +439,9 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         while (currentOffset < mapMem) {
             int operation = memory.getInt(currentOffset);
             currentOffset += Integer.BYTES;
-            String tableName = Chars.toString(memory.getStr(currentOffset));
+            String tableName = Chars.toString(memory.getStrA(currentOffset));
             currentOffset += Vm.getStorageLength(tableName);
-            String dirName = Chars.toString(memory.getStr(currentOffset));
+            String dirName = Chars.toString(memory.getStrA(currentOffset));
             currentOffset += Vm.getStorageLength(dirName);
             int tableId = memory.getInt(currentOffset);
             currentOffset += Integer.BYTES;

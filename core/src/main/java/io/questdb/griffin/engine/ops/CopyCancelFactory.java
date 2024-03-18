@@ -85,7 +85,7 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
                 Record rec = c.getRecord();
                 // should be one row
                 if (c.hasNext()) {
-                    status = rec.getSym(STATUS_INDEX);
+                    status = rec.getSymA(STATUS_INDEX);
                 } else {
                     status = "unknown";
                 }
@@ -112,7 +112,7 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
 
     private class CopyCancelRecord implements Record {
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             switch (col) {
                 case 0:
                     return cancelCopyIDStr;

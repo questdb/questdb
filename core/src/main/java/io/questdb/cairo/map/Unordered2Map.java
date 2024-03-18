@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -436,6 +437,11 @@ public class Unordered2Map implements Map, Reopenable {
 
         @Override
         public void putTimestamp(long value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
             throw new UnsupportedOperationException();
         }
 

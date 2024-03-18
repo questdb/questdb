@@ -54,7 +54,7 @@ public class QuoteIdentFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            CharSequence val = arg.getStr(null);
+            CharSequence val = arg.getStrA(null);
             if (val == null) {
                 return StrConstant.NULL;
             } else {
@@ -88,13 +88,13 @@ public class QuoteIdentFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return quote(sinkA, arg.getStr(rec));
+        public CharSequence getStrA(Record rec) {
+            return quote(sinkA, arg.getStrA(rec));
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return quote(sinkB, arg.getStr(rec));
+            return quote(sinkB, arg.getStrA(rec));
         }
 
         private static StringSink quote(StringSink sink, CharSequence str) {

@@ -92,7 +92,7 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final long timestampValue = timestamp.getTimestamp(rec);
             try {
-                final CharSequence tz = timezone.getStr(rec);
+                final CharSequence tz = timezone.getStrA(rec);
                 return tz != null ? Timestamps.toTimezone(timestampValue, TimestampFormatUtils.EN_LOCALE, tz) : timestampValue;
             } catch (NumericException e) {
                 return timestampValue;

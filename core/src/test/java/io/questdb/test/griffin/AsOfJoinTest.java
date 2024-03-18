@@ -1278,8 +1278,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         Assert.assertTrue(cursor.hasNext());
                         Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(0));
                         Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(1));
-                        CharSequence sym0 = record.getSym(0);
-                        CharSequence sym1 = record.getSym(1);
+                        CharSequence sym0 = record.getSymA(0);
+                        CharSequence sym1 = record.getSymA(1);
                         TestUtils.assertEquals("ABC", sym0);
                         TestUtils.assertEquals("ABC", sym1);
                         Assert.assertFalse(cursor.hasNext());

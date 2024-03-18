@@ -80,7 +80,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = getArg().getStrA(rec);
             return cs != null && matcher.reset(cs).find();
         }
 
@@ -114,7 +114,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = getArg().getStrA(rec);
             return cs != null && matcher.reset(cs).find();
         }
 

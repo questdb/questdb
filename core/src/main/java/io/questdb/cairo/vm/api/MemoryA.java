@@ -27,12 +27,13 @@ package io.questdb.cairo.vm.api;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-//appendable 
+// appendable
 public interface MemoryA extends Closeable {
 
     @Override
@@ -75,7 +76,7 @@ public interface MemoryA extends Closeable {
 
     void putLong256(@NotNull CharSequence hexString, int start, int end);
 
-    void putLong256Utf8(@Nullable DirectUtf8Sequence hexString);
+    void putLong256Utf8(@Nullable Utf8Sequence hexString);
 
     long putNullBin();
 
@@ -90,6 +91,22 @@ public interface MemoryA extends Closeable {
     long putStr(CharSequence value, int pos, int len);
 
     long putStrUtf8(DirectUtf8Sequence value, boolean hasNonAsciiChars);
+
+    /**
+     * Appends UTF8 sequence bytes to the memory. The binary format is bytes
+     * only. Length to be encoded elsewhere.
+     *
+     * @param value any utf8 sequence
+     * @return offset at the start of the written sequence.
+     */
+    default long putVarchar(@Nullable Utf8Sequence value) {
+        if (value != null) {
+            return putVarchar(value, 0, value.size());
+        }
+        return getAppendOffset();
+    }
+
+    long putVarchar(@NotNull Utf8Sequence value, int lo, int hi);
 
     void skip(long bytes);
 

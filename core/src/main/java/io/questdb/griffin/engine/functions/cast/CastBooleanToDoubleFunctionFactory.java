@@ -44,15 +44,8 @@ public class CastBooleanToDoubleFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToDoubleFunction {
-        private final Function arg;
-
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

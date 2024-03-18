@@ -29,6 +29,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public class JoinRecord implements Record {
     protected final int split;
@@ -222,19 +224,19 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
+    public CharSequence getStrA(int col) {
         if (col < split) {
-            return master.getStr(col);
+            return master.getStrA(col);
         }
-        return slave.getStr(col - split);
+        return slave.getStrA(col - split);
     }
 
     @Override
-    public void getStr(int col, Utf16Sink sink) {
+    public void getStr(int col, Utf16Sink utf16Sink) {
         if (col < split) {
-            master.getStr(col, sink);
+            master.getStr(col, utf16Sink);
         } else {
-            slave.getStr(col - split, sink);
+            slave.getStr(col - split, utf16Sink);
         }
     }
 
@@ -255,11 +257,11 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public CharSequence getSym(int col) {
+    public CharSequence getSymA(int col) {
         if (col < split) {
-            return master.getSym(col);
+            return master.getSymA(col);
         }
-        return slave.getSym(col - split);
+        return slave.getSymA(col - split);
     }
 
     @Override
@@ -281,6 +283,31 @@ public class JoinRecord implements Record {
     @Override
     public long getUpdateRowId() {
         return master.getUpdateRowId();
+    }
+
+    @Override
+    public void getVarchar(int col, Utf8Sink utf8Sink) {
+        if (col < split) {
+            master.getVarchar(col, utf8Sink);
+        } else {
+            slave.getVarchar(col - split, utf8Sink);
+        }
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        if (col < split) {
+            return master.getVarcharA(col);
+        }
+        return slave.getVarcharA(col - split);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        if (col < split) {
+            return master.getVarcharB(col);
+        }
+        return slave.getVarcharB(col - split);
     }
 
     void of(Record master, Record slave) {

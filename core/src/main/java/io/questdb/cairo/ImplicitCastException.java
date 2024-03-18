@@ -98,7 +98,7 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
         ImplicitCastException ice = instance();
         ice.put("inconvertible value: ");
         if (value != null) {
-            ice.put('`').put(value.asAsciiCharSequence()).put('`');
+            ice.put('`').put(value).put('`');
         } else {
             ice.put("null");
         }
@@ -158,6 +158,11 @@ public class ImplicitCastException extends RuntimeException implements Flyweight
 
     public ImplicitCastException put(@Nullable CharSequence cs) {
         message.put(cs);
+        return this;
+    }
+
+    public ImplicitCastException put(@Nullable Utf8Sequence us) {
+        message.put(us);
         return this;
     }
 

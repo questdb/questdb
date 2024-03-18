@@ -97,7 +97,7 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final CharSequence str = this.strFunc.getStr(rec);
+            final CharSequence str = this.strFunc.getStrA(rec);
             if (str == null) {
                 return Numbers.INT_NaN;
             }
@@ -122,7 +122,7 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final CharSequence str = this.strFunc.getStr(rec);
+            final CharSequence str = this.strFunc.getStrA(rec);
             if (str == null) {
                 return Numbers.INT_NaN;
             }

@@ -107,12 +107,12 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return getStr(rec, sink);
         }
 
         public CharSequence getStr(Record rec, StringBuilderSink sink) {
-            CharSequence cs = value.getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             if (cs == null) {
                 return null;
             }
@@ -149,7 +149,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             pattern.init(symbolTableSource, executionContext);
             matcher = RegexUtils.createMatcher(pattern, patternPos);
             replacement.init(symbolTableSource, executionContext);
-            CharSequence cs = replacement.getStr(null);
+            CharSequence cs = replacement.getStrA(null);
             if (cs == null) {
                 throw SqlException.$(replacementPos, "NULL replacement");
             }

@@ -51,9 +51,10 @@ import java.util.Arrays;
  */
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 
-    public static final int ADD = 14;  // a + b
-    public static final int AND = 6;   // a && b
-    public static final int DIV = 17;  // a / b
+    public static final int ADD = 14; // a + b
+    public static final int AND = 6;  // a && b
+    public static final int BINARY_HEADER_TYPE = 8;
+    public static final int DIV = 17; // a / b
     public static final int EQ = 8;   // a == b
     public static final int F4_TYPE = 3;
     public static final int F8_TYPE = 5;
@@ -66,23 +67,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int I2_TYPE = 1;
     public static final int I4_TYPE = 2;
     public static final int I8_TYPE = 4;
-    public static final int STRING_HEADER_TYPE = 7;
-    public static final int BINARY_HEADER_TYPE = 8;
     // Constants
     public static final int IMM = 1;
     public static final int LE = 11;  // a <= b
     public static final int LT = 10;  // a <  b
     // Columns
     public static final int MEM = 2;
-    public static final int MUL = 16;  // a * b
+    public static final int MUL = 16; // a * b
     public static final int NE = 9;   // a != b
     // Operator codes
-    public static final int NEG = 4;   // -a
-    public static final int NOT = 5;   // !a
+    public static final int NEG = 4;  // -a
+    public static final int NOT = 5;  // !a
     public static final int OR = 7;   // a || b
     // Opcodes:
     // Return code. Breaks the loop
-    public static final int RET = 0; // ret
+    public static final int RET = 0;  // ret
+    public static final int STRING_HEADER_TYPE = 7;
     public static final int SUB = 15;  // a - b
     // Bind variables and deferred symbols
     public static final int VAR = 3;
@@ -237,38 +237,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 backfillNodes.clear();
             } catch (SqlWrapperException e) {
                 throw e.wrappedException;
-            }
-        }
-    }
-
-    private void ensureOnlyVarlenHeaderChecks() throws SqlException {
-        final ArrayDeque<Integer> typeStack = new ArrayDeque<>();
-        for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
-            int opCode = memory.getInt(offset);
-            int typeCode = memory.getInt(offset + Integer.BYTES);
-            switch (opCode) {
-                case -1:
-                    throw SqlException.$(0, "invalid opcode");
-                case RET:
-                    return;
-                case VAR:
-                case MEM:
-                case IMM:
-                    typeStack.push(typeCode);
-                    break;
-                case NEG:
-                case NOT:
-                    typeStack.pop();
-                    typeStack.push(typeCode);
-                    break;
-                default:
-                    // If none of the above, assume it's a binary operator
-                    int lhsType = typeStack.pop();
-                    int rhsType = typeStack.pop();
-                    if (lhsType == rhsType && (lhsType == STRING_HEADER_TYPE || lhsType == BINARY_HEADER_TYPE)) {
-                        throw SqlException.$(0, "varlen columns can only be used in length/NULL checks");
-                    }
-                    typeStack.push(typeCode);
             }
         }
     }
@@ -451,6 +419,38 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         putOperand(offset, VAR, typeCode, index);
     }
 
+    private void ensureOnlyVarlenHeaderChecks() throws SqlException {
+        final ArrayDeque<Integer> typeStack = new ArrayDeque<>();
+        for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
+            int opCode = memory.getInt(offset);
+            int typeCode = memory.getInt(offset + Integer.BYTES);
+            switch (opCode) {
+                case -1:
+                    throw SqlException.$(0, "invalid opcode");
+                case RET:
+                    return;
+                case VAR:
+                case MEM:
+                case IMM:
+                    typeStack.push(typeCode);
+                    break;
+                case NEG:
+                case NOT:
+                    typeStack.pop();
+                    typeStack.push(typeCode);
+                    break;
+                default:
+                    // If none of the above, assume it's a binary operator
+                    int lhsType = typeStack.pop();
+                    int rhsType = typeStack.pop();
+                    if (lhsType == rhsType && (lhsType == STRING_HEADER_TYPE || lhsType == BINARY_HEADER_TYPE)) {
+                        throw SqlException.$(0, "varlen columns can only be used in length/NULL checks");
+                    }
+                    typeStack.push(typeCode);
+            }
+        }
+    }
+
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
         Function varFunction;
 
@@ -563,70 +563,70 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeBindVariable(final ExpressionNode node) throws SqlException {
-        if (!predicateContext.isActive()) {
+        if (predicateContext.isActive()) {
+            Function varFunction = getBindVariableFunction(node.position, node.token);
+
+            final int columnType = varFunction.getType();
+            // Treat string bind variable to be of symbol type
+            if (columnType == ColumnType.STRING) {
+                // We're going to backfill this variable later since we may
+                // not have symbol column index at this point
+                long offset = memory.getAppendOffset();
+                backfillNodes.put(offset, node);
+                putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
+                return;
+            }
+
+            final int columnTypeTag = ColumnType.tagOf(columnType);
+            int typeCode = bindVariableTypeCode(columnTypeTag);
+            if (typeCode == UNDEFINED_CODE) {
+                throw SqlException.position(node.position)
+                        .put("unsupported bind variable type: ")
+                        .put(ColumnType.nameOf(columnTypeTag));
+            }
+
+            bindVarFunctions.add(varFunction);
+            int index = bindVarFunctions.size() - 1;
+            putOperand(VAR, typeCode, index);
+        } else {
             throw SqlException.position(node.position)
                     .put("bind variable outside of predicate: ")
                     .put(node.token);
         }
-
-        Function varFunction = getBindVariableFunction(node.position, node.token);
-
-        final int columnType = varFunction.getType();
-        // Treat string bind variable to be of symbol type
-        if (columnType == ColumnType.STRING) {
-            // We're going to backfill this variable later since we may
-            // not have symbol column index at this point
-            long offset = memory.getAppendOffset();
-            backfillNodes.put(offset, node);
-            putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
-            return;
-        }
-
-        final int columnTypeTag = ColumnType.tagOf(columnType);
-        int typeCode = bindVariableTypeCode(columnTypeTag);
-        if (typeCode == UNDEFINED_CODE) {
-            throw SqlException.position(node.position)
-                    .put("unsupported bind variable type: ")
-                    .put(ColumnType.nameOf(columnTypeTag));
-        }
-
-        bindVarFunctions.add(varFunction);
-        int index = bindVarFunctions.size() - 1;
-        putOperand(VAR, typeCode, index);
     }
 
     private void serializeColumn(int position, final CharSequence token) throws SqlException {
-        if (!predicateContext.isActive()) {
+        if (predicateContext.isActive()) {
+            final int index = metadata.getColumnIndexQuiet(token);
+            if (index == -1) {
+                throw SqlException.invalidColumn(position, token);
+            }
+
+            final int columnType = metadata.getColumnType(index);
+            final int columnTypeTag = ColumnType.tagOf(columnType);
+            int typeCode = columnTypeCode(columnTypeTag);
+            if (typeCode == UNDEFINED_CODE) {
+                throw SqlException.position(position)
+                        .put("unsupported column type: ")
+                        .put(ColumnType.nameOf(columnTypeTag));
+            }
+
+            // In case of a top level boolean column, expand it to "boolean_column = true" expression.
+            if (predicateContext.singleBooleanColumn && columnTypeTag == ColumnType.BOOLEAN) {
+                // "true" constant
+                putOperand(IMM, I1_TYPE, 1);
+                // column
+                putOperand(MEM, typeCode, index);
+                // =
+                putOperator(EQ);
+                return;
+            }
+            putOperand(MEM, typeCode, index);
+        } else {
             throw SqlException.position(position)
                     .put("non-boolean column outside of predicate: ")
                     .put(token);
         }
-
-        final int index = metadata.getColumnIndexQuiet(token);
-        if (index == -1) {
-            throw SqlException.invalidColumn(position, token);
-        }
-
-        final int columnType = metadata.getColumnType(index);
-        final int columnTypeTag = ColumnType.tagOf(columnType);
-        int typeCode = columnTypeCode(columnTypeTag);
-        if (typeCode == UNDEFINED_CODE) {
-            throw SqlException.position(position)
-                    .put("unsupported column type: ")
-                    .put(ColumnType.nameOf(columnTypeTag));
-        }
-
-        // In case of a top level boolean column, expand it to "boolean_column = true" expression.
-        if (predicateContext.singleBooleanColumn && columnTypeTag == ColumnType.BOOLEAN) {
-            // "true" constant
-            putOperand(IMM, I1_TYPE, 1);
-            // column
-            putOperand(MEM, typeCode, index);
-            // =
-            putOperator(EQ);
-            return;
-        }
-        putOperand(MEM, typeCode, index);
     }
 
     private void serializeConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
@@ -709,15 +709,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeConstantStub(final ExpressionNode node) throws SqlException {
-        if (!predicateContext.isActive()) {
+        if (predicateContext.isActive()) {
+            long offset = memory.getAppendOffset();
+            backfillNodes.put(offset, node);
+            putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
+        } else {
             throw SqlException.position(node.position)
                     .put("constant outside of predicate: ")
                     .put(node.token);
         }
-
-        long offset = memory.getAppendOffset();
-        backfillNodes.put(offset, node);
-        putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
     }
 
     private void serializeGeoHash(long offset, int position, final ConstantFunction geoHashConstant, int typeCode) throws SqlException {
@@ -991,6 +991,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      */
     private static class TypesObserver implements Mutable {
 
+        private static final int BINARY_HEADER_INDEX = 8;
         private static final int F4_INDEX = 3;
         private static final int F8_INDEX = 5;
         private static final int I16_INDEX = 6;
@@ -999,9 +1000,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private static final int I4_INDEX = 2;
         private static final int I8_INDEX = 4;
         private static final int STRING_HEADER_INDEX = 7;
-        private static final int BINARY_HEADER_INDEX = 8;
         private static final int TYPES_COUNT = BINARY_HEADER_INDEX + 1;
-
 
         private final byte[] sizes = new byte[TYPES_COUNT];
 

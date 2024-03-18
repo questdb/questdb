@@ -47,27 +47,32 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
         if (func.isConstant()) {
             return new StrConstant(Chars.toString(func.getSymbol(null)));
         }
-        return new CastSymbolToStrFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastSymbolToStrFunction extends AbstractCastToStrFunction {
-        public CastSymbolToStrFunction(Function arg) {
+    public static class Func extends AbstractCastToStrFunction {
+        public Func(Function arg) {
             super(arg);
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return arg.getSymbol(rec);
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            sink.put(arg.getSymbol(rec));
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            utf16Sink.put(arg.getSymbol(rec));
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             return arg.getSymbolB(rec);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return arg.isReadThreadSafe();
         }
     }
 }

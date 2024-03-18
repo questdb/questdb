@@ -24,12 +24,11 @@
 
 package io.questdb.test.std;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 public class Long256FromCharSequenceDecoderTest {
     private Long256FromCharSequenceDecoder decoder;
@@ -37,6 +36,16 @@ public class Long256FromCharSequenceDecoderTest {
     private long l1;
     private long l2;
     private long l3;
+
+    @AfterClass
+    public static void afterClass() {
+        ColumnType.resetStringToDefault();
+    }
+
+    @BeforeClass
+    public static void beforeClass() {
+        ColumnType.makeUtf16DefaultString();
+    }
 
     @Before
     public void before() {

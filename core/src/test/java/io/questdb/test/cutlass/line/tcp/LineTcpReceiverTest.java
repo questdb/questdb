@@ -1636,7 +1636,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     RecordCursor cursor = reader.getCursor();
                     Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
-                        symbolCounts.increment(record.getSym(1));
+                        symbolCounts.increment(record.getSymA(1));
                     }
                 }
 

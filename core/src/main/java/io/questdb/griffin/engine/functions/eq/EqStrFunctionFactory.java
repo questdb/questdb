@@ -76,7 +76,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        CharSequence constValue = constFunc.getStr(null);
+        CharSequence constValue = constFunc.getStrA(null);
 
         if (constValue == null) {
             return new NullCheckFunc(varFunc);
@@ -85,7 +85,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
         return new ConstCheckFunc(varFunc, constValue);
     }
 
-    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+    public static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final CharSequence constant;
 
@@ -101,7 +101,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(constant, arg.getStr(rec));
+            return negated != Chars.equalsNc(constant, arg.getStrA(rec));
         }
 
         @Override
@@ -124,7 +124,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
             // important to compare A and B strings in case
             // these are columns of the same record
             // records have re-usable character sequences
-            final CharSequence a = left.getStr(rec);
+            final CharSequence a = left.getStrA(rec);
             final CharSequence b = right.getStrB(rec);
 
             if (a == null) {

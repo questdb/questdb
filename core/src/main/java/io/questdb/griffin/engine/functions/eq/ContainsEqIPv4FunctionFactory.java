@@ -63,7 +63,7 @@ public class ContainsEqIPv4FunctionFactory implements FunctionFactory {
     }
 
     private Function createHalfConstantFunc(Function varFunc, Function constFunc, int constFuncPos) throws SqlException {
-        CharSequence constValue = constFunc.getStr(null);
+        CharSequence constValue = constFunc.getStrA(null);
 
         if (constValue == null) {
             return new ContainsEqIPv4FunctionFactory.NullCheckFunc(varFunc);

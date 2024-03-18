@@ -5696,7 +5696,6 @@ public class SqlOptimiser implements Mutable {
             int timestampIndex = metadata.getTimestampIndex();
             int updateSetColumnCount = updateQueryModel.getUpdateExpressions().size();
             for (int i = 0; i < updateSetColumnCount; i++) {
-
                 // SET left hand side expressions are stored in top level UPDATE QueryModel
                 ExpressionNode columnExpression = updateQueryModel.getUpdateExpressions().get(i);
                 int position = columnExpression.position;

@@ -114,7 +114,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             final RowCursor cursor = indexReader.getCursor(true, hash, 0, maxOffset - Long.BYTES);
             while (cursor.hasNext()) {
                 final long offsetOffset = cursor.next();
-                if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
+                if (Chars.equals(value, charMem.getStrA(offsetMem.getLong(offsetOffset)))) {
                     return SymbolMapWriter.offsetToKey(offsetOffset);
                 }
             }
@@ -247,16 +247,16 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     private CharSequence uncachedValue(int key) {
-        return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        return charMem.getStrA(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
     private CharSequence uncachedValue2(int key) {
-        return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        return charMem.getStrB(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
     private class SymbolTableView implements StaticSymbolTable {
-        private final DirectString csview = new DirectString();
-        private final DirectString csview2 = new DirectString();
+        private final DirectString csviewA = new DirectString();
+        private final DirectString csviewB = new DirectString();
         private final DirectString csviewInternal = new DirectString();
         private RowCursor rowCursor;
 
@@ -303,11 +303,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
 
         private CharSequence uncachedValue(int key) {
-            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csview);
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csviewA);
         }
 
         private CharSequence uncachedValue2(int key) {
-            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csview2);
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csviewB);
         }
     }
 }

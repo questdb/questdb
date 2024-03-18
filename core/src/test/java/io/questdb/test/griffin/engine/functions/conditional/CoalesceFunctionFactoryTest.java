@@ -85,6 +85,29 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoalesceVarchar() throws Exception {
+        assertQuery(
+                "c1\tc2\ta\tb\tx\n" +
+                        "핕\u05FA씎鈄۲ӄǈ2L\t핕\u05FA씎鈄۲ӄǈ2L\t\t핕\u05FA씎鈄۲ӄǈ2L\t\n" +
+                        "\uD95A\uDFD9唶鴙\uDAE2\uDC5E͛Ԉ\t\t\t\t\uD95A\uDFD9唶鴙\uDAE2\uDC5E͛Ԉ\n" +
+                        "\t\t\t\t\n" +
+                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46\t\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46\t\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46\t\t蝰L➤~2\uDAC6\uDED3ڎBH뤻\n" +
+                        "Fг\uDBAE\uDD12ɜ|\\軦۽\tFг\uDBAE\uDD12ɜ|\\軦۽\t\tFг\uDBAE\uDD12ɜ|\\軦۽\t\n",
+                "select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, b, x \n" +
+                        "from t",
+                "create table t as (" +
+                        "select CASE WHEN x % 2 = 0 THEN rnd_varchar() ELSE CAST(NULL as VARCHAR) END as x," +
+                        " CASE WHEN x % 4 = 0 THEN rnd_varchar() ELSE CAST(NULL as VARCHAR) END as a," +
+                        " CASE WHEN x % 4 = 1 THEN rnd_varchar() ELSE CAST(NULL as VARCHAR) END as b" +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDateCoalesce() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tx\n" +
@@ -343,6 +366,29 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarchar3Args() throws Exception {
+        assertQuery(
+                "c1\tc2\tx\ta\tb\n" +
+                        "X\tX\tX\t\t\n" +
+                        "AA\tAA\t\tAA\t\n" +
+                        "B\t\t\t\tB\n" +
+                        "A\tA\t\tA\tB\n" +
+                        "\t\t\t\t\n",
+                "select coalesce(x, a, b) c1, coalesce(x, a) c2, x, a, b\n" +
+                        "from alex",
+                "create table alex as (" +
+                        "SELECT rnd_varchar('X',NULL,NULL) as x\n" +
+                        ", rnd_varchar('A','AA',NULL,NULL) as a\n" +
+                        ", rnd_varchar('B',NULL) as b\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testStrCoalesceSymbolNocacheSorted() throws Exception {
         assertQuery("coalesce\tx\ta\n",
                 "select coalesce(x, a) as coalesce, x, a\n" +
@@ -352,6 +398,26 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                 null,
                 "insert into t select " +
                         " rnd_str(NULL, 'X', 'Y') as x,\n" +
+                        " rnd_symbol('A', 'B', NULL) as a\n" +
+                        "from long_sequence(5)",
+                "coalesce\tx\ta\n" +
+                        "A\t\tA\n" +
+                        "B\t\tB\n" +
+                        "X\tX\t\n" +
+                        "Y\tY\t\n" +
+                        "Y\tY\tB\n", true, true, false);
+    }
+
+    @Test
+    public void testVarcharCoalesceSymbolNocacheSorted() throws Exception {
+        assertQuery("coalesce\tx\ta\n",
+                "select coalesce(x, a) as coalesce, x, a\n" +
+                        "from t\n" +
+                        "order by 1",
+                "create table t (x varchar, a symbol nocache)",
+                null,
+                "insert into t select " +
+                        " rnd_varchar(NULL, 'X', 'Y') as x,\n" +
                         " rnd_symbol('A', 'B', NULL) as a\n" +
                         "from long_sequence(5)",
                 "coalesce\tx\ta\n" +
@@ -409,6 +475,29 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolCoalesceCharAndVarchar() throws Exception {
+        assertQuery(
+                "coalesce\tx\ta\n" +
+                        "P\t\tP\n" +
+                        "W\t\tW\n" +
+                        "X\tX\tT\n" +
+                        "X\tX\tW\n" +
+                        "X\tX\tY\n",
+                "select coalesce(x, a) as coalesce, x, a\n" +
+                        "from alex\n" +
+                        "order by 1",
+                "create table alex as (" +
+                        "SELECT rnd_varchar('X',NULL) as x\n" +
+                        ", rnd_char() as a\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testSymbolCoalesceShortAndByte() throws Exception {
         assertQuery(
                 "coalesce1\tcoalesce2\tx\ta\n" +
@@ -454,6 +543,28 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolCoalesceVarchar2() throws Exception {
+        assertQuery(
+                "coalesce\tx\ta\n" +
+                        "X\tX\tA\n" +
+                        "AA\t\tAA\n" +
+                        "AA\t\tAA\n" +
+                        "X\tX\tAA\n" +
+                        "X\tX\tA\n",
+                "select coalesce(x, a) as coalesce, x, a " +
+                        "from alex",
+                "create table alex as (" +
+                        "SELECT rnd_varchar('X',NULL) as x\n" +
+                        ", rnd_symbol('A', 'AA') as a\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testSymbolCoalesceStrSorted() throws Exception {
         assertQuery(
                 "coalesce\tx\ta\n" +
@@ -467,6 +578,29 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                         "order by 1",
                 "create table alex as (" +
                         "SELECT rnd_str('X',NULL) as x\n" +
+                        ", rnd_symbol('A', 'AA') as a\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testSymbolCoalesceVarcharSorted() throws Exception {
+        assertQuery(
+                "coalesce\tx\ta\n" +
+                        "AA\t\tAA\n" +
+                        "AA\t\tAA\n" +
+                        "X\tX\tA\n" +
+                        "X\tX\tAA\n" +
+                        "X\tX\tA\n",
+                "select coalesce(x, a) as coalesce, x, a\n" +
+                        "from alex\n" +
+                        "order by 1",
+                "create table alex as (" +
+                        "SELECT rnd_varchar('X',NULL) as x\n" +
                         ", rnd_symbol('A', 'AA') as a\n" +
                         "from long_sequence(5)" +
                         ")",
@@ -541,6 +675,26 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolNocacheCoalesceVarcharSorted() throws Exception {
+        assertQuery("coalesce\tx\ta\n",
+                "select coalesce(a, x) as coalesce, x, a\n" +
+                        "from t\n" +
+                        "order by 1",
+                "create table t (x varchar, a symbol nocache)",
+                null,
+                "insert into t select " +
+                        " rnd_varchar('X', NULL) as x,\n" +
+                        " rnd_symbol('A', 'AA') as a\n" +
+                        "from long_sequence(5)",
+                "coalesce\tx\ta\n" +
+                        "A\tX\tA\n" +
+                        "A\tX\tA\n" +
+                        "AA\t\tAA\n" +
+                        "AA\t\tAA\n" +
+                        "AA\tX\tAA\n", true, true, false);
+    }
+
+    @Test
     public void testTestCoalesceImplicitCasts() throws Exception {
         assertCoalesce("1::byte", "1");
         assertCoalesce("1::short", "1");
@@ -550,6 +704,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
         assertCoalesce("1.0d", "1.0");
         assertCoalesce("'10000000-0000-0000-2000-000000000000'::uuid", "10000000-0000-0000-2000-000000000000");
         assertCoalesce("cast('0.0.1.1' as ipv4)", "0.0.1.1");
+        assertCoalesce("cast('0.0.1.1' as varchar)", "0.0.1.1");
     }
 
     @Test

@@ -45,6 +45,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableReaderMetadataTest extends AbstractCairoTest {
 
+    private static final String stringColumnType = ColumnType.nameOf(ColumnType.STRING);
+    private static final String varcharColumnType = ColumnType.nameOf(ColumnType.VARCHAR);
     private volatile Throwable exception = null;
 
     @Before
@@ -60,12 +62,13 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "double:DOUBLE\n" +
                 "float:FLOAT\n" +
                 "long:LONG\n" +
-                "str:STRING\n" +
+                "str:" + stringColumnType + "\n" +
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "xyz:STRING\n";
+                "varchar:" + varcharColumnType + "\n" +
+                "xyz:" + stringColumnType + "\n";
         assertThat(expected, (w) -> w.addColumn("xyz", ColumnType.STRING));
     }
 
@@ -130,11 +133,12 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "double:DOUBLE\n" +
                 "float:FLOAT\n" +
                 "long:LONG\n" +
-                "str:STRING\n" +
+                "str:" + stringColumnType + "\n" +
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
+                "varchar:" + varcharColumnType + "\n" +
                 "int:INT\n";
 
         assertThat(expected,
@@ -185,7 +189,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "xyz:STRING\n";
+                "varchar:" + varcharColumnType + "\n" +
+                "xyz:" + stringColumnType + "\n";
         assertThat(expected, (w) -> {
             w.removeColumn("double");
             w.removeColumn("str");
@@ -213,6 +218,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             w.removeColumn("bin");
             w.removeColumn("date");
             w.removeColumn("double");
+            w.removeColumn("varchar");
         });
     }
 
@@ -228,7 +234,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "str:STRING\n";
+                "varchar:" + varcharColumnType + "\n" +
+                "str:" + stringColumnType + "\n";
         assertThat(expected,
                 w -> w.removeColumn("str"),
                 w -> w.addColumn("str", ColumnType.STRING)
@@ -245,7 +252,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "str:STRING\n" +
+                "varchar:" + varcharColumnType + "\n" +
+                "str:" + stringColumnType + "\n" +
                 "short:INT\n";
 
         assertThat(expected,
@@ -264,11 +272,12 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "short:SHORT\n" +
                 "byte:BYTE\n" +
                 "long:LONG\n" +
-                "str:STRING\n" +
+                "str:" + stringColumnType + "\n" +
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
-                "date:DATE\n";
+                "date:DATE\n" +
+                "varchar:" + varcharColumnType + "\n";
         assertThat(expected,
                 w -> w.removeColumn("double"),
                 w -> w.removeColumn("float")
@@ -282,10 +291,11 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "double:DOUBLE\n" +
                 "float:FLOAT\n" +
                 "long:LONG\n" +
-                "str:STRING\n" +
+                "str:" + stringColumnType + "\n" +
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
-                "bin:BINARY\n";
+                "bin:BINARY\n" +
+                "varchar:" + varcharColumnType + "\n";
         assertThat(expected,
                 w -> w.removeColumn("date"),
                 w -> w.removeColumn("int")
@@ -300,11 +310,12 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                         "double:DOUBLE\n" +
                         "float:FLOAT\n" +
                         "long:LONG\n" +
-                        "str:STRING\n" +
+                        "str:" + stringColumnType + "\n" +
                         "sym:SYMBOL\n" +
                         "bool:BOOLEAN\n" +
                         "bin:BINARY\n" +
-                        "date:DATE\n";
+                        "date:DATE\n" +
+                        "varchar:" + varcharColumnType + "\n";
         assertThat(expected, (w) -> w.removeColumn("int"));
     }
 
@@ -316,10 +327,11 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "double:DOUBLE\n" +
                 "float:FLOAT\n" +
                 "long:LONG\n" +
-                "str:STRING\n" +
+                "str:" + stringColumnType + "\n" +
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
-                "bin:BINARY\n";
+                "bin:BINARY\n" +
+                "varchar:" + varcharColumnType + "\n";
         assertThat(expected, (w) -> w.removeColumn("date"));
     }
 
@@ -332,11 +344,12 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "double:DOUBLE\n" +
                 "float:FLOAT\n" +
                 "long:LONG\n" +
-                "str:STRING\n" +
+                "str:" + stringColumnType + "\n" +
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
-                "date:DATE\n";
+                "date:DATE\n" +
+                "varchar:" + varcharColumnType + "\n";
 
         List<String> lines = new ArrayList<>(Arrays.asList(allColumns.split("\n")));
 
@@ -367,7 +380,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
-                "date:DATE\n";
+                "date:DATE\n" +
+                "varchar:" + varcharColumnType + "\n";
 
         assertThat(expected,
                 w -> w.removeColumn("double"),
@@ -382,13 +396,15 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "double:DOUBLE\n" +
                 "float:FLOAT\n" +
                 "long:LONG\n" +
-                "str1:STRING\n" +
+                "str1:" + stringColumnType + "\n" +
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
-                "date:DATE\n";
+                "date:DATE\n" +
+                "varchar:" + varcharColumnType + "\n";
         assertThat(expected, (w) -> w.renameColumn("str", "str1"));
     }
+
 
     private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
         TableToken tableToken = engine.verifyTableName(tableName);

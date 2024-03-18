@@ -78,7 +78,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         for (int i = 0; i < nKeyValues; i++) {
             final Function symbol = keyValues.get(i);
             if (symbol.isConstant()) {
-                addSymbolKey(symbolMapReader.keyOf(symbol.getStr(null)), symbol, indexDirection);
+                addSymbolKey(symbolMapReader.keyOf(symbol.getStrA(null)), symbol, indexDirection);
             } else {
                 addSymbolKey(SymbolTable.VALUE_NOT_FOUND, symbol, indexDirection);
             }
@@ -128,11 +128,11 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     }
 
     private static int compareStrFunctions(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
-        return Chars.compare(a.getFunction().getStr(null), b.getFunction().getStrB(null));
+        return Chars.compare(a.getFunction().getStrA(null), b.getFunction().getStrB(null));
     }
 
     private static int compareStrFunctionsDesc(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
-        return Chars.compareDescending(a.getFunction().getStr(null), b.getFunction().getStrB(null));
+        return Chars.compareDescending(a.getFunction().getStrA(null), b.getFunction().getStrB(null));
     }
 
     private static boolean equals(CharSequence cs1, CharSequence cs2) {

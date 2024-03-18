@@ -28,11 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.*;
 
@@ -43,9 +40,16 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (args.getQuick(0).isConstant()) {
-            final CharSequence value = args.getQuick(0).getStr(null);
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            final CharSequence value = arg.getStrA(null);
             if (value == null || value.length() == 0) {
                 return UuidConstant.NULL;
             }
@@ -57,24 +61,17 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
             }
             return new UuidConstant(uuid);
         }
-        return new Func(args.getQuick(0));
+        return new Func(arg);
     }
 
-    public static class Func extends UuidFunction implements UnaryFunction {
-        private final Function arg;
-
+    public static class Func extends AbstractCastToUuidFunction {
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
         public long getLong128Hi(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             if (value == null) {
                 return Numbers.LONG_NaN;
             }
@@ -88,7 +85,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong128Lo(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             if (value == null) {
                 return Numbers.LONG_NaN;
             }
@@ -98,11 +95,6 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
             } catch (NumericException e) {
                 return Numbers.LONG_NaN;
             }
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getArg()).val("::uuid");
         }
     }
 }

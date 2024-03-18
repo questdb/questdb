@@ -55,6 +55,23 @@ public class Utf8StringSinkTest {
     }
 
     @Test
+    public void testRepeatChar() {
+        int n = 10_000; // high enough to trigger multi-byte encoding
+        for (int i = 0; i < n; i++) {
+            Utf8StringSink sink = new Utf8StringSink();
+            char c = (char) ('a' + i);
+            int count = 10;
+            sink.repeat(c, count);
+
+            String expectedString = "";
+            for (int j = 0; j < count; j++) {
+                expectedString += c;
+            }
+            TestUtils.assertEquals(expectedString, sink);
+        }
+    }
+
+    @Test
     public void testDirectUtf8Sequence() {
         final String str = "Здравей свят";
         final GcUtf8String src = new GcUtf8String(str);
