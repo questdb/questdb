@@ -107,7 +107,7 @@ public class SubStringFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return getStr0(rec, sinkA);
         }
 
@@ -139,7 +139,7 @@ public class SubStringFunctionFactory implements FunctionFactory {
 
         @Nullable
         private StringSink getStr0(Record rec, StringSink sink) {
-            CharSequence str = strFunc.getStr(rec);
+            CharSequence str = strFunc.getStrA(rec);
             if (str == null || isSimplifiable) {
                 return null;
             }

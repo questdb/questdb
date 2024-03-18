@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -80,18 +81,19 @@ class PgNamespaceRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             return Constants.NAMESPACES[row];
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            return getStr(col);
+            return getStrA(col);
         }
 
         @Override
         public int getStrLen(int col) {
-            return getStr(col).length();
+            CharSequence value = getStrA(col);
+            return value != null ? value.length() : TableUtils.NULL_LEN;
         }
     }
 

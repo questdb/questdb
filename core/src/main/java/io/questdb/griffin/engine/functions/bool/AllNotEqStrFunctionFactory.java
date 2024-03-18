@@ -54,12 +54,12 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
 
         CharSequenceHashSet set = new CharSequenceHashSet();
         for (int i = 0; i < arraySize; i++) {
-            set.add(arrayFunction.getStr(null, i));
+            set.add(arrayFunction.getStrA(null, i));
         }
 
         Function var = args.getQuick(0);
         if (var.isConstant()) {
-            CharSequence str = var.getStr(null);
+            CharSequence str = var.getStrA(null);
             return BooleanConstant.of(str != null && set.excludes(str));
         }
 
@@ -82,7 +82,7 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence str = arg.getStr(rec);
+            CharSequence str = arg.getStrA(rec);
             return str != null && set.excludes(str);
         }
 

@@ -71,6 +71,11 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
+    }
+
+    @Override
     public int getScanDirection() {
         return masterFactory.getScanDirection();
     }

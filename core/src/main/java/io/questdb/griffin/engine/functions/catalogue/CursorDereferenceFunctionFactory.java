@@ -55,7 +55,7 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
         Function columnNameFunction = args.getQuick(1);
         RecordMetadata metadata = cursorFunction.getMetadata();
         // name is always constant
-        final CharSequence columnName = columnNameFunction.getStr(null);
+        final CharSequence columnName = columnNameFunction.getStrA(null);
         final int columnIndex = metadata.getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
             throw SqlException.invalidColumn(argPositions.getQuick(1), columnName);

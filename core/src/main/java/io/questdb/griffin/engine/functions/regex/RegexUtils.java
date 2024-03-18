@@ -40,7 +40,7 @@ final class RegexUtils {
 
     @NotNull
     public static Matcher createMatcher(Function pattern, int position) throws SqlException {
-        final CharSequence regex = pattern.getStr(null);
+        final CharSequence regex = pattern.getStrA(null);
         if (regex == null) {
             throw SqlException.$(position, "NULL regex");
         }

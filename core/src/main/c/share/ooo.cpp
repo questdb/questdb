@@ -21,6 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+
 #include "jni.h"
 #include <cstring>
 #include "util.h"
@@ -31,7 +32,6 @@
 #include <atomic>
 #include <time.h>
 #endif
-
 
 typedef struct {
     uint64_t c8[256];
@@ -624,6 +624,33 @@ Java_io_questdb_std_Vect_oooMergeCopyStrColumn(JNIEnv *env, jclass cl,
     });
 }
 
+DECLARE_DISPATCHER(merge_copy_varchar_column) ;
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_oooMergeCopyVarcharColumn(JNIEnv *env, jclass cl,
+                                                   jlong merge_index,
+                                                   jlong merge_index_size,
+                                                   jlong src_data_fix,
+                                                   jlong src_data_var,
+                                                   jlong src_ooo_fix,
+                                                   jlong src_ooo_var,
+                                                   jlong dst_fix,
+                                                   jlong dst_var,
+                                                   jlong dst_var_offset) {
+    measure_time(31, [=]() {
+        merge_copy_varchar_column(
+                reinterpret_cast<index_t *>(merge_index),
+                __JLONG_REINTERPRET_CAST__(int64_t, merge_index_size),
+                reinterpret_cast<int64_t *>(src_data_fix),
+                reinterpret_cast<char *>(src_data_var),
+                reinterpret_cast<int64_t *>(src_ooo_fix),
+                reinterpret_cast<char *>(src_ooo_var),
+                reinterpret_cast<int64_t *>(dst_fix),
+                reinterpret_cast<char *>(dst_var),
+                __JLONG_REINTERPRET_CAST__(int64_t, dst_var_offset)
+        );
+    });
+}
+
 // 1 oooMergeCopyStrColumnWithTop removed and now executed as Merge Copy without Top
 // 2 oooMergeCopyBinColumnWithTop removed and now executed as Merge Copy without Top
 
@@ -1081,16 +1108,44 @@ Java_io_questdb_std_Vect_shiftCopyFixedSizeColumnData(JNIEnv *env, jclass cl, jl
     });
 }
 
+DECLARE_DISPATCHER(shift_copy_varchar_aux) ;
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_shiftCopyVarcharColumnAux(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
+                                                   jlong srcHi, jlong dst) {
+    measure_time(28, [=]() {
+        shift_copy_varchar_aux(
+                __JLONG_REINTERPRET_CAST__(int64_t, shift),
+                reinterpret_cast<int64_t *>(src),
+                __JLONG_REINTERPRET_CAST__(int64_t, srcLo),
+                __JLONG_REINTERPRET_CAST__(int64_t, srcHi),
+                reinterpret_cast<int64_t *>(dst)
+        );
+    });
+}
+
 DECLARE_DISPATCHER(copy_index_timestamp) ;
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_copyFromTimestampIndex(JNIEnv *env, jclass cl, jlong pIndex, jlong indexLo, jlong indexHi,
                                                 jlong pTs) {
-    measure_time(28, [=]() {
+    measure_time(29, [=]() {
         copy_index_timestamp(
                 reinterpret_cast<index_t *>(pIndex),
                 __JLONG_REINTERPRET_CAST__(int64_t, indexLo),
                 __JLONG_REINTERPRET_CAST__(int64_t, indexHi),
                 reinterpret_cast<int64_t *>(pTs)
+        );
+    });
+}
+
+DECLARE_DISPATCHER(set_varchar_null_refs) ;
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setVarcharColumnNullRefs(JNIEnv *env, jclass cl, jlong aux, jlong offset,
+                                                  jlong count) {
+    measure_time(30, [=]() {
+        set_varchar_null_refs(
+                reinterpret_cast<int64_t *>(aux),
+                __JLONG_REINTERPRET_CAST__(int64_t, offset),
+                __JLONG_REINTERPRET_CAST__(int64_t, count)
         );
     });
 }
@@ -1144,6 +1199,37 @@ Java_io_questdb_std_Vect_sortVarColumn(JNIEnv *env, jclass cl, jlong mergedTimes
                         len);
         tgt_index[i] = offset;
         offset += len;
+    }
+    return __JLONG_REINTERPRET_CAST__(jlong, offset);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_sortVarcharColumn(JNIEnv *env, jclass cl, jlong mergedTimestampsAddr, jlong valueCount,
+                                           jlong srcDataAddr, jlong srcAuxAddr, jlong tgtDataAddr, jlong tgtAuxAddr) {
+
+    const index_t *index = reinterpret_cast<index_t *> (mergedTimestampsAddr);
+    const int64_t count = __JLONG_REINTERPRET_CAST__(int64_t, valueCount);
+    const char *src_data = reinterpret_cast<const char *>(srcDataAddr);
+    const int64_t *src_aux = reinterpret_cast<const int64_t *>(srcAuxAddr);
+    char *tgt_data = reinterpret_cast<char *>(tgtDataAddr);
+    int64_t *tgt_aux = reinterpret_cast<int64_t *>(tgtAuxAddr);
+
+    int64_t offset = 0;
+    for (int64_t i = 0; i < count; ++i) {
+        MM_PREFETCH_T0(index + i + 64);
+        const int64_t row = index[i].i;
+        const int64_t a1 = src_aux[2 * row];
+        const int64_t a2 = src_aux[2 * row + 1];
+        tgt_aux[2 * i] = a1;
+        tgt_aux[2 * i + 1] = (offset << 16) | (a2 & 0xffff);
+        const int64_t flags = a1 & 0x0f;
+        if ((flags & 5) == 0) {
+            // not inlined and not null
+            const int64_t size = ((a1 >> 4) & 0xffffff);
+            platform_memcpy(reinterpret_cast<void *>(tgt_data + offset), reinterpret_cast<const void *>(src_data + (a2 >> 16)),
+                            size);
+            offset += size;
+        }
     }
     return __JLONG_REINTERPRET_CAST__(jlong, offset);
 }

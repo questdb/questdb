@@ -26,12 +26,13 @@ package io.questdb.test.griffin.engine.functions.bool;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class InStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
     @Test
     public void testBadConstant() {
         assertFailure(12, "STRING constant expected", "xv", "an", 10);

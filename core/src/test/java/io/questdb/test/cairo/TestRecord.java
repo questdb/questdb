@@ -89,7 +89,7 @@ public class TestRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
+    public CharSequence getStrA(int col) {
         return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
     }
 
@@ -104,7 +104,7 @@ public class TestRecord implements Record {
     }
 
     @Override
-    public CharSequence getSym(int col) {
+    public CharSequence getSymA(int col) {
         return rnd.nextChars(10);
     }
 

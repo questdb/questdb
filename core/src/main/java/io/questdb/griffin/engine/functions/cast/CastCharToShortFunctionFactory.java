@@ -40,19 +40,12 @@ public class CastCharToShortFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CastCharToShortFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastCharToShortFunction extends AbstractCastToShortFunction {
-        private final Function arg;
-
-        public CastCharToShortFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+    public static class Func extends AbstractCastToShortFunction {
+        public Func(Function arg) {
+            super(arg);
         }
 
         @Override

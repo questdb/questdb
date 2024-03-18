@@ -66,9 +66,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
-                        .http()
                         .build()
                 ) {
                     sender.table("ex_tbl")
@@ -169,6 +168,48 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testInsertWithIlpHttp_varcharColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+
+                String tableName = "h2o_feet";
+                serverMain.compile("create table " + tableName + " (async symbol, location symbol, level varchar, water_level long, ts timestamp) timestamp(ts) partition by DAY WAL");
+
+                int count = 10;
+
+                String fullString = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder()
+                        .address("localhost:" + port)
+                        .http()
+                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .build()
+                ) {
+                    for (int i = 0; i < count; i++) {
+                        sender.table(tableName)
+                                .symbol("async", "true")
+                                .symbol("location", "santa_monica")
+                                .stringColumn("level", fullString.substring(0, i % 10 + 10))
+                                .longColumn("water_level", i)
+                                .atNow();
+                    }
+                    sender.flush();
+                }
+                StringBuilder expectedString = new StringBuilder("level\n");
+                for (int i = 0; i < count; i++) {
+                    expectedString.append(fullString, 0, i % 10 + 10).append('\n');
+                }
+
+                serverMain.awaitTxn(tableName, 1);
+                serverMain.assertSql("SELECT level FROM h2o_feet", expectedString.toString());
+            }
+        });
+    }
+
+    @Test
     public void testInsertWithIlpHttpServerKeepAliveOff() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -228,9 +269,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
-                        .http()
                         .build()
                 ) {
                     sender.table("ex_tbl")
@@ -270,9 +310,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
-                        .http()
                         .build()
                 ) {
                     sender.table("ex_tbl")
@@ -355,9 +394,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         int i = 0;
 
         int port = serverMain.getHttpServerPort();
-        try (Sender sender = Sender.builder()
+        try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                 .address("localhost:" + port)
-                .http()
                 .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                 .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
                 .build()

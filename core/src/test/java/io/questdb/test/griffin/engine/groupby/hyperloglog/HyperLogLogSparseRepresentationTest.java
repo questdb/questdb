@@ -24,12 +24,12 @@
 
 package io.questdb.test.griffin.engine.groupby.hyperloglog;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLogDenseRepresentation;
 import io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLogSparseRepresentation;
 import io.questdb.std.Hash;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractTest;
 import org.junit.Test;
@@ -42,16 +42,10 @@ public class HyperLogLogSparseRepresentationTest extends AbstractTest {
 
     @Test
     public void testComputeCardinality() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         for (int precision = 11; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                     HyperLogLogSparseRepresentation hll = new HyperLogLogSparseRepresentation(finalPrecision);
                     hll.setAllocator(allocator);
                     hll.of(0);
@@ -71,16 +65,10 @@ public class HyperLogLogSparseRepresentationTest extends AbstractTest {
 
     @Test
     public void testComputeCardinalityWithRepetitions() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         for (int precision = 11; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                     HyperLogLogSparseRepresentation hll = new HyperLogLogSparseRepresentation(finalPrecision);
                     hll.setAllocator(allocator);
                     hll.of(0);
@@ -107,16 +95,10 @@ public class HyperLogLogSparseRepresentationTest extends AbstractTest {
 
     @Test
     public void testConvertToDense() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         for (int precision = 11; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                     HyperLogLogSparseRepresentation sparse = new HyperLogLogSparseRepresentation(finalPrecision);
                     sparse.setAllocator(allocator);
                     sparse.of(0);

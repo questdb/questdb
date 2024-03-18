@@ -26,12 +26,15 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.WALE_HEADER_SIZE;
@@ -218,9 +221,20 @@ public class WalEventCursor {
         final long storageLength = strLength > 0 ? Vm.getStorageLength(strLength) : Integer.BYTES;
 
         checkMemSize(storageLength);
-        final CharSequence value = strLength >= 0 ? eventMem.getStr(offset) : null;
+        final CharSequence value = strLength >= 0 ? eventMem.getStrA(offset) : null;
         offset += storageLength;
         return value;
+    }
+
+    private Utf8Sequence readVarchar() {
+        Utf8Sequence seq = VarcharTypeDriver.getValue(eventMem, offset, 1);
+        if (seq == null) {
+            offset += Integer.BYTES;
+            return null;
+        } else {
+            offset += seq.size() + Integer.BYTES;
+            return seq;
+        }
     }
 
     void openOffset(long offset) {
@@ -369,6 +383,9 @@ public class WalEventCursor {
                     case ColumnType.STRING:
                         bindVariableService.setStr(i, readStr());
                         break;
+                    case ColumnType.VARCHAR:
+                        bindVariableService.setVarchar(i, readVarchar());
+                        break;
                     case ColumnType.BINARY:
                         bindVariableService.setBin(i, readBin());
                         break;
@@ -399,7 +416,7 @@ public class WalEventCursor {
             final int count = readInt();
             for (int i = 0; i < count; i++) {
                 // garbage, string intern?
-                final CharSequence name = readStr().toString();
+                final CharSequence name = Chars.toString(readStr());
                 final int type = readInt();
                 switch (ColumnType.tagOf(type)) {
                     case ColumnType.BOOLEAN:
@@ -431,6 +448,9 @@ public class WalEventCursor {
                         break;
                     case ColumnType.STRING:
                         bindVariableService.setStr(name, readStr());
+                        break;
+                    case ColumnType.VARCHAR:
+                        bindVariableService.setVarchar(name, readVarchar());
                         break;
                     case ColumnType.BINARY:
                         bindVariableService.setBin(name, readBin());

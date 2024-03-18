@@ -1120,6 +1120,58 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnVarchar() throws Exception {
+        assertQuery(
+                "x\tv\tts\n" +
+                        "42\tb\t1970-01-02T17:00:00.000000Z\n" +
+                        "48\ta\t1970-01-02T23:00:00.000000Z\n",
+                "t " +
+                        "where v in ('a', 'b', 'd') and x%2 = 0 " +
+                        "latest on ts partition by v",
+                "create table t as (" +
+                        "select " +
+                        "x, " +
+                        "rnd_varchar('a', 'b', 'c', null) v, " +
+                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                        "from long_sequence(49)" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into t values (1000, 'd', '1970-01-02T20:00')",
+                "x\tv\tts\n" +
+                        "42\tb\t1970-01-02T17:00:00.000000Z\n" +
+                        "1000\td\t1970-01-02T20:00:00.000000Z\n" +
+                        "48\ta\t1970-01-02T23:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testLatestOnVarcharNonAscii() throws Exception {
+        assertQuery(
+                "x\tv\tts\n" +
+                        "14\t\t1970-01-01T13:00:00.000000Z\n" +
+                        "17\tраз\t1970-01-01T16:00:00.000000Z\n" +
+                        "19\tдва\t1970-01-01T18:00:00.000000Z\n" +
+                        "20\tтри\t1970-01-01T19:00:00.000000Z\n",
+                "select * " +
+                        "from t " +
+                        "latest on ts partition by v",
+                "create table t as (" +
+                        "select " +
+                        "x, " +
+                        "rnd_varchar('раз', 'два', 'три', null) v, " +
+                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                        "from long_sequence(20)" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testLatestWithFilterByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
@@ -1302,7 +1354,7 @@ public class LatestByTest extends AbstractCairoTest {
                     if (i++ > 0) {
                         sink.put(',');
                     }
-                    sink.put('\'').put(record.getSym(0)).put('\'');
+                    sink.put('\'').put(record.getSymA(0)).put('\'');
                 }
             }
         }
@@ -1325,8 +1377,8 @@ public class LatestByTest extends AbstractCairoTest {
 
         String query = "select when, version, temperature from forecasts latest on version partition by when";
         String expected = "when\tversion\ttemperature\n" +
-                valueA.replaceAll("'|#", "") + "\t2020-05-04T00:00:00.000000Z\t42.0\n" +
-                valueB.replaceAll("'|#", "") + "\t2020-05-05T00:00:00.000000Z\t142.0\n";
+                valueA.replaceAll("['#]", "") + "\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                valueB.replaceAll("['#]", "") + "\t2020-05-05T00:00:00.000000Z\t142.0\n";
 
         assertQuery(expected, query, "version", true, true);
     }

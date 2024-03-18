@@ -64,7 +64,7 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
         Function function = factory.newInstance(3, args, argPositions, configuration, sqlExecutionContext);
         Assert.assertFalse(function.getBool(new Record() {
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 return invalidTimestamp;
             }
 

@@ -67,7 +67,7 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
             set.clear();
         }
 
-        final CharSequence val = arg.getStr(record);
+        final CharSequence val = arg.getStrA(record);
         if (val != null) {
             set.add(Chars.toString(val));
             mapValue.putLong(valueIndex, 1L);
@@ -80,7 +80,7 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final CompactCharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
-        final CharSequence val = arg.getStr(record);
+        final CharSequence val = arg.getStrA(record);
         if (val != null) {
             final int index = set.keyIndex(val);
             if (index < 0) {

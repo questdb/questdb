@@ -35,7 +35,7 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Specialized flyweight char sink used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
  * <p>
- * Uses provided {@link GroupByAllocator} to allocate the underlying buffer. Grows the buffer when needed.
+ * Uses provided {@link GroupByAllocatorImpl} to allocate the underlying buffer. Grows the buffer when needed.
  * <p>
  * Buffer layout is the following:
  * <pre>

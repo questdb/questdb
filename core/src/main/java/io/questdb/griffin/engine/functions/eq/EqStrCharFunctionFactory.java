@@ -64,7 +64,7 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         }
 
         if (strFunc.isConstant() && !charFunc.isConstant()) {
-            CharSequence str = strFunc.getStr(null);
+            CharSequence str = strFunc.getStrA(null);
             if (str == null || str.length() != 1) {
                 return new NegatedAwareBooleanConstantFunc();
             }
@@ -76,7 +76,7 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         }
 
         if (strFunc.isConstant() && charFunc.isConstant()) {
-            return new ConstStrConstChrFunc(Chars.equalsNc(strFunc.getStr(null), charFunc.getChar(null)));
+            return new ConstStrConstChrFunc(Chars.equalsNc(strFunc.getStrA(null), charFunc.getChar(null)));
         }
 
         return new Func(strFunc, charFunc);
@@ -98,7 +98,7 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(strFunc.getStr(rec), chrConst);
+            return negated != Chars.equalsNc(strFunc.getStrA(rec), chrConst);
         }
 
         @Override
@@ -167,7 +167,7 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (Chars.equalsNc(left.getStr(rec), right.getChar(rec)));
+            return negated != (Chars.equalsNc(left.getStrA(rec), right.getChar(rec)));
         }
     }
 

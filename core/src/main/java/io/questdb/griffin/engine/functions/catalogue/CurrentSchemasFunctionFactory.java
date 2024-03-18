@@ -55,43 +55,43 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return "{public}";
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            sink.put(getStr(rec));
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            utf16Sink.put(getStrA(rec));
         }
 
         @Override
-        public CharSequence getStr(Record rec, int arrayIndex) {
+        public CharSequence getStrA(Record rec, int arrayIndex) {
             return "public";
         }
 
         @Override
         public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
-            sink.put(getStr(rec, arrayIndex));
+            sink.put(getStrA(rec, arrayIndex));
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return getStr(rec);
+            return getStrA(rec);
         }
 
         @Override
         public CharSequence getStrB(Record rec, int arrayIndex) {
-            return getStr(rec, arrayIndex);
+            return getStrA(rec, arrayIndex);
         }
 
         @Override
         public int getStrLen(Record rec) {
-            return getStr(rec).length();
+            return getStrA(rec).length();
         }
 
         @Override
         public int getStrLen(Record rec, int arrayIndex) {
-            return getStr(rec, arrayIndex).length();
+            return getStrA(rec, arrayIndex).length();
         }
 
         @Override

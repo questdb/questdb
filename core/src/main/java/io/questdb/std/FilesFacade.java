@@ -132,6 +132,8 @@ public interface FilesFacade {
 
     long read(int fd, long buf, long size, long offset);
 
+    long readIntAsUnsignedLong(int fd, long offset);
+
     boolean readLink(Path softLink, Path readTo);
 
     byte readNonNegativeByte(int fd, long offset);

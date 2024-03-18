@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -4946,7 +4947,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "        timestamp_sequence(0, 1000000000) ts" +
                 "    from long_sequence(10)" +
                 ") timestamp(ts) partition by DAY";
-        CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON";
+        CharSequence expectedTail = "invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON";
         ddl(createTableDDL);
         for (String[] nameType : new String[][]{
                 {"binary", "BINARY"}}) {
@@ -8249,5 +8250,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "tab latest on ts partition by symbol"
             );
         });
+    }
+
+    @Test
+    public void testUnionCastTypeSymmetry() {
+        for (int typeA = 0; typeA <= ColumnType.VARCHAR; typeA++) {
+            for (int typeB = 0; typeB <= typeA; typeB++) {
+                Assert.assertEquals(
+                        "typeA: " + typeA + ", typeB: " + typeB,
+                        SqlCodeGenerator.getUnionCastType(typeA, typeB),
+                        SqlCodeGenerator.getUnionCastType(typeB, typeA)
+                );
+            }
+        }
     }
 }

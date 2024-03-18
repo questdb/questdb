@@ -35,13 +35,11 @@ public interface Frame extends Closeable {
 
     long getOffset();
 
-    long getSize();
-
-    void rebuildIndexes(long offset);
+    long getRowCount();
 
     void saveChanges(FrameColumn column);
 
     void setOffset(long offset);
 
-    void setSize(long size);
+    void setRowCount(long rowCount);
 }

@@ -108,7 +108,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), row));
                                 actualSink.put(record.getInt(0));
                                 actualSink.put('\t');
-                                actualSink.put(record.getStr(1));
+                                actualSink.put(record.getStrA(1));
                                 actualSink.put('\t');
                                 TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                                 actualSink.put('\n');
@@ -164,7 +164,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), row));
                                 actualSink.put(record.getInt(0));
                                 actualSink.put('\t');
-                                actualSink.put(record.getStr(1));
+                                actualSink.put(record.getStrA(1));
                                 actualSink.put('\t');
                                 TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                                 actualSink.put('\n');
@@ -179,7 +179,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), row));
                                 actualSink.put(record.getInt(0));
                                 actualSink.put('\t');
-                                actualSink.put(record.getStr(1));
+                                actualSink.put(record.getStrA(1));
                                 actualSink.put('\t');
                                 TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                                 actualSink.put('\n');
@@ -235,7 +235,7 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                                 timeFrameCursor.recordAt(record, Rows.toRowID(frame.getIndex(), row));
                                 actualSink.put(record.getInt(0));
                                 actualSink.put('\t');
-                                actualSink.put(record.getStr(1));
+                                actualSink.put(record.getStrA(1));
                                 actualSink.put('\t');
                                 TimestampFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(2));
                                 actualSink.put('\n');

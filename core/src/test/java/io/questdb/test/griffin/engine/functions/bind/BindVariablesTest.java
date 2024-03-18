@@ -72,7 +72,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("1970-01", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("1970-01", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -112,7 +112,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                         "000000d0 45 4f 59 50 48 52 49 50 5a 49 4d 4e 5a 5a 52 4d\n" +
                         "000000e0 46 4d 42 45 5a 47 48 57 56 44 4b 46 4c 4f 50 4a\n" +
                         "000000f0 4f 58 50 4b 52 47 49 49 48 59 48 42 4f 51 4d 59",
-                func.getStr(builder.getRecord())
+                func.getStrA(builder.getRecord())
         );
 
         // check that bin bind variable length is accurate
@@ -124,7 +124,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         TestUtils.assertEquals(
                 "00000000 53 53 4d 50 47 4c 55 4f 48 4e 5a 48 5a 53 51 4c",
-                func.getStr(builder.getRecord())
+                func.getStrA(builder.getRecord())
         );
 
         bindVariableService.setBin("x", new TestBinarySequence().of(rnd.nextBytes(24)));
@@ -132,7 +132,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         TestUtils.assertEquals(
                 "00000000 44 47 4c 4f 47 49 46 4f 55 53 5a 4d 5a 56 51 45\n" +
                         "00000010 42 4e 44 43 51 43 45 48",
-                func.getStr(builder.getRecord())
+                func.getStrA(builder.getRecord())
         );
     }
 
@@ -174,7 +174,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                         "000000d0 45 4f 59 50 48 52 49 50 5a 49 4d 4e 5a 5a 52 4d\n" +
                         "000000e0 46 4d 42 45 5a 47 48 57 56 44 4b 46 4c 4f 50 4a\n" +
                         "000000f0 4f 58 50 4b 52 47 49 49 48 59 48 42 4f 51 4d 59",
-                func.getStr(builder.getRecord())
+                func.getStrA(builder.getRecord())
         );
 
         // check that bin bind variable length is accurate
@@ -186,7 +186,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         TestUtils.assertEquals(
                 "00000000 53 53 4d 50 47 4c 55 4f 48 4e 5a 48 5a 53 51 4c",
-                func.getStr(builder.getRecord())
+                func.getStrA(builder.getRecord())
         );
 
         bindVariableService.setBin(0, new TestBinarySequence().of(rnd.nextBytes(24)));
@@ -194,7 +194,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         TestUtils.assertEquals(
                 "00000000 44 47 4c 4f 47 49 46 4f 55 53 5a 4d 5a 56 51 45\n" +
                         "00000010 42 4e 44 43 51 43 45 48",
-                func.getStr(builder.getRecord())
+                func.getStrA(builder.getRecord())
         );
     }
 
@@ -281,13 +281,13 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("CA", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("CA", func.getStrA(builder.getRecord()));
 
         bindVariableService.setChar(1, '0');
 
         func.init(null, sqlExecutionContext);
 
-        TestUtils.assertEquals("C0", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("C0", func.getStrA(builder.getRecord()));
 
         func.close();
     }
@@ -300,10 +300,10 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("2015-04", func.getStrA(builder.getRecord()));
 
         bindVariableService.setDate("xyz", DateFormatUtils.parseUTCDate("2015-08-10T10:00:00.000Z"));
-        TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("2015-08", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -315,10 +315,10 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("2015-04", func.getStrA(builder.getRecord()));
 
         bindVariableService.setDate(0, DateFormatUtils.parseUTCDate("2015-08-10T10:00:00.000Z"));
-        TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("2015-08", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -604,7 +604,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("abcdefghijklmnopqrstuvxz", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("abcdefghijklmnopqrstuvxz", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -615,7 +615,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("abcdefghijklmnopqrstuvxz", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("abcdefghijklmnopqrstuvxz", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -628,7 +628,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("abcdefghijklm...() { _; } >_[$($())] { <<< %(='%') \"nopqrstuvxz", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("abcdefghijklm...() { _; } >_[$($())] { <<< %(='%') \"nopqrstuvxz", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -639,7 +639,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("abcdefghijklm...() { _; } >_[$($())] { <<< %(='%') \"nopqrstuvxz", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("abcdefghijklm...() { _; } >_[$($())] { <<< %(='%') \"nopqrstuvxz", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -652,7 +652,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("ABCDEFGHIJKLM...() { _; } >_[$($())] { <<< %(='%') \"NOPQRSTUVXZ", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("ABCDEFGHIJKLM...() { _; } >_[$($())] { <<< %(='%') \"NOPQRSTUVXZ", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -663,7 +663,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("ABCDEFGHIJKLM...() { _; } >_[$($())] { <<< %(='%') \"NOPQRSTUVXZ", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("ABCDEFGHIJKLM...() { _; } >_[$($())] { <<< %(='%') \"NOPQRSTUVXZ", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -717,12 +717,12 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setInt("start", 1);
 
         Function func = expr("right(:str, :start)")
-                .withFunction(new RightFunctionFactory())
+                .withFunction(new RightStrFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
 
-        TestUtils.assertEquals("d", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("d", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -732,12 +732,12 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setStr(1, "abcd");
 
         Function func = expr("right($2, $1)")
-                .withFunction(new RightFunctionFactory())
+                .withFunction(new RightStrFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
 
-        TestUtils.assertEquals("d", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("d", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -763,10 +763,10 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("2015-04", func.getStrA(builder.getRecord()));
 
         bindVariableService.setTimestamp("xyz", TimestampFormatUtils.parseTimestamp("2015-08-10T10:00:00.000Z"));
-        TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("2015-08", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -779,10 +779,10 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("2015-04", func.getStrA(builder.getRecord()));
 
         bindVariableService.setTimestamp(0, TimestampFormatUtils.parseTimestamp("2015-08-10T10:00:00.000Z"));
-        TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("2015-08", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -809,7 +809,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStrA(builder.getRecord()));
     }
 
     @Test
@@ -820,7 +820,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .$();
 
         func.init(null, sqlExecutionContext);
-        TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStrA(builder.getRecord()));
     }
 
     private FunctionBuilder expr(String expression) {

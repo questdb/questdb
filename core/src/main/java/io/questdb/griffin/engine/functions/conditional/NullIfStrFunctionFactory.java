@@ -79,12 +79,12 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            CharSequence cs1 = strFunc1.getStr(rec);
+        public CharSequence getStrA(Record rec) {
+            CharSequence cs1 = strFunc1.getStrA(rec);
             if (cs1 == null) {
                 return null;
             }
-            CharSequence cs2 = strFunc2.getStr(rec);
+            CharSequence cs2 = strFunc2.getStrA(rec);
             if (cs2 == null) {
                 return cs1;
             }

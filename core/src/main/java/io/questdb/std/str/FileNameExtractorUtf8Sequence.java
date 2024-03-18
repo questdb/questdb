@@ -63,6 +63,11 @@ public class FileNameExtractorUtf8Sequence implements Utf8Sequence {
     }
 
     @Override
+    public boolean isAscii() {
+        return base.isAscii();
+    }
+
+    @Override
     public int size() {
         return hi - lo;
     }

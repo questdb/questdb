@@ -166,14 +166,14 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 assert col == TABLE_NAME_COLUMN_INDEX;
                 return tableToken.getTableName();
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override

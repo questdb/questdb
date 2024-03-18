@@ -43,7 +43,7 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        final CharSequence tableName = args.getQuick(0).getStr(null);
+        final CharSequence tableName = args.getQuick(0).getStrA(null);
         final TableToken token = sqlExecutionContext.getTableToken(tableName);
         return new CursorFunction(new ShowColumnsRecordCursorFactory(token, argPositions.get(0)));
     }

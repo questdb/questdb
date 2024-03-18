@@ -27,39 +27,39 @@ package io.questdb.cairo.frm;
 public class FrameAlgebra {
 
     public static void append(Frame target, Frame source, int commitMode) {
-        if (source.getSize() > 0) {
+        if (source.getRowCount() > 0) {
             for (int i = 0, n = source.columnCount(); i < n; i++) {
                 try (
                         FrameColumn sourceColumn = source.createColumn(i);
                         FrameColumn targetColumn = target.createColumn(i)
                 ) {
                     if (sourceColumn.getColumnType() >= 0) {
-                        append(targetColumn, target.getSize(), sourceColumn, source.getSize(), commitMode);
+                        append(targetColumn, target.getRowCount(), sourceColumn, source.getRowCount(), commitMode);
                         target.saveChanges(targetColumn);
                     }
                 }
             }
-            target.setSize(source.getSize() + target.getSize());
+            target.setRowCount(source.getRowCount() + target.getRowCount());
         }
     }
 
-    private static void append(FrameColumn targetColumn, long targetSize, FrameColumn sourceColumn, long sourceSize, int commitMode) {
+    private static void append(FrameColumn targetColumn, long targetRowCount, FrameColumn sourceColumn, long sourceRowCount, int commitMode) {
         int columnType = sourceColumn.getColumnType();
         if (columnType != targetColumn.getColumnType()) {
             throw new UnsupportedOperationException();
         }
 
-        long sourceColTop = sourceColumn.getColumnTop();
-        if (sourceColTop > 0) {
+        final long sourceColumnTop = sourceColumn.getColumnTop();
+        if (sourceColumnTop > 0) {
             long targetColTop = targetColumn.getColumnTop();
-            if (targetColTop == targetSize) {
+            if (targetColTop == targetRowCount) {
                 // Increase target column top
-                targetColumn.addTop(sourceColTop);
+                targetColumn.addTop(sourceColumnTop);
             } else {
                 // Pad target with NULLs
-                targetColumn.appendNulls(targetSize, sourceColTop, commitMode);
+                targetColumn.appendNulls(targetRowCount, sourceColumnTop, commitMode);
             }
         }
-        targetColumn.append(targetSize + sourceColTop, sourceColumn, sourceColTop, sourceSize, commitMode);
+        targetColumn.append(targetRowCount + sourceColumnTop, sourceColumn, sourceColumnTop, sourceRowCount, commitMode);
     }
 }

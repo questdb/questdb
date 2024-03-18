@@ -110,6 +110,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
+    }
+
+    @Override
     public int getScanDirection() {
         return masterFactory.getScanDirection();
     }

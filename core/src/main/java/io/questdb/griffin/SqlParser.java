@@ -709,7 +709,7 @@ public class SqlParser {
                         timestampColumnFound = true;
                     } else {
                         int columnType = model.getColumnType(colIndex);
-                        if (ColumnType.isVariableLength(columnType)) {
+                        if (ColumnType.isVarSize(columnType)) {
                             throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column can only be fixed size column [column=").put(columnName)
                                     .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
                         }
@@ -1225,7 +1225,7 @@ public class SqlParser {
         return updateQueryModel;
     }
 
-    //doesn't allow copy, rename
+    // doesn't allow copy, rename
     private ExecutionModel parseExplain(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok = tok(lexer, "'create', 'format', 'insert', 'update', 'select' or 'with'");
 
@@ -1840,7 +1840,6 @@ public class SqlParser {
             boolean hasFrom = false;
 
             while (true) {
-
                 tok = tok(lexer, "column");
                 if (Chars.equals(tok, '*')) {
                     expr = nextLiteral(GenericLexer.immutableOf(tok), lexer.lastTokenPosition());

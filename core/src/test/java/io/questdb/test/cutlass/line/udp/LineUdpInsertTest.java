@@ -45,7 +45,14 @@ import java.util.function.Consumer;
 public abstract class LineUdpInsertTest extends AbstractCairoTest {
 
     protected static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
-    protected static final LineUdpReceiverConfiguration RCVR_CONF = new DefaultLineUdpReceiverConfiguration();
+    protected static boolean useLegacyString = true;
+    protected static final LineUdpReceiverConfiguration RCVR_CONF = new DefaultLineUdpReceiverConfiguration() {
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyString;
+        }
+    };
+
     protected static final int PORT = RCVR_CONF.getPort();
 
     protected static void assertReader(String tableName, String expected) {

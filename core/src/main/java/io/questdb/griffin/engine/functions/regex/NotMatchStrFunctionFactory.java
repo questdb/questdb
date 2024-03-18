@@ -56,7 +56,7 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         Function value = args.getQuick(0);
-        CharSequence regex = args.getQuick(1).getStr(null);
+        CharSequence regex = args.getQuick(1).getStrA(null);
 
         if (regex == null) {
             throw SqlException.$(argPositions.getQuick(1), "NULL regex");
@@ -86,7 +86,7 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = getArg().getStrA(rec);
             return cs == null || !matcher.reset(cs).find();
         }
 

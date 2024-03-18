@@ -36,6 +36,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
@@ -129,16 +130,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
-                            .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
-            );
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    "first\tts\n" +
-                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            .col("s2", ColumnType.SYMBOL)
+                                .col("vch", ColumnType.VARCHAR),
+                        10,
+                        "2022-06-01",
+                        3
+                );
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                assertSql(
+                        "first\tts\n" +
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                );
 
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
@@ -177,16 +179,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
-                            .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
-            );
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    "first\tts\n" +
-                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            .col("s2", ColumnType.SYMBOL)
+                                .col("vch", ColumnType.VARCHAR),
+                        10,
+                        "2022-06-01",
+                        3
+                );
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                assertSql(
+                        "first\tts\n" +
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                );
 
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertFailure("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", DETACH_ERR_COPY_META.name());
@@ -230,16 +233,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
-                            .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
-            );
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            assertSql(
-                    "first\tts\n" +
-                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
-            );
+                            .col("s2", ColumnType.SYMBOL)
+                                .col("vch", ColumnType.VARCHAR),
+                        10,
+                        "2022-06-01",
+                        3
+                );
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                assertSql(
+                        "first\tts\n" +
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                );
 
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
@@ -394,7 +398,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .col("vch", ColumnType.VARCHAR)
+                                .timestamp("ts"),
                     5,
                     "2022-06-01",
                     4
@@ -419,12 +424,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             }
 
             assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                            "1\t1\t2022-06-01T19:11:59.800000Z\tNaN\n" +
-                            "33\t33\t2022-06-02T22:00:00.000000Z\tNaN\n" +
-                            "3\t3\t2022-06-03T09:35:59.400000Z\tNaN\n" +
-                            "4\t4\t2022-06-04T04:47:59.200000Z\tNaN\n" +
-                            "5\t5\t2022-06-04T23:59:59.000000Z\tNaN\n",
+                    "l\ti\tvch\tts\tnew_column\n" +
+                            "1\t1\t핕\u05FA씎鈄\t2022-06-01T19:11:59.800000Z\tNaN\n" +
+                            "33\t33\t\t2022-06-02T22:00:00.000000Z\tNaN\n" +
+                            "3\t3\tӄǈ2Lg\t2022-06-03T09:35:59.400000Z\tNaN\n" +
+                            "4\t4\t\uF644䶓zV衞͛Ԉ龘и\uDA89\uDFA4~2\uDAC6\uDED3ڎB\t2022-06-04T04:47:59.200000Z\tNaN\n" +
+                            "5\t5\t뤻䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\篸{\t2022-06-04T23:59:59.000000Z\tNaN\n",
                     tableName
             );
         });
@@ -446,9 +451,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             );
 
             compile("alter table " + tableName + " add column str string");
+                compile("alter table " + tableName + " add column vch varchar");
 
             compile("insert into " + tableName +
-                    " select x, rnd_int(), timestamp_sequence('2020-01-02T23:59:59', 1000000L * 60 * 20), rnd_str('a', 'b', 'c', null)" +
+                    " select x, rnd_int(), timestamp_sequence('2020-01-02T23:59:59', 1000000L * 60 * 20), rnd_str('a', 'b', 'c', null), rnd_varchar('a', 'b', 'c', null)" +
                     " from long_sequence(100)");
 
             compile("alter table " + tableName + " detach partition list '2020-01-02', '2020-01-03'");
@@ -456,11 +462,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             assertSql(
                     "first\tstr\n" +
                             "2020-01-01T00:28:47.990000Z\t\n" +
-                            "2020-01-04T00:19:59.000000Z\ta\n" +
-                            "2020-01-04T00:39:59.000000Z\tc\n" +
-                            "2020-01-04T01:19:59.000000Z\tb\n" +
+                            "2020-01-04T00:19:59.000000Z\tb\n" +
+                            "2020-01-04T00:39:59.000000Z\ta\n" +
+                            "2020-01-04T00:59:59.000000Z\tb\n" +
                             "2020-01-04T01:39:59.000000Z\t\n" +
-                            "2020-01-04T01:59:59.000000Z\ta\n", "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                            "2020-01-04T05:19:59.000000Z\tc\n", "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             renameDetachedToAttachable(tableName, "2020-01-02", "2020-01-03");
@@ -471,14 +477,15 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "2020-01-01T00:28:47.990000Z\t\n" +
                             "2020-01-02T00:57:35.480000Z\t\n" +
                             "2020-01-02T23:59:59.000000Z\tc\n" +
-                            "2020-01-03T00:39:59.000000Z\t\n" +
-                            "2020-01-03T01:19:59.000000Z\ta\n" +
-                            "2020-01-03T02:39:59.000000Z\tb\n" +
-                            "2020-01-03T02:59:59.000000Z\tc\n" +
-                            "2020-01-04T00:39:59.000000Z\tc\n" +
-                            "2020-01-04T01:19:59.000000Z\tb\n" +
+                            "2020-01-03T00:19:59.000000Z\tb\n" +
+                                "2020-01-03T00:39:59.000000Z\t\n" +
+                            "2020-01-03T00:59:59.000000Z\ta\n" +
+                            "2020-01-03T01:59:59.000000Z\tc\n" +
+                            "2020-01-03T05:39:59.000000Z\tb\n" +
+                            "2020-01-04T00:39:59.000000Z\ta\n" +
+                            "2020-01-04T00:59:59.000000Z\tb\n" +
                             "2020-01-04T01:39:59.000000Z\t\n" +
-                            "2020-01-04T01:59:59.000000Z\ta\n", "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                            "2020-01-04T05:19:59.000000Z\tc\n", "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -493,25 +500,26 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     tab
                             .col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .col("vch", ColumnType.VARCHAR)
+                                .timestamp("ts"),
                     12,
                     timestampDay,
                     4
             );
             assertContent(
-                    "l\ti\tts\n" +
-                            "1\t1\t2022-06-01T07:59:59.916666Z\n" +
-                            "2\t2\t2022-06-01T15:59:59.833332Z\n" +
-                            "3\t3\t2022-06-01T23:59:59.749998Z\n" +
-                            "4\t4\t2022-06-02T07:59:59.666664Z\n" +
-                            "5\t5\t2022-06-02T15:59:59.583330Z\n" +
-                            "6\t6\t2022-06-02T23:59:59.499996Z\n" +
-                            "7\t7\t2022-06-03T07:59:59.416662Z\n" +
-                            "8\t8\t2022-06-03T15:59:59.333328Z\n" +
-                            "9\t9\t2022-06-03T23:59:59.249994Z\n" +
-                            "10\t10\t2022-06-04T07:59:59.166660Z\n" +
-                            "11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                            "12\t12\t2022-06-04T23:59:58.999992Z\n",
+                    "l\ti\tvch\tts\n" +
+                            "1\t1\t1\t2022-06-01T07:59:59.916666Z\n" +
+                            "2\t2\t2\t2022-06-01T15:59:59.833332Z\n" +
+                            "3\t3\t3\t2022-06-01T23:59:59.749998Z\n" +
+                            "4\t4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                            "5\t5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                            "6\t6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                            "7\t7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                            "8\t8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                            "9\t9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                            "10\t10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                            "11\t11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                            "12\t12\t12\t2022-06-04T23:59:58.999992Z\n",
                     tableName
             );
 
@@ -528,17 +536,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 row.append();
                 writer.commit();
             }
-            String expected = "l\ti\tts\n" +
-                    "137\t137\t2022-06-01T09:59:59.999999Z\n" +
-                    "4\t4\t2022-06-02T07:59:59.666664Z\n" +
-                    "5\t5\t2022-06-02T15:59:59.583330Z\n" +
-                    "6\t6\t2022-06-02T23:59:59.499996Z\n" +
-                    "7\t7\t2022-06-03T07:59:59.416662Z\n" +
-                    "8\t8\t2022-06-03T15:59:59.333328Z\n" +
-                    "9\t9\t2022-06-03T23:59:59.249994Z\n" +
-                    "10\t10\t2022-06-04T07:59:59.166660Z\n" +
-                    "11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                    "12\t12\t2022-06-04T23:59:58.999992Z\n";
+            String expected = "l\ti\tvch\tts\n" +
+                    "137\t137\t\t2022-06-01T09:59:59.999999Z\n" +
+                    "4\t4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                    "5\t5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                    "6\t6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                    "7\t7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                    "8\t8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                    "9\t9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                    "10\t10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                    "11\t11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                    "12\t12\t12\t2022-06-04T23:59:58.999992Z\n";
             assertContent(expected, tableName);
             renameDetachedToAttachable(tableName, timestampDay);
             assertFailure(
@@ -597,11 +605,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
-                            .col("s2", ColumnType.SYMBOL),
-                    100,
-                    "2022-06-01",
-                    5
-            );
+                            .col("s2", ColumnType.SYMBOL)
+                                .col("vch", ColumnType.VARCHAR),
+                        100,
+                        "2022-06-01",
+                        5
+                );
+
 
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-03'");
 
@@ -639,11 +649,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             tab
                                     .timestamp("ts")
                                     .col("i", ColumnType.INT)
-                                    .col("l", ColumnType.LONG),
-                            10,
-                            "2022-06-01",
-                            4
-                    );
+                                    .col("l", ColumnType.LONG)
+                                        .col("vch", ColumnType.VARCHAR),
+                                10,
+                                "2022-06-01",
+                                4
+                        );
 
 
                     engine.clear();
@@ -652,17 +663,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         AttachDetachStatus attachDetachStatus = writer.detachPartition(timestamp);
                         Assert.assertEquals(DETACH_ERR_COPY_META, attachDetachStatus);
                     }
-                    assertContent("ts\ti\tl\n" +
-                            "2022-06-01T09:35:59.900000Z\t1\t1\n" +
-                            "2022-06-01T19:11:59.800000Z\t2\t2\n" +
-                            "2022-06-02T04:47:59.700000Z\t3\t3\n" +
-                            "2022-06-02T14:23:59.600000Z\t4\t4\n" +
-                            "2022-06-02T23:59:59.500000Z\t5\t5\n" +
-                            "2022-06-03T09:35:59.400000Z\t6\t6\n" +
-                            "2022-06-03T19:11:59.300000Z\t7\t7\n" +
-                            "2022-06-04T04:47:59.200000Z\t8\t8\n" +
-                            "2022-06-04T14:23:59.100000Z\t9\t9\n" +
-                            "2022-06-04T23:59:59.000000Z\t10\t10\n", tableName);
+                    assertContent("ts\ti\tl\tvch\n" +
+                            "2022-06-01T09:35:59.900000Z\t1\t1\t1\n" +
+                            "2022-06-01T19:11:59.800000Z\t2\t2\t2\n" +
+                            "2022-06-02T04:47:59.700000Z\t3\t3\t3\n" +
+                            "2022-06-02T14:23:59.600000Z\t4\t4\t4\n" +
+                            "2022-06-02T23:59:59.500000Z\t5\t5\t5\n" +
+                            "2022-06-03T09:35:59.400000Z\t6\t6\t6\n" +
+                            "2022-06-03T19:11:59.300000Z\t7\t7\t7\n" +
+                            "2022-06-04T04:47:59.200000Z\t8\t8\t8\n" +
+                            "2022-06-04T14:23:59.100000Z\t9\t9\t9\n" +
+                            "2022-06-04T23:59:59.000000Z\t10\t10\t10\n", tableName);
                 }
         );
     }
@@ -758,15 +769,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                     .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                     .col("i", ColumnType.INT)
                                     .col("l", ColumnType.LONG)
-                                    .col("s2", ColumnType.SYMBOL),
-                            10,
-                            "2022-06-01",
-                            3
-                    );
-                    assertFailure(
-                            "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                            DETACH_ERR_COPY.name()
-                    );
+                                    .col("s2", ColumnType.SYMBOL)
+                                        .col("vch", ColumnType.VARCHAR),
+                                10,
+                                "2022-06-01",
+                                3
+                        );
+                        assertFailure(
+                                "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                                DETACH_ERR_COPY.name()
+                        );
+
                 }
         );
     }
@@ -791,15 +804,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                     .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                     .col("i", ColumnType.INT)
                                     .col("l", ColumnType.LONG)
-                                    .col("s2", ColumnType.SYMBOL),
-                            10,
-                            "2022-06-01",
-                            3
-                    );
-                    assertFailure(
-                            "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                            DETACH_ERR_HARD_LINK.name()
-                    );
+                                    .col("s2", ColumnType.SYMBOL)
+                                        .col("vch", ColumnType.VARCHAR),
+                                10,
+                                "2022-06-01",
+                                3
+                        );
+                        assertFailure(
+                                "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                                DETACH_ERR_HARD_LINK.name()
+                        );
+
                 }
         );
     }
@@ -816,23 +831,24 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                     .col("si", ColumnType.SYMBOL).indexed(true, 250)
                                     .col("i", ColumnType.INT)
                                     .col("l", ColumnType.LONG)
-                                    .col("s", ColumnType.SYMBOL),
-                            10,
-                            "2022-06-01",
-                            2
-                    );
+                                    .col("s", ColumnType.SYMBOL)
+                                        .col("vch", ColumnType.VARCHAR),
+                                10,
+                                "2022-06-01",
+                                2
+                        );
 
-                    String expected = "ts\tsi\ti\tl\ts\n" +
-                            "2022-06-01T04:47:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
-                            "2022-06-01T09:35:59.800000Z\tVTJW\t2\t2\t\n" +
-                            "2022-06-01T14:23:59.700000Z\t\t3\t3\tSXUX\n" +
-                            "2022-06-01T19:11:59.600000Z\t\t4\t4\t\n" +
-                            "2022-06-01T23:59:59.500000Z\t\t5\t5\tGPGW\n" +
-                            "2022-06-02T04:47:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
-                            "2022-06-02T09:35:59.300000Z\tCPSW\t7\t7\t\n" +
-                            "2022-06-02T14:23:59.200000Z\t\t8\t8\t\n" +
-                            "2022-06-02T19:11:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
-                            "2022-06-02T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n";
+                    String expected = "ts\tsi\ti\tl\ts\tvch\n" +
+                            "2022-06-01T04:47:59.900000Z\tPEHN\t1\t1\tSXUX\t䶓zV衞\n" +
+                            "2022-06-01T09:35:59.800000Z\t\t2\t2\tSXUX\t鉾檲\\~2\uDAC6\uDED3ڎBH뤻䰭\n" +
+                            "2022-06-01T14:23:59.700000Z\tHYRX\t3\t3\tGPGW\t5ʜ\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OFг\uDBAE\uDD12\n" +
+                            "2022-06-01T19:11:59.600000Z\t\t4\t4\tRXGZ\t\\軦۽㒾\uD99D\uDEA7K裷\uD9CC\uDE73+\u0093ً\uDAF5\uDE17q\n" +
+                            "2022-06-01T23:59:59.500000Z\tPEHN\t5\t5\tGPGW\t坐Ǆ Ԡ阷l\n" +
+                            "2022-06-02T04:47:59.400000Z\tVTJW\t6\t6\t\t/\uDA30\uDEE01W씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3gX夺\uDA02\uDE66\uDA29\uDE0E⋜\n" +
+                            "2022-06-02T09:35:59.300000Z\tVTJW\t7\t7\t\tк곔\n" +
+                            "2022-06-02T14:23:59.200000Z\tPEHN\t8\t8\t\t\uDB0E\uDD57\uDB47\uDD9C\n" +
+                            "2022-06-02T19:11:59.100000Z\tHYRX\t9\t9\tIBBT\t\uDAEE\uDC4FƑ䈔bɄh볱9іa\uDA76\uDDD4*\uDB87\uDF60-\n" +
+                            "2022-06-02T23:59:59.000000Z\t\t10\t10\tGPGW\t݄£΄BǬ\uDB37\uDC95Q\n";
 
                     assertContent(expected, tableName);
 
@@ -986,12 +1002,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
-                            .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
-            );
-            ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
+                            .col("s2", ColumnType.SYMBOL)
+                                .col("vch", ColumnType.VARCHAR),
+                        10,
+                        "2022-06-01",
+                        3
+                );
+                ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
 
             // remove _meta.detached simply prevents metadata checking, all else is the same
             TableToken tableToken = engine.verifyTableName(tableName);
@@ -1007,17 +1024,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             renameDetachedToAttachable(tableName, "2022-06-01", "2022-06-02");
             ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
             assertContent(
-                    "ts\ts1\ti\tl\ts2\n" +
-                            "2022-06-01T07:11:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
-                            "2022-06-01T14:23:59.800000Z\tVTJW\t2\t2\t\n" +
-                            "2022-06-01T21:35:59.700000Z\t\t3\t3\tSXUX\n" +
-                            "2022-06-02T04:47:59.600000Z\t\t4\t4\t\n" +
-                            "2022-06-02T11:59:59.500000Z\t\t5\t5\tGPGW\n" +
-                            "2022-06-02T19:11:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
-                            "2022-06-03T02:23:59.300000Z\tCPSW\t7\t7\t\n" +
-                            "2022-06-03T09:35:59.200000Z\t\t8\t8\t\n" +
-                            "2022-06-03T16:47:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
-                            "2022-06-03T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n",
+                    "ts\ts1\ti\tl\ts2\tvch\n" +
+                            "2022-06-01T07:11:59.900000Z\tPEHN\t1\t1\tSXUX\t1\n" +
+                            "2022-06-01T14:23:59.800000Z\tVTJW\t2\t2\t\t2\n" +
+                            "2022-06-01T21:35:59.700000Z\t\t3\t3\tSXUX\t3\n" +
+                            "2022-06-02T04:47:59.600000Z\t\t4\t4\t\t4\n" +
+                            "2022-06-02T11:59:59.500000Z\t\t5\t5\tGPGW\t5\n" +
+                            "2022-06-02T19:11:59.400000Z\tPEHN\t6\t6\tRXGZ\t6\n" +
+                            "2022-06-03T02:23:59.300000Z\tCPSW\t7\t7\t\t7\n" +
+                            "2022-06-03T09:35:59.200000Z\t\t8\t8\t\t8\n" +
+                            "2022-06-03T16:47:59.100000Z\tPEHN\t9\t9\tRXGZ\t9\n" +
+                            "2022-06-03T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\t10\n",
                     tableName
             );
         });
@@ -1034,11 +1051,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
-                            .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
-            );
+                            .col("s2", ColumnType.SYMBOL)
+                                .col("vch", ColumnType.VARCHAR),
+                        10,
+                        "2022-06-01",
+                        3
+                );
+
 
             CyclicBarrier start = new CyclicBarrier(2);
             CountDownLatch end = new CountDownLatch(2);
@@ -1238,7 +1257,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .col("vch", ColumnType.VARCHAR)
+                                .timestamp("ts"),
                     5,
                     "2022-06-01",
                     4
@@ -1262,13 +1282,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             // attach the partition
             assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                            "33\t33\t2022-05-03T12:00:00.000000Z\tNaN\n" +
-                            "1\t1\t2022-06-01T19:11:59.800000Z\tNaN\n" +
-                            "2\t2\t2022-06-02T14:23:59.600000Z\tNaN\n" +
-                            "3\t3\t2022-06-03T09:35:59.400000Z\tNaN\n" +
-                            "4\t4\t2022-06-04T04:47:59.200000Z\tNaN\n" +
-                            "5\t5\t2022-06-04T23:59:59.000000Z\tNaN\n",
+                    "l\ti\tvch\tts\tnew_column\n" +
+                            "33\t33\t\t2022-05-03T12:00:00.000000Z\tNaN\n" +
+                            "1\t1\t핕\u05FA씎鈄\t2022-06-01T19:11:59.800000Z\tNaN\n" +
+                            "2\t2\t\t2022-06-02T14:23:59.600000Z\tNaN\n" +
+                            "3\t3\tӄǈ2Lg\t2022-06-03T09:35:59.400000Z\tNaN\n" +
+                            "4\t4\t\uF644䶓zV衞͛Ԉ龘и\uDA89\uDFA4~2\uDAC6\uDED3ڎB\t2022-06-04T04:47:59.200000Z\tNaN\n" +
+                            "5\t5\t뤻䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\篸{\t2022-06-04T23:59:59.000000Z\tNaN\n",
                     tableName
             );
         });
@@ -1290,6 +1310,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         tab.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL).indexed(true, 512)
+                                .col("vch", ColumnType.VARCHAR)
                                 .timestamp("ts"),
                         12,
                         timestampDay,
@@ -1303,6 +1324,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         brokenMeta.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL)
+                                .col("vch", ColumnType.VARCHAR)
                                 .timestamp("ts"),
                         1,
                         registerTableName(brokenMeta.getTableName()).getDirName()
@@ -1329,19 +1351,19 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 }
 
                 assertContent(
-                        "l\ti\ts\tts\n" +
-                                "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
-                                "2\t2\tHYRX\t2022-06-01T15:59:59.833332Z\n" +
-                                "3\t3\t\t2022-06-01T23:59:59.749998Z\n" +
-                                "4\t4\tVTJW\t2022-06-02T07:59:59.666664Z\n" +
-                                "5\t5\tPEHN\t2022-06-02T15:59:59.583330Z\n" +
-                                "6\t6\t\t2022-06-02T23:59:59.499996Z\n" +
-                                "7\t7\tVTJW\t2022-06-03T07:59:59.416662Z\n" +
-                                "8\t8\t\t2022-06-03T15:59:59.333328Z\n" +
-                                "9\t9\tCPSW\t2022-06-03T23:59:59.249994Z\n" +
-                                "10\t10\t\t2022-06-04T07:59:59.166660Z\n" +
-                                "11\t11\tPEHN\t2022-06-04T15:59:59.083326Z\n" +
-                                "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n",
+                        "l\ti\ts\tvch\tts\n" +
+                                "1\t1\tCPSW\tӄǈ2Lg\t2022-06-01T07:59:59.916666Z\n" +
+                                "2\t2\tPEHN\tĕ擉q\uDAE2\uDC5E͛\t2022-06-01T15:59:59.833332Z\n" +
+                                "3\t3\t\t龘и\uDA89\uDFA4~2\uDAC6\uDED3ڎBH뤻䰭\u008B}ѱ\t2022-06-01T23:59:59.749998Z\n" +
+                                "4\t4\tHYRX\t̷킉V1Ѓَᯤ\\篸{\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\tCPSW\t\uD9D7\uDFE5\uDAE9\uDF46OFг\uDBAE\uDD12ɜ|\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\tCPSW\tk۽㒾\uD99D\uDEA7K裷\uD9CC\uDE73+\u0093ً\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\t\tjz\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\tPEHN\t\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\tVTJW\t\uDBED\uDC98\uDA30\uDEE01W씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3gX夺\uDA02\uDE66\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\tHYRX\t\uDA8D\uDD0D\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\tPEHN\t\uDB0E\uDD57\uDB47\uDD9C\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\tHYRX\t7\uDAEE\uDC4FƑ䈔bɄh볱\t2022-06-04T23:59:58.999992Z\n",
                         tableName
                 );
             }
@@ -1365,6 +1387,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         tab.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL).indexed(true, 512)
+                                .col("vch", ColumnType.VARCHAR)
                                 .timestamp("ts"),
                         12,
                         timestampDay,
@@ -1378,6 +1401,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         brokenMeta.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("vch", ColumnType.VARCHAR)
                                 .timestamp("ts"),
                         1,
                         registerTableName(brokenMeta.getTableName()).getDirName()
@@ -1405,19 +1429,19 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 }
 
                 assertContent(
-                        "l\ti\ts\tts\n" +
-                                "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
-                                "2\t2\tHYRX\t2022-06-01T15:59:59.833332Z\n" +
-                                "3\t3\t\t2022-06-01T23:59:59.749998Z\n" +
-                                "4\t4\tVTJW\t2022-06-02T07:59:59.666664Z\n" +
-                                "5\t5\tPEHN\t2022-06-02T15:59:59.583330Z\n" +
-                                "6\t6\t\t2022-06-02T23:59:59.499996Z\n" +
-                                "7\t7\tVTJW\t2022-06-03T07:59:59.416662Z\n" +
-                                "8\t8\t\t2022-06-03T15:59:59.333328Z\n" +
-                                "9\t9\tCPSW\t2022-06-03T23:59:59.249994Z\n" +
-                                "10\t10\t\t2022-06-04T07:59:59.166660Z\n" +
-                                "11\t11\tPEHN\t2022-06-04T15:59:59.083326Z\n" +
-                                "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n",
+                        "l\ti\ts\tvch\tts\n" +
+                                "1\t1\tCPSW\tӄǈ2Lg\t2022-06-01T07:59:59.916666Z\n" +
+                                "2\t2\tPEHN\tĕ擉q\uDAE2\uDC5E͛\t2022-06-01T15:59:59.833332Z\n" +
+                                "3\t3\t\t龘и\uDA89\uDFA4~2\uDAC6\uDED3ڎBH뤻䰭\u008B}ѱ\t2022-06-01T23:59:59.749998Z\n" +
+                                "4\t4\tHYRX\t̷킉V1Ѓَᯤ\\篸{\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\tCPSW\t\uD9D7\uDFE5\uDAE9\uDF46OFг\uDBAE\uDD12ɜ|\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\tCPSW\tk۽㒾\uD99D\uDEA7K裷\uD9CC\uDE73+\u0093ً\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\t\tjz\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\tPEHN\t\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\tVTJW\t\uDBED\uDC98\uDA30\uDEE01W씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3gX夺\uDA02\uDE66\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\tHYRX\t\uDA8D\uDD0D\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\tPEHN\t\uDB0E\uDD57\uDB47\uDD9C\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\tHYRX\t7\uDAEE\uDC4FƑ䈔bɄh볱\t2022-06-04T23:59:58.999992Z\n",
                         tableName
                 );
             }
@@ -1555,7 +1579,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .col("vch", ColumnType.VARCHAR)
+                                .timestamp("ts"),
                     12,
                     "2022-06-01",
                     4
@@ -1563,33 +1588,36 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             String timestampDay = "2022-06-02";
             long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
-            try (TableWriter writer = getWriter(tableName)) {
-                // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+            Utf8StringSink utf8sink = new Utf8StringSink();
+                utf8sink.put("33");
+                try (TableWriter writer = getWriter(tableName)) {
+                    // structural change
+                    writer.addColumn("new_column", ColumnType.INT);
 
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong(0, 33L);
                 row.putInt(1, 33);
-                row.putInt(3, 33);
+                row.putVarchar(2, utf8sink);
+                    row.putInt(4, 33);
                 row.append();
 
                 writer.commit();
             }
             assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                            "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                            "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
-                            "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
-                            "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
-                            "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
-                            "33\t33\t2022-06-02T22:00:00.000000Z\t33\n" +
-                            "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
-                            "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
-                            "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
-                            "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
-                            "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
-                            "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                            "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                    "l\ti\tvch\tts\tnew_column\n" +
+                            "1\t1\t핕\u05FA씎鈄\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                            "2\t2\t\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                            "3\t3\tӄǈ2Lg\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                            "4\t4\t\uF644䶓zV衞͛Ԉ龘и\uDA89\uDFA4~2\uDAC6\uDED3ڎB\t2022-06-02T07:59:59.666664Z\tNaN\n" +
+                            "5\t5\t뤻䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\篸{\t2022-06-02T15:59:59.583330Z\tNaN\n" +
+                            "33\t33\t33\t2022-06-02T22:00:00.000000Z\t33\n" +
+                            "6\t6\tE\uD9D7\uDFE5\uDAE9\uDF46O\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                            "7\t7\tг\uDBAE\uDD12ɜ|\\軦۽㒾\uD99D\uDEA7K裷\uD9CC\uDE73+\u0093\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                            "8\t8\tÝq\uDAF5\uDE17qRӽ-\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                            "9\t9\t맄 Ԡ阷\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                            "10\t10\t\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                            "11\t11\tЬ\uDA23\uDF64m\uDA30\uDEE0\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                            "12\t12\tW씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3gX\t2022-06-04T23:59:58.999992Z\tNaN\n",
                     tableName
             );
 
@@ -1597,41 +1625,44 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
             assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                            "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                            "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
-                            "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
-                            "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
-                            "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
-                            "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
-                            "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
-                            "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                            "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                    "l\ti\tvch\tts\tnew_column\n" +
+                            "1\t1\t핕\u05FA씎鈄\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                            "2\t2\t\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                            "3\t3\tӄǈ2Lg\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                            "7\t7\tг\uDBAE\uDD12ɜ|\\軦۽㒾\uD99D\uDEA7K裷\uD9CC\uDE73+\u0093\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                            "8\t8\tÝq\uDAF5\uDE17qRӽ-\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                            "9\t9\t맄 Ԡ阷\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                            "10\t10\t\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                            "11\t11\tЬ\uDA23\uDF64m\uDA30\uDEE0\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                            "12\t12\tW씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3gX\t2022-06-04T23:59:58.999992Z\tNaN\n",
                     tableName
             );
 
             // insert data, which will create the partition again
             engine.clear();
-            try (TableWriter writer = getWriter(tableName)) {
-                TableWriter.Row row = writer.newRow(timestamp);
-                row.putLong(0, 25160L);
-                row.putInt(1, 25160);
-                row.putInt(3, 25160);
+            utf8sink.clear();
+                utf8sink.put("25160");
+                try (TableWriter writer = getWriter(tableName)) {
+                    TableWriter.Row row = writer.newRow(timestamp);
+                    row.putLong(0, 25160L);
+                    row.putInt(1, 25160);
+                    row.putVarchar(2, utf8sink);
+                row.putInt(4, 25160);
                 row.append();
                 writer.commit();
             }
             assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                            "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                            "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
-                            "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
-                            "25160\t25160\t2022-06-02T22:00:00.000000Z\t25160\n" +
-                            "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
-                            "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
-                            "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
-                            "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
-                            "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                            "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                    "l\ti\tvch\tts\tnew_column\n" +
+                            "1\t1\t핕\u05FA씎鈄\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                            "2\t2\t\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                            "3\t3\tӄǈ2Lg\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                            "25160\t25160\t25160\t2022-06-02T22:00:00.000000Z\t25160\n" +
+                            "7\t7\tг\uDBAE\uDD12ɜ|\\軦۽㒾\uD99D\uDEA7K裷\uD9CC\uDE73+\u0093\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                            "8\t8\tÝq\uDAF5\uDE17qRӽ-\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                            "9\t9\t맄 Ԡ阷\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                            "10\t10\t\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                            "11\t11\tЬ\uDA23\uDF64m\uDA30\uDEE0\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                            "12\t12\tW씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3gX\t2022-06-04T23:59:58.999992Z\tNaN\n",
                     tableName
             );
 
@@ -1641,20 +1672,20 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             // reattach old version
             ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
             assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                            "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                            "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
-                            "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
-                            "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
-                            "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
-                            "33\t33\t2022-06-02T22:00:00.000000Z\t33\n" +
-                            "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
-                            "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
-                            "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
-                            "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
-                            "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
-                            "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                            "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                    "l\ti\tvch\tts\tnew_column\n" +
+                            "1\t1\t핕\u05FA씎鈄\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                            "2\t2\t\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                            "3\t3\tӄǈ2Lg\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                            "4\t4\t\uF644䶓zV衞͛Ԉ龘и\uDA89\uDFA4~2\uDAC6\uDED3ڎB\t2022-06-02T07:59:59.666664Z\tNaN\n" +
+                            "5\t5\t뤻䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\篸{\t2022-06-02T15:59:59.583330Z\tNaN\n" +
+                            "33\t33\t33\t2022-06-02T22:00:00.000000Z\t33\n" +
+                            "6\t6\tE\uD9D7\uDFE5\uDAE9\uDF46O\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                            "7\t7\tг\uDBAE\uDD12ɜ|\\軦۽㒾\uD99D\uDEA7K裷\uD9CC\uDE73+\u0093\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                            "8\t8\tÝq\uDAF5\uDE17qRӽ-\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                            "9\t9\t맄 Ԡ阷\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                            "10\t10\t\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                            "11\t11\tЬ\uDA23\uDF64m\uDA30\uDEE0\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                            "12\t12\tW씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3gX\t2022-06-04T23:59:58.999992Z\tNaN\n",
                     tableName
             );
         });
@@ -2173,22 +2204,23 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             .col("i", ColumnType.INT)
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("l", ColumnType.LONG)
-                            .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    4
-            );
-            String expected = "ts\ti\ts1\tl\ts2\n" +
-                    "2022-06-01T09:35:59.900000Z\t1\tPEHN\t1\tSXUX\n" +
-                    "2022-06-01T19:11:59.800000Z\t2\tVTJW\t2\t\n" +
-                    "2022-06-02T04:47:59.700000Z\t3\t\t3\tSXUX\n" +
-                    "2022-06-02T14:23:59.600000Z\t4\t\t4\t\n" +
-                    "2022-06-02T23:59:59.500000Z\t5\t\t5\tGPGW\n" +
-                    "2022-06-03T09:35:59.400000Z\t6\tPEHN\t6\tRXGZ\n" +
-                    "2022-06-03T19:11:59.300000Z\t7\tCPSW\t7\t\n" +
-                    "2022-06-04T04:47:59.200000Z\t8\t\t8\t\n" +
-                    "2022-06-04T14:23:59.100000Z\t9\tPEHN\t9\tRXGZ\n" +
-                    "2022-06-04T23:59:59.000000Z\t10\tVTJW\t10\tIBBT\n";
+                            .col("s2", ColumnType.SYMBOL)
+                                .col("vch", ColumnType.VARCHAR),
+                        10,
+                        "2022-06-01",
+                        4
+                );
+                String expected = "ts\ti\ts1\tl\ts2\tvch\n" +
+                    "2022-06-01T09:35:59.900000Z\t1\tPEHN\t1\tSXUX\t1\n" +
+                    "2022-06-01T19:11:59.800000Z\t2\tVTJW\t2\t\t2\n" +
+                    "2022-06-02T04:47:59.700000Z\t3\t\t3\tSXUX\t3\n" +
+                    "2022-06-02T14:23:59.600000Z\t4\t\t4\t\t4\n" +
+                    "2022-06-02T23:59:59.500000Z\t5\t\t5\tGPGW\t5\n" +
+                    "2022-06-03T09:35:59.400000Z\t6\tPEHN\t6\tRXGZ\t6\n" +
+                    "2022-06-03T19:11:59.300000Z\t7\tCPSW\t7\t\t7\n" +
+                    "2022-06-04T04:47:59.200000Z\t8\t\t8\t\t8\n" +
+                    "2022-06-04T14:23:59.100000Z\t9\tPEHN\t9\tRXGZ\t9\n" +
+                    "2022-06-04T23:59:59.000000Z\t10\tVTJW\t10\tIBBT\t10\n";
             assertContent(expected, tableName);
 
             AbstractCairoTest.ff = new TestFilesFacadeImpl() {
@@ -2240,7 +2272,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
-                                .col("s2", ColumnType.SYMBOL),
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("vch", ColumnType.VARCHAR),
                         10,
                         "2022-06-01",
                         3

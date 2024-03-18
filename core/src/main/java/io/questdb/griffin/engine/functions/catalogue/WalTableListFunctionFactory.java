@@ -202,7 +202,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 }
 
                 @Override
-                public CharSequence getStr(int col) {
+                public CharSequence getStrA(int col) {
                     if (col == nameColumn) {
                         return tableName;
                     }
@@ -211,12 +211,13 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrB(int col) {
-                    return getStr(col);
+                    return getStrA(col);
                 }
 
                 @Override
                 public int getStrLen(int col) {
-                    return getStr(col).length();
+                    CharSequence value = getStrA(col);
+                    return value != null ? value.length() : TableUtils.NULL_LEN;
                 }
 
                 private boolean switchTo(final TableToken tableToken) {

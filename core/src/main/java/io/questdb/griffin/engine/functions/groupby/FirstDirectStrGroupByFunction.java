@@ -77,7 +77,7 @@ public class FirstDirectStrGroupByFunction extends StrFunction implements GroupB
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         return getStr(rec, viewA);
     }
 

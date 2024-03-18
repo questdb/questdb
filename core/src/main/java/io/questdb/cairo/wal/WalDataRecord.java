@@ -198,17 +198,17 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
-    public CharSequence getStr(int col) {
+    public CharSequence getStrA(int col) {
         final long offset = recordIndex * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getStr(reader.getColumn(absoluteColumnIndex + 1).getLong(offset));
+        return reader.getColumn(absoluteColumnIndex).getStrA(reader.getColumn(absoluteColumnIndex + 1).getLong(offset));
     }
 
     @Override
     public CharSequence getStrB(int col) {
         final long offset = recordIndex * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getStr2(reader.getColumn(absoluteColumnIndex + 1).getLong(offset));
+        return reader.getColumn(absoluteColumnIndex).getStrB(reader.getColumn(absoluteColumnIndex + 1).getLong(offset));
     }
 
     @Override
@@ -219,13 +219,13 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
-    public CharSequence getSym(int col) {
+    public CharSequence getSymA(int col) {
         return reader.getSymbolValue(col, getInt(col));
     }
 
     @Override
     public CharSequence getSymB(int col) {
-        return getSym(col);
+        return getSymA(col);
     }
 
     @Override

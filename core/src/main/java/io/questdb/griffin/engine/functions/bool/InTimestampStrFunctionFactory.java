@@ -60,7 +60,7 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         if (rightFn.isConstant()) {
             return new EqTimestampStrConstantFunction(
                     args.getQuick(0),
-                    rightFn.getStr(null),
+                    rightFn.getStrA(null),
                     argPositions.getQuick(1)
             );
         }
@@ -125,7 +125,7 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
             if (ts == Numbers.LONG_NaN) {
                 return negated;
             }
-            CharSequence timestampAsString = right.getStr(rec);
+            CharSequence timestampAsString = right.getStrA(rec);
             if (timestampAsString == null) {
                 return negated;
             }
