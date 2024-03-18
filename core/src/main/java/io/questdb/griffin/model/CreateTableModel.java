@@ -104,6 +104,8 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         columnNameIndexMap.clear();
         ignoreIfExists = false;
         o3MaxLag = -1;
+        batchO3MaxLag = -1;
+        batchSize = -1;
     }
 
     public CharSequenceObjHashMap<ColumnCastModel> getColumnCastModels() {
