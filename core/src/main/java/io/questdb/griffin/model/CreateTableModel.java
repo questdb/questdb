@@ -46,7 +46,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private ExpressionNode likeTableName;
     private int maxUncommittedRows;
     private ExpressionNode name;
-    private long o3MaxLag = -1;
+    private long o3MaxLag;
     private ExpressionNode partitionBy;
     private QueryModel queryModel;
     private ExpressionNode timestamp;

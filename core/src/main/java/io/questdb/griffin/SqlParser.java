@@ -667,12 +667,7 @@ public class SqlParser {
         model.setWalEnabled(isWalEnabled);
 
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
-
-        long o3MaxLag = model.getO3MaxLag();
-        // if o3MaxLag wasn't explicitly set, fall back to config setting
-        if (o3MaxLag == -1) {
-            o3MaxLag = configuration.getO3MaxLag();
-        }
+        long o3MaxLag = configuration.getO3MaxLag();
 
         if (tok != null && isWithKeyword(tok)) {
             ExpressionNode expr;
