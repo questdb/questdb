@@ -27,9 +27,8 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectCharSequence;
-import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.*;
+import io.questdb.std.str.Utf8SplitString;
 
 public class NullMemoryMR implements MemoryMR {
 
@@ -38,6 +37,16 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public long addressOf(long offset) {
         return 0;
+    }
+
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringA() {
+        return null;
+    }
+
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringB() {
+        return null;
     }
 
     @Override
@@ -156,18 +165,28 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
-    public CharSequence getStr(long offset) {
+    public CharSequence getStrA(long offset) {
         return null;
     }
 
     @Override
-    public CharSequence getStr2(long offset) {
+    public CharSequence getStrB(long offset) {
         return null;
     }
 
     @Override
     public int getStrLen(long offset) {
         return TableUtils.NULL_LEN;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
+        return null;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
+        return null;
     }
 
     @Override

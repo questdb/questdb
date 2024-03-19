@@ -545,8 +545,8 @@ public class ExpressionParser {
                                     if (prevBranch != BRANCH_GEOHASH) {
                                         // validate type
                                         final short columnTypeTag = ColumnType.tagOf(node.token);
-                                        if (((columnTypeTag < ColumnType.BOOLEAN || (columnTypeTag > ColumnType.LONG256 && columnTypeTag != ColumnType.UUID && columnTypeTag != ColumnType.IPv4)) && !asPoppedNull) ||
-                                                (columnTypeTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)) {
+                                        if (((columnTypeTag < ColumnType.BOOLEAN || (columnTypeTag > ColumnType.LONG256 && columnTypeTag != ColumnType.UUID && columnTypeTag != ColumnType.IPv4 && columnTypeTag != ColumnType.VARCHAR)) && !asPoppedNull)
+                                                || (columnTypeTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)) {
                                             throw SqlException.$(node.position, "unsupported cast");
                                         }
                                         node.type = ExpressionNode.CONSTANT;

@@ -71,7 +71,7 @@ public class StrPosBenchmark {
             int finalI = i;
             records[i] = new Record() {
                 @Override
-                public String getStr(int col) {
+                public String getStrA(int col) {
                     return strings[finalI];
                 }
             };
@@ -79,18 +79,18 @@ public class StrPosBenchmark {
 
         final Function strInputFunc = new StrFunction() {
             @Override
-            public CharSequence getStr(Record rec) {
-                return rec.getStr(0);
+            public CharSequence getStrA(Record rec) {
+                return rec.getStrA(0);
             }
 
             @Override
             public CharSequence getStrB(Record rec) {
-                return rec.getStr(0);
+                return rec.getStrA(0);
             }
         };
         final Function substrStrInputFunc = new StrFunction() {
             @Override
-            public CharSequence getStr(Record rec) {
+            public CharSequence getStrA(Record rec) {
                 return ",";
             }
 

@@ -44,7 +44,7 @@ public class CastStrToBooleanFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function arg0 = args.getQuick(0);
         if (arg0.isConstant()) {
-            return resolveBoolean(arg0.getStr(null)) ? BooleanConstant.TRUE : BooleanConstant.FALSE;
+            return resolveBoolean(arg0.getStrA(null)) ? BooleanConstant.TRUE : BooleanConstant.FALSE;
         }
         return new Func(arg0);
     }
@@ -60,7 +60,7 @@ public class CastStrToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return resolveBoolean(arg.getStr(rec));
+            return resolveBoolean(arg.getStrA(rec));
         }
     }
 }

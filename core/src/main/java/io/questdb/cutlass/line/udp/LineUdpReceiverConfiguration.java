@@ -68,4 +68,6 @@ public interface LineUdpReceiverConfiguration {
     boolean ownThread();
 
     int ownThreadAffinity();
+
+    boolean isUseLegacyStringDefault();
 }

@@ -57,7 +57,7 @@ public class CastStrToLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            return Numbers.parseLongQuiet(arg.getStr(rec));
+            return Numbers.parseLongQuiet(arg.getStrA(rec));
         }
     }
 }

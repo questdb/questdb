@@ -57,7 +57,7 @@ final class UuidEqUtils {
 
     static @NotNull BooleanFunction eqStrUuid(Function strFunc, Function uuidFunc) {
         if (strFunc.isConstant()) {
-            CharSequence uuidStr = strFunc.getStr(null);
+            CharSequence uuidStr = strFunc.getStrA(null);
             long lo;
             long hi;
             if (uuidStr == null) {
@@ -142,7 +142,7 @@ final class UuidEqUtils {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence uuidStr = fun.getStr(rec);
+            CharSequence uuidStr = fun.getStrA(rec);
             if (uuidStr == null) {
                 return negated != (constUuidHi == Numbers.LONG_NaN && constUuidLo == Numbers.LONG_NaN);
             }
@@ -175,7 +175,7 @@ final class UuidEqUtils {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence str = left.getStr(rec);
+            CharSequence str = left.getStrA(rec);
             long lo = right.getLong128Lo(rec);
             long hi = right.getLong128Hi(rec);
             if (str == null) {
@@ -229,7 +229,7 @@ final class UuidEqUtils {
             BinaryFunction.super.init(symbolTableSource, executionContext);
 
             validUuidStr = true;
-            CharSequence uuidStr = strFunc.getStr(null);
+            CharSequence uuidStr = strFunc.getStrA(null);
             if (uuidStr == null) {
                 constStrLo = Numbers.LONG_NaN;
                 constStrHi = Numbers.LONG_NaN;

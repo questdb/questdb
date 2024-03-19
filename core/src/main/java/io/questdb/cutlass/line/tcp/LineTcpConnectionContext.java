@@ -300,7 +300,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 .$("] could not parse measurement, ").$(parser.getErrorCode())
                 .$(" at ").$(position)
                 .$(", line (may be mangled due to partial parsing): '")
-                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$("'")
+                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress(), !parser.hasNonAsciiChars())).$("'")
                 .$();
     }
 

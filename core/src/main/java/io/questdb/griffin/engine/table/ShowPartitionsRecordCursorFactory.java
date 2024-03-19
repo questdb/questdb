@@ -390,7 +390,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 switch (col) {
                     case 1:
                         return PartitionBy.toString(partitionBy);
@@ -405,12 +405,12 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override
             public int getStrLen(int col) {
-                CharSequence s = getStr(col);
+                CharSequence s = getStrA(col);
                 return s != null ? s.length() : TableUtils.NULL_LEN;
             }
 

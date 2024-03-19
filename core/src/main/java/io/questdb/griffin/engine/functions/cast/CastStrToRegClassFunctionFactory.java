@@ -58,11 +58,11 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            Function result = funcMap.get(arg.getStr(null));
+            Function result = funcMap.get(arg.getStrA(null));
             if (result != null) {
                 return result;
             }
-            throw SqlException.$(argPositions.getQuick(0), "unsupported class [name=").put(arg.getStr(null)).put(']');
+            throw SqlException.$(argPositions.getQuick(0), "unsupported class [name=").put(arg.getStrA(null)).put(']');
         }
         return new CastStrToRegClassFunction(arg);
     }
@@ -81,7 +81,7 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            CharSequence val = arg.getStr(rec);
+            CharSequence val = arg.getStrA(rec);
             if (val != null) {
                 return valueMap.get(val);
             }

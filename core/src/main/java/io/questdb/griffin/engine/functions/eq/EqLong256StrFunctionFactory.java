@@ -59,7 +59,7 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         if (ColumnType.isNull(rightArg.getType())) {
             return new Func(leftArg);
         }
-        return DECODER.get().newInstance(leftArg, rightArg.getStr(null));
+        return DECODER.get().newInstance(leftArg, rightArg.getStrA(null));
     }
 
     private static class Func extends NegatableBooleanFunction implements UnaryFunction {

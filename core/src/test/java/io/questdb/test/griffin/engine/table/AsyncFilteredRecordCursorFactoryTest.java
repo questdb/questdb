@@ -161,7 +161,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
                 }
             } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [STRING -> DOUBLE]");
+                String stringType = ColumnType.nameOf(ColumnType.STRING);
+                TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [" + stringType + " -> DOUBLE]");
             }
         }, 4, 4);
     }
@@ -185,7 +186,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
                 }
             } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [STRING -> DOUBLE]");
+                String stringType = ColumnType.nameOf(ColumnType.STRING);
+                TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [" + stringType + " -> DOUBLE]");
             }
         }, 4, 4);
     }

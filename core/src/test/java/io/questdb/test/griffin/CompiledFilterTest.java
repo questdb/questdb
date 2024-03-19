@@ -510,7 +510,6 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     private void indexBindVariableReplacedContext(boolean jit) throws SqlException {
-
         bindVariableService.clear();
         bindVariableService.setInt(0, 1);
         bindVariableService.setInt(1, 1000);

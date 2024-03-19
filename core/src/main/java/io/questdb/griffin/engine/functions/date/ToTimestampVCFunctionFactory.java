@@ -59,7 +59,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final Function arg = args.getQuick(0);
-        final CharSequence pattern = args.getQuick(1).getStr(null);
+        final CharSequence pattern = args.getQuick(1).getStrA(null);
         if (pattern == null) {
             throw SqlException.$(argPositions.getQuick(1), "pattern is required");
         }
@@ -71,7 +71,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
     }
 
     private TimestampConstant evaluateConstant(Function arg, DateFormat timestampFormat, DateLocale locale) {
-        CharSequence value = arg.getStr(null);
+        CharSequence value = arg.getStrA(null);
         try {
             if (value != null) {
                 return new TimestampConstant(timestampFormat.parse(value, locale));
@@ -101,7 +101,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            CharSequence value = arg.getStr(rec);
+            CharSequence value = arg.getStrA(rec);
             try {
                 if (value != null) {
                     return timestampFormat.parse(value, locale);

@@ -97,10 +97,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 .col("adouble", ColumnType.DOUBLE)
                 .col("astring", ColumnType.STRING)
                 .col("astring2", ColumnType.STRING)
-                .col("abinary", ColumnType.BINARY)
+                .col("avarchar", ColumnType.VARCHAR)
+                    .col("avarchar2", ColumnType.VARCHAR)
+                    .col("abinary", ColumnType.BINARY)
                 .col("abinary2", ColumnType.BINARY)
                 .col("auuid", ColumnType.UUID)
                 .col("along128", ColumnType.LONG128)
+                    .col("along256", ColumnType.LONG256)
                 .timestamp();
         AbstractCairoTest.create(model);
 
@@ -513,7 +516,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         Assert.assertEquals(1, bindVarFunctions.size());
         Assert.assertEquals(ColumnType.SYMBOL, bindVarFunctions.get(0).getType());
-        Assert.assertEquals(UNKNOWN_SYMBOL, bindVarFunctions.get(0).getStr(null));
+        Assert.assertEquals(UNKNOWN_SYMBOL, bindVarFunctions.get(0).getStrA(null));
     }
 
     @Test(expected = SqlException.class)
@@ -527,10 +530,17 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedBindVariableType() throws Exception {
+    public void testUnsupportedBindVariableType1() throws Exception {
         bindVariableService.clear();
         bindVariableService.setStr("astring", "foobar");
         serialize("astring = :astring");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedBindVariableType2() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("avarchar", "foobar");
+        serialize("avarchar = :avarchar");
     }
 
     @Test(expected = SqlException.class)
@@ -559,8 +569,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedColumnType() throws Exception {
+    public void testUnsupportedColumnType1() throws Exception {
         serialize("astring = 'a'");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedColumnType2() throws Exception {
+        serialize("avarchar = 'a'");
     }
 
     @Test(expected = SqlException.class)
@@ -649,6 +664,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
+    public void testUnsupportedMixedUuidAndVarcharColumns() throws Exception {
+        serialize("auuid = avarchar");
+    }
+
+    @Test(expected = SqlException.class)
     public void testUnsupportedOperatorToken() throws Exception {
         serialize("asymbol in (select rnd_symbol('A','B','C') from long_sequence(10))");
     }
@@ -696,6 +716,21 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedUuidConstantInNumericContext() throws Exception {
         serialize("along = '11111111-1111-1111-1111-111111111111'");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedVarcharConstant() throws Exception {
+        serialize("achar = 'abc'::varchar");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedVarcharEquality() throws Exception {
+        serialize("avarchar = avarchar2");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedVarcharInequality() throws Exception {
+        serialize("avarchar <> avarchar2");
     }
 
     @Test

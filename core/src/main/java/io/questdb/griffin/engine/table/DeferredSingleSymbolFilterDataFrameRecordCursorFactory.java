@@ -97,7 +97,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
         initFwdPageFrameCursor(executionContext, dataFrameCursor);
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            final CharSequence symbol = symbolFunc.getStr(null);
+            final CharSequence symbol = symbolFunc.getStrA(null);
             final StaticSymbolTable symbolMapReader = fwdPageFrameCursor.getSymbolTable(symbolColumnIndex);
             symbolKey = symbolMapReader.keyOf(symbol);
             if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {

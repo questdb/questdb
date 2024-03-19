@@ -69,8 +69,8 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(final Record rec) {
-            CharSequence str = getArg().getStr(rec);
+        public CharSequence getStrA(final Record rec) {
+            CharSequence str = getArg().getStrA(rec);
             if (str == null) {
                 return null;
             }
@@ -82,7 +82,7 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrB(final Record rec) {
-            CharSequence str = getArg().getStr(rec);
+            CharSequence str = getArg().getStrA(rec);
             if (str == null) {
                 return null;
             }

@@ -261,7 +261,9 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " cast(null as binary) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1, 40, 1) varc," +
+                        " rnd_varchar(1, 1, 1) varc2," +
                         " from long_sequence(510)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -286,7 +288,9 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1, 40, 1) varc," +
+                        " rnd_varchar(1, 1, 1) varc2," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -346,7 +350,9 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " cast(null as binary) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1, 40, 1) varc," +
+                        " rnd_varchar(1, 1, 1) varc2," +
                         " from long_sequence(510)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -373,7 +379,9 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1, 40, 1) varc," +
+                        " rnd_varchar(1, 1, 1) varc2," +
                         " from long_sequence(101)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -416,7 +424,9 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1, 40, 1) varc," +
+                        " rnd_varchar(1, 1, 1) varc2," +
                         " from long_sequence(101)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -465,7 +475,9 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " cast(null as binary) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1, 40, 1) varc," +
+                        " rnd_varchar(1, 1, 1) varc2," +
                         " from long_sequence(510)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -492,7 +504,9 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1, 40, 1) varc," +
+                        " rnd_varchar(1, 1, 1) varc2," +
                         " from long_sequence(101)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext

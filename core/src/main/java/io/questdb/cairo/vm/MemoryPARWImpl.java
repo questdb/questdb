@@ -90,6 +90,12 @@ public class MemoryPARWImpl implements MemoryARW {
         throw new UnsupportedOperationException();
     }
 
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringA() {
+        // paged memory does not support reading UTF8 strings from
+        throw new UnsupportedOperationException();
+    }
+
     public void clear() {
         releaseAllPagesButFirst();
         appendPointer = -1;
@@ -341,10 +347,6 @@ public class MemoryPARWImpl implements MemoryARW {
         return value;
     }
 
-    public final CharSequence getStr(long offset) {
-        return getStr0(offset, csview);
-    }
-
     public final CharSequence getStr0(long offset, CharSequenceView view) {
         final int len = getInt(offset);
         if (len == TableUtils.NULL_LEN) {
@@ -356,12 +358,26 @@ public class MemoryPARWImpl implements MemoryARW {
         return view.of(offset + STRING_LENGTH_BYTES, len);
     }
 
-    public final CharSequence getStr2(long offset) {
+    public final CharSequence getStrA(long offset) {
+        return getStr0(offset, csview);
+    }
+
+    public final CharSequence getStrB(long offset) {
         return getStr0(offset, csview2);
     }
 
     public final int getStrLen(long offset) {
         return getInt(offset);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
     }
 
     public boolean isMapped(long offset, long len) {
@@ -699,7 +715,7 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
-    public void putLong256Utf8(@Nullable DirectUtf8Sequence hexString) {
+    public void putLong256Utf8(@Nullable Utf8Sequence hexString) {
         if (pageHi - appendPointer < 4 * Long.BYTES) {
             straddlingPageLong256Decoder.putLong256(hexString);
         } else {
@@ -832,6 +848,37 @@ public class MemoryPARWImpl implements MemoryARW {
             return putNullStr();
         }
         return putStr(value.asAsciiCharSequence());
+    }
+
+    @Override
+    public void putVarchar(long offset, @Nullable Utf8Sequence value, int lo, int hi) {
+        if (value != null) {
+            final int n = hi - lo;
+            if (roOffsetLo < offset && offset < roOffsetHi - n) {
+                value.writeTo(absolutePointer + offset, lo, hi);
+            } else {
+                for (int i = 0; i < n; i++) {
+                    putByte(offset + i, value.byteAt(lo + i));
+                }
+            }
+        }
+    }
+
+    @Override
+    public long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
+        final int n = hi - lo;
+        final long offset = getAppendOffset();
+        if (n > 0) {
+            if (pageHi - appendPointer < n) {
+                for (int i = lo; i < hi; i++) {
+                    putByte(value.byteAt(i));
+                }
+            } else {
+                value.writeTo(appendPointer, lo, hi);
+                appendPointer += n;
+            }
+        }
+        return offset;
     }
 
     @Override
@@ -1221,7 +1268,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
     }
 
-    public class CharSequenceView extends AbstractCharSequence {
+    private class CharSequenceView extends AbstractCharSequence {
         private int len;
         private long offset;
 
@@ -1261,7 +1308,7 @@ public class MemoryPARWImpl implements MemoryARW {
             }
         }
 
-        private void putLong256(@Nullable DirectUtf8Sequence hexString) {
+        private void putLong256(@Nullable Utf8Sequence hexString) {
             final int size;
             if (hexString == null || (size = hexString.size()) == 0) {
                 putLong256Null();
@@ -1302,7 +1349,7 @@ public class MemoryPARWImpl implements MemoryARW {
             decode(hexString, start, end, this);
         }
 
-        private void putLong256(@Nullable DirectUtf8Sequence hexString) {
+        private void putLong256(@Nullable Utf8Sequence hexString) {
             final int size;
             if (hexString == null || (size = hexString.size()) == 0) {
                 putLong(Long256Impl.NULL_LONG256.getLong0());

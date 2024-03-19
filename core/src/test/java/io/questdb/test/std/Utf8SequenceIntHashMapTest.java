@@ -30,6 +30,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceIntHashMap;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.junit.Assert;
 import org.junit.Test;
@@ -174,11 +175,46 @@ public class Utf8SequenceIntHashMapTest {
 
                 final Utf8String bcs = Utf8String.newInstance(dus);
                 map.put(Utf8String.newInstance(dus), i);
-                Assert.assertEquals(i, (int) map.get(dus));
-                Assert.assertEquals(i, (int) map.get(bcs));
+                Assert.assertEquals(i, map.get(dus));
+                Assert.assertEquals(i, map.get(bcs));
             }
         } finally {
             Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testPutAll() {
+        final int N = 256;
+        Utf8SequenceIntHashMap mapA = new Utf8SequenceIntHashMap();
+        Utf8SequenceIntHashMap mapB = new Utf8SequenceIntHashMap();
+
+        final Utf8StringSink sink = new Utf8StringSink();
+        for (int i = 0; i < N; i++) {
+            sink.clear();
+            for (int j = 0; j < i; j++) {
+                sink.put("ъ");
+            }
+
+            Assert.assertEquals(-1, mapA.get(sink));
+            Assert.assertEquals(-1, mapB.get(sink));
+
+            mapA.put(sink, i);
+            Assert.assertEquals(i, mapA.get(sink));
+        }
+
+        mapB.putAll(mapA);
+
+        Assert.assertEquals(mapA.size(), mapB.size());
+
+        for (int i = 0; i < N; i++) {
+            sink.clear();
+            for (int j = 0; j < i; j++) {
+                sink.put("ъ");
+            }
+
+            Assert.assertEquals(i, mapA.get(sink));
+            Assert.assertEquals(i, mapB.get(sink));
         }
     }
 }

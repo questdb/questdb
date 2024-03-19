@@ -34,13 +34,13 @@ class StringValueRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
+    public CharSequence getStrA(int col) {
         return value;
     }
 
     @Override
     public CharSequence getStrB(int col) {
-        return getStr(col);
+        return getStrA(col);
     }
 
     @Override

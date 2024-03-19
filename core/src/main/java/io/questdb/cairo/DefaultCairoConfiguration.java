@@ -200,7 +200,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getCreateTableModelBatchSize() {
-        return 8192;
+        return 1_000_000;
     }
 
     @Override
@@ -355,7 +355,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getInsertModelBatchSize() {
-        return 8192;
+        return 1_000_000;
     }
 
     @Override

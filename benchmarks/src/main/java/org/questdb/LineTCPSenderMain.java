@@ -129,7 +129,7 @@ public class LineTCPSenderMain {
         long start = System.nanoTime();
         MicrosecondClock clock = new MicrosecondClockImpl();
         String tab = "quotes";
-        try (Sender sender = Sender.builder()
+        try (Sender sender = Sender.builder(Sender.Transport.TCP)
                 .address("wet-crimson-879-30b0c6db.ilp.c7at.questdb.com:32495")
                 .enableTls()
                 .enableAuth("admin").authToken("eRNONc_PZfJTwVuFoOr_YZJRfVnyfCRYZvJ9asABFzs")

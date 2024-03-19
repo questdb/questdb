@@ -25,11 +25,16 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 
 public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
@@ -149,9 +154,9 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         for (int i = 0; i < columnCount; i++) {
             final int columnIndex = columnIndexes.getQuick(i);
             final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
-            final MemoryR col = reader.getColumn(readerColIndex);
+            final MemoryR colMem = reader.getColumn(readerColIndex);
             // when the entire column is NULL we make it skip the whole of the data frame
-            final long top = col instanceof NullMemoryMR ? adjustedHi : reader.getColumnTop(base, columnIndex);
+            final long top = colMem instanceof NullMemoryMR ? adjustedHi : reader.getColumnTop(base, columnIndex);
             final long partitionLoAdjusted = partitionLo - top;
             final long partitionHiAdjusted = adjustedHi - top;
             final int sh = columnSizes.getQuick(i);
@@ -160,24 +165,27 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
                 if (sh > -1) {
                     // this assumes reader uses single page to map the whole column
                     // non-negative sh means fixed length column
-                    long address = col.getPageAddress(0);
+                    long address = colMem.getPageAddress(0);
                     long addressSize = partitionHiAdjusted << sh;
                     long offset = partitionLoAdjusted << sh;
                     columnPageAddress.setQuick(i * 2, address + offset);
                     pageSizes.setQuick(i * 2, addressSize - offset);
                 } else {
-                    final MemoryR fixCol = reader.getColumn(readerColIndex + 1);
-                    long fixAddress = fixCol.getPageAddress(0);
-                    long fixAddressSize = partitionHiAdjusted << 3;
-                    long fixOffset = partitionLoAdjusted << 3;
+                    final int columnType = reader.getMetadata().getColumnType(columnIndex);
+                    final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                    final MemoryR auxCol = reader.getColumn(readerColIndex + 1);
+                    long auxAddress = auxCol.getPageAddress(0);
+                    long auxOffsetLo = columnTypeDriver.getAuxVectorOffset(partitionLoAdjusted);
+                    long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
 
-                    long varAddress = col.getPageAddress(0);
-                    long varAddressSize = Unsafe.getUnsafe().getLong(fixAddress + fixAddressSize);
+                    long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
+                    // some varsize columns may not have data memory (fully inlined)
+                    long dataAddress = dataSize > 0 ? colMem.getPageAddress(0) : 0;
 
-                    columnPageAddress.setQuick(i * 2, varAddress);
-                    columnPageAddress.setQuick(i * 2 + 1, fixAddress + fixOffset);
-                    pageSizes.setQuick(i * 2, varAddressSize);
-                    pageSizes.setQuick(i * 2 + 1, fixAddressSize - fixOffset);
+                    columnPageAddress.setQuick(i * 2, dataAddress);
+                    columnPageAddress.setQuick(i * 2 + 1, auxAddress + auxOffsetLo);
+                    pageSizes.setQuick(i * 2, dataSize);
+                    pageSizes.setQuick(i * 2 + 1, auxOffsetHi - auxOffsetLo);
                 }
             } else {
                 columnPageAddress.setQuick(i * 2, 0);

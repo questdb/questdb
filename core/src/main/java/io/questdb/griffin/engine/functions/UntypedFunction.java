@@ -32,6 +32,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public abstract class UntypedFunction implements ScalarFunction {
     @Override
@@ -145,12 +147,12 @@ public abstract class UntypedFunction implements ScalarFunction {
     }
 
     @Override
-    public final CharSequence getStr(Record rec) {
+    public final CharSequence getStrA(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final void getStr(Record rec, Utf16Sink sink) {
+    public final void getStr(Record rec, Utf16Sink utf16Sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -176,6 +178,21 @@ public abstract class UntypedFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
         throw new UnsupportedOperationException();
     }
 }

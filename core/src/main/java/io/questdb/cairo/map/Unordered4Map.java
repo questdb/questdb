@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -46,7 +47,7 @@ import org.jetbrains.annotations.Nullable;
  * to the map constructor. Later put* calls made on {@link MapKey} and {@link MapValue} must match
  * the declared column types to guarantee memory access safety.
  * <p>
- * Keys must be fixed-size and up to 8 bytes total. Only insertions and updates operations are
+ * Keys must be fixed-size and up to 4 bytes total. Only insertions and updates operations are
  * supported meaning that a key can't be removed from the map once it was inserted.
  * <p>
  * The hash table is organized into the following parts:
@@ -614,6 +615,11 @@ public class Unordered4Map implements Map, Reopenable {
 
         @Override
         public void putTimestamp(long value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
             throw new UnsupportedOperationException();
         }
 

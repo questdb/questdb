@@ -33,6 +33,7 @@ import org.jetbrains.annotations.NotNull;
  */
 public class DirectUtf8StringZ implements LPSZ {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    private boolean ascii;
     private long ptr;
     private int size;
 
@@ -46,11 +47,14 @@ public class DirectUtf8StringZ implements LPSZ {
         return Unsafe.getUnsafe().getByte(ptr + index);
     }
 
-    @SuppressWarnings("StatementWithEmptyBody")
     public DirectUtf8StringZ of(long address) {
         this.ptr = address;
         long p = address;
-        while (Unsafe.getUnsafe().getByte(p++) != 0) ;
+        this.ascii = true;
+        byte b;
+        while ((b = Unsafe.getUnsafe().getByte(p++)) != 0) {
+            this.ascii &= (b >= 0);
+        }
         this.size = (int) (p - address - 1);
         return this;
     }

@@ -44,7 +44,7 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CharSequence subnetStr = args.getQuick(0).getStr(null);
+        CharSequence subnetStr = args.getQuick(0).getStrA(null);
         int nullRate = args.getQuick(1).getInt(null);
 
         try {

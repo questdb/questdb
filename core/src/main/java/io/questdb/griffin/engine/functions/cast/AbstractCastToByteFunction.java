@@ -24,11 +24,23 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
 public abstract class AbstractCastToByteFunction extends ByteFunction implements UnaryFunction {
+    protected final Function arg;
+
+    public AbstractCastToByteFunction(Function arg) {
+        this.arg = arg;
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(getArg()).val("::byte");

@@ -68,7 +68,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
             Function symbolFunc = keyValueFuncs.get(i);
             int symbolKey = symbolFunc.isRuntimeConstant()
                     ? SymbolTable.VALUE_NOT_FOUND
-                    : symbolMapReader.keyOf(symbolFunc.getStr(null));
+                    : symbolMapReader.keyOf(symbolFunc.getStrA(null));
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                 if (deferredFuncs == null) {
                     deferredFuncs = new ObjList<>();
@@ -96,7 +96,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
             StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(cursor.getColumnIndexes().getQuick(columnIndex));
             for (int i = 0, n = deferredSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = deferredSymbolFuncs.get(i);
-                final CharSequence symbol = symbolFunc.getStr(null);
+                final CharSequence symbol = symbolFunc.getStrA(null);
                 int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     deferredSymbolKeys.add(TableUtils.toIndexKey(symbolKey));

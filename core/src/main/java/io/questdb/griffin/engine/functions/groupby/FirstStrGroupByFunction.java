@@ -54,7 +54,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
-        final CharSequence val = arg.getStr(record);
+        final CharSequence val = arg.getStrA(record);
         if (val == null) {
             mapValue.putLong(valueIndex + 1, 0);
             mapValue.putBool(valueIndex + 2, true);
@@ -81,7 +81,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         final boolean nullValue = rec.getBool(valueIndex + 2);
         if (nullValue) {
             return null;
@@ -92,7 +92,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getStr(rec);
+        return getStrA(rec);
     }
 
     @Override

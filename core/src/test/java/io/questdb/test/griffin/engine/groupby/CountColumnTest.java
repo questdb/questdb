@@ -216,8 +216,8 @@ public class CountColumnTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedCountAllColumnTypesOnNullData() throws Exception {
-        assertQuery("k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "0\t1000\t1000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n",
+        assertQuery("k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcvar\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
+                        "0\t1000\t1000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n",
                 "select k, " +
                         "count(1) c1, " +
                         "count(*) cstar, " +
@@ -229,6 +229,7 @@ public class CountColumnTest extends AbstractCairoTest {
                         "count(ts) cts, " +
                         "count(l256) cl256, " +
                         "count(str) cstr, " +
+                        "count(var) cvar, " +
                         "count(sym) csym, " +
                         "count(gb) cgb, " +
                         "count(gs) cgs, " +
@@ -237,9 +238,9 @@ public class CountColumnTest extends AbstractCairoTest {
                         "from x",
                 "create table x as " +
                         "(" +
-                        " select 0 k, 1 i, 2L l, 3f f, 4d d, cast(1 as date) dat, 1::timestamp ts, rnd_long256() l256, 's' str, 'sym'::symbol sym, rnd_geohash(5) gb, rnd_geohash(10) gs, rnd_geohash(20) gi, rnd_geohash(40) gl from long_sequence(1) where x = 10 " +
+                        " select 0 k, 1 i, 2L l, 3f f, 4d d, cast(1 as date) dat, 1::timestamp ts, rnd_long256() l256, 's' str, 'v'::varchar var, 'sym'::symbol sym, rnd_geohash(5) gb, rnd_geohash(10) gs, rnd_geohash(20) gi, rnd_geohash(40) gl from long_sequence(1) where x = 10 " +
                         " union all " +
-                        " select 0, null, null , null, null, null, null, null, null, null, null, null, null, null from long_sequence(1000)" +
+                        " select 0, null, null , null, null, null, null, null, null, null, null, null, null, null, null from long_sequence(1000)" +
                         ")",
                 null,
                 true,
@@ -250,17 +251,17 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testKeyedCountAllColumnTypesOnRandomData() throws Exception {
         assertQuery(
-                "k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "0\t10000\t10000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
-                        "1\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\n" +
-                        "2\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\n" +
-                        "3\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\n" +
-                        "4\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\n" +
-                        "5\t10000\t10000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
-                        "6\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\n" +
-                        "7\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\n" +
-                        "8\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\n" +
-                        "9\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\n",
+                "k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcvar\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
+                        "0\t10000\t10000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
+                        "1\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8300\t10000\t10000\t10000\t10000\t10000\n" +
+                        "2\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8364\t10000\t10000\t10000\t10000\t10000\n" +
+                        "3\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8359\t10000\t10000\t10000\t10000\t10000\n" +
+                        "4\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8303\t10000\t10000\t10000\t10000\t10000\n" +
+                        "5\t10000\t10000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
+                        "6\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8312\t10000\t10000\t10000\t10000\t10000\n" +
+                        "7\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8282\t10000\t10000\t10000\t10000\t10000\n" +
+                        "8\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8351\t10000\t10000\t10000\t10000\t10000\n" +
+                        "9\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8355\t10000\t10000\t10000\t10000\t10000\n",
                 "select k, " +
                         "count(1) c1, " +
                         "count(*) cstar, " +
@@ -272,6 +273,7 @@ public class CountColumnTest extends AbstractCairoTest {
                         "count(ts) cts, " +
                         "count(l256) cl256, " +
                         "count(str) cstr, " +
+                        "count(varchar) cvar, " +
                         "count(sym) csym, " +
                         "count(gb) cgb, " +
                         "count(gs) cgs, " +
@@ -290,6 +292,7 @@ public class CountColumnTest extends AbstractCairoTest {
                         " case when x%5 != 0 then rnd_long()::timestamp else null end ts," +
                         " case when x%5 != 0 then rnd_long256()  else null end l256," +
                         " case when x%5 != 0 then rnd_str(100,1,10,0) else null end str," +
+                        " case when x%5 != 0 then rnd_varchar(5,16,2) else null end varchar," +
                         " case when x%5 != 0 then rnd_symbol(100,1,10,0) else null end sym," +
                         " case when x%5 != 0 then rnd_geohash(5)  else null end gb," +
                         " case when x%5 != 0 then rnd_geohash(10) else null end gs," +
@@ -306,8 +309,8 @@ public class CountColumnTest extends AbstractCairoTest {
 
     @Test
     public void testNotKeyedCountAllColumnTypesOnEmptyData() throws Exception {
-        assertQuery("c1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n",
+        assertQuery("c1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcvar\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
+                        "0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n",
                 "select count(1) c1, " +
                         "count(*) cstar, " +
                         "count(i) ci, " +
@@ -318,6 +321,7 @@ public class CountColumnTest extends AbstractCairoTest {
                         "count(ts) cts, " +
                         "count(l256) cl256, " +
                         "count(str) cstr, " +
+                        "count(var) cvar, " +
                         "count(sym) csym, " +
                         "count(gb) cgb, " +
                         "count(gs) cgs, " +
@@ -334,6 +338,7 @@ public class CountColumnTest extends AbstractCairoTest {
                         " ts timestamp, " +
                         " l256 long256, " +
                         " str string, " +
+                        " var varchar, " +
                         " sym symbol, " +
                         " gb geohash(5b), " +
                         " gs geohash(10b), " +

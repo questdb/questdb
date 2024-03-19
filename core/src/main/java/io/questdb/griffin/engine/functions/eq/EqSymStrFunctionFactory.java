@@ -67,7 +67,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        CharSequence constValue = constFunc.getStr(null);
+        CharSequence constValue = constFunc.getStrA(null);
         SymbolFunction func = (SymbolFunction) varFunc;
         if (func.getStaticSymbolTable() != null) {
             return new ConstCheckColumnFunc(func, constValue);
@@ -185,7 +185,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
             // these are columns of the same record
             // records have re-usable character sequences
             final CharSequence a = left.getSymbol(rec);
-            final CharSequence b = right.getStr(rec);
+            final CharSequence b = right.getStrA(rec);
 
             if (a == null) {
                 return negated != (b == null);

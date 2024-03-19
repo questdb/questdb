@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -50,10 +51,24 @@ public interface Utf8Sequence {
     byte byteAt(int index);
 
     /**
+     * @return true if all characters in the string are ASCII. This is a best-effort flag, i.e. it may have
+     * false value while the actual string has ASCII characters only.
+     */
+    default boolean isAscii() {
+        return false;
+    }
+
+    /**
      * Number of bytes in the string.
      * <p>
      * This is NOT the number of 16-bit chars or code points in the string.
      * This is named `size` instead of `length` to avoid collision withs the `CharSequence` interface.
      */
     int size();
+
+    default void writeTo(long addr, int lo, int hi) {
+        for (int i = lo; i < hi; i++) {
+            Unsafe.getUnsafe().putByte(addr++, byteAt(i));
+        }
+    }
 }

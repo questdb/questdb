@@ -99,7 +99,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final QueryLogger queryLogger;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final IndexBuilder rebuildIndex;
     private final Path renamePath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
@@ -128,7 +127,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
         this.messageBus = engine.getMessageBus();
-        this.rebuildIndex = new IndexBuilder(configuration);
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
@@ -219,7 +217,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Misc.free(vacuumColumnVersions);
         Misc.free(path);
         Misc.free(renamePath);
-        Misc.free(rebuildIndex);
         Misc.free(codeGenerator);
         Misc.free(mem);
         Misc.freeObjList(tableWriters);
@@ -383,12 +380,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private static boolean isIPv4Cast(int from, int to) {
-        return (from == ColumnType.STRING && to == ColumnType.IPv4);
+        return (from == ColumnType.STRING && to == ColumnType.IPv4) || (from == ColumnType.VARCHAR && to == ColumnType.IPv4);
     }
 
     private static boolean isIPv4UpdateCast(int from, int to) {
         return (from == ColumnType.STRING && to == ColumnType.IPv4)
-                || (from == ColumnType.IPv4 && to == ColumnType.STRING);
+                || (from == ColumnType.IPv4 && to == ColumnType.STRING)
+                || (from == ColumnType.VARCHAR && to == ColumnType.IPv4)
+                || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
     }
 
     private void alterTable(SqlExecutionContext executionContext) throws SqlException {
@@ -939,7 +938,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tsIncludedInDedupColumns = true;
                 } else {
                     int columnType = tableMetadata.getColumnType(colIndex);
-                    if (ColumnType.isVariableLength(columnType) || columnType < 0) {
+                    if (ColumnType.isVarSize(columnType) || columnType < 0) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column can only be fixed size column [column=").put(columnName)
                                 .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
                     }
@@ -1666,7 +1665,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            CharSequence str = record.getStr(cursorTimestampIndex);
+            CharSequence str = record.getStrA(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.TIMESTAMP));
             copier.copy(record, row);
@@ -1692,7 +1691,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            final CharSequence str = record.getStr(cursorTimestampIndex);
+            final CharSequence str = record.getStrA(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(SqlUtil.implicitCastStrAsTimestamp(str));
             copier.copy(record, row);
@@ -2334,7 +2333,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
                     } else {
                         int columnType = ColumnType.tagOf(cursorMetadata.getColumnType(writerTimestampIndex));
-                        if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.NULL) {
+                        if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.VARCHAR && columnType != ColumnType.NULL) {
                             throw SqlException.$(tableNameExpr.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
                         }
                     }
@@ -2431,7 +2430,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int functionPosition,
             BindVariableService bindVariableService
     ) throws SqlException {
-
         final int columnType = metadata.getColumnType(metadataColumnIndex);
         if (function.isUndefined()) {
             function.assignType(columnType, bindVariableService);
@@ -2536,53 +2534,55 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             tok = GenericLexer.unquote(tok);
         }
         TableToken tableToken = tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
-        rebuildIndex.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()));
+        try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
+            indexBuilder.of(path.of(configuration.getRoot()).concat(tableToken.getDirName()));
 
-        tok = SqlUtil.fetchNext(lexer);
-        CharSequence columnName = null;
-
-        if (tok != null && SqlKeywords.isColumnKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
-            if (Chars.isQuoted(tok)) {
-                tok = GenericLexer.unquote(tok);
+            CharSequence columnName = null;
+
+            if (tok != null && SqlKeywords.isColumnKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (Chars.isQuoted(tok)) {
+                    tok = GenericLexer.unquote(tok);
+                }
+                if (tok == null || TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
+                    columnName = GenericLexer.immutableOf(tok);
+                    tok = SqlUtil.fetchNext(lexer);
+                }
             }
-            if (tok == null || TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
-                columnName = GenericLexer.immutableOf(tok);
+
+            CharSequence partition = null;
+            if (tok != null && SqlKeywords.isPartitionKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+
+                if (Chars.isQuoted(tok)) {
+                    tok = GenericLexer.unquote(tok);
+                }
+                partition = tok;
                 tok = SqlUtil.fetchNext(lexer);
             }
-        }
 
-        CharSequence partition = null;
-        if (tok != null && SqlKeywords.isPartitionKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-
-            if (Chars.isQuoted(tok)) {
-                tok = GenericLexer.unquote(tok);
+            if (tok == null || !isLockKeyword(tok)) {
+                throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
             }
-            partition = tok;
+
             tok = SqlUtil.fetchNext(lexer);
-        }
+            if (tok == null || !isExclusiveKeyword(tok)) {
+                throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
+            }
 
-        if (tok == null || !isLockKeyword(tok)) {
-            throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
-        }
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !isSemicolon(tok)) {
+                throw SqlException.$(lexer.getPosition(), "EOF expected");
+            }
 
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || !isExclusiveKeyword(tok)) {
-            throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
+            columnNames.clear();
+            if (columnName != null) {
+                columnNames.add(columnName);
+            }
+            executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
+            indexBuilder.reindex(partition, columnName);
         }
-
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !isSemicolon(tok)) {
-            throw SqlException.$(lexer.getPosition(), "EOF expected");
-        }
-
-        columnNames.clear();
-        if (columnName != null) {
-            columnNames.add(columnName);
-        }
-        executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
-        rebuildIndex.reindex(partition, columnName);
         compiledQuery.ofRepair();
     }
 
@@ -3017,7 +3017,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @FunctionalInterface
-    protected interface KeywordBasedExecutor {
+    public interface KeywordBasedExecutor {
         void execute(SqlExecutionContext executionContext) throws SqlException;
     }
 
@@ -3580,6 +3580,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         castGroups.extendAndSet(ColumnType.DATE, 1);
         castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
         castGroups.extendAndSet(ColumnType.STRING, 3);
+        castGroups.extendAndSet(ColumnType.VARCHAR, 3);
         castGroups.extendAndSet(ColumnType.SYMBOL, 3);
         castGroups.extendAndSet(ColumnType.BINARY, 4);
 

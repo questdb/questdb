@@ -42,6 +42,11 @@ public abstract class AbstractCastToStrFunction extends StrFunction implements U
     }
 
     @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(getArg()).val("::string");
     }

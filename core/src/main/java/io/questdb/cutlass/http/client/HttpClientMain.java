@@ -30,6 +30,7 @@ import io.questdb.cutlass.http.client.ser.JsonToTableSerializer;
 import io.questdb.cutlass.json.JsonException;
 
 public class HttpClientMain {
+
     public static void main(String[] args) throws JsonException {
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration("C:\\qdb2\\db");
         try (
@@ -43,7 +44,6 @@ public class HttpClientMain {
                         HttpClient.ResponseHeaders responseHeaders = req
                                 .GET()
                                 .url("/exec")
-                                //.query("query", "cpu%20limit%20400000")
                                 .query("query", "cpu limit 2")
                                 //.query("query", "cpu")
                                 .header("Accept", "gzip, deflate, br")
@@ -64,6 +64,7 @@ public class HttpClientMain {
                         jsonToTableSerializer.parse(fragment.lo(), fragment.hi());
                         chunkCount++;
                     }
+
                     System.out.println(System.currentTimeMillis() - t);
                     System.out.println("done: " + i + ", chunks: " + chunkCount);
                 }

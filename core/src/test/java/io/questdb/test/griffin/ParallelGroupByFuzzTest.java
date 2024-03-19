@@ -234,7 +234,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCaseExpressionKeyGroupBy1() throws Exception {
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT CASE WHEN (key = 'k0') THEN 'foo' ELSE 'bar' END AS key, count(*) " +
                         "FROM tab GROUP BY key ORDER BY key",
                 "key\tcount\n" +
@@ -247,7 +247,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelCaseExpressionKeyGroupBy2() throws Exception {
         // Parallel GROUP BY shouldn't kick in on this query due to ::symbol cast,
         // yet we want to validate the result correctness.
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT CASE WHEN (key::symbol = 'k0') THEN 'foo' ELSE 'bar' END AS key, count(*) " +
                         "FROM tab GROUP BY key ORDER BY key",
                 "key\tcount\n" +
@@ -269,7 +269,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCountOverStringKeyGroupBy() throws Exception {
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT count(*) FROM (SELECT key FROM tab WHERE key IS NOT NULL GROUP BY key ORDER BY key)",
                 "count\n" +
                         "5\n"
@@ -621,6 +621,23 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k2abc\t2683.4065201284266\t1639600.0\n" +
                         "k3abc\t2684.081214514935\t1640400.0\n" +
                         "k4abc\t2684.756229953121\t1641200.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelFunctionKeyGroupByThreadUnsafe3() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        // This query shouldn't be executed in parallel,
+        // so this test verifies that nothing breaks.
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key::symbol key, avg(value), sum(colTop) FROM tab ORDER BY key",
+                "key\tavg\tsum\n" +
+                        "k0\t2027.5\t1642000.0\n" +
+                        "k1\t2023.5\t1638800.0\n" +
+                        "k2\t2024.5\t1639600.0\n" +
+                        "k3\t2025.5\t1640400.0\n" +
+                        "k4\t2026.5\t1641200.0\n"
         );
     }
 
@@ -1151,7 +1168,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithCaseExpression1() throws Exception {
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT avg(length(CASE WHEN (key = 'k0') THEN 'foobar' ELSE 'foo' END)), avg(value) FROM tab",
                 "avg\tavg1\n" +
                         "3.6\t2025.5\n"
@@ -1162,7 +1179,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByWithCaseExpression2() throws Exception {
         // Parallel GROUP BY shouldn't kick in on this query due to ::symbol cast,
         // yet we want to validate the result correctness.
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT sum(length(CASE WHEN (key::symbol = 'k0') THEN 'foobar' ELSE 'foo' END)) FROM tab",
                 "sum\n" +
                         "28800\n"
@@ -1226,7 +1243,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByWithMinMaxStrFunction() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT min(key), max(key) FROM tab",
                 "min\tmax\n" +
                         "k0\tk4\n"
@@ -1259,7 +1276,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByWithNestedCaseFunction() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT sum(CASE WHEN (key = 'k0') THEN 1 ELSE 0 END) FROM tab",
                 "sum\n" +
                         "1600\n"
@@ -1630,10 +1647,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelStringKeyGroupBy() throws Exception {
+    public void testParallelStringAndVarcharKeyGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop), count() FROM tab ORDER BY key",
                 "key\tavg\tsum\tcount\n" +
                         "k0\t2027.5\t1642000.0\t1600\n" +
@@ -1724,7 +1741,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelStringKeyGroupBySubQuery() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg + sum from (" +
                         "SELECT key, avg(value), sum(colTop) FROM tab" +
                         ") ORDER BY key",
@@ -1831,7 +1848,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByWithFilter() throws Exception {
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 80 ORDER BY key",
                 "key\tavg\tsum\tcount\n" +
                         "k0\t46.25\t325.0\t20\n" +
@@ -1846,7 +1863,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelStringKeyGroupByWithLimit() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop) FROM tab ORDER BY key LIMIT 3",
                 "key\tavg\tsum\n" +
                         "k0\t2027.5\t1642000.0\n" +
@@ -1892,7 +1909,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByWithNestedFilter() throws Exception {
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT avg(v), k, sum(ct) " +
                         "FROM (SELECT colTop ct, value v, key k FROM tab WHERE value < 80) ORDER BY k",
                 "avg\tk\tsum\n" +
@@ -1931,7 +1948,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByWithTooStrictFilter() throws Exception {
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 0 ORDER BY key",
                 "key\tavg\tsum\tcount\n"
         );
@@ -2607,7 +2624,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
-    private void testParallelStringKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+    private void testParallelStringAndVarcharKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(
@@ -2616,11 +2633,38 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
+                        // try with a String table first
                         ddl(
                                 compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  key STRING," +
+                                        "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        insert(
+                                compiler,
+                                "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        insert(
+                                compiler,
+                                "insert into tab " +
+                                        "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+
+
+                        // now drop the String table and recreate it with a Varchar key
+                        engine.drop("DROP TABLE tab", sqlExecutionContext);
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  key VARCHAR," +
                                         "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );

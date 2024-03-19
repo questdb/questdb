@@ -70,10 +70,10 @@ public class PartitionFrameFactory implements RecycleBin<PartitionFrame>, Closea
             long partitionTimestamp,
             RecordMetadata metadata,
             ColumnVersionReader cvr,
-            long size
+            long partitionRowCount
     ) {
         PartitionFrame frame = getOrCreate();
-        frame.openRO(partitionPath, partitionTimestamp, metadata, cvr, size);
+        frame.openRO(partitionPath, partitionTimestamp, metadata, cvr, partitionRowCount);
         return frame;
     }
 

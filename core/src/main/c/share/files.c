@@ -30,6 +30,7 @@
 #include "sysutil.h"
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <dirent.h>
 #include <sys/errno.h>
 #include <sys/time.h>
@@ -135,6 +136,16 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
         return -1;
     }
     return result;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readIntAsUnsignedLong
+        (JNIEnv *e, jclass cl, jint fd, jlong offset) {
+    uint32_t result;
+    ssize_t readLen = pread((int) fd, (void *) &result, sizeof(jint), (off_t) offset);
+    if (readLen != sizeof(uint32_t)) {
+        return -1;
+    }
+    return (jlong) result;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong

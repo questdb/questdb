@@ -45,20 +45,13 @@ public class CastStrToByteFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToByteFunction {
-        private final Function arg;
-
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
         public byte getByte(Record rec) {
-            return (byte) Numbers.parseIntQuiet(arg.getStr(rec));
+            return (byte) Numbers.parseIntQuiet(arg.getStrA(rec));
         }
     }
 }

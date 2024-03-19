@@ -43,7 +43,7 @@ import io.questdb.std.ReadOnlyObjList;
 
 public class InsertOperationImpl implements InsertOperation {
 
-    //type inference fails on java 8 if <CharSequence> is removed 
+    // type inference fails on java 8 if <CharSequence> is removed
     private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<CharSequence>() {
         @Override
         public void addAll(ReadOnlyObjList<? extends CharSequence> that) {
