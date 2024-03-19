@@ -65,7 +65,9 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return Unsafe.getUnsafe().getDouble(addressOf(offset));
     }
 
-    int getFd();
+    default int getFd() {
+        return -1;
+    }
 
     default float getFloat(long offset) {
         assert addressOf(offset + Float.BYTES) > 0;

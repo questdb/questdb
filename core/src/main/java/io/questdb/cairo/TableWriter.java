@@ -3550,7 +3550,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } catch (Throwable e) {
             handleColumnTaskException(
-                    "cannot merge fix column into lag",
+                    "could not merge fix WAL column",
                     columnIndex,
                     columnType,
                     mergeIndex,
@@ -3628,7 +3628,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } catch (Throwable e) {
             handleColumnTaskException(
-                    "cannot merge variable length column into lag",
+                    "could not merge varsize WAL column",
                     columnIndex,
                     columnType,
                     timestampMergeIndexAddr,
@@ -3716,14 +3716,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (o3SrcDataMem.isFileBased()) {
                         long bytesWritten = ff.copyData(o3SrcDataMem.getFd(), o3DstDataMem.getFd(), o3srcDataOffset, o3dstDataOffset, dataVectorCopySize);
                         if (bytesWritten != dataVectorCopySize) {
-                            throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
-                                    .put(o3DstDataMem.getFd()).put(", dataVectorCopySize=").put(dataVectorCopySize).put(", bytesWritten=").put(bytesWritten).put(']');
+                            throw CairoException.critical(ff.errno())
+                                    .put("could not copy WAL column (fd-fd) [dstFd=").put(o3DstDataMem.getFd())
+                                    .put(", o3dstDataOffset=").put(o3dstDataOffset)
+                                    .put(", srcFd=").put(o3SrcDataMem.getFd())
+                                    .put(", dataVectorCopySize=").put(dataVectorCopySize)
+                                    .put(", bytesWritten=").put(bytesWritten)
+                                    .put(']');
                         }
                     } else {
                         long bytesWritten = ff.write(o3DstDataMem.getFd(), o3SrcDataMem.addressOf(o3srcDataOffset), dataVectorCopySize, o3dstDataOffset);
                         if (bytesWritten != dataVectorCopySize) {
-                            throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
-                                    .put(o3DstDataMem.getFd()).put(", dataVectorCopySize=").put(dataVectorCopySize).put(", bytesWritten=").put(bytesWritten).put(']');
+                            throw CairoException.critical(ff.errno())
+                                    .put("could not copy WAL column (mem-fd) [fd=").put(o3DstDataMem.getFd())
+                                    .put(", o3dstDataOffset=").put(o3dstDataOffset)
+                                    .put(", o3srcDataOffset=").put(o3srcDataOffset)
+                                    .put(", dataVectorCopySize=").put(dataVectorCopySize)
+                                    .put(", bytesWritten=").put(bytesWritten)
+                                    .put(']');
                         }
                     }
                 } else {
@@ -3749,7 +3759,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } catch (Throwable th) {
             handleColumnTaskException(
-                    "move wal to lag failed",
+                    "could not copy WAL column",
                     columnIndex,
                     columnType,
                     copyRowCount,
@@ -3979,7 +3989,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } catch (Throwable ex) {
             handleColumnTaskException(
-                    "o3 move lag failed",
+                    "could not shift o3 lag",
                     columnIndex,
                     columnType,
                     copyToLagRowCount,
@@ -4041,7 +4051,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } catch (Throwable th) {
             handleColumnTaskException(
-                    "sort fixed size column failed",
+                    "could not sort fix o3 column",
                     columnIndex,
                     columnType,
                     sortedTimestampsAddr,
@@ -4076,7 +4086,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
         } catch (Throwable th) {
             handleColumnTaskException(
-                    "sort variable size column failed",
+                    "could not sort varsize o3 column",
                     columnIndex,
                     columnType,
                     sortedTimestampsAddr,

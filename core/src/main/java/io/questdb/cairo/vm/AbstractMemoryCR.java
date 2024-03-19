@@ -42,7 +42,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
     private final DirectUtf8String utf8viewA = new DirectUtf8String();
     private final DirectUtf8String utf8viewB = new DirectUtf8String();
-    protected int fd = -1;
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
@@ -51,13 +50,8 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     public long addressOf(long offset) {
         offset -= shiftAddressRight;
-        assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        assert offset <= size : "offset=" + offset + ", size=" + size;
         return pageAddress + offset;
-    }
-
-    @Override
-    public boolean isFileBased() {
-        return true;
     }
 
     public void clear() {
@@ -74,10 +68,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     @Override
     public DirectCharSequence getDirectStr(long offset) {
         return getStr(offset, csviewA);
-    }
-
-    public int getFd() {
-        return fd;
     }
 
     public FilesFacade getFilesFacade() {
