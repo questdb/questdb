@@ -40,19 +40,12 @@ public class CastDateToFloatFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CastDateToFloatFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastDateToFloatFunction extends AbstractCastToFloatFunction {
-        private final Function arg;
-
-        public CastDateToFloatFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+    public static class Func extends AbstractCastToFloatFunction {
+        public Func(Function arg) {
+            super(arg);
         }
 
         @Override

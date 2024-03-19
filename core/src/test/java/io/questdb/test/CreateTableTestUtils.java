@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.cairo.*;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
@@ -77,8 +78,10 @@ public class CreateTableTestUtils {
                     .col("j", ColumnType.SYMBOL)
                     .col("k", ColumnType.BOOLEAN)
                     .col("l", ColumnType.BINARY)
-                    .col("m", ColumnType.UUID);
+                    .col("m", ColumnType.UUID)
+                    .col("n", ColumnType.VARCHAR);
             TestUtils.create(model, engine);
+
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
                 try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"))) {
@@ -89,6 +92,7 @@ public class CreateTableTestUtils {
             }
         }
 
+        Utf8StringSink utf8Sink = new Utf8StringSink();
         try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"))) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
@@ -158,6 +162,20 @@ public class CreateTableTestUtils {
                 } else {
                     row.putLong128(12, rnd.nextLong(), rnd.nextLong());
                 }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putVarchar(13, null);
+                } else {
+                    utf8Sink.clear();
+                    if (rnd.nextInt() % 4 == 0) {
+                        rnd.nextUtf8AsciiStr(5, utf8Sink);
+                        row.putVarchar(13, utf8Sink);
+                    } else {
+                        rnd.nextUtf8Str(5, utf8Sink);
+                        row.putVarchar(13, utf8Sink);
+                    }
+                }
+
                 row.append();
             }
             writer.commit();
@@ -166,9 +184,9 @@ public class CreateTableTestUtils {
 
     public static TableModel getAllTypesModel(CairoConfiguration configuration, int partitionBy) {
         return new TableModel(configuration, "all", partitionBy)
-                .col("int", ColumnType.INT)
-                .col("short", ColumnType.SHORT)
-                .col("byte", ColumnType.BYTE)
+                .col("int", ColumnType.INT) // 0
+                .col("short", ColumnType.SHORT) // 1
+                .col("byte", ColumnType.BYTE) // 2
                 .col("double", ColumnType.DOUBLE)
                 .col("float", ColumnType.FLOAT)
                 .col("long", ColumnType.LONG)
@@ -176,7 +194,8 @@ public class CreateTableTestUtils {
                 .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
                 .col("bool", ColumnType.BOOLEAN)
                 .col("bin", ColumnType.BINARY)
-                .col("date", ColumnType.DATE);
+                .col("date", ColumnType.DATE) // 10
+                .col("varchar", ColumnType.VARCHAR); // 11
     }
 
     public static TableModel getAllTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
@@ -188,7 +207,16 @@ public class CreateTableTestUtils {
                 .col("float", ColumnType.FLOAT)
                 .col("long", ColumnType.LONG)
                 .col("str", ColumnType.STRING)
-                .col("sym", ColumnType.SYMBOL).symbolCapacity(64).col("bool", ColumnType.BOOLEAN).col("bin", ColumnType.BINARY).col("date", ColumnType.DATE).col("long256", ColumnType.LONG256).col("chr", ColumnType.CHAR).timestamp();
+                .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("bin", ColumnType.BINARY)
+                .col("date", ColumnType.DATE)
+                .col("long256", ColumnType.LONG256)
+                .col("chr", ColumnType.CHAR)
+                .col("uuid", ColumnType.UUID)
+                .col("ipv4", ColumnType.IPv4)
+                .col("varchar", ColumnType.VARCHAR)
+                .timestamp();
 
     }
 

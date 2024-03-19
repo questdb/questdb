@@ -704,8 +704,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             }
 
             @Override
-            public CharSequence getSym(int col) {
-                return currentRecord.getSym(col);
+            public CharSequence getSymA(int col) {
+                return currentRecord.getSymA(col);
             }
 
             @Override
@@ -782,7 +782,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 }
 
                 @Override
-                public CharSequence getSym(int col) {
+                public CharSequence getSymA(int col) {
                     int symbolId = (int) crossFrameRow.getQuick(col);
                     return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);
                 }
@@ -924,7 +924,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 }
 
                 @Override
-                public CharSequence getSym(int col) {
+                public CharSequence getSymA(int col) {
                     int symbolId;
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {

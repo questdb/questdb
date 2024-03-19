@@ -34,12 +34,12 @@ public class StrTypeConstant extends StrFunction implements TypeConstant {
     public static final StrTypeConstant INSTANCE = new StrTypeConstant();
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         return null;
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink sink) {
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
     }
 
     @Override

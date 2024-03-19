@@ -24,19 +24,28 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.DirectString;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
+import org.jetbrains.annotations.NotNull;
 
 // contiguous readable
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-    private final DirectString csview = new DirectString();
-    private final DirectString csview2 = new DirectString();
-    private final Long256Impl long256 = new Long256Impl();
+    private final DirectString csviewA = new DirectString();
+    private final DirectString csviewB = new DirectString();
+    private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
+    private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
+    private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
+    private final DirectUtf8String utf8viewA = new DirectUtf8String();
+    private final DirectUtf8String utf8viewB = new DirectUtf8String();
     protected int fd = -1;
     protected FilesFacade ff;
     protected long lim;
@@ -52,8 +61,8 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     public void clear() {
         // avoid debugger seg faulting when memory is closed
-        csview.clear();
-        csview2.clear();
+        csviewA.clear();
+        csviewB.clear();
         bsview.clear();
     }
 
@@ -63,7 +72,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     @Override
     public DirectCharSequence getDirectStr(long offset) {
-        return getStr(offset, csview);
+        return getStr(offset, csviewA);
     }
 
     public int getFd() {
@@ -75,13 +84,23 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     }
 
     public Long256 getLong256A(long offset) {
-        getLong256(offset, long256);
-        return long256;
+        getLong256(offset, long256A);
+        return long256A;
     }
 
     public Long256 getLong256B(long offset) {
         getLong256(offset, long256B);
         return long256B;
+    }
+
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringA() {
+        return utf8SplitViewA;
+    }
+
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringB() {
+        return utf8SplitViewB;
     }
 
     @Override
@@ -94,12 +113,22 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return pageAddress == 0 ? 0 : 1;
     }
 
-    public final CharSequence getStr(long offset) {
-        return getStr(offset, csview);
+    public final CharSequence getStrA(long offset) {
+        return getStr(offset, csviewA);
     }
 
-    public final CharSequence getStr2(long offset) {
-        return getStr(offset, csview2);
+    public final CharSequence getStrB(long offset) {
+        return getStr(offset, csviewB);
+    }
+
+    @Override @NotNull
+    public Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
+        return getVarchar(offset, size, utf8viewA, ascii);
+    }
+
+    @Override @NotNull
+    public Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
+        return getVarchar(offset, size, utf8viewB, ascii);
     }
 
     @Override
@@ -125,5 +154,21 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     @Override
     public long size() {
         return size;
+    }
+
+    private DirectUtf8String getVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
+        long addr = addressOf(offset);
+        assert addr > 0;
+        if (size + offset <= size()) {
+            return u8view.of(addr, addr + size, ascii);
+        }
+        throw CairoException.critical(0)
+                .put("String is outside of file boundary [offset=")
+                .put(offset)
+                .put(", size=")
+                .put(size)
+                .put(", size()=")
+                .put(size())
+                .put(']');
     }
 }

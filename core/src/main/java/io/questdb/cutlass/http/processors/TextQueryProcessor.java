@@ -275,7 +275,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private static void putStringOrNull(HttpChunkedResponse r, CharSequence str) {
         if (str != null) {
-            r.putQuoted(str);
+            r.putQuote().escapeJsonStr(str).putQuote();
         }
     }
 
@@ -331,7 +331,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             if (state.columnIndex > 0) {
                                 response.putAscii(state.delimiter);
                             }
-                            response.putQuoted(state.metadata.getColumnName(state.columnIndex));
+                            response.putQuote().escapeJsonStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
                             state.columnIndex++;
                             response.bookmark();
                         }
@@ -602,10 +602,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.RECORD:
                 break;
             case ColumnType.STRING:
-                putStringOrNull(response, rec.getStr(col));
+                putStringOrNull(response, rec.getStrA(col));
                 break;
             case ColumnType.SYMBOL:
-                putStringOrNull(response, rec.getSym(col));
+                putStringOrNull(response, rec.getSymA(col));
                 break;
             case ColumnType.LONG256:
                 rec.getLong256(col, response);
@@ -629,6 +629,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 throw new UnsupportedOperationException();
             case ColumnType.IPv4:
                 putIPv4Value(response, rec, col);
+                break;
+            case ColumnType.VARCHAR:
+                rec.getVarchar(col, response);
                 break;
             default:
                 assert false;

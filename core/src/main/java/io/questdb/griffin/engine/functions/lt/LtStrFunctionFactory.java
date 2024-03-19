@@ -61,14 +61,14 @@ public class LtStrFunctionFactory implements FunctionFactory {
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
         if (a.isConstant() && !b.isConstant()) {
-            CharSequence constValue = a.getStr(null);
+            CharSequence constValue = a.getStrA(null);
             if (constValue == null) {
                 return BooleanConstant.FALSE;
             }
             return new ConstOnLeftFunc(constValue, b);
         }
         if (!a.isConstant() && b.isConstant()) {
-            CharSequence constValue = b.getStr(null);
+            CharSequence constValue = b.getStrA(null);
             if (constValue == null) {
                 return BooleanConstant.FALSE;
             }
@@ -179,7 +179,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
             // important to compare A and B strings in case
             // these are columns of the same record
             // records have re-usable character sequences
-            final CharSequence l = left.getStr(rec);
+            final CharSequence l = left.getStrA(rec);
             final CharSequence r = right.getStrB(rec);
             if (l == null || r == null) {
                 return false;

@@ -56,7 +56,7 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final CharSequence val = arg.getStr(record);
+        final CharSequence val = arg.getStrA(record);
         if (val == null) {
             mapValue.putLong(valueIndex, 0);
         } else {
@@ -67,7 +67,7 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final CharSequence val = arg.getStr(record);
+        final CharSequence val = arg.getStrA(record);
         if (val != null) {
             final long ptr = mapValue.getLong(valueIndex);
             if (ptr == 0) {
@@ -91,14 +91,14 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         final long ptr = rec.getLong(valueIndex);
         return ptr == 0 ? null : sinkA.of(ptr);
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getStr(rec);
+        return getStrA(rec);
     }
 
     @Override

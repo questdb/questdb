@@ -30,6 +30,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
 
 public class JsonPlanSink extends BasePlanSink {
     final int NODE_ATTR = 2;
@@ -212,6 +213,14 @@ public class JsonPlanSink extends BasePlanSink {
         quoteValue = true;
         checkType(NODE_VALUE);
         sink.put(cs);
+        return this;
+    }
+
+    @Override
+    public PlanSink val(Utf8Sequence utf8) {
+        quoteValue = true;
+        checkType(NODE_VALUE);
+        sink.put(utf8);
         return this;
     }
 

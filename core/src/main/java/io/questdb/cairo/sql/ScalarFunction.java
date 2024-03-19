@@ -43,7 +43,7 @@ public interface ScalarFunction extends Function {
     }
 
     @Override
-    default CharSequence getStr(Record rec, int arrayIndex) {
+    default CharSequence getStrA(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 

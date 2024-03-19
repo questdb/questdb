@@ -38,7 +38,7 @@ public class CurrentSettingFunctionFactoryTest extends AbstractFunctionFactoryTe
         call("").andAssert("");
         call((String) null).andAssert("");
         call("eee").andAssert("");
-        call(CurrentSettingFunctionFactory.SERVER_VERSION_NUM).andAssert(Constants.PG_COMPATIBLE_VERSION_NUM_CONSTANT.getStr(null));
+        call(CurrentSettingFunctionFactory.SERVER_VERSION_NUM).andAssert(Constants.PG_COMPATIBLE_VERSION_NUM_CONSTANT.getStrA(null));
     }
 
     @Override

@@ -31,13 +31,13 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 public final class CastUuidToStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Zs)";
@@ -57,7 +57,7 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         return new Func(func);
     }
 
-    public static class Func extends AbstractCastToStrFunction implements UnaryFunction {
+    public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
@@ -66,14 +66,14 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             sinkA.clear();
             return SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sinkA) ? sinkA : null;
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), sink);
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec), arg.getLong128Hi(rec), utf16Sink);
         }
 
         @Override

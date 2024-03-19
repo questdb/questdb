@@ -32,39 +32,44 @@ import org.junit.Test;
 public class ConcatFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testAll() throws Exception {
+    public void testAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.NONE);
 
-            insert("insert into all2 select * from (" +
-                    "select" +
-                    " rnd_int()," +
-                    " rnd_short()," +
-                    " rnd_byte()," +
-                    " rnd_double()," +
-                    " rnd_float()," +
-                    " rnd_long()," +
-                    " rnd_str(2,3,0)," +
-                    " rnd_symbol('A','D')," +
-                    " rnd_boolean()," +
-                    " rnd_bin()," +
-                    " rnd_date()," +
-                    " rnd_long256()," +
-                    " rnd_char()," +
-                    " timestamp_sequence(0L, 10L) ts from long_sequence(10)) timestamp(ts)"
+            insert(
+                    "insert into all2 select * from (" +
+                            "select" +
+                            " rnd_int()," +
+                            " rnd_short()," +
+                            " rnd_byte()," +
+                            " rnd_double()," +
+                            " rnd_float()," +
+                            " rnd_long()," +
+                            " rnd_str(2,3,0)," +
+                            " rnd_symbol('A','D')," +
+                            " rnd_boolean()," +
+                            " rnd_bin()," +
+                            " rnd_date()," +
+                            " rnd_long256()," +
+                            " rnd_char()," +
+                            " rnd_uuid4()," +
+                            " rnd_ipv4()," +
+                            " rnd_varchar(2,3,0)," +
+                            " timestamp_sequence(0L, 10L) ts from long_sequence(10)) timestamp(ts)"
             );
             assertSql(
                     "concat\n" +
-                            "-10505757/-15119/119/0.2282233596526786/0.174/3518554007419864093/WE/D/true/[]/4676168/0x1872e79ea10322460cb5f439cbc22e9d1f0481ab7acd1f4a77827c4f6b03027b/L/20\n" +
-                            "-1148479920/24814/27/0.12966659791573354/0.285/-7611843578141082998/YR/A/false/[]/2827518/0x63eb3740c80f661e9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b/D/0\n" +
-                            "-1182156192/-20816/116/0.5025890936351257/0.995/2151565237758036093/NZ/A/false/[]/3201942/0x6c3493fcb2d0272d6046e5d137dd8f0f2e8575ff5c2587f584a7624f383eb28b/T/50\n" +
-                            "-1251437443/-27994/33/0.8108032283138068/0.509/7036584259400395476/IUG/A/false/[]/8374432/0x1bd29676f6902e64355587e777dbb1f2413521d14f331c3713e2c5f1f106cfe2/Q/80\n" +
-                            "-1271909747/4635/34/0.6381607531178513/0.402/8573481508564499209/SH/A/false/[]/3531603/0xbedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e29660300cea7db540/Y/10\n" +
-                            "-1311366306/-32151/98/0.5357010561860446/0.654/-8757007522346766135/RIP/D/false/[]/7837161/0x3eef3f158e0843624d0fa2564c3517679a2dfd07dad695f78d5c4bed8432de98/Y/40\n" +
-                            "-86791548/-32683/36/0.039509582146767475/0.720/6260580881559018466/PI/A/false/[]/132849/0xbabcd0482f05618f926cdd99e63abb35650d1fb462d014df59070392ef6aa389/W/90\n" +
-                            "1570930196/-3021/88/0.7694744648762927/0.114/-4284648096271470489/RO/D/true/[]/8955510/0x7a43ccd77f510b47a21b64e62e9e70cd840f0e1e4477981455b0586d1c02dfb3/T/60\n" +
-                            "1864113037/-1315/111/0.8940917126581895/0.198/-8082754367165748693/OV/A/false/[]/8611401/0x3d9491e7e14eba8e1de93a9cf1483e290ec6c3651b1c029f825c96def9f2fcc2/L/30\n" +
-                            "2067844108/-6087/114/0.10227682008381178/0.089/-7724577649125721868/GMX/D/false/[]/4170699/0x6fff79101ec5c1cf61ca7a1ff52a4ccf7ab72c8ee7c4dea1c54dc9aa8e01394b/G/70\n", "select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', timestamp) from all2 order by 1"
+                            "-1148479920/24814/27/0.12966659791573354/0.285/-7611843578141082998/YR/A/false/[]/2827518/0x63eb3740c80f661e9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b/D/cec82869-edec-421b-8259-3f82b430328d/235.156.195.158/龘и/0\n" +
+                            "-1204896732/16589/25/0.3549235578142891/0.912/-5585859058782510591/GZ/A/true/[]/2917086/0xa5cc689c20b5585b6034c8592e2666c46a10f5a35fa476fdc1250f6e6e2992d6/F/d2565264-70b1-4f19-bec1-b56d70fe6ce9/181.158.170.71/ܾ\uDA34\uDF73L/90\n" +
+                            "-1272693194/-22934/50/0.8912587536603974/0.344/-7885528361265853230/FJG/D/false/[]/3198086/0xba37e200ad5b17cdada00dc8b85c1bc8a5f80be4b45bf437492990e1a29afcac/G/6cecb916-a1ad-492b-9979-18f622d62989/171.30.189.77/Ѓَ/10\n" +
+                            "-1377625589/-25710/28/0.8952510116133903/0.694/-3491277789316049618/ZS/A/true/[]/9020303/0x87e79b63e0b9f43355d3686d5da27e14255a91b0e28abeb36c3493fcb2d0272d/W/05e73700-cbeb-45eb-bf8c-c4fc476cacc9/166.88.5.163/X夺/40\n" +
+                            "-705157637/28974/114/0.8786111112537701/0.235/-3463832009795858033/PHF/D/true/[]/6313135/0x6265e3472b31b40847d39008fac595375ecd4cecbeeff59672e4c0c7d1eefb11/Z/97a77df3-0ee9-4def-9914-c3ec60c46098/71.53.138.84/[Ԣ/60\n" +
+                            "-916132123/-5535/97/0.910141759290032/0.325/-8906871108655466881/XWC/A/false/[]/2731534/0x7ee54df55f49e9ac6ea837f54a4154397f3f9fef24a116ed61a4be9e1b8dcc3c/K/5bee3da4-8400-45a6-a827-63e262d6903b/239.28.217.220/㒾\uD99D\uDEA7K/20\n" +
+                            "1180113884/11356/27/0.7704949839249925/0.042/5513479607887040119/VF/D/false/[]/3051249/0x34570a2bee44673552c395ffb8982d589be6b53be30f19ee69e00a3e8d5fdfe3/K/34a05899-0880-498b-bcb0-55c54725b952/104.19.242.11/[;윦/50\n" +
+                            "1247654963/17560/84/0.37286547899075506/0.784/-5828188148408093893/QOE/A/true/[]/7463497/0x25b7e06ed01be163838fd7305a038e9d891ad048864ce2fb5073897a288aa6cf/E/908e7246-5eb9-4500-9ad9-4e48f6832194/46.193.192.107/Ѷ>/80\n" +
+                            "1503763988/-18600/91/0.26369335635512836/0.763/2155318342410845737/HML/D/false/[]/2558357/0xd24b84c08ea7606a70061ac6a4115ca72121bcf90e43824476ffd1a81bf39767/I/a07934b2-a15d-48e0-9509-88dbaca49734/103.2.142.176/碨Ь/30\n" +
+                            "724165345/21582/62/0.33976095270593043/0.747/-4036499202601723677/BHY/A/false/[]/2691241/0x5ec6d73428fb1c01b680be3ee552450eef8b1c47f7e7f9ecae395228bc24ce17/R/d50b579d-9a43-4d9f-aff9-96c5758852eb/53.18.140.19/믏G\uF6BE/70\n",
+                    "select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', uuid, '/', ipv4, '/', varchar, '/', timestamp) from all2 order by 1"
             );
         });
     }
@@ -73,7 +78,21 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
     public void testNull() throws Exception {
         assertSql(
                 "concat\n" +
-                        "foo1.2\n", "select concat('foo', null, 1.2)"
+                        "foo1.2\n",
+                "select concat('foo', null, 1.2)"
+        );
+    }
+
+    @Test
+    public void testNullStr() throws Exception {
+        assertQuery(
+                "concat\n" +
+                        "\n",
+                "select concat(sym, str, v) from x",
+                "create table x as (select rnd_symbol(null) sym, rnd_str(null) str, rnd_varchar(null) v from long_sequence(1))",
+                null,
+                true,
+                true
         );
     }
 }

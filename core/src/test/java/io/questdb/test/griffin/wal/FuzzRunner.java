@@ -326,6 +326,7 @@ public class FuzzRunner {
             engine.ddl("alter table " + tableName + " add column str_top long", sqlExecutionContext);
             engine.ddl("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
             engine.ddl("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
+            engine.ddl("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
         return engine.verifyTableName(tableName);
     }
@@ -731,7 +732,7 @@ public class FuzzRunner {
             TableReaderMetadata metadata = reader.getMetadata();
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
-                if (ColumnType.isVariableLength(columnType)) {
+                if (ColumnType.isVarSize(columnType)) {
                     for (int partitionIndex = 0; partitionIndex < reader.getPartitionCount(); partitionIndex++) {
                         reader.openPartition(partitionIndex);
                         int columnBase = reader.getColumnBase(partitionIndex);
@@ -740,7 +741,8 @@ public class FuzzRunner {
 
                         long colTop = reader.getColumnTop(columnBase, i);
                         long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
-                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dCol.getPageAddress(0), columnType)) {
+                        long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
+                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
                             Assert.fail("var column " + reader.getMetadata().getColumnName(i)
                                     + " is not dense, .i file record size is different from .d file record size");
                         }

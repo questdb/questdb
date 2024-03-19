@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.std.str.Utf8Sequence;
 
 public class BooleanConstant extends BooleanFunction implements ConstantFunction {
 
@@ -100,5 +101,10 @@ public class BooleanConstant extends BooleanFunction implements ConstantFunction
     @Override
     protected String getStr0(Record rec) {
         return value ? "true" : "false";
+    }
+
+    @Override
+    protected Utf8Sequence getVarchar0(Record rec) {
+        return value ? UTF_8_TRUE : UTF_8_FALSE;
     }
 }

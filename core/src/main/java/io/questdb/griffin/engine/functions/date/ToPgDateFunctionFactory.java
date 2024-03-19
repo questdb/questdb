@@ -64,7 +64,7 @@ public class ToPgDateFunctionFactory implements FunctionFactory {
 
         @Override
         public long getDate(Record rec) {
-            CharSequence value = arg.getStr(rec);
+            CharSequence value = arg.getStrA(rec);
             try {
                 if (value != null) {
                     return DateFormatUtils.PG_DATE_FORMAT.parse(value, DateFormatUtils.EN_LOCALE);

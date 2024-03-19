@@ -776,6 +776,15 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAsSelectTimestampVarcharCast() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (l long, t timestamp) timestamp(t) partition by DAY");
+            insert("insert into x select 1, '2024-02-27T00:00:00'::varchar");
+            assertSql("l\tt\n1\t2024-02-27T00:00:00.000000Z\n", "select * from x");
+        });
+    }
+
+    @Test
     public void testTimestampIntervalPartitionDay() throws Exception {
         assertMemoryLeak(() -> {
             //create table

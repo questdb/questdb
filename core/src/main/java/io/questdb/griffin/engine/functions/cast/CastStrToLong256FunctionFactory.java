@@ -54,7 +54,7 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public void getLong256(Record rec, CharSink<?> sink) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             if (value != null) {
                 CastSymbolToLong256FunctionFactory.appendLong256(value, long256builder, sink);
             }
@@ -62,20 +62,20 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public Long256 getLong256A(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             if (value == null) {
                 return Long256Impl.NULL_LONG256;
             }
-            return Numbers.parseLong256(value, value.length(), long256a);
+            return Numbers.parseLong256(value, long256a);
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             if (value == null) {
                 return Long256Impl.NULL_LONG256;
             }
-            return Numbers.parseLong256(value, value.length(), long256b);
+            return Numbers.parseLong256(value, long256b);
         }
     }
 }

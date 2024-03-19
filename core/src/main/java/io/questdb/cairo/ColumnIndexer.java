@@ -25,14 +25,12 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 
 
 public interface ColumnIndexer extends QuietCloseable {
-
-    void closeSlider();
 
     void configureFollowerAndWriter(
             Path path,
@@ -52,7 +50,7 @@ public interface ColumnIndexer extends QuietCloseable {
 
     BitmapIndexWriter getWriter();
 
-    void index(MemoryR mem, long loRow, long hiRow);
+    void index(FilesFacade ff, int dataColumnFd, long loRow, long hiRow);
 
     boolean isDistressed();
 
@@ -63,4 +61,6 @@ public interface ColumnIndexer extends QuietCloseable {
     void sync(boolean async);
 
     boolean tryLock(long expectedSequence);
+
+    void releaseIndexWriter();
 }

@@ -28,9 +28,11 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-//contiguous appendable readable writable
+// contiguous appendable readable writable
 public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
@@ -180,7 +182,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     }
 
     @Override
-    default void putLong256Utf8(@Nullable DirectUtf8Sequence hexString) {
+    default void putLong256Utf8(@Nullable Utf8Sequence hexString) {
         throw new UnsupportedOperationException();
     }
 
@@ -252,6 +254,18 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     @Override
     default long putStrUtf8(DirectUtf8Sequence value, boolean hasNonAsciiChars) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
+        final long offset = getAppendOffset();
+        value.writeTo(appendAddressFor(hi - lo), lo, hi);
+        return offset;
+    }
+
+    @Override
+    default void putVarchar(long offset, @NotNull Utf8Sequence value, int lo, int hi) {
+        value.writeTo(appendAddressFor(offset, hi - lo), lo, hi);
     }
 
     void shiftAddressRight(long shiftRightOffset);

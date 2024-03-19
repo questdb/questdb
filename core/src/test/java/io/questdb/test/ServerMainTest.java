@@ -110,7 +110,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
             // Start with ILP disabled
             try (final ServerMain serverMain = new ServerMain(bootstrap)) {
                 serverMain.start();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.TCP)
                         .address("localhost")
                         .port(9023)
                         .build()) {
@@ -127,7 +127,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
             // Start with ILP enabled
             try (final ServerMain serverMain = new ServerMain(bootstrap)) {
                 serverMain.start();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.TCP)
                         .address("localhost")
                         .port(9023)
                         .build()) {
@@ -562,6 +562,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.udp.receive.buffer.size\tQDB_LINE_UDP_RECEIVE_BUFFER_SIZE\t4096\tconf\tfalse\tfalse\n" +
                                     "line.udp.timestamp\tQDB_LINE_UDP_TIMESTAMP\tn\tdefault\tfalse\tfalse\n" +
                                     "line.udp.unicast\tQDB_LINE_UDP_UNICAST\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "line.use.legacy.string.default\tQDB_LINE_USE_LEGACY_STRING_DEFAULT\ttrue\tdefault\tfalse\tfalse\n" +
                                     "metrics.enabled\tQDB_METRICS_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "net.test.connection.buffer.size\tQDB_NET_TEST_CONNECTION_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "pg.binary.param.count.capacity\tQDB_PG_BINARY_PARAM_COUNT_CAPACITY\t2\tdefault\tfalse\tfalse\n" +

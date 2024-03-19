@@ -149,6 +149,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private final WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private final DirectUtf16Sink utf8Sink;
+    private final DirectUtf8String utf8String = new DirectUtf8String();
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
@@ -634,11 +635,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         CharacterStoreEntry e = characterStore.newEntry();
-        if (Utf8s.utf8ToUtf16(address, address + valueLen, e)) {
-            bindVariableService.setStr(index, characterStore.toImmutable());
+        Function fn = bindVariableService.getFunction(index);
+        // If the function type is VARCHAR, there's no need to convert to UTF-16
+        if (fn != null && fn.getType() == ColumnType.VARCHAR) {
+            if (Utf8s.validateUtf8(address, address + valueLen) != -1) {
+                bindVariableService.setVarchar(index, utf8String.of(address, address + valueLen));
+            } else {
+                LOG.error().$("invalid varchar bind variable type [index=").$(index).I$();
+                throw BadProtocolException.INSTANCE;
+            }
         } else {
-            LOG.error().$("invalid str UTF8 bytes [index=").$(index).I$();
-            throw BadProtocolException.INSTANCE;
+            if (Utf8s.utf8ToUtf16(address, address + valueLen, e)) {
+                bindVariableService.setStr(index, characterStore.toImmutable());
+            } else {
+                LOG.error().$("invalid str bind variable type [index=").$(index).I$();
+                throw BadProtocolException.INSTANCE;
+            }
         }
     }
 
@@ -914,6 +926,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 case ColumnType.IPv4:
                     appendIPv4Col(record, i);
                     break;
+                case ColumnType.VARCHAR:
+                    appendVarcharColumn(record, i);
+                    break;
                 case ColumnType.STRING:
                 case BINARY_TYPE_STRING:
                     appendStrColumn(record, i);
@@ -1036,7 +1051,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void appendStrColumn(Record record, int columnIndex) {
-        final CharSequence strValue = record.getStr(columnIndex);
+        final CharSequence strValue = record.getStrA(columnIndex);
         if (strValue == null) {
             responseUtf8Sink.setNullValue();
         } else {
@@ -1047,7 +1062,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void appendSymbolColumn(Record record, int columnIndex) {
-        final CharSequence strValue = record.getSym(columnIndex);
+        final CharSequence strValue = record.getSymA(columnIndex);
         if (strValue == null) {
             responseUtf8Sink.setNullValue();
         } else {
@@ -1101,6 +1116,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             responseUtf8Sink.putNetworkInt(Long.BYTES * 2);
             responseUtf8Sink.putNetworkLong(hi);
             responseUtf8Sink.putNetworkLong(lo);
+        }
+    }
+
+    private void appendVarcharColumn(Record record, int i) {
+        final Utf8Sequence strValue = record.getVarcharA(i);
+        if (strValue == null) {
+            responseUtf8Sink.setNullValue();
+        } else {
+            responseUtf8Sink.putNetworkInt(strValue.size());
+            responseUtf8Sink.put(strValue);
         }
     }
 
@@ -3043,7 +3068,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public Utf8Sink put(@Nullable Utf8Sequence us) {
-            // this method is only called by date format utility to print timezone name
             if (us != null) {
                 final int size = us.size();
                 if (size > 0) {

@@ -45,8 +45,8 @@ import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -259,7 +259,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
             } else {
                 Numbers.appendHexPadded(sink, i);
             }
-            sink.put(' ');
+            sink.putAscii(' ');
 
             final int v;
             if (b < 0) {
@@ -269,11 +269,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
 
             if (v < 0x10) {
-                sink.put('0');
-                sink.put(hexDigits[b]);
+                sink.putAscii('0');
+                sink.putAscii(hexDigits[b]);
             } else {
-                sink.put(hexDigits[v / 0x10]);
-                sink.put(hexDigits[v % 0x10]);
+                sink.putAscii(hexDigits[v / 0x10]);
+                sink.putAscii(hexDigits[v % 0x10]);
             }
 
             i++;

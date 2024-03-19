@@ -94,20 +94,20 @@ public class LPadStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(final Record rec) {
-            return lPadStr(strFunc.getStr(rec), lenFunc.getInt(rec), fillTextFunc.getStr(rec), sink);
+        public CharSequence getStrA(final Record rec) {
+            return lPadStr(strFunc.getStrA(rec), lenFunc.getInt(rec), fillTextFunc.getStrA(rec), sink);
         }
 
         @Override
         public CharSequence getStrB(final Record rec) {
-            return lPadStr(strFunc.getStr(rec), lenFunc.getInt(rec), fillTextFunc.getStr(rec), sinkB);
+            return lPadStr(strFunc.getStrA(rec), lenFunc.getInt(rec), fillTextFunc.getStrA(rec), sinkB);
         }
 
         @Override
         public int getStrLen(Record rec) {
-            final CharSequence str = strFunc.getStr(rec);
+            final CharSequence str = strFunc.getStrA(rec);
             final int len = lenFunc.getInt(rec);
-            final CharSequence fillText = fillTextFunc.getStr(rec);
+            final CharSequence fillText = fillTextFunc.getStrA(rec);
             if (str != null && len >= 0 && fillText != null && fillText.length() > 0) {
                 return len;
             } else {

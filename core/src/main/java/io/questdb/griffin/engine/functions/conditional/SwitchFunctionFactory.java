@@ -125,6 +125,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 return getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
+            case ColumnType.VARCHAR: // varchar is treated as char sequence, this works, but it's suboptimal
                 return getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             default:
                 throw SqlException.
@@ -167,7 +168,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private static CharSequence getString(Function function, Record record) {
-        return function.getStr(record);
+        return function.getStrA(record);
     }
 
     private static long getTimestamp(Function function, Record record) {

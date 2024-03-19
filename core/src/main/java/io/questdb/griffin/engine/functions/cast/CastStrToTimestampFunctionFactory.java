@@ -53,7 +53,7 @@ public class CastStrToTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             try {
                 return value == null ? Numbers.LONG_NaN : IntervalUtils.parseFloorPartialTimestamp(value);
             } catch (NumericException e) {

@@ -350,6 +350,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long readIntAsUnsignedLong(int fd, long offset) {
+        return Files.readIntAsUnsignedLong(fd, offset);
+    }
+
+    @Override
     public boolean readLink(Path softLink, Path readTo) {
         return Files.readLink(softLink, readTo);
     }

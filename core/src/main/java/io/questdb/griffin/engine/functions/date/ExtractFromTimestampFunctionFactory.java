@@ -54,7 +54,7 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final CharSequence part = args.getQuick(0).getStr(null);
+        final CharSequence part = args.getQuick(0).getStrA(null);
         final Function arg = args.getQuick(1);
 
         if (SqlKeywords.isCenturyKeyword(part)) {

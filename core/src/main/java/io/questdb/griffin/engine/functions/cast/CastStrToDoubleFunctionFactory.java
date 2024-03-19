@@ -52,20 +52,13 @@ public class CastStrToDoubleFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToDoubleFunction {
-        private final Function arg;
-
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
         public double getDouble(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             try {
                 return value == null ? Double.NaN : Numbers.parseDouble(value);
             } catch (NumericException e) {

@@ -620,7 +620,7 @@ public class TruncateTest extends AbstractCairoTest {
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         record.getInt(0);
-                        record.getSym(1);
+                        record.getSymA(1);
                         record.getDouble(2);
                     }
                 }

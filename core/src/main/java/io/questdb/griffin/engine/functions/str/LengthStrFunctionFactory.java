@@ -35,20 +35,27 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class LengthStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "length(S)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LengthStrVFunc(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func(args.getQuick(0));
     }
 
-    private static class LengthStrVFunc extends IntFunction implements UnaryFunction {
+    private static class Func extends IntFunction implements UnaryFunction {
         private final Function arg;
 
-        public LengthStrVFunc(Function arg) {
+        public Func(Function arg) {
             this.arg = arg;
         }
 

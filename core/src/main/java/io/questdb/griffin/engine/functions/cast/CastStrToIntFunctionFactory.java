@@ -51,7 +51,7 @@ public class CastStrToIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return Numbers.parseIntQuiet(arg.getStr(rec));
+            return Numbers.parseIntQuiet(arg.getStrA(rec));
         }
     }
 }

@@ -283,6 +283,28 @@ public final class Chars {
         return equalsCharsIgnoreCase(l, r, ll);
     }
 
+    /**
+     * Case-insensitive comparison of two char sequences, with subsequence over second.
+     *
+     * @param l left sequence
+     * @param r right sequence
+     * @param rLo right sequence lower bound
+     * @param rHi right sequence upper bound
+     * @return true if sequences match exactly (ignoring char case)
+     */
+    public static boolean equalsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int rLo, int rHi) {
+        if (l == r) {
+            return true;
+        }
+
+        int ll;
+        if ((ll = l.length()) != rHi - rLo) {
+            return false;
+        }
+
+        return equalsCharsIgnoreCase(l, r, ll, rLo, rHi);
+    }
+
     public static boolean equalsIgnoreCaseNc(@NotNull CharSequence l, @Nullable CharSequence r) {
         return r != null && equalsIgnoreCase(l, r);
     }
@@ -367,6 +389,10 @@ public final class Chars {
 
     public static boolean equalsNc(@NotNull CharSequence l, @Nullable CharSequence r) {
         return r != null && equals(l, r);
+    }
+
+    public static boolean equalsNc(CharSequence l, CharSequence r, int rLo, int rHi) {
+        return l != null && equals(l, r, rLo, rHi);
     }
 
     public static int hashCode(@NotNull CharSequence value, int lo, int hi) {
@@ -604,19 +630,6 @@ public final class Chars {
         return true;
     }
 
-    public static boolean isDoubleQuote(char c) {
-        return c == '"';
-    }
-
-    public static boolean isDoubleQuoted(CharSequence s) {
-        if (s == null || s.length() < 2) {
-            return false;
-        }
-
-        char open = s.charAt(0);
-        return isDoubleQuote(open) && open == s.charAt(s.length() - 1);
-    }
-
     public static boolean isOnlyDecimals(CharSequence s) {
         int len = s.length();
         for (int i = len - 1; i > -1; i--) {
@@ -646,15 +659,6 @@ public final class Chars {
 
         char open = s.charAt(0);
         return isQuote(open) && open == s.charAt(s.length() - 1);
-    }
-
-    public static int lastIndexOf(CharSequence sequence, char term) {
-        for (int i = sequence.length() - 1; i > -1; i--) {
-            if (sequence.charAt(i) == term) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     public static int lastIndexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
@@ -924,7 +928,7 @@ public final class Chars {
         return b.toString();
     }
 
-    public static String toString(CharSequence cs, int start, int end, char unescape) {
+    public static String toString(@NotNull CharSequence cs, int start, int end, char unescape) {
         final Utf16Sink b = Misc.getThreadLocalSink();
         final int lastChar = end - 1;
         for (int i = start; i < end; i++) {
@@ -1142,6 +1146,16 @@ public final class Chars {
     private static boolean equalsCharsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int len) {
         for (int i = 0; i < len; i++) {
             if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean equalsCharsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int len, int rLo, int rHi) {
+        assert len == (rHi-rLo);
+        for (int i = 0; i < len; i++) {
+            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i + rLo))) {
                 return false;
             }
         }

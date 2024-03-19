@@ -140,7 +140,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 if (col == 2) {
                     return entry.getPoolName();
                 } else if (col == 3) {
@@ -151,17 +151,17 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     return entry.getQuery();
                 }
 
-                return Record.super.getStr(col);
+                return Record.super.getStrA(col);
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override
             public int getStrLen(int col) {
-                CharSequence str = getStr(col);
+                CharSequence str = getStrA(col);
                 return str != null ? str.length() : -1;
             }
 

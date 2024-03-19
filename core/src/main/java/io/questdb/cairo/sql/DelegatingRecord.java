@@ -28,6 +28,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public class DelegatingRecord implements Record {
     protected Record base;
@@ -133,13 +135,13 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return base.getStr(col);
+    public CharSequence getStrA(int col) {
+        return base.getStrA(col);
     }
 
     @Override
-    public void getStr(int col, Utf16Sink sink) {
-        base.getStr(col, sink);
+    public void getStr(int col, Utf16Sink utf16Sink) {
+        base.getStr(col, utf16Sink);
     }
 
     @Override
@@ -153,8 +155,8 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
-    public CharSequence getSym(int col) {
-        return base.getSym(col);
+    public CharSequence getSymA(int col) {
+        return base.getSymA(col);
     }
 
     @Override
@@ -165,6 +167,21 @@ public class DelegatingRecord implements Record {
     @Override
     public long getTimestamp(int col) {
         return base.getTimestamp(col);
+    }
+
+    @Override
+    public void getVarchar(int col, Utf8Sink utf8Sink) {
+        base.getVarchar(col, utf8Sink);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        return base.getVarcharA(col);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        return base.getVarcharB(col);
     }
 
     public void of(Record base) {

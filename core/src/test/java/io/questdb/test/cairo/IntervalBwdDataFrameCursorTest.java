@@ -546,7 +546,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                 while (ic.hasNext()) {
                     long row = ic.next();
                     record.setRecordIndex(row);
-                    TestUtils.assertEquals(expected, record.getSym(columnIndex));
+                    TestUtils.assertEquals(expected, record.getSymA(columnIndex));
                     rowCount++;
                 }
             }
