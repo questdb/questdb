@@ -1123,7 +1123,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (reader != null) {
                 partitionBy = reader.getPartitionedBy();
             } else {
-                try(TableMetadata meta = engine.getTableMetadata(tableToken)) {
+                try (TableMetadata meta = engine.getTableMetadata(tableToken)) {
                     partitionBy = meta.getPartitionBy();
                 }
             }
@@ -1484,7 +1484,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             switch (executionModel.getModelType()) {
                 case ExecutionModel.QUERY:
                     LOG.info().$("plan [q=`").$((QueryModel) executionModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
-                    RecordCursorFactory factory = generateWithRetries((QueryModel) executionModel, executionContext, true);
+                    RecordCursorFactory factory = generateWithRetries((QueryModel) executionModel, executionContext);
                     compiledQuery.of(factory);
                     break;
                 case ExecutionModel.CREATE_TABLE:
@@ -1968,7 +1968,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try {
-                copyTableDataAndUnlock(executionContext.getSecurityContext(), tableToken, model.isWalEnabled(), cursor, metadata, position, model.getBatchSize(), model.getBatchO3MaxLag(), circuitBreaker);
+                copyTableDataAndUnlock(
+                        executionContext.getSecurityContext(),
+                        tableToken,
+                        model.isWalEnabled(),
+                        cursor,
+                        metadata,
+                        position,
+                        model.getBatchSize(),
+                        model.getBatchO3MaxLag(),
+                        circuitBreaker
+                );
             } catch (CairoException e) {
                 LogRecord record = LOG.error().$(e.getFlyweightMessage());
                 if (!e.isCancellation()) {
@@ -2877,16 +2887,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    RecordCursorFactory generateWithRetries(
-            @Transient QueryModel initialQueryModel,
-            @Transient SqlExecutionContext executionContext,
-            boolean isSelect
-    ) throws SqlException {
+    RecordCursorFactory generateWithRetries(@Transient QueryModel initialQueryModel, @Transient SqlExecutionContext executionContext) throws SqlException {
         QueryModel queryModel = initialQueryModel;
         int remainingRetries = maxRecompileAttempts;
         for (; ; ) {
             try {
-                return generateFactory(queryModel, executionContext, isSelect);
+                return generateFactory(queryModel, executionContext, true);
             } catch (TableReferenceOutOfDateException e) {
                 if (--remainingRetries < 0) {
                     throw SqlException.$(0, e.getFlyweightMessage());
