@@ -78,7 +78,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     public void setUp() {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "true");
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE,
                 JitUtil.isJitSupported() ? SqlJitMode.toString(SqlJitMode.JIT_MODE_ENABLED) :  SqlJitMode.toString(SqlJitMode.JIT_MODE_FORCE_SCALAR));
         super.setUp();
@@ -161,7 +161,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
                 }
             } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [STRING -> DOUBLE]");
+                String stringType = ColumnType.nameOf(ColumnType.STRING);
+                TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [" + stringType + " -> DOUBLE]");
             }
         }, 4, 4);
     }
@@ -185,7 +186,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
                 }
             } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [STRING -> DOUBLE]");
+                String stringType = ColumnType.nameOf(ColumnType.STRING);
+                TestUtils.assertContains(e.getMessage(), "inconvertible value: `2022-03-08T18:03:57.609765Z` [" + stringType + " -> DOUBLE]");
             }
         }, 4, 4);
     }

@@ -81,6 +81,11 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.STRING, LineUdpParserSupport.getValueType("\"0x123a4\""));
         Assert.assertEquals(ColumnType.STRING, LineUdpParserSupport.getValueType("\"0x123a4 looks \\\" like=long256,\\\n but tis not!\""));
         Assert.assertEquals(ColumnType.STRING, LineUdpParserSupport.getValueType("\"0x123a4 looks like=long256, but tis not!\""));
+
+        Assert.assertEquals(ColumnType.VARCHAR, LineUdpParserSupport.getValueType("\"0x123a4\"", false));
+        Assert.assertEquals(ColumnType.VARCHAR, LineUdpParserSupport.getValueType("\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", false));
+        Assert.assertEquals(ColumnType.VARCHAR, LineUdpParserSupport.getValueType("\"0x123a4 looks like=long256, but tis not!\"", false));
+
         Assert.assertEquals(ColumnType.UNDEFINED, LineUdpParserSupport.getValueType("\"0x123a4 looks \\\" like=long256,\\\n but tis not!")); // missing closing '"'
         Assert.assertEquals(ColumnType.UNDEFINED, LineUdpParserSupport.getValueType("0x123a4 looks \\\" like=long256,\\\n but tis not!\"")); // wanted to be a string, missing opening '"'
 
@@ -89,21 +94,21 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
 
         Assert.assertEquals(ColumnType.LONG, LineUdpParserSupport.getValueType("123i"));
         Assert.assertEquals(ColumnType.LONG, LineUdpParserSupport.getValueType("1i"));
-        Assert.assertEquals(ColumnType.INT, LineUdpParserSupport.getValueType("123i", ColumnType.DOUBLE, ColumnType.INT));
-        Assert.assertEquals(ColumnType.INT, LineUdpParserSupport.getValueType("1i", ColumnType.FLOAT, ColumnType.INT));
-        Assert.assertEquals(ColumnType.SHORT, LineUdpParserSupport.getValueType("123i", ColumnType.DOUBLE, ColumnType.SHORT));
-        Assert.assertEquals(ColumnType.SHORT, LineUdpParserSupport.getValueType("1i", ColumnType.DOUBLE, ColumnType.SHORT));
-        Assert.assertEquals(ColumnType.BYTE, LineUdpParserSupport.getValueType("123i", ColumnType.FLOAT, ColumnType.BYTE));
-        Assert.assertEquals(ColumnType.BYTE, LineUdpParserSupport.getValueType("1i", ColumnType.DOUBLE, ColumnType.BYTE));
+        Assert.assertEquals(ColumnType.INT, LineUdpParserSupport.getValueType("123i", ColumnType.DOUBLE, ColumnType.INT, true));
+        Assert.assertEquals(ColumnType.INT, LineUdpParserSupport.getValueType("1i", ColumnType.FLOAT, ColumnType.INT, true));
+        Assert.assertEquals(ColumnType.SHORT, LineUdpParserSupport.getValueType("123i", ColumnType.DOUBLE, ColumnType.SHORT, true));
+        Assert.assertEquals(ColumnType.SHORT, LineUdpParserSupport.getValueType("1i", ColumnType.DOUBLE, ColumnType.SHORT, true));
+        Assert.assertEquals(ColumnType.BYTE, LineUdpParserSupport.getValueType("123i", ColumnType.FLOAT, ColumnType.BYTE, true));
+        Assert.assertEquals(ColumnType.BYTE, LineUdpParserSupport.getValueType("1i", ColumnType.DOUBLE, ColumnType.BYTE, true));
 
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("1.45"));
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("1e-13"));
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("1.0"));
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("1"));
-        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1.45", ColumnType.FLOAT, ColumnType.LONG));
-        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1e-13", ColumnType.FLOAT, ColumnType.INT));
-        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1.0", ColumnType.FLOAT, ColumnType.BYTE));
-        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1", ColumnType.FLOAT, ColumnType.LONG));
+        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1.45", ColumnType.FLOAT, ColumnType.LONG, true));
+        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1e-13", ColumnType.FLOAT, ColumnType.INT, true));
+        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1.0", ColumnType.FLOAT, ColumnType.BYTE, true));
+        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1", ColumnType.FLOAT, ColumnType.LONG, true));
 
         Assert.assertEquals(ColumnType.TIMESTAMP, LineUdpParserSupport.getValueType("123t"));
 

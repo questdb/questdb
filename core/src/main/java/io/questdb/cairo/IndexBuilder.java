@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
-import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -42,7 +41,6 @@ import io.questdb.std.str.Path;
 public class IndexBuilder extends RebuildColumnBase {
     private static final Log LOG = LogFactory.getLog(IndexBuilder.class);
     private final MemoryMAR ddlMem;
-    private final MemoryMR indexMem = Vm.getMRInstance();
     private final SymbolColumnIndexer indexer;
 
     public IndexBuilder(CairoConfiguration configuration) {
@@ -141,35 +139,28 @@ public class IndexBuilder extends RebuildColumnBase {
             final int plen = path.size();
 
             if (ff.exists(path.$())) {
-                try (final MemoryMR roMem = indexMem) {
-                    long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
-                    removeIndexFiles(ff, columnName, columnNameTxn);
-                    TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
+                long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
+                removeIndexFiles(ff, columnName, columnNameTxn);
+                TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
 
-                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
-                    if (columnTop > -1L) {
+                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
+                if (columnTop > -1L) {
 
-                        if (partitionSize > columnTop) {
-                            LOG.info().$("indexing [path=").$(path).I$();
-                            createIndexFiles(ff, columnName, indexValueBlockCapacity, plen, columnNameTxn);
-                            TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
-                            roMem.of(
-                                    ff,
-                                    path,
-                                    0,
-                                    (partitionSize - columnTop) * Integer.BYTES,
-                                    MemoryTag.MMAP_TABLE_WRITER
-                            );
-                            try {
-                                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
-                                indexer.index(roMem, columnTop, partitionSize);
-                            } finally {
-                                indexer.clear();
-                            }
+                    if (partitionSize > columnTop) {
+                        LOG.info().$("indexing [path=").$(path).I$();
+                        createIndexFiles(ff, columnName, indexValueBlockCapacity, plen, columnNameTxn);
+                        TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
+                        int columnDataFd = TableUtils.openRO(ff, path, LOG);
+                        try {
+                            indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                            indexer.index(ff, columnDataFd, columnTop, partitionSize);
+                        } finally {
+                            ff.close(columnDataFd);
+                            indexer.clear();
                         }
-                    } else {
-                        LOG.info().$("column is empty in partition [path=").$(path).I$();
                     }
+                } else {
+                    LOG.info().$("column is empty in partition [path=").$(path).I$();
                 }
             } else {
                 LOG.info().$("partition does not exist [path=").$(path).I$();

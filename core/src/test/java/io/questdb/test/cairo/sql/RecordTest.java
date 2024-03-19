@@ -87,7 +87,7 @@ public class RecordTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
-        RECORD.getStr(0);
+        RECORD.getStrA(0);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -102,7 +102,7 @@ public class RecordTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSym() {
-        RECORD.getSym(0);
+        RECORD.getSymA(0);
     }
 
     @Test(expected = UnsupportedOperationException.class)

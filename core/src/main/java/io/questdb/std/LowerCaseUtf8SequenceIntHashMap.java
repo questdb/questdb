@@ -112,7 +112,7 @@ public class LowerCaseUtf8SequenceIntHashMap extends AbstractLowerCaseUtf8Sequen
 
     public void removeAt(int index) {
         if (index < 0) {
-            Utf8String key = keys[-index - 1];
+            Utf8Sequence key = keys[-index - 1];
             super.removeAt(index);
             list.remove(key);
         }
@@ -136,10 +136,10 @@ public class LowerCaseUtf8SequenceIntHashMap extends AbstractLowerCaseUtf8Sequen
         free = capacity = newCapacity;
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
 
-        Utf8String[] oldKeys = keys;
+        Utf8Sequence[] oldKeys = keys;
         int[] oldHashCodes = hashCodes;
         int[] oldValues = values;
-        this.keys = new Utf8String[len];
+        this.keys = new Utf8Sequence[len];
         this.hashCodes = new int[len];
         this.values = new int[len];
         Arrays.fill(keys, null);
@@ -147,7 +147,7 @@ public class LowerCaseUtf8SequenceIntHashMap extends AbstractLowerCaseUtf8Sequen
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            Utf8String key = oldKeys[i];
+            Utf8Sequence key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
                 keys[index] = key;

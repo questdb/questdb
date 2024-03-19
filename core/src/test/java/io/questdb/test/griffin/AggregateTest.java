@@ -77,7 +77,7 @@ public class AggregateTest extends AbstractCairoTest {
     public void setUp() {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, enableParallelGroupBy);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, enableParallelGroupBy);
     }
 
     @Test
@@ -110,7 +110,7 @@ public class AggregateTest extends AbstractCairoTest {
                 "2020-01-01T00:28:47.990000Z:TIMESTAMP\t51:LONG\n" +
                 "2020-01-02T00:28:47.990000Z:TIMESTAMP\t49:LONG\n";
 
-        String sql = "select ts, count() from tt1 SAMPLE BY d";
+        String sql = "select ts, count() from tt1 SAMPLE BY d ALIGN TO FIRST OBSERVATION";
 
         assertSqlWithTypes(sql, expected);
     }
@@ -598,7 +598,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return null;
                             }
                         },
@@ -609,7 +609,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a1";
                             }
                         },
@@ -620,7 +620,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a2";
                             }
                         },
@@ -631,7 +631,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a3";
                             }
                         },
@@ -1080,7 +1080,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return null;
                             }
                         },
@@ -1098,7 +1098,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return null;
                             }
                         },
@@ -1109,7 +1109,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a1";
                             }
                         },
@@ -1120,7 +1120,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a2";
                             }
                         },
@@ -1131,7 +1131,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a3";
                             }
                         },
@@ -1186,7 +1186,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return null;
                             }
                         },
@@ -1197,7 +1197,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a1";
                             }
                         },
@@ -1208,7 +1208,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a2";
                             }
                         },
@@ -1219,7 +1219,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a3";
                             }
                         },

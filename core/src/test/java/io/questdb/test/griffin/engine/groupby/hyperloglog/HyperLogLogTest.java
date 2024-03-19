@@ -24,12 +24,12 @@
 
 package io.questdb.test.griffin.engine.groupby.hyperloglog;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLog;
 import io.questdb.std.Hash;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
@@ -45,16 +45,10 @@ public class HyperLogLogTest extends AbstractTest {
 
     @Test
     public void testAddInvalidatesCachedCardinality() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         for (int precision = 4; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                     Rnd rnd = new Rnd();
 
                     HyperLogLog hll = new HyperLogLog(finalPrecision);
@@ -75,16 +69,10 @@ public class HyperLogLogTest extends AbstractTest {
 
     @Test
     public void testFastCardinalityComputation() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         for (int precision = 4; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                     HyperLogLog hll = new HyperLogLog(finalPrecision);
                     hll.setAllocator(allocator);
                     hll.of(0);
@@ -106,15 +94,9 @@ public class HyperLogLogTest extends AbstractTest {
 
     @Test
     public void testFuzz() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                 IntHashSet oracle = new IntHashSet();
 
                 int precision = MIN_PRECISION + rnd.nextInt(MAX_PRECISION - MIN_PRECISION + 1);
@@ -138,16 +120,10 @@ public class HyperLogLogTest extends AbstractTest {
 
     @Test
     public void testHighCardinality() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         for (int precision = 4; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                     HyperLogLog hll = new HyperLogLog(finalPrecision);
                     hll.setAllocator(allocator);
                     hll.of(0);
@@ -173,16 +149,10 @@ public class HyperLogLogTest extends AbstractTest {
 
     @Test
     public void testLowCardinality() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         for (int precision = 4; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                     HyperLogLog hll = new HyperLogLog(finalPrecision);
                     hll.setAllocator(allocator);
                     hll.of(0);
@@ -207,16 +177,10 @@ public class HyperLogLogTest extends AbstractTest {
 
     @Test
     public void testMergeDenseWithDense() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         for (int precision = 4; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                     Rnd rnd = new Rnd();
 
                     HyperLogLog expectedHll = new HyperLogLog(finalPrecision);
@@ -254,16 +218,10 @@ public class HyperLogLogTest extends AbstractTest {
 
     @Test
     public void testMergeSparseWithDense() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         for (int precision = 11; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                     Rnd rnd = new Rnd();
 
                     HyperLogLog expectedHll = new HyperLogLog(finalPrecision);
@@ -307,16 +265,10 @@ public class HyperLogLogTest extends AbstractTest {
 
     @Test
     public void testMergeSparseWithSparse() throws Exception {
-        CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         for (int precision = 11; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
                     Rnd rnd = new Rnd();
 
                     HyperLogLog expectedHll = new HyperLogLog(finalPrecision);

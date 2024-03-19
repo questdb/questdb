@@ -41,6 +41,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -157,14 +158,12 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                     break;
             }
         } else {
-
             if (!setOperation) {
                 expression1.put(name).put('(');
                 expression2.put(name).put('(');
             }
 
             for (int i = 0, n = args.length; i < n; i++) {
-
                 if ((setOperation && i > 1) || (!setOperation && i > 0)) {
                     expression1.put(',');
                     expression2.put(',');
@@ -180,7 +179,8 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                         expression1,
                         expression2,
                         i,
-                        args[i]);
+                        args[i]
+                );
 
                 if (i == 0 && setOperation) {
                     expression1.put(' ').put(name).put(' ').put('(');
@@ -213,7 +213,8 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         return new Invocation(
                 parseFunction(expression1, metadata, functionParser),
                 parseFunction(expression2, metadata, functionParser),
-                new TestRecord(args));
+                new TestRecord(args)
+        );
     }
 
     private int getArgType(Object arg) {
@@ -223,6 +224,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         if (arg instanceof CharSequence) {
             return ColumnType.STRING;
+        }
+
+        if (arg instanceof Utf8Sequence) {
+            return ColumnType.VARCHAR;
         }
 
         if (arg instanceof Integer) {
@@ -287,16 +292,18 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
     }
 
-    private void printArgument(CharSequence signature,
-                               int signatureTypeOffset,
-                               boolean forceConstant,
-                               GenericRecordMetadata metadata,
-                               boolean b,
-                               boolean constVarArg,
-                               StringSink expression1,
-                               StringSink expression2,
-                               int i,
-                               Object arg) {
+    private void printArgument(
+            CharSequence signature,
+            int signatureTypeOffset,
+            boolean forceConstant,
+            GenericRecordMetadata metadata,
+            boolean b,
+            boolean constVarArg,
+            StringSink expression1,
+            StringSink expression2,
+            int i,
+            Object arg
+    ) {
         final String columnName = "f" + i;
         final boolean constantArg;
         final int argType;
@@ -345,6 +352,15 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 } else {
                     sink.put('\'');
                     sink.put((CharSequence) value);
+                    sink.put('\'');
+                }
+                break;
+            case ColumnType.VARCHAR:
+                if (value == null) {
+                    sink.put("null");
+                } else {
+                    sink.put('\'');
+                    sink.put((Utf8Sequence) value);
                     sink.put('\'');
                 }
                 break;
@@ -525,14 +541,14 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         private void assertString(Function func, CharSequence expected) {
             if (expected == null) {
-                Assert.assertNull(func.getStr(record));
+                Assert.assertNull(func.getStrA(record));
                 Assert.assertNull(func.getStrB(record));
                 Assert.assertEquals(-1, func.getStrLen(record));
                 sink.clear();
                 func.getStr(record, sink);
                 Assert.assertEquals(0, sink.length());
             } else {
-                CharSequence a = func.getStr(record);
+                CharSequence a = func.getStrA(record);
                 CharSequence b = func.getStrB(record);
                 if (!func.isConstant() && (!(a instanceof String) || !(b instanceof String))) {
                     Assert.assertNotSame(a, b);
@@ -541,7 +557,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 TestUtils.assertEquals(expected, b);
 
                 // repeat call to make sure there is correct object reuse
-                TestUtils.assertEquals(expected, func.getStr(record));
+                TestUtils.assertEquals(expected, func.getStrA(record));
                 TestUtils.assertEquals(expected, func.getStrB(record));
 
                 sink.clear();
@@ -642,7 +658,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             return (CharSequence) args[col];
         }
 
@@ -658,13 +674,23 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
-        public CharSequence getSym(int col) {
+        public CharSequence getSymA(int col) {
             return (CharSequence) args[col];
         }
 
         @Override
         public CharSequence getSymB(int col) {
             return (CharSequence) args[col];
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            return (Utf8Sequence) args[col];
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(int col) {
+            return (Utf8Sequence) args[col];
         }
     }
 }

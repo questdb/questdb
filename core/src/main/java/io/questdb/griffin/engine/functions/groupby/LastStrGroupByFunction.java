@@ -38,7 +38,7 @@ public class LastStrGroupByFunction extends FirstStrGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
-        final CharSequence val = arg.getStr(record);
+        final CharSequence val = arg.getStrA(record);
         if (val == null) {
             mapValue.putLong(valueIndex + 1, 0);
             mapValue.putBool(valueIndex + 2, true);

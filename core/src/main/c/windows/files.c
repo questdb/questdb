@@ -241,6 +241,21 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
     return -1;
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readIntAsUnsignedLong
+        (JNIEnv *e, jclass cl, jint fd, jlong offset) {
+    DWORD count;
+    uint32_t result;
+    HANDLE handle = FD_TO_HANDLE(fd);
+    if (set_file_pos(handle, offset)
+        && ReadFile(handle, (LPVOID) &result, (DWORD) 4, &count, NULL)) {
+        if (count == 4) {
+            return (jlong) result;
+        }
+    }
+    SaveLastError();
+    return -1;
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
         (JNIEnv *e, jclass cl, jint fd, jlong offset) {
     DWORD count;

@@ -30,6 +30,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
  * Gathers important query execution plan details and prints them in a readable format.
@@ -164,6 +165,11 @@ public class TextPlanSink extends BasePlanSink {
 
     public PlanSink val(CharSequence cs) {
         sink.put(cs);
+        return this;
+    }
+
+    public PlanSink val(Utf8Sequence utf8) {
+        sink.put(utf8);
         return this;
     }
 

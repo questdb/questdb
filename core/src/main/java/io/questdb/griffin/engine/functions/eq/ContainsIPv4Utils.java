@@ -45,7 +45,7 @@ public class ContainsIPv4Utils {
 
     public static Function containsIPv4(Function ipv4Func, Function strFunc, int strFuncPosition) throws SqlException {
         if (strFunc.isConstant()) {
-            CharSequence constValue = strFunc.getStr(null);
+            CharSequence constValue = strFunc.getStrA(null);
             if (constValue == null) {
                 return new NullCheckFunc(ipv4Func);
             }
@@ -159,7 +159,7 @@ public class ContainsIPv4Utils {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
 
-            CharSequence value = strFunc.getStr(null);
+            CharSequence value = strFunc.getStrA(null);
             if (value == null) {
                 // act as a null check
                 subnet = IPv4_NULL;

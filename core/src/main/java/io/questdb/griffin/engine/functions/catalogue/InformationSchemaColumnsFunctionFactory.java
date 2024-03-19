@@ -116,7 +116,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
                 boolean hasNext = false;
                 if (columIdx == -1 && (hasNext = allTablesCursor.hasNext())) {
-                    tableName = allTablesCursor.getRecord().getStr(0);
+                    tableName = allTablesCursor.getRecord().getStrA(0);
                     showColumnsCursor.of(executionContext, tableName);
                 }
 
@@ -126,8 +126,8 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
                 if (showColumnsCursor.hasNext()) {
                     Record rec = showColumnsCursor.getRecord();
-                    CharSequence columnName = rec.getStr(ShowColumnsRecordCursorFactory.N_NAME_COL);
-                    CharSequence dataType = rec.getStr(ShowColumnsRecordCursorFactory.N_TYPE_COL);
+                    CharSequence columnName = rec.getStrA(ShowColumnsRecordCursorFactory.N_NAME_COL);
+                    CharSequence dataType = rec.getStrA(ShowColumnsRecordCursorFactory.N_TYPE_COL);
                     columIdx++;
                     record.of(tableName, columIdx, columnName, dataType);
                     return true;
@@ -166,7 +166,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                 }
 
                 @Override
-                public CharSequence getStr(int col) {
+                public CharSequence getStrA(int col) {
                     switch (col) {
                         case 0:
                             return tableName;
@@ -180,12 +180,12 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
                 @Override
                 public CharSequence getStrB(int col) {
-                    return getStr(col);
+                    return getStrA(col);
                 }
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence str = getStr(col);
+                    CharSequence str = getStrA(col);
                     return str != null ? str.length() : -1;
                 }
 

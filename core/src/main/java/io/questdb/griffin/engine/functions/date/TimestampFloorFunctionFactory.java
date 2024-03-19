@@ -42,7 +42,7 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final CharSequence str = args.getQuick(0).getStr(null);
+        final CharSequence str = args.getQuick(0).getStrA(null);
         int stride = 1;
         char c = 0;
         if (str != null) {
@@ -79,6 +79,8 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
                 return new TimestampFloorFunctions.TimestampFloorSSFunction(args.getQuick(1), stride);
             case 'T':
                 return new TimestampFloorFunctions.TimestampFloorMSFunction(args.getQuick(1), stride);
+            case 'U':
+                return new TimestampFloorFunctions.TimestampFloorMCFunction(args.getQuick(1), stride);
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:

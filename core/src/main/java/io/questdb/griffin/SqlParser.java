@@ -40,8 +40,8 @@ import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
+    public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
-    private static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
@@ -709,7 +709,7 @@ public class SqlParser {
                         timestampColumnFound = true;
                     } else {
                         int columnType = model.getColumnType(colIndex);
-                        if (ColumnType.isVariableLength(columnType)) {
+                        if (ColumnType.isVarSize(columnType)) {
                             throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column can only be fixed size column [column=").put(columnName)
                                     .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
                         }
@@ -1225,7 +1225,7 @@ public class SqlParser {
         return updateQueryModel;
     }
 
-    //doesn't allow copy, rename
+    // doesn't allow copy, rename
     private ExecutionModel parseExplain(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok = tok(lexer, "'create', 'format', 'insert', 'update', 'select' or 'with'");
 
@@ -1431,6 +1431,13 @@ public class SqlParser {
                     tok = optTok(lexer);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'calendar' or 'first observation' expected");
+                }
+            } else {
+                // Set offset according to default config
+                if (configuration.getSampleByDefaultAlignmentCalendar()) {
+                    model.setSampleByOffset(ZERO_OFFSET);
+                } else {
+                    model.setSampleByOffset(null);
                 }
             }
         }
@@ -1833,7 +1840,6 @@ public class SqlParser {
             boolean hasFrom = false;
 
             while (true) {
-
                 tok = tok(lexer, "column");
                 if (Chars.equals(tok, '*')) {
                     expr = nextLiteral(GenericLexer.immutableOf(tok), lexer.lastTokenPosition());

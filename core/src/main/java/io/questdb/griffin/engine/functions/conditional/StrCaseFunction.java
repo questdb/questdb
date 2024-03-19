@@ -45,13 +45,13 @@ class StrCaseFunction extends StrFunction implements CaseFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink sink) {
-        picker.pick(rec).getStr(rec, sink);
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
+        picker.pick(rec).getStr(rec, utf16Sink);
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return picker.pick(rec).getStr(rec);
+    public CharSequence getStrA(Record rec) {
+        return picker.pick(rec).getStrA(rec);
     }
 
     @Override

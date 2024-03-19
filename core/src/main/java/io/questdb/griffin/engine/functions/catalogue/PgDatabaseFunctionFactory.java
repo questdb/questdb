@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class PgDatabaseFunctionFactory implements FunctionFactory {
 
@@ -120,7 +121,8 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        @NotNull
+        public CharSequence getStrA(int col) {
             switch (col) {
                 case 1:
                     // datname
@@ -137,12 +139,12 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrB(int col) {
-            return getStr(col);
+            return getStrA(col);
         }
 
         @Override
         public int getStrLen(int col) {
-            return getStr(col).length();
+            return getStrA(col).length();
         }
     }
 

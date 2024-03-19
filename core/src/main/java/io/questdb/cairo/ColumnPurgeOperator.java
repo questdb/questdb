@@ -228,7 +228,7 @@ public class ColumnPurgeOperator implements Closeable {
 
                 // perform existence check ahead of trying to remove files
                 if (!ff.exists(path)) {
-                    if (ColumnType.isVariableLength(columnType)) {
+                    if (ColumnType.isVarSize(columnType)) {
                         path.trimTo(pathTrimToPartition);
                         TableUtils.iFile(path, columnName, columnVersion);
                         if (!ff.exists(path)) {
@@ -301,7 +301,7 @@ public class ColumnPurgeOperator implements Closeable {
                     continue;
                 }
 
-                if (ColumnType.isVariableLength(columnType)) {
+                if (ColumnType.isVarSize(columnType)) {
                     path.trimTo(pathTrimToPartition);
                     TableUtils.iFile(path, columnName, columnVersion);
 

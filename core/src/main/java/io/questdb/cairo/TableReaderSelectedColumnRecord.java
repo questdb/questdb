@@ -27,8 +27,10 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.DirectCharSequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableReaderRecord.ifOffsetNegThen0ElseValue;
 
@@ -255,7 +257,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int columnIndex) {
+    public CharSequence getStrA(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
@@ -264,7 +266,7 @@ public class TableReaderSelectedColumnRecord implements Record {
         );
         long offset = reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex);
         assert recordIndex != 0 || (offset == 0 || offset == Numbers.LONG_NaN);
-        return reader.getColumn(absoluteColumnIndex).getStr(offset);
+        return reader.getColumn(absoluteColumnIndex).getStrA(offset);
     }
 
     @Override
@@ -275,7 +277,7 @@ public class TableReaderSelectedColumnRecord implements Record {
                 recordIndex,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
-        return reader.getColumn(absoluteColumnIndex).getStr2(
+        return reader.getColumn(absoluteColumnIndex).getStrB(
                 reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
         );
     }
@@ -294,7 +296,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public CharSequence getSym(int columnIndex) {
+    public CharSequence getSymA(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
@@ -318,6 +320,16 @@ public class TableReaderSelectedColumnRecord implements Record {
     @Override
     public long getUpdateRowId() {
         return getRowId();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int columnIndex) {
+        return getVarchar(columnIndex, 1);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int columnIndex) {
+        return getVarchar(columnIndex, 2);
     }
 
     public void incrementRecordIndex() {
@@ -344,5 +356,21 @@ public class TableReaderSelectedColumnRecord implements Record {
     private long getAdjustedRecordIndex(int col) {
         assert col > -1 && col < reader.getColumnCount() : "Column index out of bounds: " + col + " >= " + reader.getColumnCount();
         return recordIndex - reader.getColumnTop(columnBase, col);
+    }
+
+    @Nullable
+    private Utf8Sequence getVarchar(int columnIndex, int ab) {
+        final int col = deferenceColumn(columnIndex);
+        final long rowNum = getAdjustedRecordIndex(col);
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                rowNum,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return VarcharTypeDriver.getValue(
+                rowNum,
+                reader.getColumn(absoluteColumnIndex),
+                reader.getColumn(absoluteColumnIndex + 1),
+                ab
+        );
     }
 }

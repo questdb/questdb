@@ -64,7 +64,7 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         int strFuncPosition = argPositions.getQuick(1);
         Function strFunc = args.getQuick(1);
         if (strFunc.isConstant()) {
-            CharSequence value = strFunc.getStr(null);
+            CharSequence value = strFunc.getStrA(null);
             if (value == null) {
                 return new ConstStrFunc(long256Func);
             }
@@ -177,7 +177,7 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
 
-            CharSequence value = strFunc.getStr(null);
+            CharSequence value = strFunc.getStrA(null);
             if (value == null) {
                 constLong0 = Long256Impl.NULL_LONG256.getLong0();
                 constLong1 = Long256Impl.NULL_LONG256.getLong1();

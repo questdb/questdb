@@ -30,6 +30,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
 
 public class SymbolConstant extends SymbolFunction implements ConstantFunction {
@@ -37,11 +40,13 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     public static final SymbolConstant NULL = new SymbolConstant(null, VALUE_IS_NULL);
     public static final SymbolConstant TRUE = new SymbolConstant("true", 0);
     private final int index;
+    private final Utf8String utf8Value;
     private final String value;
 
     public SymbolConstant(CharSequence value, int index) {
         if (value == null) {
             this.value = null;
+            this.utf8Value = null;
             this.index = SymbolTable.VALUE_IS_NULL;
         } else {
             if (Chars.startsWith(value, '\'')) {
@@ -49,6 +54,7 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
             } else {
                 this.value = Chars.toString(value);
             }
+            this.utf8Value = new Utf8String(this.value);
             this.index = index;
         }
     }
@@ -79,6 +85,21 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     @Override
     public CharSequence getSymbolB(Record rec) {
         return value;
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        utf8Sink.put(utf8Value);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        return utf8Value;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        return utf8Value;
     }
 
     @Override

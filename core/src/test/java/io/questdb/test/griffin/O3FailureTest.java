@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
@@ -38,6 +39,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
@@ -49,7 +51,6 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.File;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -91,7 +92,7 @@ public class O3FailureTest extends AbstractO3Test {
         @Override
         public int openRW(LPSZ name, long opts) {
             int fd = super.openRW(name, opts);
-            if (Utf8s.endsWithAscii(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
+            if (Utf8s.endsWithAscii(name, "1970-01-06.16" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
                 this.fd = fd;
             }
             return fd;
@@ -100,7 +101,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffMkDirFailure = new TestFilesFacadeImpl() {
         @Override
         public int mkdirs(Path path, int mode) {
-            if (!fixFailure.get() || (Utf8s.containsAscii(path, "1970-01-06.14") && counter.decrementAndGet() == 0)) {
+            if (!fixFailure.get() || (Utf8s.containsAscii(path, "1970-01-06.16") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
             }
@@ -110,7 +111,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenRW = new TestFilesFacadeImpl() {
         @Override
         public int openRW(LPSZ name, long opts) {
-            if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0)) {
+            if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06.16" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
             }
@@ -302,7 +303,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(
                 0,
                 O3FailureTest::testColumnTopLastDataOOODataFailRetry0,
-                failToFSync("1970-01-07.15" + Files.SEPARATOR + "i.d")
+                failToFSync("1970-01-07.17" + Files.SEPARATOR + "i.d")
         );
     }
 
@@ -313,7 +314,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(
                 4,
                 O3FailureTest::testColumnTopLastDataOOODataFailRetry0,
-                failToFSync("1970-01-07.15" + Files.SEPARATOR + "i.d")
+                failToFSync("1970-01-07.17" + Files.SEPARATOR + "i.d")
         );
     }
 
@@ -406,7 +407,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Utf8s.containsAscii(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-06.16" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -433,7 +434,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Utf8s.containsAscii(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-06.16" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -559,8 +560,8 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public boolean truncate(int fd, long size) {
-                // Fail first truncate to 0 size, it's more stable than measuring number of calls made to truncate
-                if (size == 0 && counter.getAndIncrement() == 0) {
+                // First two calls to truncate are for varchar column
+                if (size == 0 && counter.getAndIncrement() == 2) {
                     return false;
                 }
                 return super.truncate(fd, size);
@@ -576,8 +577,8 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public boolean truncate(int fd, long size) {
-                // Fail first truncate to 0 size, it's more stable than measuring number of calls made to truncate
-                if (size == 0 && counter.getAndIncrement() == 0) {
+                // First two calls to truncate are for varchar column
+                if (size == 0 && counter.getAndIncrement() == 2) {
                     return false;
                 }
                 return super.truncate(fd, size);
@@ -1048,18 +1049,23 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("create table y as (x union all append)", sqlExecutionContext);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        assertSqlResultAgainstFile(engine, sqlExecutionContext, "/o3/testColumnTopMidAppendColumn.txt");
-        engine.releaseAllReaders();
-        assertSqlResultAgainstFile(engine, sqlExecutionContext, "/o3/testColumnTopMidAppendColumn.txt");
-    }
+        assertO3DataConsistencyStableSort(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                null,
+                null
+        );
 
-    private static void assertSqlResultAgainstFile(
-            CairoEngine engine,
-            SqlExecutionContext sqlExecutionContext,
-            String resourceName
-    ) throws SqlException {
-        engine.print("x", sink, sqlExecutionContext);
-        TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
+        engine.releaseAllReaders();
+
+        assertO3DataConsistencyStableSort(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                null,
+                null
+        );
     }
 
     private static void assertXCountAndMax(
@@ -1844,7 +1850,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -1863,6 +1871,9 @@ public class O3FailureTest extends AbstractO3Test {
         engine.ddl("alter table x add column v11 string", sqlExecutionContext);
         engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
         engine.ddl("alter table x add column v9 long", sqlExecutionContext);
+        engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
+        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
+
 
         compiler.compile(
                 "insert into x " +
@@ -1885,6 +1896,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
 //        --------     new columns here ---------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -1898,7 +1911,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
+                        " rnd_long() v9," +
+                        " rnd_varchar(1,40,1) v13," +
+                        " rnd_varchar(1,1,1) v14" +
                         " from long_sequence(500)",
                 sqlExecutionContext
         );
@@ -1924,6 +1939,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
 //        --------     new columns here ---------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -1937,8 +1954,10 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
-                        " from long_sequence(100)" +
+                        " rnd_long() v9," +
+                        " rnd_varchar(1,40,1) v13," +
+                        " rnd_varchar(1,1,1) v14" +
+                        " from long_sequence(50)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
@@ -1973,6 +1992,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 0 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -1989,7 +2009,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2008,10 +2030,15 @@ public class O3FailureTest extends AbstractO3Test {
         engine.ddl("alter table x add column v11 string", sqlExecutionContext);
         engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
         engine.ddl("alter table x add column v9 long", sqlExecutionContext);
+        engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
+        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
+
+        engine.ddl("create table w as (select * from x)", sqlExecutionContext);
 
         compiler.compile(
-                "insert into x " +
+                "create table append1 as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2029,6 +2056,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
 //        --------     new columns here ---------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -2042,14 +2071,18 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
-                        " from long_sequence(500)",
+                        " rnd_long() v9," +
+                        " rnd_varchar(1,40,1) v13," +
+                        " rnd_varchar(1,1,1) v14" +
+                        " from long_sequence(500)" +
+                        ")",
                 sqlExecutionContext
         );
 
         compiler.compile(
-                "create table append as (" +
+                "create table append2 as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2067,6 +2100,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
 //        --------     new columns here ---------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -2080,28 +2115,31 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
+                        " rnd_long() v9," +
+                        " rnd_varchar(1,40,1) v13," +
+                        " rnd_varchar(1,1,1) v14" +
                         " from long_sequence(400)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
+        engine.insert("insert into x select * from append1", sqlExecutionContext);
         final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
 
         try {
-            compiler.compile("insert into x select * from append", sqlExecutionContext);
+            compiler.compile("insert into x select * from append2", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
 
         assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
-        compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-        assertSqlResultAgainstFile(
+        assertO3DataConsistencyStableSort(
                 engine,
+                compiler,
                 sqlExecutionContext,
-                "/o3/testColumnTopLastOOOPrefix.txt"
+                "create table y as (select * from w union all append1 union all append2)",
+                "insert into x select * from append2"
         );
     }
 
@@ -2130,7 +2168,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 executionContext
@@ -2149,6 +2189,8 @@ public class O3FailureTest extends AbstractO3Test {
         engine.ddl("alter table x add column v11 string", executionContext);
         engine.ddl("alter table x add column v12 binary", executionContext);
         engine.ddl("alter table x add column v9 long", executionContext);
+        engine.ddl("alter table x add column v13 varchar", executionContext);
+        engine.ddl("alter table x add column v14 varchar", executionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -2170,6 +2212,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         //  ------------------- new columns ------------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -2183,7 +2227,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
+                        " rnd_long() v9," +
+                        " rnd_varchar(1,40,1) v13," +
+                        " rnd_varchar(1,1,1) v14" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 executionContext
@@ -2220,6 +2266,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 0 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2236,7 +2283,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2255,10 +2304,13 @@ public class O3FailureTest extends AbstractO3Test {
         engine.ddl("alter table x add column v11 string", sqlExecutionContext);
         engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
         engine.ddl("alter table x add column v9 long", sqlExecutionContext);
+        engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
+        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2276,6 +2328,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         // ---- new columns ----
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -2289,7 +2343,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
+                        " rnd_long() v9," +
+                        " rnd_varchar(1,40,1) v13," +
+                        " rnd_varchar(1,1,1) v14" +
                         " from long_sequence(1000)",
                 sqlExecutionContext
         );
@@ -2297,6 +2353,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table append as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2314,6 +2371,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         // --------- new columns -----------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -2327,7 +2386,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
+                        " rnd_long() v9," +
+                        " rnd_varchar(1,40,1) v13," +
+                        " rnd_varchar(1,1,1) v14" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2360,6 +2421,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 0 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2376,7 +2438,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2395,10 +2459,15 @@ public class O3FailureTest extends AbstractO3Test {
         engine.ddl("alter table x add column v11 string", sqlExecutionContext);
         engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
         engine.ddl("alter table x add column v9 long", sqlExecutionContext);
+        engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
+        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
+
+        engine.ddl("create table w as (select * from x)", sqlExecutionContext);
 
         compiler.compile(
-                "insert into x " +
+                "create table append1 as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2416,6 +2485,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
 //        --------     new columns here ---------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -2429,14 +2500,18 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
-                        " from long_sequence(1000)",
+                        " rnd_long() v9," +
+                        " rnd_varchar(1,40,1) v13," +
+                        " rnd_varchar(1,1,1) v14" +
+                        " from long_sequence(1000)" +
+                        ")",
                 sqlExecutionContext
         );
 
         compiler.compile(
-                "create table append as (" +
+                "create table append2 as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2454,6 +2529,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
 //        --------     new columns here ---------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -2467,28 +2544,32 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
+                        " rnd_long() v9," +
+                        " rnd_varchar(1,40,1) v13," +
+                        " rnd_varchar(1,1,1) v14" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
+        engine.insert("insert into x select * from append1", sqlExecutionContext);
+
         final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
 
         try {
-            compiler.compile("insert into x select * from append", sqlExecutionContext);
+            compiler.compile("insert into x select * from append2", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
 
         assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
-        compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-        assertSqlResultAgainstFile(
+        assertO3DataConsistencyStableSort(
                 engine,
+                compiler,
                 sqlExecutionContext,
-                "/o3/testColumnTopMidDataMergeData.txt"
+                "create table y as (select * from w union all append1 union all append2)",
+                "insert into x select * from append2"
         );
     }
 
@@ -2517,7 +2598,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2536,6 +2619,8 @@ public class O3FailureTest extends AbstractO3Test {
         engine.ddl("alter table x add column v11 string", sqlExecutionContext);
         engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
         engine.ddl("alter table x add column v9 long", sqlExecutionContext);
+        engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
+        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -2557,6 +2642,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         //  ------------------- new columns ------------------
                         " rnd_double() v," +
                         " rnd_float() v1," +
@@ -2570,7 +2657,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_char() v10," +
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
-                        " rnd_long() v9" +
+                        " rnd_long() v9," +
+                        " rnd_varchar(1,40,1) v13," +
+                        " rnd_varchar(1,1,1) v14" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2667,6 +2756,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_long() j," +
                         " rnd_str(5,16,2) str," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " timestamp_sequence('2020-02-24T01',1000L) ts" +
                         " from long_sequence(20)" +
                         ") timestamp (ts) partition by DAY WAL",
@@ -2679,6 +2770,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " cast(x as int) i," +
                         " rnd_long() j," +
                         " rnd_str(5,160,2) str," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " timestamp_sequence('2020-02-24',100L) ts" +
                         " from long_sequence(50000)",
                 executionContext
@@ -2954,7 +3047,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2988,7 +3083,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(507)" +
                         ")",
                 sqlExecutionContext
@@ -3014,7 +3111,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -3211,7 +3310,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 executionContext
@@ -3236,7 +3337,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 executionContext
@@ -3293,7 +3396,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -3318,7 +3423,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -3369,7 +3476,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -3396,7 +3505,9 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
+                        " rnd_char() t," +
+                        " rnd_varchar(1,40,1) vc1," +
+                        " rnd_varchar(1,1,1) vc2," +
                         " from long_sequence(1000)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -3513,15 +3624,30 @@ public class O3FailureTest extends AbstractO3Test {
 
     }
 
+    private static void putRndStr(Rnd rnd, RecordMetadata metadata, TableWriter.Row r, int col, int len, Utf8StringSink sink) {
+        switch (metadata.getColumnType(col)) {
+            case ColumnType.STRING:
+                r.putStr(col, rnd.nextChars(len));
+                break;
+            case ColumnType.VARCHAR:
+                sink.clear();
+                rnd.nextUtf8Str(len, sink);
+                r.putVarchar(col, sink);
+                break;
+            default:
+                throw new UnsupportedOperationException();
+        }
+    }
+
     private static void testVarColumnStress(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
 
-        compiler.compile("create table x (f symbol index, a string, b string, c string, d string, e symbol index, g int, t timestamp) timestamp (t) partition by DAY", executionContext);
+        compiler.compile("create table x (f symbol index, a string, b string, c string, d string, vc1 varchar, vc2 varchar, e symbol index, g int, t timestamp) timestamp (t) partition by DAY", executionContext);
         // max timestamp should be 100_000
-        compiler.compile("insert into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(3000000)", executionContext);
+        compiler.compile("insert into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_varchar(1,40,1), rnd_varchar(1,1,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(3000000)", executionContext);
 
         String[] symbols = new String[]{"ppp", "wrre", "0ppd", "l22z", "wwe32", "pps", "oop2", "00kk"};
         final int symbolLen = symbols.length;
@@ -3530,6 +3656,8 @@ public class O3FailureTest extends AbstractO3Test {
         Rnd rnd = TestUtils.generateRandom(LOG);
         int batches = 0;
         int batchCount = 75;
+
+        Utf8StringSink utf8Sink = new Utf8StringSink();
         while (batches < batchCount) {
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 for (int i = 0; i < batchCount; i++) {
@@ -3537,12 +3665,17 @@ public class O3FailureTest extends AbstractO3Test {
                     for (int k = 0; k < 1000; k++) {
                         TableWriter.Row r = w.newRow(rnd.nextPositiveInt() % 100_000);
                         r.putSym(0, symbols[rnd.nextInt(symbolLen)]);
-                        r.putStr(1, rnd.nextChars(7));
-                        r.putStr(2, rnd.nextChars(8));
-                        r.putStr(3, rnd.nextChars(4));
-                        r.putStr(4, rnd.nextChars(6));
-                        r.putSym(5, symbols[rnd.nextInt(symbolLen)]);
-                        r.putInt(6, rnd.nextInt());
+                        putRndStr(rnd, w.getMetadata(), r, 1, 7, utf8Sink);
+                        putRndStr(rnd, w.getMetadata(), r, 2, 8, utf8Sink);
+                        putRndStr(rnd, w.getMetadata(), r, 3, 4, utf8Sink);
+                        putRndStr(rnd, w.getMetadata(), r, 4, 6, utf8Sink);
+
+                        putRndStr(rnd, w.getMetadata(), r, 5, 40, utf8Sink);
+                        putRndStr(rnd, w.getMetadata(), r, 6, 1, utf8Sink);
+
+                        r.putSym(7, symbols[rnd.nextInt(symbolLen)]);
+                        r.putInt(8, rnd.nextInt());
+
                         r.append();
                     }
                     try {

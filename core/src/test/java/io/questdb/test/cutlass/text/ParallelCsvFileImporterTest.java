@@ -56,6 +56,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     private static final Rnd rnd = new Rnd();
+    private static final String stringTypeName = ColumnType.nameOf(ColumnType.STRING);
 
     @Before
     public void setUp() {
@@ -2713,10 +2714,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         "tstmp\tTIMESTAMP\tfalse\t256\tfalse\t0\ttrue\tfalse\n" +
                         "ft\tDOUBLE\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
                         "db\tDOUBLE\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
-                        "str\tSTRING\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
-                        "sym\tSTRING\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "str\t" + stringTypeName + "\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "sym\t" + stringTypeName + "\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
                         "l256\tLONG256\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
-                        "ge\tSTRING\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
+                        "ge\t" + stringTypeName + "\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
                         "uid\tUUID\tfalse\t256\tfalse\t0\tfalse\tfalse\n",
                 "show columns from alltypes",
                 null,

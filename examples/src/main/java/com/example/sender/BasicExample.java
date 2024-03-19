@@ -2,24 +2,19 @@ package com.example.sender;
 
 import io.questdb.client.Sender;
 
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-
 public class BasicExample {
     public static void main(String[] args) {
-        try (Sender sender = Sender.builder().address("localhost:9009").build()) {
-            sender.table("inventors")
-                    .symbol("born", "Austrian Empire")
-                    .timestampColumn("birthday", Instant.parse("1856-07-10T00:00:00.00Z"))
-                    .longColumn("id", 0)
-                    .stringColumn("name", "Nicola Tesla")
-                    .at(System.nanoTime(), ChronoUnit.NANOS);
-            sender.table("inventors")
-                    .symbol("born", "USA")
-                    .timestampColumn("birthday", Instant.parse("1847-02-11T00:00:00.00Z"))
-                    .longColumn("id", 1)
-                    .stringColumn("name", "Thomas Alva Edison")
-                    .at(System.nanoTime(), ChronoUnit.NANOS);
+        try (Sender sender = Sender.fromConfig("tcp::addr=localhost:9009;")) {
+            sender.table("weather_sensor")
+                    .symbol("id", "toronto1")
+                    .doubleColumn("temperature", 23.5)
+                    .doubleColumn("humidity", 0.49)
+                    .atNow();
+            sender.table("weather_sensor")
+                    .symbol("id", "dubai2")
+                    .doubleColumn("temperature", 41.2)
+                    .doubleColumn("humidity", 0.34)
+                    .atNow();
         }
     }
 }

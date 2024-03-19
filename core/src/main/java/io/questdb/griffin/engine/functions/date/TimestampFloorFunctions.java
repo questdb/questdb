@@ -162,6 +162,25 @@ final class TimestampFloorFunctions {
         }
     }
 
+    static class TimestampFloorMCFunction extends AbstractTimestampFloorFunction {
+        private final int stride;
+
+        public TimestampFloorMCFunction(Function arg, int stride) {
+            super(arg);
+            this.stride = stride;
+        }
+
+        @Override
+        public long floor(long timestamp) {
+            return Timestamps.floorMC(timestamp, stride);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "microsecond";
+        }
+    }
+
     static class TimestampFloorMIFunction extends AbstractTimestampFloorFunction {
         private final int stride;
 
@@ -288,10 +307,6 @@ final class TimestampFloorFunctions {
 
     static class TimestampFloorWWFunction extends AbstractTimestampFloorFunction {
         private final int stride;
-
-        public TimestampFloorWWFunction(Function arg) {
-            this(arg, 1);
-        }
 
         public TimestampFloorWWFunction(Function arg, int stride) {
             super(arg);

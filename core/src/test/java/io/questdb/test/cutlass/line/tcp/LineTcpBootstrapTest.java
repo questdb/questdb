@@ -66,7 +66,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
 
                 int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort();
-                try (Sender sender = Sender.builder().address("localhost").port(port).build()) {
+                try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost").port(port).build()) {
                     for (int i = 0; i < 1_000_000; i++) {
                         sender.table("x").stringColumn("a", "42").atNow();
                     }
@@ -100,7 +100,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
 
                 int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort();
                 Thread th = new Thread(() -> {
-                    try (Sender sender = Sender.builder().address("localhost").port(port).build()) {
+                    try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost").port(port).build()) {
                         for (int i = 0; i < 100; i++) {
                             sender.table("abc").symbol("sym1", "10").atNow();
                         }

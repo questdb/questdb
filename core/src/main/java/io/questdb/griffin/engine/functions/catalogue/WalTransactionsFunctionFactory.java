@@ -74,7 +74,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        CharSequence tableName = args.get(0).getStr(null);
+        CharSequence tableName = args.get(0).getStrA(null);
         TableToken tableToken = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
         if (tableToken == null) {
             throw SqlException.$(argPositions.get(0), "table does not exist: ").put(tableName);

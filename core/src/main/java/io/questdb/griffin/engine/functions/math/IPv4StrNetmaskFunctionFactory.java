@@ -53,7 +53,7 @@ public class IPv4StrNetmaskFunctionFactory implements FunctionFactory {
     ) {
         final Function strFunc = args.getQuick(0);
         if (strFunc.isConstant()) {
-            final CharSequence str = strFunc.getStr(null);
+            final CharSequence str = strFunc.getStrA(null);
             if (str == null) {
                 return IPv4Constant.NULL;
             }
@@ -77,7 +77,7 @@ public class IPv4StrNetmaskFunctionFactory implements FunctionFactory {
 
         @Override
         public int getIPv4(Record rec) {
-            final CharSequence str = arg.getStr(null);
+            final CharSequence str = arg.getStrA(null);
             if (str == null) {
                 return Numbers.IPv4_NULL;
             }

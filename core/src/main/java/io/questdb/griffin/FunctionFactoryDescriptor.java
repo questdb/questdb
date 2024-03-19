@@ -170,6 +170,9 @@ public class FunctionFactoryDescriptor {
             case 'x':
                 sigArgType = ColumnType.IPv4;
                 break;
+            case 'ø':
+                sigArgType = ColumnType.VARCHAR;
+                break;
             default:
                 sigArgType = -1;
                 break;
@@ -332,6 +335,7 @@ public class FunctionFactoryDescriptor {
         typeNameMap.put('j', "long128");
         typeNameMap.put('z', "uuid");
         typeNameMap.put('x', "ipv4");
+        typeNameMap.put('ø', "varchar");
         typeNameMap.put('[' | 32, "[]");
     }
 }

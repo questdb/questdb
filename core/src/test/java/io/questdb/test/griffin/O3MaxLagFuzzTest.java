@@ -57,6 +57,16 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
         executeWithPool(2, this::testRollbackFuzz);
     }
 
+    @Test
+    public void testRollbackRegression1() throws Exception {
+        executeWithPool(0, this::testRollbackRegression1);
+    }
+
+    @Test
+    public void testRollbackRegression2() throws Exception {
+        executeWithPool(0, this::testRollbackRegression2);
+    }
+
     private static void replayTransactions(Rnd rnd, CairoEngine engine, TableWriter w, ObjList<FuzzTransaction> transactions, int virtualTimestampIndex) {
         for (int i = 0, n = transactions.size(); i < n; i++) {
             FuzzTransaction tx = transactions.getQuick(i);
@@ -95,7 +105,9 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
-                " rnd_char() t" +
+                " rnd_char() t," +
+                " rnd_varchar(6, 16, 2) v1," +
+                " rnd_varchar(1, 1, 1) v2," +
                 " from long_sequence(" + nTotalRows + ")" +
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
@@ -197,7 +209,9 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
-                " rnd_char() t" +
+                " rnd_char() t," +
+                " rnd_varchar(5, 16, 2) v1," +
+                " rnd_varchar(1, 1, 1) v2," +
                 " from long_sequence(" + nTotalRows + ")" +
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
@@ -235,6 +249,68 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, "(z limit " + lim + ") order by ts limit -" + o3Uncommitted, w);
             w.ic();
 
+            w.commit();
+        }
+        assertXY(compiler, sqlExecutionContext);
+    }
+
+    private void testRollbackRegression1(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        // We used this commented-out code to find values that make this and the other regression test fail:
+//        final Rnd rnd = TestUtils.generateRandom(LOG);
+//        final int nTotalRows = rnd.nextInt(79000);
+//        final long microsBetweenRows = rnd.nextLong(3090985);
+//        final double fraction = rnd.nextDouble();
+//        System.out.printf("*+*+*+*+ nTotalRows %,d microsBetweenRows %,d fraction %.2f\n", nTotalRows, microsBetweenRows, fraction);
+
+        final int nTotalRows = 51_555;
+        final long microsBetweenRows = 2_267_870;
+        final double fraction = 0.8;
+        runRollbackRegression(engine, compiler, sqlExecutionContext, nTotalRows, microsBetweenRows, fraction);
+    }
+
+    private void testRollbackRegression2(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final int nTotalRows = 10_795;
+        final long microsBetweenRows = 1_970_536;
+        final double fraction = 0.09;
+        runRollbackRegression(engine, compiler, sqlExecutionContext, nTotalRows, microsBetweenRows, fraction);
+    }
+
+    private void runRollbackRegression(
+            CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
+            int nTotalRows, long microsBetweenRows, double fraction
+    ) throws SqlException {
+
+        // table "x" is in order
+        String sql = "create table x as (" +
+                "select" +
+                " rnd_short(10,1024) f," +
+                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
+                " from long_sequence(" + nTotalRows + ")" +
+                ") timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+        // table "z" is out of order - reshuffled "x"
+        compiler.compile("create table z as (select * from x order by f)", sqlExecutionContext);
+        // table "y" is our target table, where we exercise O3 and rollbacks
+        compiler.compile("create table y as (select * from x where 1 <> 1) timestamp(ts) partition by day", sqlExecutionContext);
+        try (TableWriter w = TestUtils.getWriter(engine, "y")) {
+            insertUncommitted(compiler, sqlExecutionContext, "z limit " + (int) (nTotalRows * fraction), w);
+            w.ic();
+            final long o3Uncommitted = w.getO3RowCount();
+            long expectedRowCount = w.size() - o3Uncommitted;
+            w.rollback();
+            Assert.assertEquals(expectedRowCount, w.size());
+            TestUtils.assertEquals(
+                    compiler,
+                    sqlExecutionContext,
+                    "(z limit " + (int) (nTotalRows * fraction) + ") order by ts limit " + expectedRowCount,
+                    "y"
+            );
+            // insert remaining data (that we did not try to insert yet)
+            insertUncommitted(compiler, sqlExecutionContext, "z limit " + (int) (nTotalRows * fraction) + ", " + nTotalRows, w);
+            w.ic();
+            // insert data that we rolled back
+            insertUncommitted(compiler, sqlExecutionContext, "(z limit " + (int) (nTotalRows * fraction) + ") order by ts limit -" + o3Uncommitted, w);
+            w.ic();
             w.commit();
         }
         assertXY(compiler, sqlExecutionContext);

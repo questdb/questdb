@@ -63,8 +63,8 @@ public class TrimFunction extends StrFunction implements UnaryFunction {
     }
 
     @Override
-    public CharSequence getStr(final Record rec) {
-        final CharSequence charSequence = getArg().getStr(rec);
+    public CharSequence getStrA(final Record rec) {
+        final CharSequence charSequence = getArg().getStrA(rec);
         if (charSequence == null) {
             return null;
         }
@@ -74,7 +74,7 @@ public class TrimFunction extends StrFunction implements UnaryFunction {
 
     @Override
     public CharSequence getStrB(final Record rec) {
-        final CharSequence charSequence = getArg().getStr(rec);
+        final CharSequence charSequence = getArg().getStrA(rec);
         if (charSequence == null) {
             return null;
         }
@@ -88,7 +88,7 @@ public class TrimFunction extends StrFunction implements UnaryFunction {
         if (len == TableUtils.NULL_LEN) {
             return TableUtils.NULL_LEN;
         }
-        trim(type, getArg().getStr(rec), sink1);
+        trim(type, getArg().getStrA(rec), sink1);
         return sink1.length();
     }
 }

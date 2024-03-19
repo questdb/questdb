@@ -44,7 +44,6 @@ public class O3PartitionTask {
     private O3Basket o3Basket;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
     private long oldPartitionSize;
-    private long oooTimestampMax;
     private long oooTimestampMin;
     private int partitionBy;
     private long partitionTimestamp;
@@ -89,10 +88,6 @@ public class O3PartitionTask {
 
     public long getOldPartitionSize() {
         return oldPartitionSize;
-    }
-
-    public long getOooTimestampMax() {
-        return oooTimestampMax;
     }
 
     public long getOooTimestampMin() {
@@ -160,7 +155,6 @@ public class O3PartitionTask {
             long srcOooHi,
             long srcOooMax,
             long oooTimestampMin,
-            long oooTimestampMax,
             long partitionTimestamp,
             long maxTimestamp,
             long srcDataMax,
@@ -182,7 +176,6 @@ public class O3PartitionTask {
         this.srcOooHi = srcOooHi;
         this.srcOooMax = srcOooMax;
         this.oooTimestampMin = oooTimestampMin;
-        this.oooTimestampMax = oooTimestampMax;
         this.partitionTimestamp = partitionTimestamp;
         this.maxTimestamp = maxTimestamp;
         this.srcDataMax = srcDataMax;

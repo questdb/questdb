@@ -154,7 +154,6 @@ public class FunctionParserEqFunctionsNullTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         for (int col0Type : EQUIVALENT_NULL_TYPES) {
             for (int col1Type : EQUIVALENT_NULL_TYPES) {
-
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 metadata.add(new TableColumnMetadata("col0", col0Type));
                 metadata.add(new TableColumnMetadata("col1", col1Type));

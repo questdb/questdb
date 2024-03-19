@@ -314,7 +314,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 }
             }
             // Tail
-            if (n > lo + 2 || txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) < 0) {
+            if (n > lo + 2 || txReader.getPartitionRowCountByTimestamp(partitionTimestamp) < 0) {
                 processPartition(
                         ff,
                         path,

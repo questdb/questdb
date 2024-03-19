@@ -39,43 +39,43 @@ public class StrArrayFunctionTest {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return "{hello}";
         }
 
         @Override
-        public CharSequence getStr(Record rec, int arrayIndex) {
+        public CharSequence getStrA(Record rec, int arrayIndex) {
             return "hello";
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            sink.put(getStr(rec));
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            utf16Sink.put(getStrA(rec));
         }
 
         @Override
         public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
-            sink.put(getStr(rec, arrayIndex));
+            sink.put(getStrA(rec, arrayIndex));
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return getStr(rec);
+            return getStrA(rec);
         }
 
         @Override
         public CharSequence getStrB(Record rec, int arrayIndex) {
-            return getStr(rec, arrayIndex);
+            return getStrA(rec, arrayIndex);
         }
 
         @Override
         public int getStrLen(Record rec) {
-            return getStr(rec).length();
+            return getStrA(rec).length();
         }
 
         @Override
         public int getStrLen(Record rec, int arrayIndex) {
-            return getStr(rec, arrayIndex).length();
+            return getStrA(rec, arrayIndex).length();
         }
 
         @Override
@@ -85,22 +85,22 @@ public class StrArrayFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
+    public void testGetGeoByte() {
         function.getGeoByte(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
+    public void testGetGeoInt() {
         function.getGeoInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
+    public void testGetGeoLong() {
         function.getGeoLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
+    public void testGetGeoShort() {
         function.getGeoShort(null);
     }
 
@@ -150,17 +150,42 @@ public class StrArrayFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256() {
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
         function.getLong256(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256A() {
+    public void testGetLong256A() {
         function.getLong256A(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256B() {
+    public void testGetLong256B() {
         function.getLong256B(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharUtf8Sink() {
+        function.getVarchar(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharA() {
+        function.getVarcharA(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharB() {
+        function.getVarcharB(null);
     }
 }

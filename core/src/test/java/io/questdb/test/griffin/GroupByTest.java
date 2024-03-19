@@ -1021,18 +1021,43 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByVarchar() throws Exception {
+        assertQuery(
+                "key\tmax\n" +
+                        "0\t100\n" +
+                        "1\t91\n" +
+                        "2\t92\n" +
+                        "3\t93\n" +
+                        "4\t94\n" +
+                        "5\t95\n" +
+                        "6\t96\n" +
+                        "7\t97\n" +
+                        "8\t98\n" +
+                        "9\t99\n",
+                "select key, max(value) from t group by key order by key",
+                "create table t as ( select (x%10)::varchar key, x as value from long_sequence(100)); ",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testGroupByWithAliasClash1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
-                    "    select 1 as l, 'a' as s, -1 max " +
-                    "    union all " +
-                    "    select 1, 'a', -2 )");
+            compile(
+                    "create table t as (" +
+                            "    select 1 as l, 'a' as s, -1 max " +
+                            "    union all " +
+                            "    select 1, 'a', -2" +
+                            "    )"
+            );
 
-            String query = "select s, max, max(l) from t group by s, max order by 1, 2, 3";
+            String query = "select s, max, max(l) from t group by s, max order by s, max";
             assertPlan(
                     query,
                     "Sort light\n" +
-                            "  keys: [s, max, max1]\n" +
+                            "  keys: [s, max]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [s,max]\n" +
                             "      values: [max(l)]\n" +
@@ -1596,12 +1621,14 @@ public class GroupByTest extends AbstractCairoTest {
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n");
-            assertQuery("a\tB\tz\tviews\n" +
+            assertQuery(
+                    "a\tB\tz\tviews\n" +
                             "1\t2\t3\t1\n",
                     query,
                     null,
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -1656,12 +1683,14 @@ public class GroupByTest extends AbstractCairoTest {
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n");
-            assertQuery("a\tb\tc\tviews\n" +
+            assertQuery(
+                    "a\tb\tc\tviews\n" +
                             "1\t2\t3\t1\n",
                     query,
                     null,
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -1796,8 +1825,6 @@ public class GroupByTest extends AbstractCairoTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: trades\n");
         });
-
-
     }
 
     @Test
@@ -2221,6 +2248,7 @@ public class GroupByTest extends AbstractCairoTest {
                 "ref0",
                 true,
                 false
+
         );
     }
 
@@ -2311,6 +2339,43 @@ public class GroupByTest extends AbstractCairoTest {
                     "[27] '*' is not allowed in GROUP BY"
             );
         });
+    }
+
+    @Test
+    public void testSumOverSumColumn() throws Exception {
+        ddl("create table \"avg\" as (" +
+                "select rnd_symbol('A', 'B', 'C') category, " +
+                "rnd_double() sum, " +
+                "rnd_double() count, " +
+                "timestamp_sequence(0, 100000000000) timestamp " +
+                "from long_sequence(20)" +
+                ") timestamp(timestamp) partition by DAY");
+
+        String query = "select sum(\"sum\"), sum(\"count\"), \"category\" from \"avg\" group by \"category\" order by 3";
+        assertQuery(
+                "sum\tsum1\tcategory\n" +
+                        "1.920104572218119\t0.9826178313717698\tA\n" +
+                        "2.0117879412419453\t3.362073294894596\tB\n" +
+                        "6.020496469863701\t5.702005218155505\tC\n",
+                query,
+                null,
+                true,
+                true
+        );
+
+        assertPlan(
+                query,
+                "Sort light\n" +
+                        "  keys: [category]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [sum,sum1,category]\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
+                        "          keys: [category]\n" +
+                        "          values: [sum(sum),sum(count)]\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: avg\n"
+        );
     }
 
     private void assertError(String query, String errorMessage) {

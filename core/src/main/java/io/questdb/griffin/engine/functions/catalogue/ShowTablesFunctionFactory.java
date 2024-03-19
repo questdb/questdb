@@ -210,7 +210,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                 }
 
                 @Override
-                public CharSequence getStr(int col) {
+                public CharSequence getStrA(int col) {
                     if (Chars.equals(ShowTablesCursorFactory.TABLE_NAME_COLUMN_NAME, getMetadata().getColumnName(col))) {
                         return tableToken.getTableName();
                     }
@@ -231,12 +231,12 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrB(int col) {
-                    return getStr(col);
+                    return getStrA(col);
                 }
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence str = getStr(col);
+                    CharSequence str = getStrA(col);
                     return str != null ? str.length() : -1;
                 }
 

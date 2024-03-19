@@ -52,7 +52,7 @@ public class ToDateFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function arg = args.getQuick(0);
-        final CharSequence pattern = args.getQuick(1).getStr(null);
+        final CharSequence pattern = args.getQuick(1).getStrA(null);
         if (pattern == null) {
             throw SqlException.$(argPositions.getQuick(1), "pattern is required");
         }
@@ -80,7 +80,7 @@ public class ToDateFunctionFactory implements FunctionFactory {
 
         @Override
         public long getDate(Record rec) {
-            CharSequence value = arg.getStr(rec);
+            CharSequence value = arg.getStrA(rec);
             try {
                 if (value != null) {
                     return dateFormat.parse(value, locale);

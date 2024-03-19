@@ -288,7 +288,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         RowCursor cursor = indexWriter.getCursor(hash);
         while (cursor.hasNext()) {
             long offsetOffset = cursor.next();
-            if (Chars.equals(symbol, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
+            if (Chars.equals(symbol, charMem.getStrA(offsetMem.getLong(offsetOffset)))) {
                 return offsetToKey(offsetOffset);
             }
         }

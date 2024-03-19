@@ -29,9 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.FlyweightDirectUtf16Sink;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 
@@ -40,6 +38,7 @@ public class LineTcpEventBuffer {
     private final long bufSize;
     private final FlyweightDirectUtf16Sink tempSink = new FlyweightDirectUtf16Sink();
     private final FlyweightDirectUtf16Sink tempSinkB = new FlyweightDirectUtf16Sink();
+    private final DirectUtf8String utf8Sequence = new DirectUtf8String();
 
     public LineTcpEventBuffer(long bufLo, long bufSize) {
         this.bufLo = bufLo;
@@ -260,6 +259,18 @@ public class LineTcpEventBuffer {
         return offset + Long.BYTES;
     }
 
+    public long addVarchar(long address, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+        final int valueSize = value.size();
+        final int totalSize = Byte.BYTES + Byte.BYTES + Integer.BYTES + valueSize;
+        checkCapacity(address, totalSize);
+        Unsafe.getUnsafe().putByte(address++, LineTcpParser.ENTITY_TYPE_VARCHAR);
+        Unsafe.getUnsafe().putByte(address++, (byte) (hasNonAsciiChars ? 1 : 0));
+        Unsafe.getUnsafe().putInt(address, valueSize);
+        address += Integer.BYTES;
+        value.writeTo(address, 0, valueSize);
+        return address + totalSize;
+    }
+
     public long columnValueLength(byte entityType, long offset) {
         CharSequence cs;
         switch (entityType) {
@@ -347,6 +358,11 @@ public class LineTcpEventBuffer {
 
     public CharSequence readUtf16CharsB(long address, int length) {
         return tempSinkB.asCharSequence(address, address + length * 2L);
+    }
+
+    public Utf8Sequence readVarchar(long address, boolean ascii) {
+        int size = readInt(address);
+        return utf8Sequence.of(address + Integer.BYTES, address + Integer.BYTES + size, ascii);
     }
 
     private long addString(long address, DirectUtf8Sequence value, boolean hasNonAsciiChars, byte entityTypeString) {

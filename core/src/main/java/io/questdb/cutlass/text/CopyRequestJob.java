@@ -39,6 +39,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
 
@@ -55,7 +56,8 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
     private final RingQueue<CopyRequestTask> requestQueue;
     private final Sequence requestSubSeq;
     private final TableToken statusTableToken;
-    private final StringSink stringSink = new StringSink();
+    private final StringSink utf16StringSink = new StringSink();
+    private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private ParallelCsvFileImporter parallelImporter;
     private Path path;
     private SerialCsvFileImporter serialImporter;
@@ -123,16 +125,30 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
             long errors
     ) {
         if (writer != null) {
-            stringSink.clear();
-            Numbers.appendHex(stringSink, task.getCopyID(), true);
             try {
                 TableWriter.Row row = writer.newRow(clock.getTicks());
-                row.putStr(1, stringSink);
+                final int idColumnType = writer.getMetadata().getColumnType(1);
+                if (idColumnType == ColumnType.VARCHAR) {
+                    utf8StringSink.clear();
+                    Numbers.appendHex(utf8StringSink, task.getCopyID(), true);
+                    row.putVarchar(1, utf8StringSink);
+                } else {
+                    utf16StringSink.clear();
+                    Numbers.appendHex(utf16StringSink, task.getCopyID(), true);
+                    row.putStr(1, utf16StringSink);
+                }
                 row.putSym(2, task.getTableName());
                 row.putSym(3, task.getFileName());
                 row.putSym(4, CopyTask.getPhaseName(phase));
                 row.putSym(5, CopyTask.getStatusName(status));
-                row.putStr(6, msg);
+                final int msgColumnType = writer.getMetadata().getColumnType(6);
+                if (msgColumnType == ColumnType.VARCHAR) {
+                    utf8StringSink.clear();
+                    utf8StringSink.put(msg);
+                    row.putVarchar(6, utf8StringSink);
+                } else {
+                    row.putStr(6, msg);
+                }
                 row.putLong(7, rowsHandled);
                 row.putLong(8, rowsImported);
                 row.putLong(9, errors);

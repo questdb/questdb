@@ -293,6 +293,11 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                     pendingHeartbeats.deleteRow(heartbeatRow);
                 }
             } else {
+                if (requestedOperation == IOOperation.READ && suspendEvent == null && context.getSocket().isMorePlaintextBuffered()) {
+                    publishOperation(IOOperation.READ, context);
+                    continue;
+                }
+
                 LOG.debug().$("processing registration [fd=").$(fd)
                         .$(", op=").$(operation)
                         .$(", id=").$(opId).I$();

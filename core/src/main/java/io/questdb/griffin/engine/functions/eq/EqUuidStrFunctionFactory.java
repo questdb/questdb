@@ -60,7 +60,7 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
         Function uuidFunc = args.getQuick(0);
         Function strFunc = args.getQuick(1);
         if (strFunc.isConstant()) {
-            CharSequence uuidStr = strFunc.getStr(null);
+            CharSequence uuidStr = strFunc.getStrA(null);
             long lo;
             long hi;
             if (uuidStr == null) {
@@ -145,7 +145,7 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence uuidStr = fun.getStr(rec);
+            CharSequence uuidStr = fun.getStrA(rec);
             if (uuidStr == null) {
                 return negated != (constUuidHi == Numbers.LONG_NaN && constUuidLo == Numbers.LONG_NaN);
             }
@@ -178,7 +178,7 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence str = left.getStr(rec);
+            CharSequence str = left.getStrA(rec);
             long lo = right.getLong128Lo(rec);
             long hi = right.getLong128Hi(rec);
             if (str == null) {
@@ -232,7 +232,7 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
             BinaryFunction.super.init(symbolTableSource, executionContext);
 
             validUuidStr = true;
-            CharSequence uuidStr = strFunc.getStr(null);
+            CharSequence uuidStr = strFunc.getStrA(null);
             if (uuidStr == null) {
                 constStrLo = Numbers.LONG_NaN;
                 constStrHi = Numbers.LONG_NaN;

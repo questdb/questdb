@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -105,6 +106,8 @@ public interface PlanSink {
     PlanSink val(boolean b);
 
     PlanSink val(CharSequence cs);
+
+    PlanSink val(Utf8Sequence utf8);
 
     PlanSink val(Sinkable s);
 

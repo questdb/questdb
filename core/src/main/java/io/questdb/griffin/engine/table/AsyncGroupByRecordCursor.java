@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
@@ -76,7 +77,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             ObjList<Function> recordFunctions,
             MessageBus messageBus
     ) {
-        this.allocator = new GroupByAllocator(configuration);
+        this.allocator = GroupByAllocatorFactory.createThreadSafeAllocator(configuration);
         this.groupByFunctions = groupByFunctions;
         GroupByUtils.setAllocator(groupByFunctions, allocator);
         this.recordFunctions = recordFunctions;

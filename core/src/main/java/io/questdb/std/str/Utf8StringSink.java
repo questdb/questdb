@@ -36,6 +36,7 @@ import org.jetbrains.annotations.TestOnly;
 public class Utf8StringSink implements MutableUtf8Sink {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final int initialCapacity;
+    private boolean ascii;
     private byte[] buffer;
     private int pos;
 
@@ -47,6 +48,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
         this.initialCapacity = initialCapacity;
         this.buffer = new byte[initialCapacity];
         this.pos = 0;
+        this.ascii = true;
     }
 
     @Override
@@ -66,6 +68,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
 
     public void clear(int pos) {
         this.pos = pos;
+        this.ascii = true;
     }
 
     @TestOnly
@@ -74,17 +77,14 @@ public class Utf8StringSink implements MutableUtf8Sink {
     }
 
     @Override
-    public Utf8StringSink putUtf8(long lo, long hi) {
-        checkCapacity(Bytes.checkedLoHiSize(lo, hi, pos));
-        for (long p = lo; p < hi; p++) {
-            buffer[pos++] = Unsafe.getUnsafe().getByte(p);
-        }
-        return this;
+    public boolean isAscii() {
+        return ascii;
     }
 
     @Override
     public Utf8StringSink put(@Nullable Utf8Sequence us) {
         if (us != null) {
+            ascii &= us.isAscii();
             int s = us.size();
             checkCapacity(s);
             for (int i = 0; i < s; i++) {
@@ -97,12 +97,33 @@ public class Utf8StringSink implements MutableUtf8Sink {
 
     @Override
     public Utf8StringSink put(byte b) {
-        checkCapacity(1);
-        buffer[pos++] = b;
+        ascii = false;
+        return putByte0(b);
+    }
+
+    @Override
+    public Utf8Sink putAscii(char c) {
+        return putByte0((byte) c);
+    }
+
+    @Override
+    public Utf8StringSink putUtf8(long lo, long hi) {
+        ascii = false;
+        checkCapacity(Bytes.checkedLoHiSize(lo, hi, pos));
+        for (long p = lo; p < hi; p++) {
+            buffer[pos++] = Unsafe.getUnsafe().getByte(p);
+        }
         return this;
     }
 
     public Utf8StringSink repeat(@NotNull CharSequence value, int n) {
+        for (int i = 0; i < n; i++) {
+            put(value);
+        }
+        return this;
+    }
+
+    public Utf8StringSink repeat(char value, int n) {
         for (int i = 0; i < n; i++) {
             put(value);
         }
@@ -134,5 +155,12 @@ public class Utf8StringSink implements MutableUtf8Sink {
         final byte[] n = new byte[size];
         System.arraycopy(buffer, 0, n, 0, pos);
         buffer = n;
+    }
+
+    @NotNull
+    private Utf8StringSink putByte0(byte b) {
+        checkCapacity(1);
+        buffer[pos++] = b;
+        return this;
     }
 }

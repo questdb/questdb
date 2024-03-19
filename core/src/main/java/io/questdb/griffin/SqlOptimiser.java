@@ -456,7 +456,7 @@ public class SqlOptimiser implements Mutable {
     private void addJoinContext(QueryModel parent, JoinContext context) {
         QueryModel jm = parent.getJoinModels().getQuick(context.slaveIndex);
         JoinContext other = jm.getContext();
-        if (other == null) {
+        if (other == null || other.slaveIndex == -1) {
             jm.setContext(context);
         } else {
             jm.setContext(mergeContexts(parent, other, context));
@@ -1481,30 +1481,6 @@ public class SqlOptimiser implements Mutable {
             QueryModel outerModel,
             QueryModel distinctModel
     ) throws SqlException {
-        createSelectColumnsForWildcardFromColumnNames(
-                srcModel,
-                hasJoins,
-                wildcardPosition,
-                translatingModel,
-                innerModel,
-                windowModel,
-                groupByModel,
-                outerModel,
-                distinctModel
-        );
-    }
-
-    private void createSelectColumnsForWildcardFromColumnNames(
-            QueryModel srcModel,
-            boolean hasJoins,
-            int wildcardPosition,
-            QueryModel translatingModel,
-            QueryModel innerModel,
-            QueryModel windowModel,
-            QueryModel groupByModel,
-            QueryModel outerModel,
-            QueryModel distinctModel
-    ) throws SqlException {
         final ObjList<CharSequence> columnNames = srcModel.getBottomUpColumnAliases();
         for (int j = 0, z = columnNames.size(); j < z; j++) {
             CharSequence name = columnNames.getQuick(j);
@@ -2084,6 +2060,7 @@ public class SqlOptimiser implements Mutable {
     private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model, int orderByMnemonic) {
         orderByAdvice.clear();
         ObjList<ExpressionNode> orderBy = model.getOrderBy();
+
         int len = orderBy.size();
         if (len == 0) {
             // propagate advice in case nested model can implement it efficiently (e.g. with backward scan)
@@ -2307,7 +2284,7 @@ public class SqlOptimiser implements Mutable {
         return expr;
     }
 
-    private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) {
+    private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b)  {
         assert a.slaveIndex == b.slaveIndex;
 
         deletedContexts.clear();
@@ -3003,19 +2980,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         final ObjList<QueryModel> jm = model.getJoinModels();
-        for (int i = 0, k = jm.size(); i < k; i++) {
-            QueryModel qm = jm.getQuick(i).getNestedModel();
-            if (qm != null) {
-                if (model.getGroupBy().size() == 0
-                        && model.getSampleBy() == null
-                        && model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT) { // order by should not copy through group by, sample by or distinct
-                    qm.setOrderByAdviceMnemonic(orderByMnemonic);
-                    qm.copyOrderByAdvice(orderByAdvice);
-                    qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
-                }
-                optimiseOrderBy(qm, orderByMnemonic);
-            }
-        }
+        pushDownOrderByAdviceToJoinModels(model, jm, orderByMnemonic, orderByDirectionAdvice);
 
         final QueryModel union = model.getUnionModel();
         if (union != null) {
@@ -3024,6 +2989,179 @@ public class SqlOptimiser implements Mutable {
             union.setOrderByAdviceMnemonic(orderByMnemonic);
             optimiseOrderBy(union, orderByMnemonic);
         }
+    }
+
+    /**
+     * Propagates orderByAdvice to nested join models if certain conditions are met.
+     * Advice should only be propagated if relevant.
+     * Cases:
+     *     ASOF JOIN
+     *         Propagate if the ordering is for the primary table only, and timestamp-first
+     *     OTHER JOINs
+     *         Propagate down primary table only.
+     *
+     * @param model The current query model
+     * @param jm The join model list for the current query model
+     * @param orderByMnemonic The advice 'strength'
+     * @param orderByDirectionAdvice The advice direction
+     */
+    private void pushDownOrderByAdviceToJoinModels(QueryModel model, ObjList<QueryModel> jm, int orderByMnemonic, IntList orderByDirectionAdvice) {
+        if (model == null) {
+            return;
+        }
+        // don't propagate though group by, sample by or distinct
+        if (model.getGroupBy().size() != 0
+                || model.getSampleBy() != null
+                || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
+            return;
+        }
+        // placeholder for prefix-stripped advice
+        ObjList<ExpressionNode> advice = null;
+        // Check if the orderByAdvice has names qualified by table names i.e 't1.ts' versus 'ts'
+        final boolean orderByAdviceHasDot = checkForDot(orderByAdvice);
+        // loop over the join models
+        // get primary model
+        QueryModel jm1 = jm.getQuiet(0);
+        jm1 = jm1 != null ? jm1.getNestedModel() : null;
+        if (jm1 == null) {
+            return;
+        }
+        // get secondary model
+        QueryModel jm2 = jm1.getJoinModels().getQuiet(1);
+        // if order by advice has no table prefixes, we preserve original behaviour and pass it on.
+        if (!orderByAdviceHasDot) {
+            if (allAdviceIsForThisTable(jm1, orderByAdvice)) {
+                setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
+            }
+            optimiseOrderBy(jm1, orderByMnemonic);
+            return;
+        }
+        // if the order by advice is for more than one table, don't propagate it, as a sort will be needed anyway
+        if (!checkForConsistentPrefix(orderByAdvice)) {
+            return;
+        }
+        // if the orderByAdvice prefixes do not match the primary table name, don't propagate it
+        final CharSequence adviceToken = orderByAdvice.getQuick(0).token;
+        final int dotLoc = Chars.indexOf(adviceToken, '.');
+        if (!(Chars.equalsNc(jm1.getTableName(), adviceToken, 0, dotLoc)
+                || (jm1.getAlias() != null && Chars.equals(jm1.getAlias().token, adviceToken, 0, dotLoc)))) {
+            optimiseOrderBy(jm1, orderByMnemonic);
+            return;
+        }
+        // order by advice is pushable, so now we copy it and strip the table prefix
+        advice = duplicateAdviceAndTakeSuffix();
+        // if there's a join, we need to handle it differently.
+        if (jm2 != null) {
+            final int joinType = jm2.getJoinType();
+            if (joinType == QueryModel.JOIN_ASOF) {// For asof join, we only propagate advice if its ordered beginning with the designated timestamp
+                CharSequence token = advice.getQuick(0).token;
+                QueryColumn qc = jm1.getAliasToColumnMap().get(token);
+                // if there is a matching column, and it is the designated timestamp, then propagate advice
+                if (qc != null
+                        && qc.getColumnType() == ColumnType.TIMESTAMP
+                        && Chars.equalsIgnoreCase(jm1.getTimestamp().token, qc.getAst().token)) {
+                    setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+                }
+            } else {
+                setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+            }
+        }
+        else {
+            // fallback to copy the advice to primary
+            setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+        }
+        // recursive call
+        optimiseOrderBy(jm1, orderByMnemonic);
+    }
+
+
+    /**
+     * Checks that all the order by advice tokens appear as columns for this join model.
+     * @param model model to check
+     * @param orderByAdvice advice
+     * @return all order by advice appears in model columns list
+     */
+    private boolean allAdviceIsForThisTable(QueryModel model, ObjList<ExpressionNode> orderByAdvice) {
+        CharSequence alias;
+        LowerCaseCharSequenceObjHashMap<QueryColumn> columnMap = model.getAliasToColumnMap();
+        for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
+            alias = orderByAdvice.getQuick(i).token;
+            if (!columnMap.contains(alias)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Copies orderByAdvice and removes table prefixes.
+     *
+     * @return prefix-less advice
+     */
+    private ObjList<ExpressionNode> duplicateAdviceAndTakeSuffix() {
+        int d;
+        CharSequence token;
+        ExpressionNode node;
+        ObjList<ExpressionNode> advice = new ObjList<>();
+        for (int j = 0, m = orderByAdvice.size(); j < m; j++) {
+            node = orderByAdvice.getQuick(j);
+            token = node.token;
+            d = Chars.indexOf(token, '.');
+            advice.add(expressionNodePool.next().of(node.type, token.subSequence(d + 1, token.length()), node.precedence, node.position));
+        }
+        return advice;
+    }
+
+    /**
+     * Copies the provided order by advice into the given model.
+     *
+     * @param model The target model
+     * @param advice The order by advice to copy
+     * @param orderByMnemonic The advice 'strength'
+     * @param orderByDirectionAdvice The advice direction
+     */
+    private void setAndCopyAdvice(QueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
+        model.setOrderByAdviceMnemonic(orderByMnemonic);
+        model.copyOrderByAdvice(advice);
+        model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+    }
+
+    /**
+     * Checks for a dot in the token.
+     *
+     * @param orderByAdvice the given advice
+     * @return whether dot is present or not
+     */
+    private boolean checkForDot(ObjList<ExpressionNode> orderByAdvice) {
+        for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
+            if (Chars.indexOf(orderByAdvice.getQuick(i).token, '.') > -1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Checks whether the given advice is for one table only i.e consistent table prefix.
+     *
+     * @param orderByAdvice the given advice
+     * @return whether prefix is consistent or not
+     */
+    private boolean checkForConsistentPrefix(ObjList<ExpressionNode> orderByAdvice) {
+        CharSequence prefix = "";
+        for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
+            CharSequence token = orderByAdvice.getQuick(i).token;
+            int loc = Chars.indexOf(token, '.');
+            if (loc > -1) {
+                if (prefix.length() == 0) {
+                    prefix = token.subSequence(0, loc);
+                }
+                else if (!Chars.equalsIgnoreCase(prefix, token, 0, loc)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private void parseFunctionAndEnumerateColumns(
@@ -4257,7 +4395,7 @@ public class SqlOptimiser implements Mutable {
      * a trick to add artificial timestamp to the original model and then wrap the original
      * model into a sub-query, to select all the intended columns but the artificial timestamp.
      */
-    private QueryModel rewriteSampleBy(@Nullable QueryModel model) {
+    private QueryModel rewriteSampleBy(@Nullable QueryModel model) throws SqlException {
 
         if (model == null) {
             return null;
@@ -4280,6 +4418,19 @@ public class SqlOptimiser implements Mutable {
                             && (sampleByFill.size() == 0 || (sampleByFill.size() == 1 && SqlKeywords.isNoneKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
             ) {
+                // Validate that the model does not have wildcard column names.
+                // Using wildcard in group-by expression makes SQL ambiguous and
+                // error-prone. For example, additive table metadata changes (adding a column)
+                // will change the outcome of existing queries, if those supported wildcards for
+                // as group-by keys.
+
+                for (int i = 0, n = model.getColumns().size(); i <n; i++) {
+                    QueryColumn column = model.getColumns().getQuick(i);
+                    if (Chars.endsWith(column.getAst().token, '*')) {
+                        throw SqlException.$(column.getAst().position, "wildcard column select is not allowed in sample-by queries");
+                    }
+                }
+
                 // When timestamp is not explicitly selected, we will
                 // need to add it artificially to enable group-by to
                 // have access to bucket key. If this happens, the artificial
@@ -4303,7 +4454,36 @@ public class SqlOptimiser implements Mutable {
                 // 3. wrap the result into an order by to maintain the timestamp order, but this can be optional
 
                 // the timestamp could be selected but also aliased
-                CharSequence timestampAlias = model.getColumnNameToAliasMap().get(timestamp.token);
+                CharSequence timestampColumn = timestamp.token;
+                CharSequence timestampAlias = model.getColumnNameToAliasMap().get(timestampColumn);
+
+                if (timestampAlias == null) {
+                    // Let's not give up yet, the timestamp column might be prefixed
+                    // with either table name or table alias
+                    if (nested.getAlias() != null) {
+                        // table is indeed aliased
+                        CharacterStoreEntry e = characterStore.newEntry();
+                        e.put(nested.getAlias().token).putAscii('.').put(timestamp.token);
+                        CharSequence tableAliasPrefixedTimestampColumn = e.toImmutable();
+                        timestampAlias = model.getColumnNameToAliasMap().get(tableAliasPrefixedTimestampColumn);
+                        if (timestampAlias != null) {
+                            timestampColumn = tableAliasPrefixedTimestampColumn;
+                        }
+                    }
+
+                    // still nothing? Let's try table prefix very last time.
+                    if (timestampAlias == null && nested.getTableName() != null) {
+                        CharacterStoreEntry e = characterStore.newEntry();
+                        e.put(nested.getTimestamp()).putAscii('.').put(timestamp.token);
+                        CharSequence tableNamePrefixedTimestampColumn = e.toImmutable();
+                        timestampAlias = model.getColumnNameToAliasMap().get(tableNamePrefixedTimestampColumn);
+
+                        if (timestampAlias != null) {
+                            timestampColumn = tableNamePrefixedTimestampColumn;
+
+                        }
+                    }
+                }
 
                 // These lists collect timestamp copies that we remove from the group-by model.
                 // The goal is to re-populate the wrapper model with the copies in the correct positions.
@@ -4321,7 +4501,7 @@ public class SqlOptimiser implements Mutable {
                     // selected column list. While doing that we also
                     // need to avoid alias conflicts1
 
-                    timestampAlias = createColumnAlias(timestamp.token, model);
+                    timestampAlias = createColumnAlias(timestampColumn, model);
                     model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias));
 
                     timestampOnly = false;
@@ -4340,7 +4520,7 @@ public class SqlOptimiser implements Mutable {
                             // check all literals that refer timestamp column, except the one
                             // with our chosen timestamp alias.
                                 qc.getAst().type == ExpressionNode.LITERAL
-                                        && Chars.equalsIgnoreCase(qc.getAst().token, timestamp.token)
+                                        && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)
                                         && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias)
                         ) {
                             model.removeColumn(i);
@@ -4352,7 +4532,7 @@ public class SqlOptimiser implements Mutable {
                             n--;
                             wrapAction = SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES;
                         } else {
-                            if (!Chars.equalsIgnoreCase(qc.getAst().token, timestamp.token)) {
+                            if (!Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)) {
                                 timestampOnly = false;
                             }
                             i++;
@@ -4381,15 +4561,21 @@ public class SqlOptimiser implements Mutable {
                 lhs.paramCount = 0;
                 lhs.type = CONSTANT;
 
+                final ExpressionNode rhs = expressionNodePool.next();
+                rhs.token = timestampColumn;
+                rhs.position = timestamp.position;
+                rhs.paramCount = 0;
+                rhs.type = LITERAL;
+
                 top.lhs = lhs;
-                top.rhs = timestamp;
+                top.rhs = rhs;
 
                 model.getBottomUpColumns().setQuick(
                         timestampPos,
                         queryColumnPool.next().of(timestampAlias, top)
                 );
 
-                if (timestampOnly) {
+                if (timestampOnly || nested.getGroupBy().size() > 0) {
                     nested.addGroupBy(top);
                 }
 
@@ -5510,7 +5696,6 @@ public class SqlOptimiser implements Mutable {
             int timestampIndex = metadata.getTimestampIndex();
             int updateSetColumnCount = updateQueryModel.getUpdateExpressions().size();
             for (int i = 0; i < updateSetColumnCount; i++) {
-
                 // SET left hand side expressions are stored in top level UPDATE QueryModel
                 ExpressionNode columnExpression = updateQueryModel.getUpdateExpressions().get(i);
                 int position = columnExpression.position;

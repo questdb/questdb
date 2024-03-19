@@ -66,7 +66,7 @@ public class CurrentUserFunctionFactory implements FunctionFactory {
         private SecurityContext context;
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return context.getPrincipal();
         }
 

@@ -425,6 +425,8 @@ public final class Files {
 
     public native static long read(int fd, long address, long len, long offset);
 
+    public native static long readIntAsUnsignedLong(int fd, long offset);
+
     public static boolean readLink(Path softLink, Path readTo) {
         final int len = readTo.size();
         final int bufSize = 1024;

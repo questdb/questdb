@@ -53,14 +53,11 @@ import java.util.concurrent.TimeUnit;
 /**
  * Influx Line Protocol client to feed data to a remote QuestDB instance.
  * <p>
- * This client supports both HTTP and TCP protocols. In most cases you should prefer HTTP protocol as it provides
- * stronger transactional guarantees and better feedback in case of errors.
- * <p>
- * Use {@link #builder()} method to create a new instance.
+ * Use {@link #builder(Transport)} or {@link #fromConfig(CharSequence)} method to create a new instance.
  * <br>
  * How to use the Sender:
  * <ol>
- *     <li>Obtain an instance via {@link #builder()}</li>
+ *     <li>Obtain an instance via {@link #builder(Transport)} or {@link #fromConfig(CharSequence)}</li>
  *     <li>Use {@link #table(CharSequence)} to select a table</li>
  *     <li>Use {@link #symbol(CharSequence, CharSequence)} to add all symbols. You must add symbols before adding other columns.</li>
  *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)},
@@ -70,27 +67,82 @@ import java.util.concurrent.TimeUnit;
  *     {@link #atNow()} which will add a timestamp on a server.</li>
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
  * </ol>
- * <br>
- * Sender supports both HTTP and TCP transports. It defaults to TCP transport. To use HTTP transport you must call
- * {@link LineSenderBuilder#http()} method.
  * <p>
  * Sender implements the <code>java.io.Closeable</code> interface. Thus, you must call the {@link #close()} method
  * when you no longer need it.
  * <br>
- * Thread-safety: Sender is not thread-safe. Each thread-safe needs its own instance or you have to implement
+ * Thread-safety: Sender is not thread-safe. Each thread-safe needs its own instance, or you have to implement
  * a mechanism for passing Sender instances among thread. An object pool could have this role.
  * <br>
+ * This client supports both HTTP and TCP protocols. In most cases you should prefer HTTP protocol as it provides
+ * stronger transactional guarantees and better feedback in case of errors.
+ * <p>
  * Error-handling: Most errors throw an instance of {@link LineSenderException}.
  */
 public interface Sender extends Closeable {
 
     /**
-     * Construct a Builder object to create a new Sender instance.
+     * Transport to use for communication with a QuestDB server.
+     */
+    enum Transport {
+        /**
+         * Use HTTP transport to communicate with a QuestDB server.
+         * <p>
+         * This transport is suitable for most use-cases. It provides stronger transactional guarantees and better
+         * feedback in case of errors.
+         */
+        HTTP,
+
+        /**
+         * Use TCP transport to communicate with a QuestDB server.
+         * <p>
+         * Most users should not need to use this transport. It's left for compatibility with older versions of QuestDB
+         * and for use-cases where HTTP transport is not suitable, when communicating with a QuestDB server over a high-latency
+         * network
+         */
+        TCP
+    }
+
+    /**
+     * Create a Sender builder instance from a configuration string.
+     * <br>
+     * This allows to use the configuration string as a template for creating a Sender builder instance and then
+     * tune options which are not available in the configuration string. Configurations options specified in the
+     * configuration string cannot be overridden via the builder methods.
+     * <p>
+     * <b>Example 1</b><br>
+     * This example creates a Sender instance that connects to a QuestDB server over HTTP transport. The created Sender
+     * will auto-flush data when number of buffered rows reaches 1000.
+     * <code>http::addr=localhost:9000;auto_flush_rows=1000;</code>
+     * <br>
+     * <b>Example 2</b><br>
+     * This example creates a Sender instance that connects to a QuestDB server over TCP transport.
+     * <code>tcp::addr=localhost:9009;</code>
+     * <p>
+     * Refer to <a href="https://questdb.io/docs/reference/clients/overview/">QuestDB documentation</a> for a full list
+     * of configuration options.
      *
+     * @param configurationString configuration string
+     * @return Sender instance
+     * @see #fromEnv()
+     * @see #builder(CharSequence)
+     */
+    static LineSenderBuilder builder(CharSequence configurationString) {
+        return new LineSenderBuilder().fromConfig(configurationString);
+    }
+
+    /**
+     * Construct a Builder object to create a new Sender instance with a specific transport.
+     * <p>
+     * HTTP transport is suitable for most use-cases. It provides stronger transactional guarantees and better feedback
+     * in case of errors. The TCP transport is left for compatibility with older versions of QuestDB and for use-cases
+     * where HTTP transport is not suitable, when communicating with a QuestDB server over a high-latency network.
+     *
+     * @param transport transport to use
      * @return Builder object to create a new Sender instance.
      */
-    static LineSenderBuilder builder() {
-        return new LineSenderBuilder();
+    static LineSenderBuilder builder(Transport transport) {
+        return new LineSenderBuilder(transport == Transport.HTTP ? LineSenderBuilder.PROTOCOL_HTTP : LineSenderBuilder.PROTOCOL_TCP);
     }
 
     /**
@@ -113,10 +165,11 @@ public interface Sender extends Closeable {
      * @param configurationString configuration string
      * @return Sender instance
      * @see #fromEnv()
+     * @see #fromConfig(CharSequence)
      * @see LineSenderBuilder#fromConfig(CharSequence)
      */
     static Sender fromConfig(CharSequence configurationString) {
-        return builder().fromConfig(configurationString).build();
+        return builder(configurationString).build();
     }
 
     /**
@@ -250,7 +303,7 @@ public interface Sender extends Closeable {
     Sender symbol(CharSequence name, CharSequence value);
 
     /**
-     * Select the table for a new row. This is always the first method to start a error. It's an error to call other
+     * Select the table for a new row. This is always the first method to start an error. It's an error to call other
      * methods without calling this method first.
      *
      * @param table name of the table
@@ -302,9 +355,8 @@ public interface Sender extends Closeable {
      * <br>
      * Example usage for HTTP transport:
      * <pre>{@code
-     * try (Sender sender = Sender.builder()
+     * try (Sender sender = Sender.builder(Sender.Transport.HTTP)
      *  .address("localhost:9000")
-     *  .http()
      *  .build()) {
      *      sender.table(tableName).column("value", 42).atNow();
      *      sender.flush();
@@ -313,9 +365,8 @@ public interface Sender extends Closeable {
      * <br>
      * Example usage for HTTP transport and TLS:
      * <pre>{@code
-     * try (Sender sender = Sender.builder()
+     * try (Sender sender = Sender.builder(Sender.Transport.HTTP)
      *  .address("localhost:9000")
-     *  .http()
      *  .enableTls()
      *  .build()) {
      *    sender.table(tableName).column("value", 42).atNow();
@@ -325,33 +376,37 @@ public interface Sender extends Closeable {
      * <br>
      * Example usage for TCP transport and TLS:
      * <pre>{@code
-     * try (Sender sender = Sender.builder()
+     * try (Sender sender = Sender.builder(Sender.Transport.TCP)
      *  .address("localhost:9000")
-     *  .http()
      *  .enableTls()
      *  .build()) {
      *    sender.table(tableName).column("value", 42).atNow();
      *    sender.flush();
      *   }
      * }</pre>
+     *
+     * @see Sender#fromConfig(CharSequence) for creating a Sender directly from a configuration String
      */
     final class LineSenderBuilder {
         private static final int AUTO_FLUSH_DISABLED = 0;
-        private static final int DEFAULT_AUTO_FLUSH_ROWS = 600;
+        private static final int DEFAULT_AUTO_FLUSH_INTERVAL_MILLIS = 1_000;
+        private static final int DEFAULT_AUTO_FLUSH_ROWS = 75_000;
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
+        private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
         private static final int MIN_BUFFER_SIZE = 512 + 1; // challenge size + 1;
         // The PARAMETER_NOT_SET_EXPLICITLY constant is used to detect if a parameter was set explicitly in configuration parameters
         // where it matters. This is needed to detect invalid combinations of parameters. Why?
         // We want to fail-fast even when an explicitly configured options happens to be same value as the default value,
-        // because this still indicates a user error and silently ignoring it could lead to hard to debug issues.
+        // because this still indicates a user error and silently ignoring it could lead to hard-to-debug issues.
         private static final int PARAMETER_NOT_SET_EXPLICITLY = -1;
         private static final int PROTOCOL_HTTP = 1;
         private static final int PROTOCOL_TCP = 0;
+        private int autoFlushIntervalMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private int autoFlushRows = PARAMETER_NOT_SET_EXPLICITLY;
         private int bufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
         private String host;
@@ -375,6 +430,7 @@ public interface Sender extends Closeable {
                 return httpTimeout == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_HTTP_TIMEOUT : httpTimeout;
             }
         };
+        private long minRequestThroughput = PARAMETER_NOT_SET_EXPLICITLY;
         private String password;
         private int port = PARAMETER_NOT_SET_EXPLICITLY;
         private PrivateKey privateKey;
@@ -389,6 +445,10 @@ public interface Sender extends Closeable {
 
         private LineSenderBuilder() {
 
+        }
+
+        private LineSenderBuilder(int protocol) {
+            this.protocol = protocol;
         }
 
         /**
@@ -452,12 +512,47 @@ public interface Sender extends Closeable {
         }
 
         /**
+         * Set the interval in milliseconds at which the Sender automatically flushes its buffer.
+         * <br>
+         * It flushes the buffer even when the number of buffered rows is less than the value set by {@link #autoFlushRows(int)}.
+         * This prevents rows from being locally buffered for too long when the rate of incoming data is low.
+         * <p>
+         * <strong>Important:</strong>This option does not cause the Sender to flush the buffer at regular intervals.
+         * Auto-flushing is only triggered when calling {@link #atNow()}, {@link #at(Instant)} or {@link #at(long, ChronoUnit)}.
+         * The Sender will not flush the buffer if no new rows are added even if the auto-flush interval has elapsed.
+         * <p>
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+         * communicating over TCP transport.
+         * <br>
+         * You cannot set this value when auto-flush is disabled. See {@link #disableAutoFlush()}.
+         * <br>
+         * Default value is 1000 milliseconds.
+         *
+         * @param autoFlushIntervalMillis interval at which the Sender automatically flushes it's buffer in milliseconds.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder autoFlushIntervalMillis(int autoFlushIntervalMillis) {
+            if (this.autoFlushIntervalMillis != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("auto flush interval was already configured ")
+                        .put("[autoFlushIntervalMillis=").put(this.autoFlushIntervalMillis).put("]");
+            } else if (this.autoFlushRows == AUTO_FLUSH_DISABLED) {
+                throw new LineSenderException("cannot set auto flush interval when auto-flush is disabled");
+            }
+            if (autoFlushIntervalMillis <= 0) {
+                throw new LineSenderException("auto flush interval cannot be negative ")
+                        .put("[autoFlushIntervalMillis=").put(autoFlushIntervalMillis).put("]");
+            }
+            this.autoFlushIntervalMillis = autoFlushIntervalMillis;
+            return this;
+        }
+
+        /**
          * Set the maximum number of rows that are buffered locally before they are automatically sent to a server.
          * <br>
          * This is only used when communicating over HTTP transport, and it's illegal to call this method when
          * communicating over TCP transport.
          * <br>
-         * The Sender automatically flushes its buffer when the number of accumulated rows reaches the configured value.
+         * The Sender automatically flushes it's buffer when the number of accumulated rows reaches the configured value.
          * You must make sure that the buffer has sufficient capacity to accommodate all locally buffered data.
          * Otherwise, the Sender will throw an exception.
          * <br>
@@ -471,6 +566,7 @@ public interface Sender extends Closeable {
          * @see #flush()
          * @see #disableAutoFlush()
          * @see #maxBufferCapacity(int)
+         * @see #autoFlushIntervalMillis(int)
          */
         public LineSenderBuilder autoFlushRows(int autoFlushRows) {
             if (this.autoFlushRows > 0) {
@@ -529,12 +625,19 @@ public interface Sender extends Closeable {
             if (protocol == PROTOCOL_HTTP) {
                 int actualAutoFlushRows = autoFlushRows == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_AUTO_FLUSH_ROWS : autoFlushRows;
                 long actualMaxRetriesNanos = retryTimeoutMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
+                long actualMinRequestThroughput = minRequestThroughput == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MIN_REQUEST_THROUGHPUT : minRequestThroughput;
+                long actualAutoFlushIntervalMillis;
+                if (autoFlushRows == AUTO_FLUSH_DISABLED) {
+                    actualAutoFlushIntervalMillis = Long.MAX_VALUE;
+                } else {
+                    actualAutoFlushIntervalMillis = TimeUnit.MILLISECONDS.toNanos(autoFlushIntervalMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_AUTO_FLUSH_INTERVAL_MILLIS : autoFlushIntervalMillis);
+                }
                 ClientTlsConfiguration tlsConfig = null;
                 if (tlsEnabled) {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                     tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
                 }
-                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos);
+                return new LineHttpSender(host, port, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis);
             }
             assert protocol == PROTOCOL_TCP;
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
@@ -651,7 +754,7 @@ public interface Sender extends Closeable {
          * @return this instance for method chaining
          * @see #fromConfig(CharSequence)
          */
-        public LineSenderBuilder fromConfig(CharSequence configurationString) {
+        private LineSenderBuilder fromConfig(CharSequence configurationString) {
             if (Chars.isBlank(configurationString)) {
                 throw new LineSenderException("configuration string cannot be empty nor null");
             }
@@ -708,10 +811,21 @@ public interface Sender extends Closeable {
                         port(protocol == PROTOCOL_TCP ? DEFAULT_TCP_PORT : DEFAULT_HTTP_PORT);
                     }
                 } else if (Chars.equals("user", sink)) {
+                    // deprecated key: user, new key: username
                     pos = getValue(configurationString, pos, sink, "user");
                     user = sink.toString();
+                } else if (Chars.equals("username", sink)) {
+                    pos = getValue(configurationString, pos, sink, "username");
+                    user = sink.toString();
                 } else if (Chars.equals("pass", sink)) {
+                    // deprecated key: pass, new key: password
                     pos = getValue(configurationString, pos, sink, "pass");
+                    if (protocol == PROTOCOL_TCP) {
+                        throw new LineSenderException("password is not supported for TCP protocol");
+                    }
+                    password = sink.toString();
+                } else if (Chars.equals("password", sink)) {
+                    pos = getValue(configurationString, pos, sink, "password");
                     if (protocol == PROTOCOL_TCP) {
                         throw new LineSenderException("password is not supported for TCP protocol");
                     }
@@ -772,6 +886,13 @@ public interface Sender extends Closeable {
                         throw new LineSenderException("invalid auto_flush_rows [value=").put(autoFlushRows).put("]");
                     }
                     autoFlushRows(autoFlushRows);
+                } else if (Chars.equals("auto_flush_interval", sink)) {
+                    pos = getValue(configurationString, pos, sink, "auto_flush_interval");
+                    int autoFlushInterval = parseIntValue(sink, "auto_flush_interval");
+                    if (autoFlushInterval < 1) {
+                        throw new LineSenderException("invalid auto_flush_interval [value=").put(autoFlushInterval).put("]");
+                    }
+                    autoFlushIntervalMillis(autoFlushInterval);
                 } else if (Chars.equals("auto_flush", sink)) {
                     pos = getValue(configurationString, pos, sink, "auto_flush");
                     if (Chars.equalsIgnoreCase("off", sink)) {
@@ -779,6 +900,14 @@ public interface Sender extends Closeable {
                     } else if (!Chars.equalsIgnoreCase("on", sink)) {
                         throw new LineSenderException("invalid auto_flush [value=").put(sink).put(", allowed-values=[on, off]]");
                     }
+                } else if (Chars.equals("request_timeout", sink)) {
+                    pos = getValue(configurationString, pos, sink, "request_timeout");
+                    int requestTimeout = parseIntValue(sink, "request_timeout");
+                    httpTimeoutMillis(requestTimeout);
+                } else if (Chars.equals("request_min_throughput", sink)) {
+                    pos = getValue(configurationString, pos, sink, "request_min_throughput");
+                    int requestMinThroughput = parseIntValue(sink, "request_min_throughput");
+                    minRequestThroughput(requestMinThroughput);
                 } else {
                     // ignore unknown keys, unless they are malformed
                     if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
@@ -819,7 +948,7 @@ public interface Sender extends Closeable {
          *
          * @return an instance of {@link LineSenderBuilder} for further configuration
          */
-        public LineSenderBuilder http() {
+        private LineSenderBuilder http() {
             if (protocol != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("protocol was already configured ")
                         .put("[protocol=").put(protocol).put("]");
@@ -831,7 +960,7 @@ public interface Sender extends Closeable {
         /**
          * Set timeout is milliseconds for HTTP requests.
          * <br>
-         * This is only used when communicating over HTTP transport and it's illegal to call this method when
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
          * communicating over TCP transport.
          *
          * @param httpTimeoutMillis timeout is milliseconds for HTTP requests.
@@ -932,6 +1061,33 @@ public interface Sender extends Closeable {
         }
 
         /**
+         * Minimum expected throughput in bytes per second for HTTP requests.
+         * <br>
+         * If the throughput is lower than this value, the connection will time out.
+         * The value is expressed as a number of bytes per second. This is used to calculate additional request timeout,
+         * on top of {@link #httpTimeoutMillis(int)}
+         * <br>
+         * This is useful when you are sending large batches of data, and you want to ensure that the connection
+         * does not time out while sending the batch. Setting this to 0 disables the throughput calculation and the
+         * connection will only time out based on the {@link #httpTimeoutMillis(int)} value.
+         * <p>
+         * The default is 100 KiB/s.
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+         * communicating over TCP transport.
+         *
+         * @param minRequestThroughput minimum expected throughput in bytes per second for HTTP requests.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder minRequestThroughput(int minRequestThroughput) {
+            if (minRequestThroughput < 1) {
+                throw new LineSenderException("minimum request throughput must not be negative ")
+                        .put("[minRequestThroughput=").put(minRequestThroughput).put("]");
+            }
+            this.minRequestThroughput = minRequestThroughput;
+            return this;
+        }
+
+        /**
          * Set port where a QuestDB server is listening on.
          *
          * @param port port where a QuestDB server is listening on.
@@ -988,20 +1144,12 @@ public interface Sender extends Closeable {
             return this;
         }
 
-        /**
-         * Use TCP protocol as transport.
-         * <br>
-         * Configures the Sender to use the TCP protocol. This is the default transport.
-         *
-         * @return an instance of {@link LineSenderBuilder} for further configuration
-         */
-        public LineSenderBuilder tcp() {
+        private void tcp() {
             if (protocol != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("protocol was already configured ")
                         .put("[protocol=").put(protocol).put("]");
             }
             protocol = PROTOCOL_TCP;
-            return this;
         }
 
         private static int getValue(CharSequence configurationString, int pos, StringSink sink, String name) {
@@ -1092,11 +1240,17 @@ public interface Sender extends Closeable {
                 if (httpTimeout != PARAMETER_NOT_SET_EXPLICITLY) {
                     throw new LineSenderException("HTTP timeout is not supported for TCP protocol");
                 }
+                if (minRequestThroughput != PARAMETER_NOT_SET_EXPLICITLY) {
+                    throw new LineSenderException("minimum request throughput is not supported for TCP protocol");
+                }
                 if (maximumBufferCapacity != bufferCapacity) {
                     throw new LineSenderException("maximum buffer capacity must be the same as initial buffer capacity for TCP protocol")
                             .put("[maximumBufferCapacity=").put(maximumBufferCapacity)
                             .put(", initialBufferCapacity=").put(bufferCapacity)
                             .put("]");
+                }
+                if (autoFlushIntervalMillis != PARAMETER_NOT_SET_EXPLICITLY) {
+                    throw new LineSenderException("auto flush interval is not supported for TCP protocol");
                 }
             } else {
                 throw new LineSenderException("unsupported protocol ")

@@ -226,6 +226,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getDefaultSeqPartTxnCount() {
+        return getDelegate().getDefaultSeqPartTxnCount();
+    }
+
+    @Override
     public boolean getDefaultSymbolCacheFlag() {
         return getDelegate().getDefaultSymbolCacheFlag();
     }
@@ -233,11 +238,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getDefaultSymbolCapacity() {
         return getDelegate().getDefaultSymbolCapacity();
-    }
-
-    @Override
-    public int getDefaultSeqPartTxnCount() {
-        return getDelegate().getDefaultSeqPartTxnCount();
     }
 
     @Override
@@ -523,6 +523,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public @NotNull String getRoot() {
         return getDelegate().getRoot();
+    }
+
+    @Override
+    public boolean getSampleByDefaultAlignmentCalendar() {
+        return getDelegate().getSampleByDefaultAlignmentCalendar();
     }
 
     @Override

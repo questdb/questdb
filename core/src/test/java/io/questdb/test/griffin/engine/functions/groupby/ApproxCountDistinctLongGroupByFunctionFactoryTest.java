@@ -355,7 +355,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                 "ts\tapprox_count_distinct\n" +
                         "1970-01-01T00:00:00.050000Z\t8\n" +
                         "1970-01-01T00:00:02.050000Z\t8\n", "with x as (select * from (select rnd_long(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
-                        "select ts, approx_count_distinct(s) from x sample by 2s"
+                        "select ts, approx_count_distinct(s) from x sample by 2s align to first observation"
         ));
     }
 
@@ -396,7 +396,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                         "e\t6\t1970-01-01T00:00:05.000000Z\n" +
                         "d\t8\t1970-01-01T00:00:05.000000Z\n" +
                         "a\t5\t1970-01-01T00:00:05.000000Z\n",
-                "select a, approx_count_distinct(s), ts from x sample by 5s",
+                "select a, approx_count_distinct(s), ts from x sample by 5s align to first observation",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long(0, 12, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false

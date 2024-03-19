@@ -35,6 +35,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf16Sink;
 
 public class CastBooleanToStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Ts)";
@@ -44,7 +45,7 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
-            return new StrConstant(func.getStr(null));
+            return new StrConstant(func.getStrA(null));
         }
         return new Func(args.getQuick(0));
     }
@@ -55,18 +56,23 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return arg.getStr(rec);
+        public CharSequence getStrA(Record rec) {
+            return arg.getStrA(rec);
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            arg.getStr(rec, sink);
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            arg.getStr(rec, utf16Sink);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             return arg.getStrB(rec);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return arg.isReadThreadSafe();
         }
     }
 }
