@@ -124,18 +124,18 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
                     }
                 }
 
-                dispatchO3CallbackQueue(queue, queuedCount);
+                consumeO3CallbackQueue(queue, queuedCount);
             } catch (Throwable e) {
                 e.printStackTrace();
                 th.set(e);
             }
         }
 
-        private void dispatchO3CallbackQueue(RingQueue<O3CallbackTask> queue, int queuedCount) {
+        private void consumeO3CallbackQueue(RingQueue<O3CallbackTask> queue, int queuedCount) {
             try {
                 // This is work stealing, can run tasks from other table writers
                 final Sequence subSeq = engine.getMessageBus().getO3CallbackSubSeq();
-                TableWriter.dispatchO3CallbackQueue0(queue, queuedCount, subSeq, o3DoneLatch);
+                TableWriter.consumeO3CallbackQueue0(queue, queuedCount, subSeq, o3DoneLatch);
                 assert o3DoneLatch.getCount() == -queuedCount : "o3DoneLatch.getCount()=" + o3DoneLatch.getCount() + ", queuedCount=" + queuedCount;
             } catch (Throwable e) {
                 e.printStackTrace();

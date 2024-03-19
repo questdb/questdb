@@ -227,12 +227,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
     private TableToken tableToken;
-    private final O3ColumnUpdateMethod o3MoveWalFromFilesToLastPartitionRef = this::o3MoveWalFromFilesToLastPartition;
+    private final O3ColumnUpdateMethod copyWalColumnToLastPartitionRef = this::copyWalColumnToLastPartition;
     private final O3ColumnUpdateMethod o3SortFixColumnRef = this::o3SortFixColumn;
     private final O3ColumnUpdateMethod o3SortVarColumnRef = this::o3SortVarColumn;
     private final O3ColumnUpdateMethod o3MergeVarColumnLagRef = this::o3MergeVarColumnLag;
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
-    private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
+    private final O3ColumnUpdateMethod o3MoveColumnInLagToTopRef = this::o3MoveColumnInLagToTop;
     private final O3ColumnUpdateMethod o3MergeFixColumnLagRef = this::o3MergeFixColumnLag;
     private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_TABLE_WRITER);
     private LongConsumer timestampSetter;
@@ -381,7 +381,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     // this method is public to allow testing
-    public static void dispatchO3CallbackQueue0(RingQueue<O3CallbackTask> queue, int queuedCount, Sequence subSeq, SOUnboundedCountDownLatch o3DoneLatch) {
+    public static void consumeO3CallbackQueue0(RingQueue<O3CallbackTask> queue, int queuedCount, Sequence subSeq, SOUnboundedCountDownLatch o3DoneLatch) {
         while (!o3DoneLatch.done(queuedCount)) {
             long cursor = subSeq.next();
             if (cursor > -1) {
@@ -1697,7 +1697,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
                     // This will copy data from mmap files to memory.
                     // Symbols are already mapped to the correct destination.
-                    o3ShiftLagRowsUp(timestampIndex, o3Hi - o3Lo, o3Lo, walLagRowCount, true, this.o3MoveWalFromFilesToLastPartitionRef);
+                    o3DispatchCallbackTasks(timestampIndex, o3Hi - o3Lo, o3Lo, walLagRowCount, true, this.copyWalColumnToLastPartitionRef);
                     walLagRowCount += commitRowCount;
                     txWriter.setLagRowCount((int) walLagRowCount);
                     txWriter.setLagOrdered(!isDeduplicationEnabled() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin);
@@ -1709,7 +1709,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // Try to fast apply records from LAG to last partition which are before o3TimestampMin and commitToTimestamp.
                 // This application will not include the current transaction data, only what's already in WAL lag.
-                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp), false) != Long.MIN_VALUE) {
+                if (applyFromWalLagToLastPartition(Math.min(o3TimestampMin, commitToTimestamp)) != Long.MIN_VALUE) {
                     walLagRowCount = txWriter.getLagRowCount();
                     totalUncommitted = walLagRowCount + commitRowCount;
                 }
@@ -2480,7 +2480,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return index;
     }
 
-    private long applyFromWalLagToLastPartition(long commitToTimestamp, boolean commitTerminates) {
+    private long applyFromWalLagToLastPartition(long commitToTimestamp) {
         long lagMinTimestamp = txWriter.getLagMinTimestamp();
         if (!isDeduplicationEnabled()
                 && txWriter.getLagRowCount() > 0
@@ -2495,7 +2495,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (lagMaxTimestamp <= commitToTimestamp) {
                 // Easy case, all lag data can be marked as committed in the last partition
                 LOG.debug().$("fast apply full lag to last partition [table=").$(tableToken).I$();
-                applyLagToLastPartition(lagMaxTimestamp, txWriter.getLagRowCount(), Long.MAX_VALUE, commitTerminates);
+                applyLagToLastPartition(lagMaxTimestamp, txWriter.getLagRowCount(), Long.MAX_VALUE);
                 return lagMaxTimestamp;
             } else if (lagMinTimestamp <= commitToTimestamp) {
                 // Find the max row which can be marked as committed in the last timestamp
@@ -2523,7 +2523,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long newMaxTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (applyCount - 1) * Long.BYTES);
                     assert newMinLagTimestamp > commitToTimestamp && commitToTimestamp >= newMaxTimestamp;
 
-                    applyLagToLastPartition(newMaxTimestamp, (int) applyCount, newMinLagTimestamp, commitTerminates);
+                    applyLagToLastPartition(newMaxTimestamp, (int) applyCount, newMinLagTimestamp);
 
                     LOG.debug().$("partial apply lag to last partition [table=").$(tableToken)
                             .$(" ,lagSize=").$(lagRows)
@@ -2541,7 +2541,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return Long.MIN_VALUE;
     }
 
-    private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp, boolean commitTerminates) {
+    private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
         long initialTransientRowCount = txWriter.transientRowCount;
         txWriter.transientRowCount += lagRowCount;
         txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
@@ -2568,7 +2568,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // if the partition is closed after the commit.
         // If wal commit terminates here, column positions should include lag to not truncate the WAL lag data.
         // Otherwise, lag will be copied out and ok to truncate to the transient row count.
-        long partitionTruncateRowCount = txWriter.getTransientRowCount() + (commitTerminates ? txWriter.getLagRowCount() : 0);
+        long partitionTruncateRowCount = txWriter.getTransientRowCount();
         setAppendPosition(partitionTruncateRowCount, false);
     }
 
@@ -3368,6 +3368,137 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         metadata.setMetadataVersion(txWriter.getMetadataVersion() + 1);
     }
 
+    private void copyWalColumnToLastPartition(
+            int columnIndex,
+            final int columnType,
+            long copyRowCount,
+            long ignore,
+            long columnRowCount,
+            long existingLagRows,
+            long symbolsFlags
+    ) {
+        if (o3ErrorCount.get() > 0) {
+            return;
+        }
+        try {
+            boolean isDesignatedTimestamp = columnIndex < 0;
+            columnIndex = columnIndex < 0 ? -columnIndex - 1 : columnIndex;
+
+            MemoryCR o3SrcDataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+            MemoryCR o3srcAuxMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
+            MemoryMA o3DstDataMem = columns.get(getPrimaryColumnIndex(columnIndex));
+            MemoryMA o3dstAuxMem = columns.get(getSecondaryColumnIndex(columnIndex));
+            long dstRowCount = txWriter.getTransientRowCount() - getColumnTop(columnIndex) + existingLagRows;
+
+            long dataVectorCopySize;
+            long o3srcDataOffset;
+            long o3dstDataOffset;
+            if (ColumnType.isVarSize(columnType)) {
+                // Var dataVectorCopySize column
+                final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+
+                final long committedAuxOffset = columnTypeDriver.getAuxVectorOffset(columnRowCount);
+                final long o3srcAuxMemAddr = o3srcAuxMem.addressOf(0);
+                o3srcDataOffset = columnTypeDriver.getDataVectorOffset(o3srcAuxMemAddr, columnRowCount);
+                dataVectorCopySize = columnTypeDriver.getDataVectorSize(o3srcAuxMemAddr, columnRowCount, columnRowCount + copyRowCount - 1);
+
+                final long o3dstAuxOffset = columnTypeDriver.getAuxVectorOffset(dstRowCount);
+                final long o3dstAuxSize = columnTypeDriver.getAuxVectorSize(copyRowCount);
+
+                if (o3dstAuxOffset > 0) {
+                    o3dstAuxMem.jumpTo(o3dstAuxOffset);
+                    o3dstDataOffset = columnTypeDriver.getDataVectorSizeAt(o3dstAuxMem.addressOf(0), dstRowCount - 1);
+                } else {
+                    o3dstDataOffset = 0;
+                }
+
+                // move count + 1 rows, to make sure index column remains n+1
+                // the data is copied back to start of the buffer, no need to set dataVectorCopySize first
+                long o3dstAuxAddr = mapAppendColumnBuffer(o3dstAuxMem, o3dstAuxOffset, o3dstAuxSize, true);
+                assert o3dstAuxAddr != 0;
+                try {
+                    final long shift = o3srcDataOffset - o3dstDataOffset;
+                    columnTypeDriver.shiftCopyAuxVector(
+                            shift,
+                            o3srcAuxMem.addressOf(committedAuxOffset),
+                            0,
+                            copyRowCount - 1, // inclusive
+                            Math.abs(o3dstAuxAddr)
+                    );
+                } finally {
+                    mapAppendColumnBufferRelease(o3dstAuxAddr, o3dstAuxOffset, o3dstAuxSize);
+                }
+            } else {
+                // Fixed dataVectorCopySize column
+                final int shl = ColumnType.pow2SizeOf(columnType);
+                o3srcDataOffset = isDesignatedTimestamp ? columnRowCount << 4 : columnRowCount << shl;
+                dataVectorCopySize = copyRowCount << shl;
+                o3dstDataOffset = dstRowCount << shl;
+            }
+
+            o3DstDataMem.jumpTo(o3dstDataOffset + dataVectorCopySize);
+
+            if (!isDesignatedTimestamp) {
+                if (o3SrcDataMem instanceof MemoryCARW) {
+                    MemoryCARW o3MemBuff = (MemoryCARW) o3SrcDataMem;
+                    if (mixedIOFlag) {
+                        long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(o3srcDataOffset), dataVectorCopySize, o3dstDataOffset);
+                        if (bytesWritten != dataVectorCopySize) {
+                            throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
+                                    .put(o3DstDataMem.getFd()).put(", dataVectorCopySize=").put(dataVectorCopySize).put(", bytesWritten=").put(bytesWritten).put(']');
+                        }
+                    } else {
+                        long destAddr = mapAppendColumnBuffer(o3DstDataMem, o3dstDataOffset, dataVectorCopySize, true);
+                        try {
+                            Vect.memcpy(Math.abs(destAddr), o3MemBuff.addressOf(o3srcDataOffset), dataVectorCopySize);
+                        } finally {
+                            mapAppendColumnBufferRelease(destAddr, o3dstDataOffset, dataVectorCopySize);
+                        }
+                    }
+                } else {
+                    if (mixedIOFlag) {
+                        MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
+                        long bytesWritten = ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), o3srcDataOffset, o3dstDataOffset, dataVectorCopySize);
+                        if (bytesWritten != dataVectorCopySize) {
+                            throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
+                                    .put(o3DstDataMem.getFd()).put(", dataVectorCopySize=").put(dataVectorCopySize).put(", bytesWritten=").put(bytesWritten).put(']');
+                        }
+                    } else if (dataVectorCopySize > 0) {
+                        long destAddr = mapAppendColumnBuffer(o3DstDataMem, o3dstDataOffset, dataVectorCopySize, true);
+                        try {
+                            Vect.memcpy(Math.abs(destAddr), o3SrcDataMem.addressOf(o3srcDataOffset), dataVectorCopySize);
+                        } finally {
+                            mapAppendColumnBufferRelease(destAddr, o3dstDataOffset, dataVectorCopySize);
+                        }
+                    }
+                }
+            } else {
+                // WAL format has timestamp written as 2 LONGs per record, in so-called timestamp index data structure.
+                // There is no point storing in 2 LONGs per record the LAG it is enough to have 1 LONG with timestamp.
+                // The sort will convert the format back to timestamp index data structure.
+                long srcLo = o3SrcDataMem.addressOf(o3srcDataOffset);
+
+                long destAddr = mapAppendColumnBuffer(o3DstDataMem, o3dstDataOffset, dataVectorCopySize, true);
+                try {
+                    Vect.copyFromTimestampIndex(srcLo, 0, copyRowCount - 1, Math.abs(destAddr));
+                } finally {
+                    mapAppendColumnBufferRelease(destAddr, o3dstDataOffset, dataVectorCopySize);
+                }
+            }
+        } catch (Throwable th) {
+            handleWorkStealingException(
+                    "move wal to lag failed",
+                    columnIndex,
+                    columnType,
+                    copyRowCount,
+                    columnRowCount,
+                    existingLagRows,
+                    symbolsFlags,
+                    th
+            );
+        }
+    }
+
     /**
      * Creates bitmap index files for a column. This method uses primary column instance as temporary tool to
      * append index data. Therefore, it must be called before primary column is initialized.
@@ -3516,10 +3647,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void dispatchO3CallbackQueue(RingQueue<O3CallbackTask> queue, int queuedCount) {
+    private void consumeO3CallbackQueue(RingQueue<O3CallbackTask> queue, int queuedCount) {
         // This is work stealing, can run tasks from other table writers
         final Sequence subSeq = this.messageBus.getO3CallbackSubSeq();
-        dispatchO3CallbackQueue0(queue, queuedCount, subSeq, o3DoneLatch);
+        consumeO3CallbackQueue0(queue, queuedCount, subSeq, o3DoneLatch);
         checkO3Errors();
     }
 
@@ -4648,6 +4779,57 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void o3DispatchCallbackTasks(
+            int timestampIndex,
+            long o3LagRowCount,
+            long o3RowCount,
+            long existingLagRowCount,
+            boolean excludeSymbols,
+            O3ColumnUpdateMethod o3MoveLagRef
+    ) {
+        final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
+        final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
+
+        o3DoneLatch.reset();
+        o3ErrorCount.set(0);
+        int queuedCount = 0;
+        long excludeSymbolsL = excludeSymbols ? 1 : 0;
+        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
+            int columnType = metadata.getColumnType(colIndex);
+            int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
+
+            if (columnType > 0) {
+                long cursor = pubSeq.next();
+
+                // Pass column index as -1 when it's designated timestamp column to o3 move method
+                if (cursor > -1) {
+                    try {
+                        final O3CallbackTask task = queue.get(cursor);
+                        task.of(
+                                o3DoneLatch,
+                                columnIndex,
+                                columnType,
+                                o3LagRowCount,
+                                IGNORE,
+                                o3RowCount,
+                                existingLagRowCount,
+                                excludeSymbolsL,
+                                o3MoveLagRef
+                        );
+
+                    } finally {
+                        queuedCount++;
+                        pubSeq.done(cursor);
+                    }
+                } else {
+                    o3MoveLagRef.run(columnIndex, columnType, o3LagRowCount, IGNORE, o3RowCount, existingLagRowCount, excludeSymbolsL);
+                }
+            }
+        }
+
+        consumeO3CallbackQueue(queue, queuedCount);
+    }
+
     private void o3MergeFixColumnLag(int columnIndex, int columnType, long mergeIndex, long mergeCount, long lagRows, long mappedRowLo, long mappedRowHi) {
         if (o3ErrorCount.get() > 0) {
             return;
@@ -4763,7 +4945,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        dispatchO3CallbackQueue(queue, queuedCount);
+        consumeO3CallbackQueue(queue, queuedCount);
         swapO3ColumnsExcept(timestampIndex);
     }
 
@@ -4853,7 +5035,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void o3MoveLag0(
+    private void o3MoveColumnInLagToTop(
             int columnIndex,
             final int columnType,
             long copyToLagRowCount,
@@ -5102,138 +5284,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void o3MoveWalFromFilesToLastPartition(
-            int columnIndex,
-            final int columnType,
-            long copyRowCount,
-            long ignore,
-            long columnRowCount,
-            long existingLagRows,
-            long symbolsFlags
-    ) {
-        if (o3ErrorCount.get() > 0) {
-            return;
-        }
-        try {
-            boolean isDesignatedTimestamp = columnIndex < 0;
-            columnIndex = columnIndex < 0 ? -columnIndex - 1 : columnIndex;
-
-            MemoryCR o3SrcDataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-            MemoryCR o3srcAuxMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
-            MemoryMA o3DstDataMem = columns.get(getPrimaryColumnIndex(columnIndex));
-            MemoryMA o3dstAuxMem = columns.get(getSecondaryColumnIndex(columnIndex));
-            long dstRowCount = txWriter.getTransientRowCount() - getColumnTop(columnIndex) + existingLagRows;
-
-            long dataVectorCopySize;
-            long o3srcDataOffset;
-            long o3dstDataOffset;
-            if (ColumnType.isVarSize(columnType)) {
-                // Var dataVectorCopySize column
-                final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-
-                final long committedAuxOffset = columnTypeDriver.getAuxVectorOffset(columnRowCount);
-                final long o3srcAuxMemAddr = o3srcAuxMem.addressOf(0);
-                o3srcDataOffset = columnTypeDriver.getDataVectorOffset(o3srcAuxMemAddr, columnRowCount);
-                dataVectorCopySize = columnTypeDriver.getDataVectorSize(o3srcAuxMemAddr, columnRowCount, columnRowCount + copyRowCount - 1);
-
-                final long o3dstAuxOffset = columnTypeDriver.getAuxVectorOffset(dstRowCount);
-                final long o3dstAuxSize = columnTypeDriver.getAuxVectorSize(copyRowCount);
-
-                if (o3dstAuxOffset > 0) {
-                    o3dstAuxMem.jumpTo(o3dstAuxOffset);
-                    o3dstDataOffset = columnTypeDriver.getDataVectorSizeAt(o3dstAuxMem.addressOf(0), dstRowCount - 1);
-                } else {
-                    o3dstDataOffset = 0;
-                }
-
-                // move count + 1 rows, to make sure index column remains n+1
-                // the data is copied back to start of the buffer, no need to set dataVectorCopySize first
-                long o3dstAuxAddr = mapAppendColumnBuffer(o3dstAuxMem, o3dstAuxOffset, o3dstAuxSize, true);
-                assert o3dstAuxAddr != 0;
-                try {
-                    final long shift = o3srcDataOffset - o3dstDataOffset;
-                    columnTypeDriver.shiftCopyAuxVector(
-                            shift,
-                            o3srcAuxMem.addressOf(committedAuxOffset),
-                            0,
-                            copyRowCount - 1, // inclusive
-                            Math.abs(o3dstAuxAddr)
-                    );
-                } finally {
-                    mapAppendColumnBufferRelease(o3dstAuxAddr, o3dstAuxOffset, o3dstAuxSize);
-                }
-            } else {
-                // Fixed dataVectorCopySize column
-                final int shl = ColumnType.pow2SizeOf(columnType);
-                o3srcDataOffset = isDesignatedTimestamp ? columnRowCount << 4 : columnRowCount << shl;
-                dataVectorCopySize = copyRowCount << shl;
-                o3dstDataOffset = dstRowCount << shl;
-            }
-
-            o3DstDataMem.jumpTo(o3dstDataOffset + dataVectorCopySize);
-
-            if (!isDesignatedTimestamp) {
-                if (o3SrcDataMem instanceof MemoryCARW) {
-                    MemoryCARW o3MemBuff = (MemoryCARW) o3SrcDataMem;
-                    if (mixedIOFlag) {
-                        long bytesWritten = ff.write(o3DstDataMem.getFd(), o3MemBuff.addressOf(o3srcDataOffset), dataVectorCopySize, o3dstDataOffset);
-                        if (bytesWritten != dataVectorCopySize) {
-                            throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
-                                    .put(o3DstDataMem.getFd()).put(", dataVectorCopySize=").put(dataVectorCopySize).put(", bytesWritten=").put(bytesWritten).put(']');
-                        }
-                    } else {
-                        long destAddr = mapAppendColumnBuffer(o3DstDataMem, o3dstDataOffset, dataVectorCopySize, true);
-                        try {
-                            Vect.memcpy(Math.abs(destAddr), o3MemBuff.addressOf(o3srcDataOffset), dataVectorCopySize);
-                        } finally {
-                            mapAppendColumnBufferRelease(destAddr, o3dstDataOffset, dataVectorCopySize);
-                        }
-                    }
-                } else {
-                    if (mixedIOFlag) {
-                        MemoryCM o3SrcDataMemFile = (MemoryCMOR) o3SrcDataMem;
-                        long bytesWritten = ff.copyData(o3SrcDataMemFile.getFd(), o3DstDataMem.getFd(), o3srcDataOffset, o3dstDataOffset, dataVectorCopySize);
-                        if (bytesWritten != dataVectorCopySize) {
-                            throw CairoException.critical(ff.errno()).put("Could not copy data from WAL lag [fd=")
-                                    .put(o3DstDataMem.getFd()).put(", dataVectorCopySize=").put(dataVectorCopySize).put(", bytesWritten=").put(bytesWritten).put(']');
-                        }
-                    } else {
-                        long destAddr = mapAppendColumnBuffer(o3DstDataMem, o3dstDataOffset, dataVectorCopySize, true);
-                        try {
-                            Vect.memcpy(Math.abs(destAddr), o3SrcDataMem.addressOf(o3srcDataOffset), dataVectorCopySize);
-                        } finally {
-                            mapAppendColumnBufferRelease(destAddr, o3dstDataOffset, dataVectorCopySize);
-                        }
-                    }
-                }
-            } else {
-                // WAL format has timestamp written as 2 LONGs per record, in so-called timestamp index data structure.
-                // There is no point storing in 2 LONGs per record the LAG it is enough to have 1 LONG with timestamp.
-                // The sort will convert the format back to timestamp index data structure.
-                long srcLo = o3SrcDataMem.addressOf(o3srcDataOffset);
-
-                long destAddr = mapAppendColumnBuffer(o3DstDataMem, o3dstDataOffset, dataVectorCopySize, true);
-                try {
-                    Vect.copyFromTimestampIndex(srcLo, 0, copyRowCount - 1, Math.abs(destAddr));
-                } finally {
-                    mapAppendColumnBufferRelease(destAddr, o3dstDataOffset, dataVectorCopySize);
-                }
-            }
-        } catch (Throwable th) {
-            handleWorkStealingException(
-                    "move wal to lag failed",
-                    columnIndex,
-                    columnType,
-                    copyRowCount,
-                    columnRowCount,
-                    existingLagRows,
-                    symbolsFlags,
-                    th
-            );
-        }
-    }
-
-
     private void o3OpenColumnSafe(Sequence openColumnSubSeq, long cursor, O3OpenColumnTask openColumnTask) {
         try {
             O3OpenColumnJob.openColumn(openColumnTask, cursor, openColumnSubSeq);
@@ -5312,7 +5362,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            dispatchO3CallbackQueue(queue, queuedCount);
+            consumeO3CallbackQueue(queue, queuedCount);
         }
         txWriter.resetToLastPartition(committedTransientRowCount);
         return transientRowsAdded;
@@ -5347,51 +5397,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Special case, designated timestamp column
             o3TimestampMem.jumpTo(o3RowCount * 16);
         }
-    }
-
-    private void o3ShiftLagRowsUp(int timestampIndex, long o3LagRowCount, long o3RowCount, long existingLagRowCount, boolean excludeSymbols, O3ColumnUpdateMethod o3MoveLagRef) {
-
-        final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
-        final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
-
-        o3DoneLatch.reset();
-        o3ErrorCount.set(0);
-        int queuedCount = 0;
-        long excludeSymbolsL = excludeSymbols ? 1 : 0;
-        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
-            int columnType = metadata.getColumnType(colIndex);
-            int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
-
-            if (columnType > 0) {
-                long cursor = pubSeq.next();
-
-                // Pass column index as -1 when it's designated timestamp column to o3 move method
-                if (cursor > -1) {
-                    try {
-                        final O3CallbackTask task = queue.get(cursor);
-                        task.of(
-                                o3DoneLatch,
-                                columnIndex,
-                                columnType,
-                                o3LagRowCount,
-                                IGNORE,
-                                o3RowCount,
-                                existingLagRowCount,
-                                excludeSymbolsL,
-                                o3MoveLagRef
-                        );
-
-                    } finally {
-                        queuedCount++;
-                        pubSeq.done(cursor);
-                    }
-                } else {
-                    o3MoveLagRef.run(columnIndex, columnType, o3LagRowCount, IGNORE, o3RowCount, existingLagRowCount, excludeSymbolsL);
-                }
-            }
-        }
-
-        dispatchO3CallbackQueue(queue, queuedCount);
     }
 
     private void o3Sort(long sortedTimestampsAddr, long sortedTimestampsRowCount, int timestampIndex) {
@@ -5432,7 +5437,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        dispatchO3CallbackQueue(queue, queuedCount);
+        consumeO3CallbackQueue(queue, queuedCount);
         swapO3ColumnsExcept(timestampIndex);
     }
 
@@ -6081,7 +6086,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (o3LagRowCount > 0 && !metadata.isWalEnabled()) {
             LOG.info().$("shifting lag rows up [table=").$(tableToken.getTableName()).$(", lagCount=").$(o3LagRowCount).I$();
-            o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, srcOooMax, 0L, false, this.o3MoveLagRef);
+            o3DispatchCallbackTasks(timestampIndex, o3LagRowCount, srcOooMax, 0L, false, this.o3MoveColumnInLagToTopRef);
         }
     }
 
