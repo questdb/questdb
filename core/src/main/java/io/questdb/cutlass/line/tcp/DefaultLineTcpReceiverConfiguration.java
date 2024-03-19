@@ -212,4 +212,9 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     public boolean isSymbolAsFieldSupported() {
         return false;
     }
+
+    @Override
+    public boolean isUseLegacyStringDefault() {
+        return true;
+    }
 }

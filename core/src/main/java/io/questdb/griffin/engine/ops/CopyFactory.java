@@ -147,14 +147,14 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         private CharSequence value;
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             return value;
         }
 
         @Override
         public CharSequence getStrB(int col) {
             // the sink is immutable
-            return getStr(col);
+            return getStrA(col);
         }
 
         @Override

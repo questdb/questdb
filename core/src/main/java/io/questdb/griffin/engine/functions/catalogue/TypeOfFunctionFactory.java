@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
@@ -94,5 +95,6 @@ public class TypeOfFunctionFactory implements FunctionFactory {
         }
 
         TYPE_NAMES.put(ColumnType.IPv4, new StrConstant(ColumnType.nameOf(ColumnType.IPv4)));
+        TYPE_NAMES.put(ColumnType.VARCHAR, new VarcharConstant(ColumnType.nameOf(ColumnType.VARCHAR)));
     }
 }

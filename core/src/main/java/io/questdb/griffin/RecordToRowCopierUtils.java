@@ -33,8 +33,11 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 
 public class RecordToRowCopierUtils {
+
     private RecordToRowCopierUtils() {
     }
 
@@ -84,9 +87,10 @@ public class RecordToRowCopierUtils {
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
-        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
-        int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
+        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSymA", "(I)Ljava/lang/CharSequence;");
+        int rGetStrA = asm.poolInterfaceMethod(Record.class, "getStrA", "(I)Ljava/lang/CharSequence;");
         int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
+        int rGetVarchar = asm.poolInterfaceMethod(Record.class, "getVarcharA", "(I)Lio/questdb/std/str/Utf8Sequence;");
         //
         int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
         int wPutIPv4 = asm.poolInterfaceMethod(TableWriter.Row.class, "putIPv4", "(II)V");
@@ -94,6 +98,7 @@ public class RecordToRowCopierUtils {
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
         int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128", "(IJJ)V");
         int wPutUuidStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuid", "(ILjava/lang/CharSequence;)V");
+        int wPutUuidUtf8 = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuidUtf8", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutDate = asm.poolInterfaceMethod(TableWriter.Row.class, "putDate", "(IJ)V");
         int wPutTimestamp = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
         //
@@ -106,6 +111,8 @@ public class RecordToRowCopierUtils {
         int wPutSymChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(IC)V");
         int wPutStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
         int wPutGeoStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
+        int wPutVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
+
         int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
         int implicitCastCharAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastCharAsGeoHash", "(CI)B");
         int implicitCastStrAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastStrAsFloat", "(Ljava/lang/CharSequence;)F");
@@ -115,6 +122,7 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsChar = asm.poolMethod(SqlUtil.class, "implicitCastStrAsChar", "(Ljava/lang/CharSequence;)C");
         int implicitCastStrAsInt = asm.poolMethod(SqlUtil.class, "implicitCastStrAsInt", "(Ljava/lang/CharSequence;)I");
         int implicitCastStrAsIPv4 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsIPv4", "(Ljava/lang/CharSequence;)I");
+        int implicitCastUtf8StrAsIPv4 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsIPv4", "(Lio/questdb/std/str/Utf8Sequence;)I");
         int implicitCastStrAsLong = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
@@ -125,6 +133,14 @@ public class RecordToRowCopierUtils {
         int implicitCastLongAsByte = asm.poolMethod(SqlUtil.class, "implicitCastLongAsByte", "(J)B");
         int implicitCastFloatAsByte = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsByte", "(F)B");
         int implicitCastDoubleAsByte = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsByte", "(D)B");
+
+        int implicitCastVarcharAsLong = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsLong", "(Lio/questdb/std/str/Utf8Sequence;)J");
+        int implicitCastVarcharAsShort = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsShort", "(Lio/questdb/std/str/Utf8Sequence;)S");
+        int implicitCastVarcharAsInt = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsInt", "(Lio/questdb/std/str/Utf8Sequence;)I");
+        int implicitCastVarcharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsByte", "(Lio/questdb/std/str/Utf8Sequence;)B");
+        int implicitCastVarcharAsChar = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsChar", "(Lio/questdb/std/str/Utf8Sequence;)C");
+        int implicitCastVarcharAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsFloat", "(Lio/questdb/std/str/Utf8Sequence;)F");
+        int implicitCastVarcharAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsDouble", "(Lio/questdb/std/str/Utf8Sequence;)D");
 
         int implicitCastIntAsShort = asm.poolMethod(SqlUtil.class, "implicitCastIntAsShort", "(I)S");
         int implicitCastLongAsShort = asm.poolMethod(SqlUtil.class, "implicitCastLongAsShort", "(J)S");
@@ -139,10 +155,17 @@ public class RecordToRowCopierUtils {
         int implicitCastDoubleAsLong = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsLong", "(D)J");
         int implicitCastDoubleAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsFloat", "(D)F");
         int wPutStrChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(IC)V");
+        int wPutVarcharChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(IC)V");
         int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolInterfaceMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
         int implicitCastGeoHashAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastGeoHashAsGeoHash", "(JII)J");
         int transferUuidToStrCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferUuidToStrCol", "(Lio/questdb/cairo/TableWriter$Row;IJJ)V");
+        int transferUuidToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferUuidToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;IJJ)V");
+        int transferVarcharToStrCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToStrCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
+        int transferVarcharToSymbolCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToSymbolCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
+        int transferVarcharToTimestampCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToTimestampCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
+        int transferVarcharToDateCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferVarcharToDateCol", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/str/Utf8Sequence;)V");
+        int transferStrToVarcharCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferStrToVarcharCol", "(Lio/questdb/cairo/TableWriter$Row;ILjava/lang/CharSequence;)V");
 
         // in case of Geo Hashes column type can overflow short and asm.iconst() will not provide
         // the correct value.
@@ -566,6 +589,9 @@ public class RecordToRowCopierUtils {
                         case ColumnType.STRING:
                             asm.invokeInterface(wPutStrChar, 2);
                             break;
+                        case ColumnType.VARCHAR:
+                            asm.invokeInterface(wPutVarcharChar, 2);
+                            break;
                         case ColumnType.SYMBOL:
                             asm.invokeInterface(wPutSymChar, 2);
                             break;
@@ -588,9 +614,82 @@ public class RecordToRowCopierUtils {
                         case ColumnType.STRING:
                             asm.invokeInterface(wPutStr, 2);
                             break;
+                        case ColumnType.VARCHAR:
+                            asm.invokeStatic(transferStrToVarcharCol);
+                            break;
                         default:
                             assert false;
                             break;
+                    }
+                    break;
+                case ColumnType.VARCHAR:
+                    switch (toColumnTypeTag) {
+                        case ColumnType.VARCHAR:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeInterface(wPutVarchar, 2);
+                            break;
+                        case ColumnType.STRING:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(transferVarcharToStrCol);
+                            break;
+                        case ColumnType.IPv4:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastUtf8StrAsIPv4);
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsLong);
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsShort);
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.INT:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsInt);
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsByte);
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.CHAR:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsChar);
+                            asm.invokeInterface(wPutChar, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsFloat);
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsDouble);
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        case ColumnType.UUID:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeInterface(wPutUuidUtf8, 2);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(transferVarcharToTimestampCol);
+                            break;
+                        case ColumnType.SYMBOL:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(transferVarcharToSymbolCol);
+                            break;
+                        case ColumnType.DATE:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(transferVarcharToDateCol);
+                            break;
+                        default:
+                            assert false;
                     }
                     break;
                 case ColumnType.STRING:
@@ -598,48 +697,58 @@ public class RecordToRowCopierUtils {
                     // whereas Functions support string to primitive conversions, Record instances
                     // do not. This is because functions are aware of their return type but records
                     // would have to do expensive checks to decide which conversion would be required
-                    asm.invokeInterface(rGetStr);
                     switch (toColumnTypeTag) {
                         case ColumnType.BYTE:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsByte);
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.SHORT:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsShort);
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.CHAR:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsChar);
                             asm.invokeInterface(wPutChar, 2);
                             break;
                         case ColumnType.INT:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsInt);
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.IPv4:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsIPv4);
                             asm.invokeInterface(wPutIPv4, 2);
                             break;
                         case ColumnType.LONG:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsLong);
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.FLOAT:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         case ColumnType.SYMBOL:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeInterface(wPutSym, 2);
                             break;
                         case ColumnType.DATE:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsDate);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.TIMESTAMP:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsTimestamp);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
@@ -647,15 +756,23 @@ public class RecordToRowCopierUtils {
                         case ColumnType.GEOSHORT:
                         case ColumnType.GEOINT:
                         case ColumnType.GEOLONG:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeInterface(wPutGeoStr, 2);
                             break;
                         case ColumnType.STRING:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeInterface(wPutStr, 2);
                             break;
+                        case ColumnType.VARCHAR:
+                            asm.invokeInterface(rGetStrA);
+                            asm.invokeStatic(transferStrToVarcharCol);
+                            break;
                         case ColumnType.UUID:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeInterface(wPutUuidStr, 2);
                             break;
                         case ColumnType.LONG256:
+                            asm.invokeInterface(rGetStrA);
                             asm.invokeStatic(implicitCastStrAsLong256);
                             asm.invokeInterface(wPutLong256, 2);
                             break;
@@ -825,6 +942,13 @@ public class RecordToRowCopierUtils {
                             // Stack: [RowWriter, lo, hi]
                             asm.invokeStatic(transferUuidToStrCol);
                             break;
+                        case ColumnType.VARCHAR:
+                            asm.invokeInterface(rGetLong128Lo, 1);
+                            asm.aload(1);  // Push record to the stack.
+                            asm.iconst(i); // Push column index to a stack
+                            asm.invokeInterface(rGetLong128Hi, 1);
+                            asm.invokeStatic(transferUuidToVarcharCol);
+                            break;
                         default:
                             assert false;
                             break;
@@ -862,5 +986,64 @@ public class RecordToRowCopierUtils {
         if (SqlUtil.implicitCastUuidAsStr(lo, hi, threadLocalBuilder)) {
             row.putStr(col, threadLocalBuilder);
         }
+    }
+
+    // Called from dynamically generated bytecode
+    public static void transferUuidToVarcharCol(TableWriter.Row row, int col, long lo, long hi) {
+        Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+        if (SqlUtil.implicitCastUuidAsStr(lo, hi, sink)) {
+            row.putVarchar(col, sink);
+        }
+    }
+
+    // Called from dynamically generated bytecode
+    public static void transferVarcharToStrCol(TableWriter.Row row, int col, Utf8Sequence seq) {
+        if (seq == null) {
+            return;
+        }
+        StringSink threadLocalBuilder = Misc.getThreadLocalSink();
+        threadLocalBuilder.put(seq);
+        row.putStr(col, threadLocalBuilder);
+    }
+
+    // Called from dynamically generated bytecode
+    public static void transferVarcharToSymbolCol(TableWriter.Row row, int col, Utf8Sequence seq) {
+        if (seq == null) {
+            return;
+        }
+        StringSink threadLocalBuilder = Misc.getThreadLocalSink();
+        threadLocalBuilder.put(seq);
+        row.putSym(col, threadLocalBuilder);
+    }
+
+    // Called from dynamically generated bytecode
+    public static void transferVarcharToTimestampCol(TableWriter.Row row, int col, Utf8Sequence seq) {
+        if (seq == null) {
+            return;
+        }
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put(seq);
+        long ts = SqlUtil.implicitCastVarcharAsTimestamp(sink);
+        row.putTimestamp(col, ts);
+    }
+
+    // Called from dynamically generated bytecode
+    public static void transferVarcharToDateCol(TableWriter.Row row, int col, Utf8Sequence seq) {
+        if (seq == null) {
+            return;
+        }
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put(seq);
+        long date = SqlUtil.implicitCastVarcharAsDate(sink);
+        row.putDate(col, date);
+    }
+
+    public static void transferStrToVarcharCol(TableWriter.Row row, int col, CharSequence str) {
+        if (str == null) {
+            return;
+        }
+        Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+        sink.put(str);
+        row.putVarchar(col, sink);
     }
 }

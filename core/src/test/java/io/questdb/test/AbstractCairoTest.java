@@ -267,7 +267,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 for (int i = 0; i < columnCount; i++) {
                     switch (ColumnType.tagOf(metadata.getColumnType(i))) {
                         case ColumnType.STRING:
-                            CharSequence a = record.getStr(i);
+                            CharSequence a = record.getStrA(i);
                             CharSequence b = record.getStrB(i);
                             if (a == null) {
                                 Assert.assertNull(b);
@@ -402,6 +402,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.initGriffin(circuitBreaker);
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
+
+        ColumnType.makeUtf8DefaultString();
     }
 
     public static void snapshotMemoryUsage() {
@@ -538,7 +540,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 switch (ColumnType.tagOf(metadata.getColumnType(i))) {
                     case ColumnType.STRING:
-                        CharSequence s = record.getStr(i);
+                        CharSequence s = record.getStrA(i);
                         if (s != null) {
                             CharSequence b = record.getStrB(i);
                             if (b instanceof AbstractCharSequence) {
@@ -688,7 +690,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         int column = symbolIndexes.getQuick(i);
                         SymbolTable symbolTable = cursor.getSymbolTable(column);
                         if (symbolTable instanceof StaticSymbolTable) {
-                            CharSequence sym = Chars.toString(record.getSym(column));
+                            CharSequence sym = Chars.toString(record.getSymA(column));
                             int value = record.getInt(column);
                             if (((StaticSymbolTable) symbolTable).containsNullValue() && value == ((StaticSymbolTable) symbolTable).getSymbolCount()) {
                                 Assert.assertEquals(Integer.MIN_VALUE, ((StaticSymbolTable) symbolTable).keyOf(sym));
@@ -698,7 +700,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                             TestUtils.assertEquals(sym, symbolTable.valueOf(value));
                         } else {
                             final int value = record.getInt(column);
-                            TestUtils.assertEquals(record.getSym(column), symbolTable.valueOf(value));
+                            TestUtils.assertEquals(record.getSymA(column), symbolTable.valueOf(value));
                         }
                     }
                 }
@@ -818,10 +820,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
                             Assert.assertTrue(doubleEquals(expected[expectedRow].getDouble(col), record.getDouble(col)));
                             break;
                         case ColumnType.STRING:
-                            TestUtils.assertEquals(expected[expectedRow].getStr(col), record.getStr(col));
+                            TestUtils.assertEquals(expected[expectedRow].getStrA(col), record.getStrA(col));
                             break;
                         case ColumnType.SYMBOL:
-                            TestUtils.assertEquals(expected[expectedRow].getSym(col), record.getSym(col));
+                            TestUtils.assertEquals(expected[expectedRow].getSymA(col), record.getSymA(col));
                             break;
                         case ColumnType.IPv4:
                             Assert.assertEquals(expected[expectedRow].getIPv4(col), record.getIPv4(col));
@@ -1207,7 +1209,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        engine.drop(dropSql, sqlExecutionContext, null);
+        engine.drop(dropSql, sqlExecutionContext);
     }
 
     protected static void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {

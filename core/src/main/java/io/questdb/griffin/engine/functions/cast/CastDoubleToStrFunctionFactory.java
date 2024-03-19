@@ -34,8 +34,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class CastDoubleToStrFunctionFactory implements FunctionFactory {
 
@@ -46,27 +46,27 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        Function intFunc = args.getQuick(0);
-        if (intFunc.isConstant()) {
+        Function doubleFunc = args.getQuick(0);
+        if (doubleFunc.isConstant()) {
             final StringSink sink = Misc.getThreadLocalSink();
-            sink.put(intFunc.getDouble(null), configuration.getDoubleToStrCastScale());
+            sink.put(doubleFunc.getDouble(null), configuration.getDoubleToStrCastScale());
             return new StrConstant(Chars.toString(sink));
         }
-        return new CastDoubleToStrFunction(args.getQuick(0), configuration.getDoubleToStrCastScale());
+        return new Func(args.getQuick(0), configuration.getDoubleToStrCastScale());
     }
 
-    public static class CastDoubleToStrFunction extends AbstractCastToStrFunction {
+    public static class Func extends AbstractCastToStrFunction {
         private final int scale;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public CastDoubleToStrFunction(Function arg, int scale) {
+        public Func(Function arg, int scale) {
             super(arg);
             this.scale = scale;
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             final double value = arg.getDouble(rec);
             if (Double.isNaN(value)) {
                 return null;
@@ -77,12 +77,12 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             final double value = arg.getDouble(rec);
             if (Double.isNaN(value)) {
                 return;
             }
-            sink.put(value, scale);
+            utf16Sink.put(value, scale);
         }
 
         @Override

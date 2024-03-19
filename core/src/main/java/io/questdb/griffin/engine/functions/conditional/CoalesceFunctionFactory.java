@@ -34,6 +34,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public class CoalesceFunctionFactory implements FunctionFactory {
     @Override
@@ -99,6 +101,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                     }
                 }
                 return new SymStrCoalesceFunction(args, argsSize);
+            case ColumnType.VARCHAR:
+                return argsSize == 2 ? new TwoVarcharCoalesceFunction(args) : new VarcharCoalesceFunction(args, argsSize);
             case ColumnType.UUID:
                 return argsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, argsSize);
             case ColumnType.BOOLEAN:
@@ -345,6 +349,100 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class TwoVarcharCoalesceFunction extends VarcharFunction implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoVarcharCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            Utf8Sequence value = args0.getVarcharA(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getVarcharA(rec);
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            Utf8Sequence sequence = getVarcharA(rec);
+            if (sequence != null) {
+                utf8Sink.put(sequence);
+            }
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            Utf8Sequence value = args0.getVarcharB(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getVarcharB(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class VarcharCoalesceFunction extends VarcharFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public VarcharCoalesceFunction(ObjList<Function> args, int size) {
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            for (int i = 0; i < size; i++) {
+                Function arg = args.getQuick(i);
+                Utf8Sequence value = arg.getVarcharA(rec);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            Utf8Sequence sequence = getVarcharA(rec);
+            if (sequence != null) {
+                utf8Sink.put(sequence);
+            }
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            for (int i = 0; i < size; i++) {
+                Function arg = args.getQuick(i);
+                Utf8Sequence value = arg.getVarcharB(rec);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
+        }
+    }
+
     private static class SymStrCoalesceFunction extends StrFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
@@ -361,10 +459,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
-                CharSequence value = (ColumnType.isSymbol(arg.getType())) ? arg.getSymbol(rec) : arg.getStr(rec);
+                CharSequence value = (ColumnType.isSymbol(arg.getType())) ? arg.getSymbol(rec) : arg.getStrA(rec);
                 if (value != null) {
                     return value;
                 }
@@ -660,12 +758,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            CharSequence value = args0.getStr(rec);
+        public CharSequence getStrA(Record rec) {
+            CharSequence value = args0.getStrA(rec);
             if (value != null) {
                 return value;
             }
-            return args1.getStr(rec);
+            return args1.getStrA(rec);
         }
 
         @Override
@@ -699,7 +797,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             CharSequence value = args0.getSymbol(rec);
             if (value != null) {
                 return value;
@@ -742,12 +840,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            CharSequence value = args0IsSymbol ? args0.getSymbol(rec) : args0.getStr(rec);
+        public CharSequence getStrA(Record rec) {
+            CharSequence value = args0IsSymbol ? args0.getSymbol(rec) : args0.getStrA(rec);
             if (value != null) {
                 return value;
             }
-            return arg1IsSymbol ? args1.getSymbol(rec) : args1.getStr(rec);
+            return arg1IsSymbol ? args1.getSymbol(rec) : args1.getStrA(rec);
         }
 
         @Override

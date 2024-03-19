@@ -49,6 +49,11 @@ public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mu
     }
 
     @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

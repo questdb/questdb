@@ -144,7 +144,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         columnNameIndexMap.clear();
         // don't create strings in this loop, we already have them in columnNameIndexMap
         for (int i = 0; i < columnCount; i++) {
-            CharSequence name = metaMem.getStr(offset);
+            CharSequence name = metaMem.getStrA(offset);
             assert name != null;
             int type = TableUtils.getColumnType(metaMem, i);
             String nameStr = Chars.toString(name);

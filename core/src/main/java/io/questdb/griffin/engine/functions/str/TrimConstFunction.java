@@ -41,8 +41,8 @@ public class TrimConstFunction extends StrFunction implements UnaryFunction {
 
     public TrimConstFunction(Function arg, TrimType type) {
         this.arg = arg;
-        trim(type, getArg().getStr(null), sink1);
-        trim(type, getArg().getStr(null), sink2);
+        trim(type, getArg().getStrA(null), sink1);
+        trim(type, getArg().getStrA(null), sink2);
     }
 
     @Override
@@ -51,7 +51,7 @@ public class TrimConstFunction extends StrFunction implements UnaryFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         return sink1;
     }
 

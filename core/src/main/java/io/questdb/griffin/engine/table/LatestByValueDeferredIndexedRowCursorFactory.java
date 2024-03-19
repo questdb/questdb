@@ -71,7 +71,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
 
     @Override
     public void prepareCursor(TableReader tableReader) {
-        final CharSequence symbol = symbolFunc.getStr(null);
+        final CharSequence symbol = symbolFunc.getStrA(null);
         symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             symbolKey++;

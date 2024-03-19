@@ -108,7 +108,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
-                    CharSequence tsValue = func.getStr(null);
+                    CharSequence tsValue = func.getStrA(null);
                     val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;
                     break;
             }
@@ -176,7 +176,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                         break;
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
-                        CharSequence str = func.getStr(rec);
+                        CharSequence str = func.getStrA(rec);
                         val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NaN;
                         break;
                 }

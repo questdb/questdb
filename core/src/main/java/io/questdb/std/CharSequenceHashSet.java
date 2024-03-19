@@ -109,10 +109,12 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         hasNull = false;
     }
 
+    @Override
     public boolean contains(CharSequence key) {
         return key == null ? hasNull : keyIndex(key) < 0;
     }
 
+    @Override
     public boolean excludes(CharSequence key) {
         return key == null ? !hasNull : keyIndex(key) > -1;
     }
@@ -138,6 +140,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         return getListIndexAt(keyIndex(cs));
     }
 
+    @Override
     public CharSequence keyAt(int index) {
         int index1 = -index - 1;
         return keys[index1];

@@ -48,8 +48,7 @@ import java.util.function.Function;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class LineHttpSenderMockServerTest extends AbstractTest {
-    public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY = port -> Sender.builder().address("localhost:" + port)
-            .http();
+    public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY = port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port);
 
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
     private static final Metrics metrics = Metrics.enabled();
@@ -135,7 +134,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
                 .doubleColumn("x", 1.0)
-                .atNow(), port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";username=Aladdin;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";username=Aladdin;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
@@ -147,7 +146,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
                 .doubleColumn("x", 1.0)
-                .atNow(), port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
@@ -160,7 +159,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                         .doubleColumn("x", 1.0)
                         .atNow();
             }
-        }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";auto_flush=off;"));
+        }, port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush=off;"));
     }
 
     @Test
@@ -179,8 +178,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
     @Test
     public void testMaxRequestBufferSizeExceeded() {
-        try (Sender sender = Sender.builder().address("localhost:1")
-                .http()
+        try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:1")
                 .maxBufferCapacity(65536)
                 .autoFlushRows(Integer.MAX_VALUE)
                 .build()
@@ -225,15 +223,14 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                             .atNow();
 
                     sender.flush();
-                }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;") // 1ms base timeout and 1 byte per second to extend the timeout
+                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;") // 1ms base timeout and 1 byte per second to extend the timeout
         );
     }
 
     @Test
     public void testNoConnection() {
-        try (Sender sender = Sender.builder()
+        try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                 .address("127.0.0.1:1")
-                .http()
                 .retryTimeoutMillis(1000)
                 .build()) {
             sender.table("test")
@@ -375,7 +372,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     } finally {
                         delayLatch.countDown();
                     }
-                }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";request_timeout=100;retry_timeout=0;")
+                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=100;retry_timeout=0;")
         );
     }
 

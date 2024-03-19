@@ -25,6 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sink;
 
 class PrometheusFormatUtils {
     static final char LF = '\n';
@@ -43,10 +44,10 @@ class PrometheusFormatUtils {
         sink.putAscii("_total counter\n");
     }
 
-    static void appendLabel(CharSink<?> sink, CharSequence labelName, CharSequence labelValue) {
-        sink.put(labelName);
-        sink.putAscii('=');
-        sink.putQuoted(labelValue);
+    static void appendLabel(Utf8Sink utf8Sink, CharSequence labelName, CharSequence labelValue) {
+        utf8Sink.put(labelName);
+        utf8Sink.putAscii('=');
+        utf8Sink.putQuote().escapeJsonStr(labelValue).putQuote();
     }
 
     static void appendNewLine(CharSink<?> sink) {

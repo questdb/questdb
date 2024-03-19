@@ -87,6 +87,45 @@ inline void merge_copy_var_column(
     }
 }
 
+void merge_copy_varchar_column(
+        index_t *merge_index,
+        int64_t merge_index_size,
+        int64_t *src_data_fix,
+        char *src_data_var,
+        int64_t *src_ooo_fix,
+        char *src_ooo_var,
+        int64_t *dst_fix,
+        char *dst_var,
+        int64_t dst_var_offset
+) {
+    int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
+    char *src_var[] = {src_ooo_var, src_data_var};
+
+    // todo: perf. optimizations
+    // todo: check types, possible UB, etc.
+    for (int64_t l = 0; l < merge_index_size; l++) {
+        const uint64_t row = merge_index[l].i;
+        const uint32_t bit = (row >> 63);
+        const uint64_t rr = row & ~(1ull << 63);
+        const int64_t firstWord = src_fix[bit][rr * 2];
+        const int64_t secondWord = src_fix[bit][rr * 2 + 1];
+
+        auto originalData = secondWord & 0x000000000000ffffLL;
+        auto rellocatedSecondWord = originalData | (dst_var_offset << 16);
+        if ((firstWord & 1) == 0 && (firstWord & 4) == 0) {
+            // todo: is this branch needed? perhaps we can get away without it?
+            // not inlined and not null
+            auto originalOffset = secondWord >> 16;
+            auto len = (firstWord >> 4) & 0xffffff;
+            auto data = src_var[bit] + originalOffset;
+            __MEMCPY(dst_var + dst_var_offset, data, len);
+            dst_var_offset += len;
+        }
+        dst_fix[l * 2] = firstWord;
+        dst_fix[l * 2 + 1] = rellocatedSecondWord;
+    }
+}
+
 void platform_memcpy(void *dst, const void *src, const size_t len) {
     __MEMCPY(dst, src, len);
 }
@@ -235,9 +274,28 @@ void shift_copy(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_h
 }
 
 // 28
+void shift_copy_varchar_aux(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest) {
+    const int64_t count = 2 * (src_hi - src_lo + 1);
+    for (int64_t i = 0; i < count; i += 2) {
+        dest[i] = src[i + 2 * src_lo];
+        // The offset is stored in the second 8 bytes of varchar's 16 bytes.
+        // 16 LSBs (little-endian) are reserved for other varchar fields.
+        dest[i + 1] = src[i + 2 * src_lo + 1] - (shift << 16);
+    }
+}
+
+// 29
 void copy_index_timestamp(index_t *index, int64_t index_lo, int64_t index_hi, int64_t *dest) {
     const int64_t count = index_hi - index_lo + 1;
     for (int64_t i = 0; i < count; i++) {
         dest[i] = index[index_lo + i].ts;
+    }
+}
+
+// 30
+void set_varchar_null_refs(int64_t *aux, int64_t offset, int64_t count) {
+    for (int64_t i = 0; i < 2 * count; i += 2) {
+        aux[i] = 4;                 // null flag
+        aux[i + 1] = offset << 16;  // offset for subsequent null varchars stays the same
     }
 }

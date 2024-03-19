@@ -40,6 +40,7 @@ import java.io.Closeable;
 public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, DirectUtf8Sequence, Closeable {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final DirectByteSink sink;
+    private boolean ascii;
 
     public DirectUtf8Sink(long initialCapacity) {
         sink = new DirectByteSink(initialCapacity) {
@@ -48,6 +49,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
                 return MemoryTag.NATIVE_DIRECT_UTF8_SINK;
             }
         };
+        ascii = true;
     }
 
     @Override
@@ -73,6 +75,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     @Override
     public void clear() {
         sink.clear();
+        ascii = true;
     }
 
     @Override
@@ -88,6 +91,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     @Override
     public DirectUtf8Sink put(@Nullable Utf8Sequence us) {
         if (us != null) {
+            ascii &= us.isAscii();
             final int size = us.size();
             final long dest = sink.checkCapacity(size);
             for (int i = 0; i < size; i++) {
@@ -100,13 +104,8 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
 
     @Override
     public DirectUtf8Sink put(byte b) {
+        ascii = false;
         sink.put(b);
-        return this;
-    }
-
-    @Override
-    public DirectUtf8Sink putUtf8(long lo, long hi) {
-        sink.put(lo, hi);
         return this;
     }
 
@@ -119,6 +118,13 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     @Override
     public DirectUtf8Sink putAscii(@Nullable CharSequence cs) {
         MutableUtf8Sink.super.putAscii(cs);
+        return this;
+    }
+
+    @Override
+    public DirectUtf8Sink putUtf8(long lo, long hi) {
+        ascii = false;
+        sink.put(lo, hi);
         return this;
     }
 

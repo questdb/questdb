@@ -52,7 +52,7 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         try {
-            final CharSequence value = args.getQuick(1).getStr(null);
+            final CharSequence value = args.getQuick(1).getStrA(null);
             if (value == null) {
                 return new Func(args.getQuick(0), Numbers.INT_NaN);
             }

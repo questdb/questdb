@@ -65,7 +65,7 @@ final class Mig607 {
                                 MigrationActions.prefixedBlockOffset(MigrationActions.META_OFFSET_COLUMN_TYPES_606, i, MigrationActions.META_COLUMN_DATA_SIZE_606)
                         )
                 );
-                final CharSequence columnName = metaMem.getStr(currentColumnNameOffset);
+                final CharSequence columnName = metaMem.getStrA(currentColumnNameOffset);
                 currentColumnNameOffset += Vm.getStorageLength(columnName);
                 if (columnType == ColumnType.STRING || columnType == ColumnType.BINARY) {
                     final long columnTop = readColumnTop(
@@ -249,7 +249,7 @@ final class Mig607 {
                 int denseSymbolCount = 0;
                 long currentColumnNameOffset = columnNameOffset;
                 for (int i = 0; i < columnCount; i++) {
-                    final CharSequence columnName = metaMem.getStr(currentColumnNameOffset);
+                    final CharSequence columnName = metaMem.getStrA(currentColumnNameOffset);
                     currentColumnNameOffset += Vm.getStorageLength(columnName.length());
 
                     if (ColumnType.tagOf(

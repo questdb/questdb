@@ -24,10 +24,87 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public interface Utf8Sink extends CharSink<Utf8Sink> {
+
+    default Utf8Sink escapeJsonStr(@NotNull CharSequence cs) {
+        return escapeJsonStr(cs, 0, cs.length());
+    }
+
+    default Utf8Sink escapeJsonStr(@NotNull CharSequence cs, int lo, int hi) {
+        int i = lo;
+        while (i < hi) {
+            char c = cs.charAt(i++);
+            if (c < 32) {
+                escapeJsonStrChar(c);
+            } else if (c < 128) {
+                switch (c) {
+                    case '\"':
+                    case '\\':
+                        putAscii('\\');
+                        // intentional fall through
+                    default:
+                        putAscii(c);
+                        break;
+                }
+            } else {
+                i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
+            }
+        }
+        return this;
+    }
+
+    default Utf8Sink escapeJsonStr(Utf8Sequence utf8) {
+        int i = 0;
+        final int hi = utf8.size();
+        while (i < hi) {
+            char c = (char) utf8.byteAt(i++);
+            if (c > 0 && c < 32) {
+                escapeJsonStrChar(c);
+            } else if (c > 0 && c < 128) {
+                switch (c) {
+                    case '\"':
+                    case '\\':
+                        putAscii('\\');
+                        // intentional fall through
+                    default:
+                        putAscii(c);
+                        break;
+                }
+            } else {
+                put((byte) c);
+            }
+        }
+        return this;
+    }
+
+    default void escapeJsonStrChar(char c) {
+        switch (c) {
+            case '\b':
+                putAscii("\\b");
+                break;
+            case '\f':
+                putAscii("\\f");
+                break;
+            case '\n':
+                putAscii("\\n");
+                break;
+            case '\r':
+                putAscii("\\r");
+                break;
+            case '\t':
+                putAscii("\\t");
+                break;
+            default:
+                putAscii("\\u00");
+                put(c >> 4);
+                putAscii(Numbers.hexDigits[c & 15]);
+                break;
+        }
+    }
 
     @Override
     default int getEncoding() {
@@ -69,7 +146,6 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         return this;
     }
 
-
     default Utf8Sink put(@Nullable DirectUtf8Sequence dus) {
         if (dus != null) {
             putUtf8(dus.lo(), dus.hi());
@@ -107,6 +183,11 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     @Override
     default Utf8Sink putAscii(char c) {
         return put((byte) c);
+    }
+
+    default Utf8Sink putQuote() {
+        putAscii('"');
+        return this;
     }
 
     default Utf8Sink putQuoted(@NotNull CharSequence cs) {

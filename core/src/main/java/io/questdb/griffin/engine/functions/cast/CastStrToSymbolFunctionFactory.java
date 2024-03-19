@@ -53,7 +53,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            return SymbolConstant.newInstance(arg.getStr(null));
+            return SymbolConstant.newInstance(arg.getStrA(null));
         }
         return new Func(arg);
     }
@@ -76,7 +76,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             final int keyIndex;
             if (value == null) {
                 return SymbolTable.VALUE_IS_NULL;
@@ -92,7 +92,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             return getSymbol(value);
         }
 

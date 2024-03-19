@@ -49,12 +49,14 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
+                "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n" +
                 "timestamp:TIMESTAMP\n" +
-                "str:STRING\n";
+                "str:" + ColumnType.nameOf(ColumnType.STRING) + "\n";
+
         assertThatTimestampRemains((w) -> {
             w.removeColumn("str");
             w.addColumn("str", ColumnType.STRING);
-        }, expected, 11, 10, 12);
+        }, expected, 12, 11, 13);
     }
 
     @Test
@@ -71,7 +73,8 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 .col("sym", ColumnType.SYMBOL)
                 .col("bool", ColumnType.BOOLEAN)
                 .col("bin", ColumnType.BINARY)
-                .col("date", ColumnType.DATE);
+                .col("date", ColumnType.DATE)
+                .col("varchar", ColumnType.VARCHAR);
 
         AbstractCairoTest.create(model);
 
@@ -82,11 +85,12 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "float:FLOAT\n" +
                 "timestamp:TIMESTAMP\n" +
                 "long:LONG\n" +
-                "str:STRING\n" +
+                "str:" + ColumnType.nameOf(ColumnType.STRING) + "\n" +
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
-                "date:DATE\n";
-        assertThatTimestampRemains((w) -> w.removeColumn("bin"), expected, 5, 5, 11);
+                "date:DATE\n" +
+                "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n";
+        assertThatTimestampRemains((w) -> w.removeColumn("bin"), expected, 5, 5, 12);
     }
 
     @Test
@@ -104,8 +108,9 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
+                "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n" +
                 "timestamp:TIMESTAMP\n";
-        assertThatTimestampRemains((w) -> w.removeColumn("str"), expected, 11, 10, 11);
+        assertThatTimestampRemains((w) -> w.removeColumn("str"), expected, 12, 11, 12);
     }
 
     @Test
@@ -122,7 +127,8 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 .col("sym", ColumnType.SYMBOL)
                 .col("bool", ColumnType.BOOLEAN)
                 .col("bin", ColumnType.BINARY)
-                .col("date", ColumnType.DATE);
+                .col("date", ColumnType.DATE)
+                .col("varchar", ColumnType.VARCHAR);
         AbstractCairoTest.create(model);
         assertThat(0);
     }
@@ -141,7 +147,8 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 .col("sym", ColumnType.SYMBOL)
                 .col("bool", ColumnType.BOOLEAN)
                 .col("bin", ColumnType.BINARY)
-                .col("date", ColumnType.DATE);
+                .col("date", ColumnType.DATE)
+                .col("varchar", ColumnType.VARCHAR);
         AbstractCairoTest.create(model);
         assertThat(5);
     }
@@ -151,16 +158,16 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
         TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, PartitionBy.NONE)
                 .timestamp();
         AbstractCairoTest.create(model);
-        assertThat(11);
+        assertThat(12);
     }
 
     private void assertThat(int expectedInitialTimestampIndex) throws Exception {
-        int columnCount = 11;
+        int columnCount = 12;
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {
                 metadata.load();
-                Assert.assertEquals(12, metadata.getColumnCount());
+                Assert.assertEquals(13, metadata.getColumnCount());
                 Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
                 long structureVersion;
                 try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
@@ -183,11 +190,12 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                             "double:DOUBLE\n" +
                             "float:FLOAT\n" +
                             "long:LONG\n" +
-                            "str:STRING\n" +
+                            "str:" + ColumnType.nameOf(ColumnType.STRING) + "\n" +
                             "sym:SYMBOL\n" +
                             "bool:BOOLEAN\n" +
                             "bin:BINARY\n" +
-                            "date:DATE\n";
+                            "date:DATE\n" +
+                            "varchar:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\n";
 
                     TestUtils.assertEquals(expected, sink);
                     Assert.assertEquals(-1, metadata.getTimestampIndex());
@@ -207,7 +215,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
             String tableName = "all";
             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {
                 metadata.load();
-                Assert.assertEquals(12, metadata.getColumnCount());
+                Assert.assertEquals(13, metadata.getColumnCount());
                 Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
                 long structVersion;
                 try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {

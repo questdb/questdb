@@ -66,6 +66,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected boolean disconnected;
     protected short floatDefaultColumnType;
     protected short integerDefaultColumnType;
+    protected boolean useLegacyString;
     protected LineTcpReceiverConfiguration lineTcpConfiguration;
     protected long microSecondTicks;
     protected int nWriterThreads;
@@ -89,6 +90,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         disconnectOnError = false;
         floatDefaultColumnType = ColumnType.DOUBLE;
         integerDefaultColumnType = ColumnType.LONG;
+        useLegacyString = true;
         autoCreateNewColumns = true;
         autoCreateNewTables = true;
         lineTcpConfiguration = createNoAuthReceiverConfiguration(provideLineTcpNetworkFacade());
@@ -170,6 +172,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public short getDefaultColumnTypeForInteger() {
                 return integerDefaultColumnType;
+            }
+
+            @Override
+            public boolean isUseLegacyStringDefault() {
+                return useLegacyString;
             }
 
             @Override

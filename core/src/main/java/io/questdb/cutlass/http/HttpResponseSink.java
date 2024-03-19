@@ -35,7 +35,6 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.ex.ZLibException;
 import io.questdb.std.str.*;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -649,56 +648,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink put(@NotNull CharSequence cs, int lo, int hi) {
-            int i = lo;
-            while (i < hi) {
-                char c = cs.charAt(i++);
-                if (c < 32) {
-                    escapeSpace(c);
-                } else if (c < 128) {
-                    switch (c) {
-                        case '\"':
-                        case '\\':
-                            putAscii('\\');
-                            // intentional fall through
-                        default:
-                            putAscii(c);
-                            break;
-                    }
-                } else {
-                    i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
-                }
-            }
-            return this;
-        }
-
-        @Override
-        public Utf8Sink put(@Nullable CharSequence cs) {
-            if (cs != null) {
-                put(cs, 0, cs.length());
-            }
-            return this;
-        }
-
-        @Override
-        public Utf8Sink put(char c) {
-            if (c < 32) {
-                escapeSpace(c);
-            } else {
-                switch (c) {
-                    case '\"':
-                    case '\\':
-                        putAscii('\\');
-                        // intentional fall through
-                    default:
-                        Utf8Sink.super.put(c);
-                        break;
-                }
-            }
-            return this;
-        }
-
-        @Override
         public Utf8Sink putUtf8(long lo, long hi) {
             buffer.putUtf8(lo, hi);
             return this;
@@ -707,44 +656,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         public void status(int status, CharSequence contentType) {
             buffer.clearAndPrepareToWriteToBuffer();
             headerImpl.status("HTTP/1.1 ", status, contentType, -1);
-        }
-
-        private void escapeSpace(char c) {
-            switch (c) {
-                case '\b':
-                    putAsciiInternal("\\b");
-                    break;
-                case '\f':
-                    putAsciiInternal("\\f");
-                    break;
-                case '\n':
-                    putAsciiInternal("\\n");
-                    break;
-                case '\r':
-                    putAsciiInternal("\\r");
-                    break;
-                case '\t':
-                    putAsciiInternal("\\t");
-                    break;
-                default:
-                    putAsciiInternal("\\u00");
-                    put(c >> 4);
-                    putAsciiInternal(Numbers.hexDigits[c & 15]);
-                    break;
-            }
-        }
-
-        private void putAsciiInternal(char c) {
-            Utf8Sink.super.putAscii(c);
-        }
-
-        private void putAsciiInternal(@Nullable CharSequence cs) {
-            if (cs != null) {
-                int l = cs.length();
-                for (int i = 0; i < l; i++) {
-                    putAsciiInternal(cs.charAt(i));
-                }
-            }
         }
     }
 

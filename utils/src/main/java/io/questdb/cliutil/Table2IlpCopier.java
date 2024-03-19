@@ -98,7 +98,7 @@ public class Table2IlpCopier {
     }
 
     private static Sender buildLineTcpSender(Table2Ilp.Table2IlpParams params) {
-        Sender.LineSenderBuilder senderBuilder = Sender.builder();
+        Sender.LineSenderBuilder senderBuilder = Sender.builder(Sender.Transport.TCP);
         senderBuilder.address(params.getDestinationIlpHost() + ":" + params.getDestinationIlpPort());
         if (params.enableDestinationTls()) {
             senderBuilder.enableTls();

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -716,6 +717,11 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public void putVarchar(Utf8Sequence value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void skip(int bytes) {
             appendAddress += bytes;
         }
@@ -1027,6 +1033,17 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void putTimestamp(long value) {
             putLong(value);
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
+            int byteCount = VarcharTypeDriver.getSingleMemValueByteCount(value);
+            checkCapacity(byteCount);
+            // ASCII flag is best-effort, so there is a chance that identical ASCII-only strings
+            // have different values of the flag. This would break hash table look-ups, so we always
+            // set the flag to false.
+            VarcharTypeDriver.appendValue(appendAddress, value, true);
+            appendAddress += byteCount;
         }
 
         @Override

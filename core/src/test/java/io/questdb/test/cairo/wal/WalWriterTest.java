@@ -103,7 +103,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(1, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -134,7 +134,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(10, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -166,7 +166,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(110, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -197,7 +197,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(100, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -259,7 +259,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(1, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -291,7 +291,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(10, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(Integer.MIN_VALUE, record.getInt(3));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
@@ -325,7 +325,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertTrue(cursor.hasNext());
                 assertEquals(100, record.getByte(0));
                 assertEquals(1000, record.getShort(4));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(Integer.MIN_VALUE, record.getInt(3));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
@@ -434,7 +434,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(1, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -516,7 +516,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(1, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -548,12 +548,12 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(10, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(Integer.MIN_VALUE, record.getInt(3));
                 assertEquals(0, record.getRowId());
                 assertTrue(cursor.hasNext());
                 assertEquals(100, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(Integer.MIN_VALUE, record.getInt(3));
                 assertEquals(1, record.getRowId());
                 assertFalse(cursor.hasNext());
@@ -628,7 +628,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(125, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -767,17 +767,17 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(1, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
 
                 assertTrue(cursor.hasNext());
                 assertEquals(11, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(1, record.getRowId());
 
                 assertTrue(cursor.hasNext());
                 assertEquals(112, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(2, record.getRowId());
 
                 assertFalse(cursor.hasNext());
@@ -845,7 +845,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 int i = 0;
                 while (cursor.hasNext()) {
                     assertEquals(i > 23 ? i - 24 : (i > 17 ? i - 18 : i), record.getByte(0));
-                    assertNull(record.getStr(1));
+                    assertNull(record.getStrA(1));
                     assertEquals(i, record.getRowId());
                     i++;
                 }
@@ -903,7 +903,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 int i = 0;
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
-                    assertNull(record.getStr(1));
+                    assertNull(record.getStrA(1));
                     assertEquals(i, record.getRowId());
                     i++;
                 }
@@ -1016,7 +1016,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         int n = 0;
                         while (cursor.hasNext()) {
                             assertEquals(1, record.getByte(0));
-                            assertEquals("test" + n, record.getStr(1).toString());
+                            TestUtils.assertEquals("test" + n, record.getStrA(1));
                             assertEquals(n, record.getRowId());
                             n++;
                         }
@@ -1165,7 +1165,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         while (cursor.hasNext()) {
                             assertEquals((segmentId % numOfSegments) * maxRowCount + n, record.getInt(0));
                             assertEquals(n, record.getInt(1)); // New symbol value every row
-                            assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSym(1));
+                            assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSymA(1));
                             assertEquals(n, record.getRowId());
                             n++;
                         }
@@ -1673,8 +1673,8 @@ public class WalWriterTest extends AbstractCairoTest {
                         assertEquals(i, record.getChar(8));
                         assertEquals(i % 2 == 0, record.getBool(9));
                         assertEquals(i, record.getDate(10));
-                        assertEquals(String.valueOf(i), record.getStr(11).toString());
-                        assertEquals(record.getStr(11).toString(), record.getStrB(11).toString());
+                        TestUtils.assertEquals(String.valueOf(i), record.getStrA(11));
+                        TestUtils.assertEquals(record.getStrA(11), record.getStrB(11));
                         assertEquals(String.valueOf(i).length(), record.getStrLen(11));
                         assertEquals(i, record.getGeoByte(12));
                         assertEquals(i, record.getGeoInt(13));
@@ -1701,14 +1701,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
                         assertEquals(1654852426000000L + (i + 1) * (long) (Math.pow(10, 5 - (int) Math.log10(i + 1))), record.getTimestamp(21));
 
-                        assertEquals(String.valueOf((char) (65 + i % 26)), record.getStr(22).toString());
-                        assertEquals("abcdefghijklmnopqrstuvwxyz".substring(0, i % 26 + 1), record.getStr(23).toString());
+                        TestUtils.assertEquals(String.valueOf((char) (65 + i % 26)), record.getStrA(22));
+                        TestUtils.assertEquals("abcdefghijklmnopqrstuvwxyz".substring(0, i % 26 + 1), record.getStrA(23));
 
-                        assertEquals(String.valueOf(i), record.getSym(24));
-                        assertEquals(String.valueOf((char) (65 + i % 26)), record.getSym(25));
+                        assertEquals(String.valueOf(i), record.getSymA(24));
+                        assertEquals(String.valueOf((char) (65 + i % 26)), record.getSymA(25));
 
-                        assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getSym(26).toString());
-                        assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getStr(27).toString());
+                        TestUtils.assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getSymA(26));
+                        TestUtils.assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getStrA(27));
 
                         assertEquals(i, record.getLong128Lo(28));
                         assertEquals(i + 1, record.getLong128Hi(28));
@@ -1793,7 +1793,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(1, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -1824,7 +1824,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(10, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -1941,7 +1941,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(1, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -2014,11 +2014,11 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(1, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertTrue(cursor.hasNext());
                 assertEquals(10, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(1, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -2112,8 +2112,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(12, record.getInt(0));
-                assertEquals("symb", record.getSym(1));
-                assertEquals("symc", record.getSym(2));
+                assertEquals("symb", record.getSymA(1));
+                assertEquals("symc", record.getSymA(2));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -2168,7 +2168,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(133, record.getInt(0));
-                assertEquals("Таке-Сяке", record.getSym(2));
+                assertEquals("Таке-Сяке", record.getSymA(2));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -2243,7 +2243,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(1, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -2274,7 +2274,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(10, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -2310,7 +2310,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(110, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -2341,7 +2341,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(100, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -2405,11 +2405,11 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(1, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertTrue(cursor.hasNext());
                 assertEquals(11, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(1, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -2439,7 +2439,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(112, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -2687,7 +2687,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 int i = 0;
                 while (cursor.hasNext()) {
                     assertEquals(i > 23 ? i - 24 : (i > 17 ? i - 18 : i), record.getByte(0));
-                    assertNull(record.getStr(1));
+                    assertNull(record.getStrA(1));
                     assertEquals(i, record.getRowId());
                     i++;
                 }
@@ -2745,7 +2745,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 int i = 0;
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
-                    assertNull(record.getStr(1));
+                    assertNull(record.getStrA(1));
                     assertEquals(i, record.getRowId());
                     i++;
                 }
@@ -2779,7 +2779,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 int i = 0;
                 while (cursor.hasNext()) {
                     assertEquals(i > 23 ? i - 24 : (i > 17 ? i - 18 : i), record.getByte(0));
-                    assertNull(record.getStr(1));
+                    assertNull(record.getStrA(1));
                     assertEquals(i, record.getRowId());
                     i++;
                 }
@@ -2837,7 +2837,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 int i = 0;
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
-                    assertNull(record.getStr(1));
+                    assertNull(record.getStrA(1));
                     assertEquals(i, record.getRowId());
                     i++;
                 }
@@ -2921,14 +2921,14 @@ public class WalWriterTest extends AbstractCairoTest {
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
                     assertEquals(i, record.getInt(1));
-                    assertEquals("sym" + i, record.getSym(1));
+                    assertEquals("sym" + i, record.getSymA(1));
                     assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
                     assertEquals(i % 2, record.getInt(2));
-                    assertEquals("s" + i % 2, record.getSym(2));
+                    assertEquals("s" + i % 2, record.getSymA(2));
                     assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
                     assertEquals(i % 2, record.getInt(3));
-                    assertEquals("symbol" + i % 2, record.getSym(3));
-                    assertEquals(record.getSymB(3), record.getSym(3));
+                    assertEquals("symbol" + i % 2, record.getSymA(3));
+                    assertEquals(record.getSymB(3), record.getSymA(3));
                     assertEquals("symbol" + i % 2, reader.getSymbolMapReader(3).valueOf(i % 2));
                     i++;
                 }
@@ -2948,12 +2948,12 @@ public class WalWriterTest extends AbstractCairoTest {
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
                     assertEquals(i, record.getInt(1));
-                    assertEquals("sym" + i, record.getSym(1));
+                    assertEquals("sym" + i, record.getSymA(1));
                     assertEquals(i % 2, record.getInt(2));
-                    assertEquals("s" + i % 2, record.getSym(2));
+                    assertEquals("s" + i % 2, record.getSymA(2));
                     assertEquals(i % 3, record.getInt(3));
-                    assertEquals("symbol" + i % 3, record.getSym(3));
-                    assertEquals(record.getSymB(3), record.getSym(3));
+                    assertEquals("symbol" + i % 3, record.getSymA(3));
+                    assertEquals(record.getSymB(3), record.getSymA(3));
                     i++;
                 }
                 assertEquals(i, reader.size());
@@ -3270,19 +3270,19 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(1, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(ts, record.getTimestamp(2));
                 assertEquals(0, record.getRowId());
                 assertEquals(0, ((WalDataRecord) record).getDesignatedTimestampRowId(2));
                 assertTrue(cursor.hasNext());
                 assertEquals(17, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(ts + timestampOffsets[0], record.getTimestamp(2));
                 assertEquals(1, record.getRowId());
                 assertEquals(1, ((WalDataRecord) record).getDesignatedTimestampRowId(2));
                 assertTrue(cursor.hasNext());
                 assertEquals(0, record.getByte(0));
-                assertNull(record.getStr(1));
+                assertNull(record.getStrA(1));
                 assertEquals(ts + timestampOffsets[1], record.getTimestamp(2));
                 assertEquals(2, record.getRowId());
                 assertEquals(2, ((WalDataRecord) record).getDesignatedTimestampRowId(2));

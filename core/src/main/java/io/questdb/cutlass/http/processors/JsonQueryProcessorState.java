@@ -44,6 +44,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
@@ -402,19 +403,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putStrValue(HttpChunkedResponse response, Record rec, int col) {
-        putStringOrNull(response, rec.getStr(col));
+        putStringOrNull(response, rec.getStrA(col));
     }
 
     private static void putStringOrNull(HttpChunkedResponse response, CharSequence str) {
         if (str == null) {
             response.putAscii("null");
         } else {
-            response.putQuoted(str);
+            response.putQuote().escapeJsonStr(str).putQuote();
         }
     }
 
     private static void putSymValue(HttpChunkedResponse response, Record rec, int col) {
-        putStringOrNull(response, rec.getSym(col));
+        putStringOrNull(response, rec.getSymA(col));
     }
 
     private static void putTimestampValue(HttpChunkedResponse response, Record rec, int col) {
@@ -449,7 +450,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
             JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
             response.putAscii('{')
-                    .putAsciiQuoted("query").putAscii(':').putQuoted(query).putAscii(',')
+                    .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
                     .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("empty column in list")
                     .putAscii('}');
             response.sendChunk(true);
@@ -462,7 +463,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
             JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
             response.putAscii('{')
-                    .putAsciiQuoted("query").putAscii(':').putQuoted(query).putAscii(',')
+                    .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
                     .putAsciiQuoted("error").putAscii(':').putAscii('\'').putAscii("invalid column in list: ").put(columnNames, start, hi).putAscii('\'')
                     .putAscii('}');
             response.sendChunk(true);
@@ -502,8 +503,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
             int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
             response.putAscii('{')
-                    .putAsciiQuoted("name").putAscii(':').putQuoted(columnNames.getQuick(columnIndex))
-                    .putAscii(',')
+                    .putAsciiQuoted("name").putAscii(':').putQuote().escapeJsonStr(columnNames.getQuick(columnIndex)).putQuote().putAscii(',')
                     .putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType))
                     .putAscii('}');
         }
@@ -535,7 +535,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
         response.bookmark();
         response.putAscii('{')
-                .putAsciiQuoted("query").putAscii(':').putQuoted(query).putAscii(',')
+                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
                 .putAsciiQuoted("columns").putAscii(':').putAscii('[');
         columnIndex = 0;
         return true;
@@ -584,6 +584,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 case ColumnType.STRING:
                     putStrValue(response, record, columnIdx);
+                    break;
+                case ColumnType.VARCHAR:
+                    putVarcharValue(response, columnIdx);
                     break;
                 case ColumnType.SYMBOL:
                     putSymValue(response, record, columnIdx);
@@ -810,6 +813,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.put(rec.getFloat(col), floatScale);
     }
 
+    private void putVarcharValue(HttpChunkedResponse response, int columnIdx) {
+        Utf8Sequence str = record.getVarcharA(columnIdx);
+        if (str == null) {
+            response.putAscii("null");
+        } else {
+            response.putQuote().escapeJsonStr(str).putQuote();
+        }
+    }
+
     private void setupFirstRecord() {
         if (skip > 0) {
             final RecordCursor cursor = this.cursor;
@@ -855,7 +867,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             CharSequence query
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         response.putAscii('{')
-                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query).putAscii(',')
+                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query != null ? query : "").putQuote().putAscii(',')
                 .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
                 .putAsciiQuoted("position").putAscii(':').put(position)
                 .putAscii('}');

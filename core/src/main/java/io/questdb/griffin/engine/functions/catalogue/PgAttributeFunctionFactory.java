@@ -189,7 +189,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
                 if (foundMetadataFile) {
                     long offset = TableUtils.getColumnNameOffset(columnCount);
                     for (int i = 0; i < columnCount; i++) {
-                        CharSequence name = metaMem.getStr(offset);
+                        CharSequence name = metaMem.getStrA(offset);
                         if (columnIndex == i) {
                             int type = PGOids.getTypeOid(TableUtils.getColumnType(metaMem, i));
                             diskReadingRecord.intValues[3] = type;
@@ -246,7 +246,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 return name;
             }
 
@@ -262,7 +262,8 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
             @Override
             public int getStrLen(int col) {
-                return getStr(col).length();
+                CharSequence value = getStrA(col);
+                return value != null ? value.length() : TableUtils.NULL_LEN;
             }
         }
     }

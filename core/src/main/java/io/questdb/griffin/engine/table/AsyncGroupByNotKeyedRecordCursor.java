@@ -34,10 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
-import io.questdb.griffin.engine.groupby.GroupByUtils;
-import io.questdb.griffin.engine.groupby.SimpleMapValue;
+import io.questdb.griffin.engine.groupby.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
@@ -60,7 +57,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             CairoConfiguration configuration,
             ObjList<GroupByFunction> groupByFunctions
     ) {
-        this.allocator = new GroupByAllocator(configuration);
+        this.allocator = GroupByAllocatorFactory.createThreadSafeAllocator(configuration);
         this.groupByFunctions = groupByFunctions;
         GroupByUtils.setAllocator(groupByFunctions, allocator);
         this.recordA = new VirtualRecord(groupByFunctions);

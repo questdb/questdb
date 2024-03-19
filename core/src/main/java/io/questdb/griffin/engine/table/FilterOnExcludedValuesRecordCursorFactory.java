@@ -133,7 +133,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
 
             // Generate excluded key set.
             for (int i = 0, n = keyExcludedValueFunctions.size(); i < n; i++) {
-                final CharSequence value = keyExcludedValueFunctions.getQuick(i).getStr(null);
+                final CharSequence value = keyExcludedValueFunctions.getQuick(i).getStrA(null);
                 excludedKeys.add(symbolMapReader.keyOf(value));
             }
 

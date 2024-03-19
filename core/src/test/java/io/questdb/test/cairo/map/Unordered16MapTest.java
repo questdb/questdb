@@ -34,6 +34,7 @@ import io.questdb.cairo.map.Unordered16Map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -41,6 +42,7 @@ import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 
 public class Unordered16MapTest extends AbstractCairoTest {
 
@@ -320,6 +322,7 @@ public class Unordered16MapTest extends AbstractCairoTest {
         short[] columnTypes = new short[]{
                 ColumnType.BINARY,
                 ColumnType.STRING,
+                ColumnType.VARCHAR,
                 ColumnType.LONG256,
         };
         for (short columnType : columnTypes) {
@@ -331,5 +334,49 @@ public class Unordered16MapTest extends AbstractCairoTest {
                 }
             });
         }
+    }
+
+    @Test
+    public void testPutBinUnsupported() throws Exception {
+        assertUnsupported(key -> key.putBin(null));
+    }
+
+    @Test
+    public void testPutLong256ObjectUnsupported() throws Exception {
+        assertUnsupported(key -> key.putLong256(null));
+    }
+
+    @Test
+    public void testPutLong256ValuesUnsupported() throws Exception {
+        assertUnsupported(key -> key.putLong256(0, 0, 0, 0));
+    }
+
+    @Test
+    public void testPutStrUnsupported() throws Exception {
+        assertUnsupported(key -> key.putStr(null));
+    }
+
+    @Test
+    public void testPutStrRangeUnsupported() throws Exception {
+        assertUnsupported(key -> key.putStr(null, 0, 0));
+    }
+
+    @Test
+    public void testPutVarcharUnsupported() throws Exception {
+        assertUnsupported(key -> key.putVarchar((Utf8Sequence) null));
+    }
+
+    private static void assertUnsupported(Consumer<? super MapKey> putKeyFn) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Unordered16Map map = new Unordered16Map(new SingleColumnType(ColumnType.BOOLEAN), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1)) {
+                MapKey key = map.withKey();
+                try {
+                    putKeyFn.accept(key);
+                    Assert.fail();
+                } catch (UnsupportedOperationException e) {
+                    Assert.assertTrue(true);
+                }
+            }
+        });
     }
 }

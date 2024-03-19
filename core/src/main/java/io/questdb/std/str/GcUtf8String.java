@@ -84,6 +84,11 @@ public class GcUtf8String implements DirectUtf8Sequence {
     }
 
     @Override
+    public boolean isAscii() {
+        return original.length() == size;
+    }
+
+    @Override
     public long ptr() {
         return ptr;
     }

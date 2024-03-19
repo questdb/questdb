@@ -16,6 +16,7 @@ deploy*.bat
 win64svc/cmake-build-debug
 win64svc/build
 win64svc/CMakeCache.txt
+core/src/main/resources/io/questdb/bin/linux/libasm.a
 core/cmake-build-debug
 core/cmake-build-debug-coverage
 core/cmake-build-release

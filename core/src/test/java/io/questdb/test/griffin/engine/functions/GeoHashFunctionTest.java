@@ -108,7 +108,7 @@ public class GeoHashFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
-        nullFunction.getStr(null);
+        nullFunction.getStrA(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

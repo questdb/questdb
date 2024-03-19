@@ -268,7 +268,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
             int i = 0;
             Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                CharSequence table = record.getStr(metadata.getColumnIndex("table_name"));
+                CharSequence table = record.getStrA(metadata.getColumnIndex("table_name"));
                 long owner = record.getLong(metadata.getColumnIndex("owner_thread_id"));
                 long txn = record.getLong(metadata.getColumnIndex("current_txn"));
                 long timestamp = record.getTimestamp(metadata.getColumnIndex("last_access_timestamp"));

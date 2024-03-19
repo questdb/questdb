@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.MemoryPMARImpl;
-import io.questdb.cairo.vm.MemorySRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -296,99 +295,6 @@ public class CairoMemoryTest extends AbstractTest {
                         }
                     } finally {
                         FF.munmap(addr, fileSize, MemoryTag.MMAP_DEFAULT);
-                    }
-
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testSlidingWindowMemory() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                path.of(temp.getRoot().getAbsolutePath());
-                final int N = 100000;
-                final Rnd rnd = new Rnd();
-                try (MemoryMA mem = Vm.getMAInstance(CommitMode.NOSYNC)) {
-                    mem.of(FF, path.concat("x.dat").$(), FF.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-
-                    for (int i = 0; i < N; i++) {
-                        mem.putLong(rnd.nextLong());
-                    }
-
-                    try (MemorySRImpl mem2 = new MemorySRImpl()) {
-                        mem2.of(mem, MemoryTag.MMAP_DEFAULT);
-
-                        // try to read outside of original page bounds
-                        try {
-                            mem2.getLong(N * 16);
-                            Assert.fail();
-                        } catch (CairoException e) {
-                            TestUtils.assertContains(e.getFlyweightMessage(), "Trying to map read-only page outside");
-                        }
-
-                        // make sure jump() is reported
-                        try {
-                            mem2.jumpTo(1024);
-                            Assert.fail();
-                        } catch (UnsupportedOperationException e) {
-                            TestUtils.assertContains(e.getMessage(), "Cannot jump() read-only memory");
-                        }
-
-                        rnd.reset();
-                        for (int i = 0; i < N; i++) {
-                            Assert.assertEquals(rnd.nextLong(), mem2.getLong(i * 8));
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testSlidingWindowMemoryCannotMap() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                path.of(temp.getRoot().getAbsolutePath());
-                final int N = 100000;
-                final Rnd rnd = new Rnd();
-
-                FilesFacade ff = new TestFilesFacadeImpl() {
-                    int counter = 2;
-
-                    @Override
-                    public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                        if (flags == Files.MAP_RO && --counter == 0) {
-                            return -1;
-                        }
-                        return super.mmap(fd, len, offset, flags, memoryTag);
-                    }
-                };
-                try (MemoryMA mem = Vm.getMAInstance(CommitMode.NOSYNC)) {
-                    mem.of(ff, path.concat("x.dat").$(), ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-
-                    for (int i = 0; i < N; i++) {
-                        mem.putLong(rnd.nextLong());
-                    }
-
-                    try (MemorySRImpl mem2 = new MemorySRImpl()) {
-                        mem2.of(mem, MemoryTag.MMAP_DEFAULT);
-
-                        try {
-                            rnd.reset();
-                            for (int i = 0; i < N; i++) {
-                                Assert.assertEquals(rnd.nextLong(), mem2.getLong(i * 8));
-                            }
-                            Assert.fail();
-                        } catch (CairoException e) {
-                            TestUtils.assertContains(e.getMessage(), "could not mmap");
-                        }
-
-                        rnd.reset();
-                        for (int i = 0; i < N; i++) {
-                            Assert.assertEquals(rnd.nextLong(), mem2.getLong(i * 8));
-                        }
                     }
                 }
             }

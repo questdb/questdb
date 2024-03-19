@@ -71,12 +71,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
     }
 
-    @Before
-    public void setUp() {
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 512);
-        super.setUp();
-    }
-
     @AfterClass
     public static void tearDownStatic() {
         path = Misc.free(path);
@@ -114,6 +108,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "), cast(a as SYMBOL)";
 
         assertCast(expectedData, expectedMeta, sql);
+    }
+
+    @Before
+    public void setUp() {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 512);
+        super.setUp();
     }
 
     @Test
@@ -1438,6 +1438,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastLongString() throws SqlException {
+        assertSql(
+                "typeOf\tcast\n" +
+                        "STRING\t1\n",
+                "select typeOf(1L::string), 1L::string"
+        );
+    }
+
+    @Test
     public void testCastLongTimestamp() throws SqlException {
         assertCastLong(
                 "a\n" +
@@ -1462,6 +1471,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000010Z\n" +
                         "1970-01-01T00:00:00.000006Z\n",
                 ColumnType.TIMESTAMP
+        );
+    }
+
+    @Test
+    public void testCastLongVarchar() throws SqlException {
+        assertSql(
+                "typeOf\tcast\n" +
+                        "VARCHAR\t1\n",
+                "select typeOf(1L::varchar), 1L::varchar"
         );
     }
 

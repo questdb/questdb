@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -35,12 +36,32 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@RunWith(Parameterized.class)
 public class GroupByAllocatorTest extends AbstractCairoTest {
+
+    private final AllocatorType allocatorType;
+
+    public GroupByAllocatorTest(AllocatorType allocatorType) {
+        this.allocatorType = allocatorType;
+    }
+
+    @Parameterized.Parameters(name = "{0}-{1}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {AllocatorType.THREAD_SAFE},
+                {AllocatorType.THREAD_UNSAFE},
+        });
+    }
 
     @Test
     public void testCanBeUsedAfterClose() throws Exception {
@@ -52,7 +73,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = createAllocator(config)) {
                 long ptr = allocator.malloc(N);
                 for (int i = 0; i < N; i++) {
                     // Touch the memory to make sure it's allocated.
@@ -71,57 +92,6 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConcurrent() throws Exception {
-        final int N = 1000;
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
-        assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
-                final int threads = 8;
-
-                final AtomicInteger errors = new AtomicInteger();
-                final SOCountDownLatch latch = new SOCountDownLatch(threads);
-                final CyclicBarrier barrier = new CyclicBarrier(threads);
-                for (int i = 0; i < threads; i++) {
-                    int finalI = i;
-                    new Thread(() -> {
-                        try {
-                            barrier.await();
-
-                            for (int j = 0; j < N; j++) {
-                                long ptr = allocator.malloc(j + 1);
-                                // Touch the memory to make sure it's allocated.
-                                for (int k = 0; k < j + 1; k++) {
-                                    Unsafe.getUnsafe().putByte(ptr + k, (byte) finalI);
-                                }
-
-                                // Assert that no one else touched the memory.
-                                for (int k = 0; k < j + 1; k++) {
-                                    Assert.assertEquals((byte) finalI, Unsafe.getUnsafe().getByte(ptr + k));
-                                }
-
-                                allocator.free(ptr, j + 1);
-                            }
-                        } catch (Throwable th) {
-                            th.printStackTrace();
-                            errors.incrementAndGet();
-                        } finally {
-                            latch.countDown();
-                        }
-                    }).start();
-                }
-
-                latch.await();
-                Assert.assertEquals(0, errors.get());
-            }
-        });
-    }
-
-    @Test
     public void testFree() throws Exception {
         final int N = 100;
         final int minChunkSize = 64;
@@ -132,7 +102,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = createAllocator(config)) {
                 long ptr = allocator.malloc(minChunkSize / 4);
                 // Touch the first byte to make sure the memory is allocated.
                 Unsafe.getUnsafe().putByte(ptr, (byte) 42);
@@ -178,7 +148,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = createAllocator(config)) {
                 for (int i = 0; i < N; i++) {
                     long ptr = allocator.malloc(i + 1);
                     for (int j = 0; j < i + 1; j++) {
@@ -186,6 +156,59 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                         Unsafe.getUnsafe().putByte(ptr + j, (byte) j);
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testMallocConcurrent() throws Exception {
+        Assume.assumeTrue(allocatorType == AllocatorType.THREAD_SAFE);
+
+        final int N = 1000;
+        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getGroupByAllocatorDefaultChunkSize() {
+                return 64;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = createAllocator(config)) {
+                final int threads = 8;
+
+                final AtomicInteger errors = new AtomicInteger();
+                final SOCountDownLatch latch = new SOCountDownLatch(threads);
+                final CyclicBarrier barrier = new CyclicBarrier(threads);
+                for (int i = 0; i < threads; i++) {
+                    int finalI = i;
+                    new Thread(() -> {
+                        try {
+                            barrier.await();
+
+                            for (int j = 0; j < N; j++) {
+                                long ptr = allocator.malloc(j + 1);
+                                // Touch the memory to make sure it's allocated.
+                                for (int k = 0; k < j + 1; k++) {
+                                    Unsafe.getUnsafe().putByte(ptr + k, (byte) finalI);
+                                }
+
+                                // Assert that no one else touched the memory.
+                                for (int k = 0; k < j + 1; k++) {
+                                    Assert.assertEquals((byte) finalI, Unsafe.getUnsafe().getByte(ptr + k));
+                                }
+
+                                allocator.free(ptr, j + 1);
+                            }
+                        } catch (Throwable th) {
+                            th.printStackTrace();
+                            errors.incrementAndGet();
+                        } finally {
+                            latch.countDown();
+                        }
+                    }).start();
+                }
+
+                latch.await();
+                Assert.assertEquals(0, errors.get());
             }
         });
     }
@@ -202,7 +225,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = createAllocator(config)) {
                 int size = M;
                 long ptr = allocator.malloc(size);
                 // Touch the first byte to make sure the memory is allocated.
@@ -241,7 +264,9 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRealloc2() throws Exception {
+    public void testReallocConcurrent() throws Exception {
+        Assume.assumeTrue(allocatorType == AllocatorType.THREAD_SAFE);
+
         Rnd rnd = TestUtils.generateRandom(LOG);
         final int M = 1 + rnd.nextInt(100);
         final int minChunkSize = rnd.nextInt(64) + 1;
@@ -254,14 +279,13 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = createAllocator(config)) {
                 ObjList<Thread> threads = new ObjList<>();
                 int threadCount = 10;
                 long[] ptrs = new long[threadCount];
                 for (int th = 0; th < threadCount; th++) {
                     int threadId = th;
                     Thread thread = new Thread(() -> {
-
                         int size = M;
                         long ptr = allocator.malloc(size);
                         // Touch the first byte to make sure the memory is allocated.
@@ -297,17 +321,17 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                     threads.getQuick(i).join();
                 }
 
-                // ralloc on another thread
+                // realloc on another thread
                 for (int threadId = 0; threadId < threadCount; threadId++) {
                     long ptr = ptrs[threadId];
-                    ptr = allocator.realloc(ptr, N, 2 * N);
+                    ptr = allocator.realloc(ptr, N, 2L * N);
                     for (int j = 0; j < M; j++) {
                         Assert.assertEquals(threadId, Unsafe.getUnsafe().getByte(ptr + j));
                     }
                     for (int j = M; j < N; j++) {
                         Assert.assertEquals(123, Unsafe.getUnsafe().getByte(ptr + j));
                     }
-                    allocator.free(ptr, 2 * N);
+                    allocator.free(ptr, 2L * N);
                 }
             }
         });
@@ -323,7 +347,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = createAllocator(config)) {
                 allocator.malloc(maxRequest + 1);
             }
         });
@@ -339,10 +363,25 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = createAllocator(config)) {
                 long ptr = allocator.malloc(maxRequest - 1);
                 allocator.realloc(ptr, maxRequest - 1, maxRequest + 1);
             }
         });
+    }
+
+    private GroupByAllocator createAllocator(CairoConfiguration config) {
+        switch (allocatorType) {
+            case THREAD_SAFE:
+                return GroupByAllocatorFactory.createThreadSafeAllocator(config);
+            case THREAD_UNSAFE:
+                return GroupByAllocatorFactory.createThreadUnsafeAllocator(config);
+            default:
+                throw new IllegalArgumentException("Unexpected allocator type: " + allocatorType);
+        }
+    }
+
+    public enum AllocatorType {
+        THREAD_SAFE, THREAD_UNSAFE
     }
 }

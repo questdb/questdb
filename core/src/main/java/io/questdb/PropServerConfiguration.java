@@ -494,6 +494,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
+    private boolean useLegacyStringDefault;
 
     public PropServerConfiguration(
             String root,
@@ -1221,6 +1222,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$(", will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
+                this.useLegacyStringDefault = getBoolean(properties, env, PropertyKey.LINE_USE_LEGACY_STRING_DEFAULT, true);
             }
 
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
@@ -3445,6 +3447,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
+        }
+
+        @Override
         public int getDefaultPartitionBy() {
             return lineTcpDefaultPartitionBy;
         }
@@ -3569,6 +3576,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public short getDefaultColumnTypeForInteger() {
             return integerDefaultColumnType;
+        }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
         }
 
         @Override
@@ -3896,6 +3908,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int ownThreadAffinity() {
             return lineUdpOwnThreadAffinity;
+        }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
         }
     }
 

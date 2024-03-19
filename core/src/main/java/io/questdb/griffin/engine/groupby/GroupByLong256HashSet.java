@@ -33,7 +33,7 @@ import io.questdb.std.Vect;
 /**
  * Specialized flyweight hash set used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
  * <p>
- * Uses provided {@link GroupByAllocator} to allocate the underlying buffer. Grows the buffer when needed.
+ * Uses provided {@link GroupByAllocatorImpl} to allocate the underlying buffer. Grows the buffer when needed.
  * <p>
  * Buffer layout is the following:
  * <pre>
@@ -145,6 +145,7 @@ public class GroupByLong256HashSet {
             }
         }
     }
+
     public GroupByLong256HashSet of(long ptr) {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + 32L * initialCapacity);
@@ -163,6 +164,7 @@ public class GroupByLong256HashSet {
     public long ptr() {
         return ptr;
     }
+
     public void resetPtr() {
         ptr = 0;
     }

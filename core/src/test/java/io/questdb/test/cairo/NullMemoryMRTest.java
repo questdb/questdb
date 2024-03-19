@@ -105,12 +105,12 @@ public class NullMemoryMRTest {
 
     @Test
     public void getStr() {
-        Assert.assertNull(NullMemoryMR.INSTANCE.getStr(1234));
+        Assert.assertNull(NullMemoryMR.INSTANCE.getStrA(1234));
     }
 
     @Test
     public void getStrB() {
-        Assert.assertNull(NullMemoryMR.INSTANCE.getStr2(1234));
+        Assert.assertNull(NullMemoryMR.INSTANCE.getStrB(1234));
     }
 
     @Test

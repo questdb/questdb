@@ -1138,6 +1138,18 @@ public class UuidTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateUuidWithVarchar() throws Exception {
+        ddl("create table x (i INT, v VARCHAR, u UUID)");
+        insert("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11', null)");
+        update("update x set u = v where i = 0");
+        assertSql(
+                "i\tv\tu\n" +
+                        "0\ta0eebc11-110b-11f8-116d-11b9bd380a11\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
+                "select * from x"
+        );
+    }
+
+    @Test
     public void testUuidExplicitCastAsLong() throws Exception {
         ddl("create table x (u UUID)");
         insert("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");

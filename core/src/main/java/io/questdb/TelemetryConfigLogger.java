@@ -63,7 +63,7 @@ public class TelemetryConfigLogger implements Closeable {
         configWriter = Misc.free(configWriter);
     }
 
-    private void appendConfigRow(CairoEngine engine, SqlCompiler compiler, TableWriter configWriter, Long256 id, boolean enabled) {
+    private void appendConfigRow(CairoEngine engine, TableWriter configWriter, Long256 id, boolean enabled) {
         final TableWriter.Row row = configWriter.newRow();
         if (id == null) {
             final MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
@@ -117,12 +117,12 @@ public class TelemetryConfigLogger implements Closeable {
                 final Record record = cursor.getRecord();
                 final boolean _enabled = record.getBool(1);
                 final Long256 l256 = record.getLong256A(0);
-                final CharSequence _questDBVersion = record.getSym(2);
+                final CharSequence _questDBVersion = record.getSymA(2);
 
                 // if the configuration changed to enable or disable telemetry
                 // we need to update the table to reflect that
                 if (enabled != _enabled || !questDBVersion.equals(_questDBVersion)) {
-                    appendConfigRow(engine, compiler, configWriter, l256, enabled);
+                    appendConfigRow(engine, configWriter, l256, enabled);
                     LOG.advisory()
                             .$("instance config changes [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
                             .$(", enabled=").$(enabled)
@@ -135,7 +135,7 @@ public class TelemetryConfigLogger implements Closeable {
                 }
             } else {
                 // if there are no record for telemetry id we need to create one using clocks
-                appendConfigRow(engine, compiler, configWriter, null, enabled);
+                appendConfigRow(engine, configWriter, null, enabled);
             }
         }
         return configWriter;

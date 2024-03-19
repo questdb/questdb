@@ -1,3 +1,43 @@
+- name: ilp-http
+  lang: java
+  path: examples/src/main/java/com/example/sender/HttpExample.java
+  header: |-
+    Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
+    and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
+
+    Maven
+    ```
+    <dependency>
+        <groupId>org.questdb</groupId>
+        <artifactId>questdb</artifactId>
+        <version>LATEST</version>
+    </dependency>
+    ```
+
+    Gradle
+    ```
+    compile group: 'org.questdb', name: 'questdb', version: 'latest.release'
+    ```
+- name: ilp-http-auth
+  lang: java
+  path: examples/src/main/java/com/example/sender/HttpsAuthExample.java
+  header: |-
+    Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
+    and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
+
+    Maven
+    ```
+    <dependency>
+        <groupId>org.questdb</groupId>
+        <artifactId>questdb</artifactId>
+        <version>LATEST</version>
+    </dependency>
+    ```
+
+    Gradle
+    ```
+    compile group: 'org.questdb', name: 'questdb', version: 'latest.release'
+    ```
 - name: ilp
   lang: java
   path: examples/src/main/java/com/example/sender/BasicExample.java

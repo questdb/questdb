@@ -1186,7 +1186,9 @@ public class CopyTest extends AbstractCairoTest {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             Assert.assertTrue(cursor.hasNext());
-            return cursor.getRecord().getStr(0).toString();
+            CharSequence value = cursor.getRecord().getStrA(0);
+            Assert.assertNotNull(value);
+            return value.toString();
         }
     }
 

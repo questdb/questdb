@@ -65,6 +65,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.STRING:
+                case ColumnType.VARCHAR:
                     if (func.isRuntimeConstant()) {
                         // string bind variable case
                         if (deferredValues == null) {
@@ -76,7 +77,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                     // fall through
                 case ColumnType.SYMBOL:
                 case ColumnType.NULL:
-                    CharSequence value = func.getStr(null);
+                    CharSequence value = func.getStrA(null);
                     if (value == null) {
                         set.add(null);
                     } else {
@@ -149,7 +150,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                 if (deferredValues != null) {
                     for (int i = 0, n = deferredValues.size(); i < n; i++) {
                         final Function func = deferredValues.getQuick(i);
-                        intSet.add(symbolTable.keyOf(func.getStr(null)));
+                        intSet.add(symbolTable.keyOf(func.getStrA(null)));
                     }
                 }
                 testFunc = intTest;
@@ -158,7 +159,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                     deferredSet.clear();
                     for (int i = 0, n = deferredValues.size(); i < n; i++) {
                         final Function func = deferredValues.getQuick(i);
-                        deferredSet.add(func.getStr(null));
+                        deferredSet.add(func.getStrA(null));
                     }
                 }
                 testFunc = strTest;

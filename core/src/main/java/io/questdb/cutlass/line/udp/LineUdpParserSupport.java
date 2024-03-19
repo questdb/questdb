@@ -28,17 +28,23 @@ import io.questdb.cairo.*;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.Utf8StringSink;
 
 public class LineUdpParserSupport {
     private final static Log LOG = LogFactory.getLog(LineUdpParserSupport.class);
 
     public static int getValueType(CharSequence value) {
-        return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG);
+        return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG, true);
     }
 
-    public static int getValueType(CharSequence value, short defaultFloatColumnType, short defaultIntegerColumnType) {
+    public static int getValueType(CharSequence value, boolean useLegacyStringDefault) {
+        return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG, useLegacyStringDefault);
+    }
+
+    public static int getValueType(CharSequence value, short defaultFloatColumnType, short defaultIntegerColumnType, boolean useLegacyStringDefault) {
         // method called for inbound ilp messages on each value.
         // returning UNDEFINED makes the whole line be skipped.
         // 0 len values, return null type.
@@ -80,7 +86,7 @@ public class LineUdpParserSupport {
                         LOG.error().$("incorrectly quoted string: ").$(value).$();
                         return ColumnType.UNDEFINED;
                     }
-                    return ColumnType.STRING;
+                    return useLegacyStringDefault ? ColumnType.STRING : ColumnType.VARCHAR;
                 default:
                     if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
                         return defaultFloatColumnType;
@@ -127,6 +133,11 @@ public class LineUdpParserSupport {
                         break;
                     case ColumnType.STRING:
                         row.putStr(columnIndex, value, 1, value.length() - 2);
+                        break;
+                    case ColumnType.VARCHAR:
+                        Utf8StringSink utf8Sink = Misc.getThreadLocalUtf8Sink();
+                        utf8Sink.put(value, 1, value.length() - 1);
+                        row.putVarchar(columnIndex, utf8Sink);
                         break;
                     case ColumnType.SYMBOL:
                         row.putSym(columnIndex, value);
@@ -247,6 +258,9 @@ public class LineUdpParserSupport {
                 break;
             case ColumnType.STRING:
                 row.putStr(columnIndex, null);
+                break;
+            case ColumnType.VARCHAR:
+                row.putVarchar(columnIndex, null);
                 break;
             case ColumnType.SYMBOL:
                 row.putSym(columnIndex, null);

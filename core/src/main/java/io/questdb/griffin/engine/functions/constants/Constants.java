@@ -93,6 +93,7 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.GEOLONG, GeoLongConstant.NULL);
         nullConstants.extendAndSet(ColumnType.UUID, UuidConstant.NULL);
         nullConstants.extendAndSet(ColumnType.IPv4, IPv4Constant.NULL);
+        nullConstants.extendAndSet(ColumnType.VARCHAR, VarcharConstant.NULL);
 
         typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);
@@ -113,6 +114,7 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.ARRAY_STRING, StringArrayTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.UUID, UuidTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.IPv4, IPv4TypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.VARCHAR, VarcharTypeConstant.INSTANCE);
 
         for (int b = 1; b <= ColumnType.GEOLONG_MAX_BITS; b++) {
             geoNullConstants.extendAndSet(b, getGeoHashConstant(GeoHashes.NULL, b));

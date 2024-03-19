@@ -51,7 +51,7 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
 
     @Override
     public int getInt(Record rec) {
-        final CharSequence symbolStr = symbolFunction.getStr(null);
+        final CharSequence symbolStr = symbolFunction.getStrA(null);
         return symbolTable.keyOf(symbolStr);
     }
 
@@ -62,7 +62,7 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        return symbolFunction.getStr(null);
+        return symbolFunction.getStrA(null);
     }
 
     @Override

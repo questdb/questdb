@@ -107,7 +107,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
             for (int i = 0, n = includedSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = includedSymbolFuncs.getQuick(i);
                 symbolFunc.init(dataFrameCursor, executionContext);
-                int key = symbolMapReader.keyOf(symbolFunc.getStr(null));
+                int key = symbolMapReader.keyOf(symbolFunc.getStrA(null));
                 if (key != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(key);
                 }
@@ -121,7 +121,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
             for (int i = 0, n = excludedSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = excludedSymbolFuncs.getQuick(i);
                 symbolFunc.init(dataFrameCursor, executionContext);
-                int key = symbolMapReader.keyOf(symbolFunc.getStr(null));
+                int key = symbolMapReader.keyOf(symbolFunc.getStrA(null));
                 if (key != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(key);
                 }

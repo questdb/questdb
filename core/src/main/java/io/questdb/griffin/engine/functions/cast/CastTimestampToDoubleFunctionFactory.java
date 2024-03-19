@@ -46,19 +46,12 @@ public class CastTimestampToDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CastTimestampToDoubleFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastTimestampToDoubleFunction extends AbstractCastToDoubleFunction {
-        private final Function arg;
-
-        public CastTimestampToDoubleFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+    public static class Func extends AbstractCastToDoubleFunction {
+        public Func(Function arg) {
+            super(arg);
         }
 
         @Override

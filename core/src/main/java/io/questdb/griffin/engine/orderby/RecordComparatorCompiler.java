@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf8s;
 
 public class RecordComparatorCompiler {
     private final BytecodeAssembler asm;
@@ -324,7 +325,7 @@ public class RecordComparatorCompiler {
                     comparatorClass = Character.class;
                     break;
                 case ColumnType.STRING:
-                    getterNameA = "getStr";
+                    getterNameA = "getStrA";
                     getterNameB = "getStrB";
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;
@@ -343,9 +344,15 @@ public class RecordComparatorCompiler {
                     comparatorDesc = "(JJJJ)I";
                     comparatorClass = Long128.class;
                     break;
+                case ColumnType.VARCHAR:
+                    getterNameA = "getVarcharA";
+                    getterNameB = "getVarcharB";
+                    fieldType = "Lio/questdb/std/str/Utf8Sequence;";
+                    comparatorClass = Utf8s.class;
+                    break;
                 default:
                     // SYMBOL
-                    getterNameA = "getSym";
+                    getterNameA = "getSymA";
                     getterNameB = "getSymB";
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;

@@ -1724,7 +1724,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 assertGeoStr("ooo", 15, GeoHashes.NULL);
                 Assert.fail();
             } catch (ImplicitCastException e) {
-                TestUtils.assertEquals("inconvertible value: `ooo` [STRING -> GEOHASH(3c)]", e.getFlyweightMessage());
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `ooo` [");
+                TestUtils.assertContains(e.getFlyweightMessage(), " -> GEOHASH(3c)]");
             }
         });
     }
@@ -1751,7 +1752,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 assertGeoStr("g912j", 44, GeoHashes.NULL);
                 Assert.fail();
             } catch (ImplicitCastException e) {
-                TestUtils.assertEquals("inconvertible value: `g912j` [STRING -> GEOHASH(44b)]", e.getFlyweightMessage());
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `g912j` [");
+                TestUtils.assertContains(e.getFlyweightMessage(), " -> GEOHASH(44b)]");
             }
         });
     }
@@ -3032,7 +3034,7 @@ public class TableWriterTest extends AbstractCairoTest {
             RecordCursor cursor = reader.getCursor();
             final Record r = cursor.getRecord();
             while (cursor.hasNext()) {
-                TestUtils.assertEquals(rnd.nextChars(5), r.getStr(col));
+                TestUtils.assertEquals(rnd.nextChars(5), r.getStrA(col));
             }
         }
     }
@@ -3108,8 +3110,8 @@ public class TableWriterTest extends AbstractCairoTest {
             RecordCursor cursor = reader.getCursor();
             final Record r = cursor.getRecord();
             while (cursor.hasNext()) {
-                TestUtils.assertEquals(something, r.getStr(0).toString());
-                TestUtils.assertEquals(boring, r.getSym(1).toString());
+                TestUtils.assertEquals(something, r.getStrA(0));
+                TestUtils.assertEquals(boring, r.getSymA(1));
             }
         }
     }
@@ -4152,8 +4154,8 @@ public class TableWriterTest extends AbstractCairoTest {
             RecordCursor cursor = reader.getCursor();
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                TestUtils.assertEquals(rnd.nextChars(5), record.getSym(0));
-                TestUtils.assertEquals(rnd.nextChars(10), record.getStr(1));
+                TestUtils.assertEquals(rnd.nextChars(5), record.getSymA(0));
+                TestUtils.assertEquals(rnd.nextChars(10), record.getStrA(1));
                 count++;
             }
 
