@@ -36,12 +36,10 @@ import io.questdb.griffin.engine.functions.cast.CastIntToByteFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Numbers;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -489,6 +487,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 assertString(function1, expected);
                 assertString(function2, expected);
             }
+            if (ColumnType.tagOf(function1.getType()) == ColumnType.VARCHAR) {
+                Utf8Sequence exp = expected == null ? null : new Utf8String(expected);
+                assertVarchar(function1, exp);
+                assertVarchar(function2, exp);
+            }
             closeFunctions();
         }
 
@@ -564,6 +567,33 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 func.getStr(record, sink);
                 TestUtils.assertEquals(expected, sink);
                 Assert.assertEquals(expected.length(), func.getStrLen(record));
+            }
+        }
+
+        private void assertVarchar(Function func, Utf8Sequence expected) {
+            if (expected == null) {
+                Assert.assertNull(func.getVarcharA(record));
+                Assert.assertNull(func.getVarcharB(record));
+                utf8StringSink.clear();
+                func.getVarchar(record, utf8StringSink);
+                Assert.assertEquals(0, utf8StringSink.size());
+            } else {
+                Utf8Sequence a = func.getVarcharA(record);
+                Utf8Sequence b = func.getVarcharB(record);
+                if (!func.isConstant()) {
+                    Assert.assertNotSame(a, b);
+                }
+                TestUtils.assertEquals(expected, a);
+                TestUtils.assertEquals(expected, b);
+
+                // repeat call to make sure there is correct object reuse
+                TestUtils.assertEquals(expected, func.getVarcharA(record));
+                TestUtils.assertEquals(expected, func.getVarcharB(record));
+
+                utf8StringSink.clear();
+                func.getVarchar(record, utf8StringSink);
+                TestUtils.assertEquals(expected, utf8StringSink);
+                Assert.assertEquals(expected.size(), utf8StringSink.size());
             }
         }
 

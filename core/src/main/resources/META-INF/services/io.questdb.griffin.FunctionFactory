@@ -882,6 +882,10 @@ io.questdb.griffin.engine.functions.str.LPadFunctionFactory
 io.questdb.griffin.engine.functions.str.LPadStrFunctionFactory
 io.questdb.griffin.engine.functions.str.RPadFunctionFactory
 io.questdb.griffin.engine.functions.str.RPadStrFunctionFactory
+io.questdb.griffin.engine.functions.str.LPadVarcharFunctionFactory
+io.questdb.griffin.engine.functions.str.LPadStrVarcharFunctionFactory
+io.questdb.griffin.engine.functions.str.RPadVarcharFunctionFactory
+io.questdb.griffin.engine.functions.str.RPadStrVarcharFunctionFactory
 
 # Trim
 io.questdb.griffin.engine.functions.str.TrimFunctionFactory
