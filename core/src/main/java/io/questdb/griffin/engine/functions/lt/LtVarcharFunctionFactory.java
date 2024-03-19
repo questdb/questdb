@@ -32,17 +32,17 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
-public class LtStrFunctionFactory implements FunctionFactory {
+public class LtVarcharFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "<(SS)";
+        return "<(ØØ)";
     }
 
     @Override
@@ -61,108 +61,20 @@ public class LtStrFunctionFactory implements FunctionFactory {
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
         if (a.isConstant() && !b.isConstant()) {
-            CharSequence constValue = a.getStrA(null);
+            Utf8Sequence constValue = a.getVarcharA(null);
             if (constValue == null) {
                 return BooleanConstant.FALSE;
             }
-            return new ConstOnLeftFunc(constValue, b);
+            return new LtVarcharStrFunctionFactory.ConstOnLeftFunc(constValue, b);
         }
         if (!a.isConstant() && b.isConstant()) {
-            CharSequence constValue = b.getStrA(null);
+            Utf8Sequence constValue = b.getVarcharA(null);
             if (constValue == null) {
                 return BooleanConstant.FALSE;
             }
-            return new ConstOnRightFunc(a, constValue);
+            return new LtStrVarcharFunctionFactory.ConstOnRightFunc(a, constValue);
         }
         return new Func(a, b);
-    }
-
-    static class ConstOnLeftFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final CharSequence constant;
-        private final Function right;
-
-        public ConstOnLeftFunc(CharSequence constant, Function right) {
-            this.constant = constant;
-            this.right = right;
-        }
-
-        @Override
-        public Function getArg() {
-            return right;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            final CharSequence r = right.getStrB(rec);
-            if (r == null) {
-                return false;
-            }
-            return negated == (Chars.compare(constant, r) >= 0);
-        }
-
-        @Override
-        public String getName() {
-            if (negated) {
-                return ">=";
-            } else {
-                return "<";
-            }
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val('\'').val(constant).val('\'');
-            if (negated) {
-                sink.val(">=");
-            } else {
-                sink.val("<");
-            }
-            sink.val(right);
-        }
-    }
-
-    static class ConstOnRightFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final CharSequence constant;
-        private final Function left;
-
-        public ConstOnRightFunc(Function left, CharSequence constant) {
-            this.left = left;
-            this.constant = constant;
-        }
-
-        @Override
-        public Function getArg() {
-            return left;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            final CharSequence l = left.getStrB(rec);
-            if (l == null) {
-                return false;
-            }
-            return negated == (Chars.compare(l, constant) >= 0);
-        }
-
-        @Override
-        public String getName() {
-            if (negated) {
-                return ">=";
-            } else {
-                return "<";
-            }
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(left);
-            if (negated) {
-                sink.val(">=");
-            } else {
-                sink.val("<");
-            }
-            sink.val('\'').val(constant).val('\'');
-        }
     }
 
     static class Func extends NegatableBooleanFunction implements BinaryFunction {
@@ -179,12 +91,12 @@ public class LtStrFunctionFactory implements FunctionFactory {
             // important to compare A and B strings in case
             // these are columns of the same record
             // records have re-usable character sequences
-            final CharSequence l = left.getStrA(rec);
-            final CharSequence r = right.getStrB(rec);
+            final Utf8Sequence l = left.getVarcharA(rec);
+            final Utf8Sequence r = right.getVarcharB(rec);
             if (l == null || r == null) {
                 return false;
             }
-            return negated == (Chars.compare(l, r) >= 0);
+            return negated == (Utf8s.compare(l, r) >= 0);
         }
 
         @Override
@@ -209,11 +121,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(left);
-            if (negated) {
-                sink.val(">=");
-            } else {
-                sink.val('<');
-            }
+            sink.val(getName());
             sink.val(right);
         }
     }

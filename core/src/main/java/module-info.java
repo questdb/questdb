@@ -196,6 +196,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.lt.LtStrFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtLongFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtLong256FunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtVarcharStrFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtStrVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtVarcharFunctionFactory,
 
 //                   '+' operator
             io.questdb.griffin.engine.functions.math.AddIntFunctionFactory,
@@ -253,6 +256,7 @@ open module io.questdb {
 //                     '~=',
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
+            io.questdb.griffin.engine.functions.regex.MatchVarcharFunctionFactory,
 //                    like
             io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory,
