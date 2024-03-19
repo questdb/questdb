@@ -27,11 +27,7 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectCharSequence;
-import io.questdb.std.str.DirectString;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 
 // contiguous readable
@@ -57,6 +53,11 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         offset -= shiftAddressRight;
         assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
         return pageAddress + offset;
+    }
+
+    @Override
+    public boolean isFileBased() {
+        return true;
     }
 
     public void clear() {

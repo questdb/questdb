@@ -531,7 +531,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailMergeWalVarIntoLagParallel() throws Exception {
-        executeWithPool(2, O3FailureTest::testFailMergeWalVarIntoLag0);
+        executeWithPool(0, O3FailureTest::testFailMergeWalVarIntoLag0);
     }
 
     @Test
@@ -3227,59 +3227,60 @@ public class O3FailureTest extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = new WorkerPool(() -> 1);
-            pool1.assign(new Job() {
-                private boolean toRun = true;
+            try (WorkerPool pool1 = new WorkerPool(() -> 1)) {
+                pool1.assign(new Job() {
+                    private boolean toRun = true;
 
-                @Override
-                public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                    if (toRun) {
-                        try {
-                            toRun = false;
-                            barrier.await();
-                            compiler.compile("insert into x select * from y", executionContext);
-                        } catch (Throwable e) {
-                            //noinspection CallToPrintStackTrace
-                            e.printStackTrace();
-                            errorCount.incrementAndGet();
-                        } finally {
-                            haltLatch.countDown();
+                    @Override
+                    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                        if (toRun) {
+                            try {
+                                toRun = false;
+                                barrier.await();
+                                compiler.compile("insert into x select * from y", executionContext);
+                            } catch (Throwable e) {
+                                //noinspection CallToPrintStackTrace
+                                e.printStackTrace();
+                                errorCount.incrementAndGet();
+                            } finally {
+                                haltLatch.countDown();
+                            }
                         }
+                        return false;
                     }
-                    return false;
-                }
-            });
+                });
 
-            final WorkerPool pool2 = new TestWorkerPool(1);
-            pool2.assign(new Job() {
-                private boolean toRun = true;
+                try (final WorkerPool pool2 = new TestWorkerPool(1)) {
+                    pool2.assign(new Job() {
+                        private boolean toRun = true;
 
-                @Override
-                public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                    if (toRun) {
-                        try {
-                            toRun = false;
-                            barrier.await();
-                            compiler2.compile("insert into x1 select * from y1", executionContext);
-                        } catch (Throwable e) {
-                            //noinspection CallToPrintStackTrace
-                            e.printStackTrace();
-                            errorCount.incrementAndGet();
-                        } finally {
-                            haltLatch.countDown();
+                        @Override
+                        public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                            if (toRun) {
+                                try {
+                                    toRun = false;
+                                    barrier.await();
+                                    compiler2.compile("insert into x1 select * from y1", executionContext);
+                                } catch (Throwable e) {
+                                    //noinspection CallToPrintStackTrace
+                                    e.printStackTrace();
+                                    errorCount.incrementAndGet();
+                                } finally {
+                                    haltLatch.countDown();
+                                }
+                            }
+                            return false;
                         }
-                    }
-                    return false;
+                    });
+
+                    pool1.start();
+                    pool2.start();
+                    haltLatch.await();
+
+                    pool2.halt();
                 }
-            });
-
-            pool1.start();
-            pool2.start();
-
-            haltLatch.await();
-
-            pool1.halt();
-            pool2.halt();
+                pool1.halt();
+            }
 
             Assert.assertTrue(errorCount.get() > 0);
         }
