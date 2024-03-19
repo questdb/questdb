@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocatorImpl;
 import io.questdb.griffin.engine.groupby.GroupByUtf8Sink;
 import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -39,14 +39,8 @@ import org.junit.Test;
 public class GroupByUtf8SinkTest extends AbstractCairoTest {
     @Test
     public void testClear() throws Exception {
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = new GroupByAllocatorImpl(64, Numbers.SIZE_1MB)) {
                 GroupByUtf8Sink sink = new GroupByUtf8Sink();
                 sink.setAllocator(allocator);
                 sink.put("foobar");
@@ -64,14 +58,8 @@ public class GroupByUtf8SinkTest extends AbstractCairoTest {
     @Test
     public void testPutCharSequence() throws Exception {
         final int N = 1000;
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = new GroupByAllocatorImpl(64, Numbers.SIZE_1MB)) {
                 GroupByUtf8Sink sink = new GroupByUtf8Sink();
                 sink.setAllocator(allocator);
                 int len = 0;
@@ -90,14 +78,8 @@ public class GroupByUtf8SinkTest extends AbstractCairoTest {
     @Test
     public void testPutUtf8Sequence() throws Exception {
         final int N = 1000;
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = new GroupByAllocatorImpl(64, Numbers.SIZE_1MB)) {
                 GroupByUtf8Sink sink = new GroupByUtf8Sink();
                 sink.setAllocator(allocator);
                 Rnd rnd = new Rnd();
@@ -119,14 +101,8 @@ public class GroupByUtf8SinkTest extends AbstractCairoTest {
     @Test
     public void testPutUtf8SequenceAscii() throws Exception {
         final int N = 1000;
-        final CairoConfiguration config = new DefaultCairoConfiguration(root) {
-            @Override
-            public long getGroupByAllocatorDefaultChunkSize() {
-                return 64;
-            }
-        };
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocator(config)) {
+            try (GroupByAllocator allocator = new GroupByAllocatorImpl(64, Numbers.SIZE_1MB)) {
                 GroupByUtf8Sink sink = new GroupByUtf8Sink();
                 sink.setAllocator(allocator);
                 Rnd rnd = new Rnd();

@@ -182,9 +182,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 String fullString = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
                 int port = serverMain.getHttpServerPort();
-                try (Sender sender = Sender.builder()
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
-                        .http()
                         .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                         .build()
                 ) {

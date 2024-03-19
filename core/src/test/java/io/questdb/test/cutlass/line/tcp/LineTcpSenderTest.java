@@ -652,7 +652,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testUseVarcharAsString() throws Exception {
         useLegacyStringDefault = false;
         runInContext(r -> {
-            try (Sender sender = Sender.builder()
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()
