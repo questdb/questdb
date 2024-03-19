@@ -51,8 +51,47 @@ public interface Utf8Sequence {
     byte byteAt(int index);
 
     /**
-     * @return true if all characters in the string are ASCII. This is a best-effort flag, i.e. it may have
-     * false value while the actual string has ASCII characters only.
+     * Returns 8 bytes of content packed into a long (little-endian).
+     * Bytes beyond the end of the string are 0.
+     */
+    default long zeroPaddedLongAt(int index) {
+        long result = 0;
+        long limit = Math.min(size(), index + Long.BYTES);
+        for (int i = index; i < limit; i++) {
+            result |= (long) (byteAt(i) & 0xff) << 8 * (i - index);
+        }
+        return result;
+    }
+
+    /**
+     * Returns the first 6 bytes of this UTF-8 sequence. This prefix is stored inline
+     * in the auxiliary vector of a VARCHAR column, so asking for it is a matter of
+     * optimized data access. This is not a general access method, it is implemented
+     * only where needed to support the optimization.
+     */
+    default long zeroPaddedSixPrefix() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Called as a part of equality check that has already ensured the two strings
+     * have the same byte size. This is especially relevant when comparing two values
+     * from a VARCHAR column: same size guarantees they are either both inlined or
+     * both not inlined, which means the same `Utf8Sequence` implementation is on
+     * both sides.
+     */
+    default boolean equalsAssumingSameSize(Utf8Sequence other) {
+        for (int i = 0; i < size(); i++) {
+            if (byteAt(i) != other.byteAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Returns `true` if it's guaranteed that the contents of this UTF-8 sequence are
+     * all ASCII characters. Returning `false` does not guarantee anything.
      */
     default boolean isAscii() {
         return false;

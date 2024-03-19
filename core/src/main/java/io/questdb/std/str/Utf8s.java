@@ -138,12 +138,7 @@ public final class Utf8s {
         if (l.size() != r.size()) {
             return false;
         }
-        for (int index = 0, n = l.size(); index < n; index++) {
-            if (l.byteAt(index) != r.byteAt(index)) {
-                return false;
-            }
-        }
-        return true;
+        return l.equalsAssumingSameSize(r);
     }
 
     public static boolean equals(@NotNull Utf8Sequence l, int lLo, int lHi, @NotNull Utf8Sequence r, int rLo, int rHi) {

@@ -41,6 +41,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED;
+
 public class VarcharTypeDriverTest extends AbstractTest {
 
     @Test
@@ -54,16 +57,18 @@ public class VarcharTypeDriverTest extends AbstractTest {
                         MemoryCARW dataMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
                 ) {
                     VarcharTypeDriver.appendValue(dataMem, auxMem, null);
-                    VarcharTypeDriver.appendValue(dataMem, auxMem, new Utf8String("foobarbaz - bazbarfoo"));
+                    String testStr = "foobarbaz - bazbarfoo";
+                    int length = testStr.length();
+                    VarcharTypeDriver.appendValue(dataMem, auxMem, new Utf8String(testStr));
 
-                    Assert.assertEquals(21, driver.getDataVectorSize(auxMem.addressOf(0), 0, 1));
+                    Assert.assertEquals(length, driver.getDataVectorSize(auxMem.addressOf(0), 0, 1));
 
                     Assert.assertEquals(0, driver.getDataVectorSizeAt(auxMem.addressOf(0), 0));
-                    Assert.assertEquals(21, driver.getDataVectorSizeAt(auxMem.addressOf(0), 1));
+                    Assert.assertEquals(length, driver.getDataVectorSizeAt(auxMem.addressOf(0), 1));
 
                     Assert.assertEquals(0, driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), -1));
                     Assert.assertEquals(0, driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), 0));
-                    Assert.assertEquals(21, driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), 1));
+                    Assert.assertEquals(length, driver.getDataVectorSizeAtFromFd(ff, auxMem.getFd(), 1));
                 }
             }
         });
@@ -87,7 +92,8 @@ public class VarcharTypeDriverTest extends AbstractTest {
 
                     for (int i = 0; i < n; i++) {
                         Assert.assertNull(VarcharTypeDriver.getValue((i + auxOffset), dataMem, auxMem, 1));
-                        Assert.assertEquals(dataOffset, VarcharTypeDriver.getDataVectorSize(auxMem, (i + auxOffset) * 16L));
+                        Assert.assertEquals(dataOffset, VarcharTypeDriver.getDataVectorSize(auxMem,
+                                (i + auxOffset) * VARCHAR_AUX_WIDTH_BYTES));
                     }
                 }
             }
@@ -127,7 +133,9 @@ public class VarcharTypeDriverTest extends AbstractTest {
 
                     for (int i = auxLo; i < n; i++) {
                         Utf8Sequence varchar = VarcharTypeDriver.getValue(i, dataMemA, auxMemA, 1);
-                        Assert.assertEquals(expectedOffsets.getQuick(i - auxLo), VarcharTypeDriver.getDataVectorSize(auxMemA, i * 16L));
+                        Assert.assertEquals(
+                                expectedOffsets.getQuick(i - auxLo),
+                                VarcharTypeDriver.getDataVectorSize(auxMemA, i * VARCHAR_AUX_WIDTH_BYTES));
                         Assert.assertNotNull(varchar);
                         TestUtils.assertEquals(expectedStr, varchar.asAsciiCharSequence());
                         Assert.assertTrue(varchar.isAscii());
@@ -141,7 +149,9 @@ public class VarcharTypeDriverTest extends AbstractTest {
 
                     for (int i = 0; i < n - auxLo; i++) {
                         Utf8Sequence varchar = VarcharTypeDriver.getValue(i, dataMemB, auxMemB, 1);
-                        Assert.assertEquals("offset mismatch: i=" + i + ", n=" + n, expectedOffsets.getQuick(i) - shift, VarcharTypeDriver.getDataVectorSize(auxMemB, i * 16L));
+                        Assert.assertEquals("offset mismatch: i=" + i + ", n=" + n,
+                                expectedOffsets.getQuick(i) - shift,
+                                VarcharTypeDriver.getDataVectorSize(auxMemB, i * VARCHAR_AUX_WIDTH_BYTES));
                         Assert.assertNotNull(varchar);
                         TestUtils.assertEquals(expectedStr, varchar.asAsciiCharSequence());
                         Assert.assertTrue(varchar.isAscii());
@@ -176,7 +186,8 @@ public class VarcharTypeDriverTest extends AbstractTest {
 
                     for (int i = auxLo; i < n; i++) {
                         Assert.assertNull(VarcharTypeDriver.getValue(i, dataMemA, auxMemA, 1));
-                        Assert.assertEquals(expectedOffsets.getQuick(i - auxLo), VarcharTypeDriver.getDataVectorSize(auxMemA, i * 16L));
+                        Assert.assertEquals(expectedOffsets.getQuick(i - auxLo),
+                                VarcharTypeDriver.getDataVectorSize(auxMemA, i * VARCHAR_AUX_WIDTH_BYTES));
                     }
 
                     dataMemB.extend(dataMemA.size() - shift);
@@ -187,7 +198,9 @@ public class VarcharTypeDriverTest extends AbstractTest {
 
                     for (int i = 0; i < n - auxLo; i++) {
                         Assert.assertNull(VarcharTypeDriver.getValue(i, dataMemB, auxMemB, 1));
-                        Assert.assertEquals("offset mismatch: i=" + i + ", n=" + n, expectedOffsets.getQuick(i) - shift, VarcharTypeDriver.getDataVectorSize(auxMemB, i * 16L));
+                        Assert.assertEquals("offset mismatch: i=" + i + ", n=" + n,
+                                expectedOffsets.getQuick(i) - shift,
+                                VarcharTypeDriver.getDataVectorSize(auxMemB, i * VARCHAR_AUX_WIDTH_BYTES));
                     }
                 }
             }
@@ -289,7 +302,9 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     Utf8Sequence varcharA = VarcharTypeDriver.getValue(i, dataMemA, auxMemA, 1);
                     Utf8Sequence varcharB = VarcharTypeDriver.getValue(i, dataMemB, auxMemB, 1);
                     // offsets should match since the data is in-order
-                    Assert.assertEquals(VarcharTypeDriver.getDataVectorSize(auxMemA, i * 16L), VarcharTypeDriver.getDataVectorSize(auxMemB, i * 16L));
+                    Assert.assertEquals(
+                            VarcharTypeDriver.getDataVectorSize(auxMemA, i * VARCHAR_AUX_WIDTH_BYTES),
+                            VarcharTypeDriver.getDataVectorSize(auxMemB, i * VARCHAR_AUX_WIDTH_BYTES));
                     Assert.assertTrue((varcharA != null && varcharB != null) || (varcharA == null && varcharB == null));
                     if (varcharA != null) {
                         Assert.assertEquals(varcharA.isAscii(), varcharB.isAscii());
@@ -316,7 +331,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
             LongList usedSpace = new LongList();
             long expectedUsedSize = 0;
             for (int i = 0; i < n; i++) {
-                expectedUsedSize += 16; // aux vector entry size
+                expectedUsedSize += VARCHAR_AUX_WIDTH_BYTES;
                 if (i % 15 == 0) {
                     VarcharTypeDriver.appendValue(dataMem, auxMem, null);
                 } else {
@@ -324,7 +339,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     final int len = i % 20;
                     char ch = (char) ('a' + i);
                     utf8Sink.repeat(ch, len);
-                    if (utf8Sink.size() > VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED) {
+                    if (utf8Sink.size() > VARCHAR_MAX_BYTES_FULLY_INLINED) {
                         expectedUsedSize += utf8Sink.size();
                     }
                     VarcharTypeDriver.appendValue(dataMem, auxMem, utf8Sink);
@@ -342,7 +357,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 expectedUsedSize = (cut == 0) ? 0 : usedSpace.getQuick(cut - 1);
                 Assert.assertEquals(expectedUsedSize, actualUsedSize);
 
-                long expectedAuxUsedSize = cut * 16L;
+                long expectedAuxUsedSize = VARCHAR_AUX_WIDTH_BYTES * (long) cut;
                 long expectedDataUsedSize = expectedUsedSize - expectedAuxUsedSize;
                 Assert.assertEquals(expectedAuxUsedSize, auxMem.getAppendOffset());
                 Assert.assertEquals(expectedDataUsedSize, dataMem.getAppendOffset());
@@ -356,7 +371,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                         final int len = i % 40;
                         char ch = (char) ('A' + i);
                         utf8Sink.repeat(ch, len);
-                        if (utf8Sink.size() > VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED) {
+                        if (utf8Sink.size() > VARCHAR_MAX_BYTES_FULLY_INLINED) {
                             expectedUsedSize += utf8Sink.size();
                         }
                         VarcharTypeDriver.appendValue(dataMem, auxMem, utf8Sink);

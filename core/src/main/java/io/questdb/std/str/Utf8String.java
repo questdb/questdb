@@ -28,42 +28,64 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 
 /**
  * An immutable on-heap sequence of UTF-8 bytes.
  */
 public class Utf8String implements Utf8Sequence {
     public static final Utf8String EMPTY = new Utf8String("");
+    private static final int ZERO_PADDING_LEN = Long.BYTES - 1;
     private final boolean ascii;
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final byte[] bytes;
-
-    public Utf8String(byte @NotNull [] bytes, boolean ascii) {
-        this.bytes = bytes;
-        this.ascii = ascii;
-    }
-
-    public Utf8String(@NotNull String str) {
-        this.bytes = str.getBytes(StandardCharsets.UTF_8);
-        this.ascii = (str.length() == bytes.length);
-    }
-
-    public Utf8String(char ch) {
-        this.bytes = String.valueOf(ch).getBytes(StandardCharsets.UTF_8);
-        this.ascii = (bytes.length == 1);
-    }
-
-    public Utf8String(@NotNull CharSequence seq) {
-        this.bytes = seq.toString().getBytes(StandardCharsets.UTF_8);
-        this.ascii = (seq.length() == bytes.length);
-    }
+    private final int length;
 
     public static Utf8String newInstance(@NotNull Utf8Sequence src) {
-        byte[] bytes = new byte[src.size()];
+        byte[] bytes = new byte[src.size() + ZERO_PADDING_LEN];
         for (int i = 0, n = src.size(); i < n; i++) {
             bytes[i] = src.byteAt(i);
         }
-        return new Utf8String(bytes, src.isAscii());
+        return new Utf8String(bytes, src.size(), src.isAscii());
+    }
+
+    public Utf8String(byte @NotNull [] bytes, boolean ascii) {
+        this.length = bytes.length;
+        this.ascii = ascii;
+        this.bytes = zeroPad(bytes);
+    }
+
+    public Utf8String(@NotNull String str) {
+        byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
+        this.length = bytes.length;
+        this.ascii = (str.length() == bytes.length);
+        this.bytes = zeroPad(bytes);
+    }
+
+    public Utf8String(char ch) {
+        byte[] bytes = String.valueOf(ch).getBytes(StandardCharsets.UTF_8);
+        this.length = bytes.length;
+        this.ascii = (bytes.length == 1);
+        this.bytes = zeroPad(bytes);
+    }
+
+    public Utf8String(@NotNull CharSequence seq) {
+        byte[] bytes = seq.toString().getBytes(StandardCharsets.UTF_8);
+        this.length = bytes.length;
+        this.ascii = (seq.length() == bytes.length);
+        this.bytes = zeroPad(bytes);
+    }
+
+    private Utf8String(byte @NotNull [] bytes, int length, boolean ascii) {
+        this.length = length;
+        this.ascii = ascii;
+        this.bytes = bytes;
+    }
+
+    private static byte[] zeroPad(byte[] bytes) {
+        return Arrays.copyOf(bytes, bytes.length + ZERO_PADDING_LEN);
     }
 
     @Override
@@ -90,8 +112,18 @@ public class Utf8String implements Utf8Sequence {
     }
 
     @Override
+    public long zeroPaddedLongAt(int index) {
+        return longAt(index);
+    }
+
+    @Override
+    public long zeroPaddedSixPrefix() {
+        return longAt(0) & VARCHAR_INLINED_PREFIX_MASK;
+    }
+
+    @Override
     public int size() {
-        return bytes.length;
+        return length;
     }
 
     @Override

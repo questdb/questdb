@@ -35,9 +35,10 @@ public interface DirectUtf8Sequence extends Utf8Sequence, DirectSequence {
      * Returns byte at index.
      * Note: Unchecked bounds.
      *
-     * @param index byte index
+     * @param index index of a byte
      * @return byte at index
      */
+    @Override
     default byte byteAt(int index) {
         return Unsafe.getUnsafe().getByte(ptr() + index);
     }
