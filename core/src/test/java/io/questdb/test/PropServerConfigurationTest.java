@@ -221,10 +221,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertModelPoolCapacity());
-        Assert.assertEquals(8192, configuration.getCairoConfiguration().getInsertModelBatchSize());
+        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getInsertModelBatchSize());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
-        Assert.assertEquals(8192, configuration.getCairoConfiguration().getCreateTableModelBatchSize());
+        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getCreateTableModelBatchSize());
         Assert.assertEquals(1, configuration.getCairoConfiguration().getPartitionPurgeListCapacity());
         Assert.assertEquals(ff.allowMixedIO(root), configuration.getCairoConfiguration().isWriterMixedIOEnabled());
         Assert.assertEquals(CairoConfiguration.O_NONE, configuration.getCairoConfiguration().getWriterFileOpenOpts());
