@@ -63,7 +63,8 @@ public class GroupByUtils {
             @Transient @NotNull IntList groupByFunctionPositions,
             @Nullable ObjList<Function> keyFunctions,
             @Nullable ObjList<ExpressionNode> keyFunctionNodes,
-            @NotNull ArrayColumnTypes valueTypes
+            @NotNull ArrayColumnTypes valueTypes,
+            boolean directStrSupported
     ) throws SqlException {
         groupByFunctionPositions.clear();
 
@@ -85,7 +86,7 @@ public class GroupByUtils {
                     // some functions may need more than one column in values,
                     // so we have them do all the work
                     GroupByFunction func = (GroupByFunction) function;
-                    func.pushValueTypes(valueTypes);
+                    func.initValueTypes(valueTypes, directStrSupported);
                     groupByFunctions.add(func);
                     groupByFunctionPositions.add(node.position);
                 } else {
@@ -258,7 +259,8 @@ public class GroupByUtils {
             @NotNull FunctionParser functionParser,
             @NotNull SqlExecutionContext executionContext,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @NotNull ObjList<GroupByFunction> workerGroupByFunctions
+            @NotNull ObjList<GroupByFunction> workerGroupByFunctions,
+            boolean directStrSupported
     ) throws SqlException {
         final ObjList<QueryColumn> columns = model.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -290,7 +292,7 @@ public class GroupByUtils {
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             final GroupByFunction workerGroupByFunction = workerGroupByFunctions.getQuick(i);
             final GroupByFunction groupByFunction = groupByFunctions.getQuick(i);
-            workerGroupByFunction.setValueIndex(groupByFunction.getValueIndex());
+            workerGroupByFunction.initValueIndex(groupByFunction.getValueIndex(), directStrSupported);
         }
     }
 

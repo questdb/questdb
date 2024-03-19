@@ -92,6 +92,22 @@ public class FirstDirectStrGroupByFunction extends StrFunction implements GroupB
     }
 
     @Override
+    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+        assert directStrSupported;
+        assert arg.supportsDirectStr();
+
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.LONG); // direct string pointer
+        columnTypes.add(ColumnType.INT);  // string length (in chars), TableUtils.NULL_LEN stands for null string
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -118,23 +134,10 @@ public class FirstDirectStrGroupByFunction extends StrFunction implements GroupB
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // row id
-        columnTypes.add(ColumnType.LONG); // direct string pointer
-        columnTypes.add(ColumnType.INT);  // string length (in chars), TableUtils.NULL_LEN stands for null string
-    }
-
-    @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putLong(valueIndex + 1, 0);
         mapValue.putInt(valueIndex + 2, TableUtils.NULL_LEN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

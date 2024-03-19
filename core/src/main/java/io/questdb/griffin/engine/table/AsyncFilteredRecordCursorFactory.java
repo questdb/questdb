@@ -167,6 +167,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public boolean supportsDirectStr() {
+        return true;
+    }
+
+    @Override
     public boolean supportsFilterStealing() {
         return limitLoFunction == null;
     }

@@ -88,6 +88,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_ALL_CONSTRUCTOR = IntersectAllRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
+    private static final int[][] UNION_CAST_MATRIX = new int[][]{
+            {0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 0,},
+            {11, 1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 1,},
+            {11, 11, 2, 3, 11, 5, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 2,},
+            {11, 11, 3, 3, 3, 5, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 3,},
+            {11, 11, 11, 3, 4, 5, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,},
+            {11, 11, 5, 5, 5, 5, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 5,},
+            {11, 11, 6, 6, 6, 6, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 6,},
+            {11, 11, 7, 7, 7, 7, 7, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 7,},
+            {11, 11, 8, 8, 8, 8, 8, 8, 8, 9, 10, 11, 8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 8,},
+            {11, 11, 9, 9, 9, 9, 9, 9, 9, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 9,},
+            {11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 10,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 11, 11, 11, 11, 11, 11,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 13,},
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,},
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,},
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,},
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 18,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 19,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 20,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, 11, 11, 11, 11, 21,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, 11, 11, 11, 22,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, 11, 11, 11, 23,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, 11, 11, 11, 24,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 25, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, 11, 11, 11, 25,},
+            {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, 11, 11, 11, 27,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 28, 11, 11, 28,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 29, 11, 29,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 30, 30,},
+            {0, 1, 2, 3, 11, 5, 6, 7, 8, 9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,},
+    };
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
     private static final ModelOperator backupWhereClauseRef = QueryModel::backupWhereClause;
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> countConstructors = new IntObjHashMap<>();
@@ -117,9 +151,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
-    // a bitset of string/symbol columns forced to be serialised as varchar
-    private final BitSet writeStringAsVarcharA = new BitSet();
-    private final BitSet writeStringAsVarcharB = new BitSet();
     private final LongList prefixes = new LongList();
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
@@ -137,6 +168,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
+    // a bitset of string/symbol columns forced to be serialised as varchar
+    private final BitSet writeStringAsVarcharA = new BitSet();
+    private final BitSet writeStringAsVarcharB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
 
@@ -161,6 +195,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         jitIRMem.truncate();
         this.expressionNodePool = expressionNodePool;
         this.reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
+    }
+
+    public static int getUnionCastType(int typeA, int typeB) {
+        short tagA = ColumnType.tagOf(typeA);
+        short tagB = ColumnType.tagOf(typeB);
+        int geoBitsA = getGeoHashBits(typeA);
+        int geoBitsB = getGeoHashBits(typeB);
+        boolean isGeoHashA = geoBitsA != 0;
+        boolean isGeoHashB = geoBitsB != 0;
+        if (isGeoHashA != isGeoHashB) {
+            // One type is geohash, the other isn't. Since a stringy type can be parsed
+            // into geohash, output geohash when the other type is stringy. If not,
+            // cast both types to string.
+            return isStringyType(typeA) ? typeB
+                    : isStringyType(typeB) ? typeA
+                    : ColumnType.STRING;
+        }
+        if (isGeoHashA) {
+            // Both types are geohash, resolve to the one with less geohash bits.
+            return geoBitsA < geoBitsB ? typeA : typeB;
+        }
+        // Neither type is geohash, use the type cast matrix to resolve.
+        return UNION_CAST_MATRIX[tagA][tagB];
     }
 
     @Override
@@ -325,6 +382,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
 
+    private static boolean isStringyType(int colType) {
+        return colType == ColumnType.VARCHAR || colType == ColumnType.STRING;
+    }
+
+    private static RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) {
+        int columnCount = typesA.getColumnCount();
+        assert columnCount == typesB.getColumnCount();
+
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        for (int i = 0; i < columnCount; i++) {
+            int typeA = typesA.getColumnType(i);
+            int typeB = typesB.getColumnType(i);
+            int targetType = getUnionCastType(typeA, typeB);
+            metadata.add(new TableColumnMetadata(typesA.getColumnName(i), targetType));
+        }
+        return metadata;
+    }
+
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
         int columnIndex;
         if (ast.type == FUNCTION && ast.paramCount == 1 && SqlKeywords.isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
@@ -464,11 +539,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private @Nullable ObjList<Function> compileWorkerFilterConditionally(
+            SqlExecutionContext executionContext,
             @Nullable Function filter,
             int workerCount,
             @Nullable ExpressionNode filterExpr,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
+            RecordMetadata metadata
     ) throws SqlException {
         if (filter != null && !filter.isReadThreadSafe()) {
             assert filterExpr != null;
@@ -485,11 +560,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private @Nullable ObjList<ObjList<GroupByFunction>> compileWorkerGroupByFunctionsConditionally(
+            SqlExecutionContext executionContext,
             QueryModel model,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             int workerCount,
             RecordMetadata metadata,
-            SqlExecutionContext executionContext
+            boolean directStrSupported
     ) throws SqlException {
         boolean threadSafe = true;
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
@@ -509,7 +585,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         functionParser,
                         executionContext,
                         groupByFunctions,
-                        workerGroupByFunctions
+                        workerGroupByFunctions,
+                        directStrSupported
                 );
             }
             return allWorkerGroupByFunctions;
@@ -518,11 +595,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private @Nullable ObjList<ObjList<Function>> compileWorkerKeyFunctionsConditionally(
+            SqlExecutionContext executionContext,
             @NotNull ObjList<Function> keyFunctions,
             int workerCount,
             @NotNull ObjList<ExpressionNode> keyFunctionNodes,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
+            RecordMetadata metadata
     ) throws SqlException {
         boolean threadSafe = true;
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {
@@ -1651,11 +1728,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             filter,
                             reduceTaskFactory,
                             compileWorkerFilterConditionally(
+                                    executionContext,
                                     filter,
                                     executionContext.getSharedWorkerCount(),
                                     filterExpr,
-                                    factory.getMetadata(),
-                                    executionContext
+                                    factory.getMetadata()
                             ),
                             limitLoFunction,
                             limitLoPos,
@@ -1691,11 +1768,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     filter,
                     reduceTaskFactory,
                     compileWorkerFilterConditionally(
+                            executionContext,
                             filter,
                             executionContext.getSharedWorkerCount(),
                             filterExpr,
-                            factory.getMetadata(),
-                            executionContext
+                            factory.getMetadata()
                     ),
                     limitLoFunction,
                     limitLoPos,
@@ -2062,11 +2139,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 filter,
                                 reduceTaskFactory,
                                 compileWorkerFilterConditionally(
+                                        executionContext,
                                         filter,
                                         executionContext.getSharedWorkerCount(),
                                         filterExpr,
-                                        master.getMetadata(),
-                                        executionContext
+                                        master.getMetadata()
                                 ),
                                 null,
                                 0,
@@ -2113,11 +2190,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 filter,
                                 reduceTaskFactory,
                                 compileWorkerFilterConditionally(
+                                        executionContext,
                                         filter,
                                         executionContext.getSharedWorkerCount(),
                                         constFilterExpr,
-                                        master.getMetadata(),
-                                        executionContext
+                                        master.getMetadata()
                                 ),
                                 null,
                                 0,
@@ -2776,7 +2853,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             groupByFunctionPositions,
                             null,
                             null,
-                            valueTypes
+                            valueTypes,
+                            factory.supportsDirectStr()
                     );
                 } catch (Throwable e) {
                     Misc.freeObjList(groupByFunctions);
@@ -2839,7 +2917,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         groupByFunctionPositions,
                         null,
                         null,
-                        valueTypes
+                        valueTypes,
+                        factory.supportsDirectStr()
                 );
             } catch (Throwable e) {
                 Misc.freeObjList(groupByFunctions);
@@ -3564,7 +3643,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         groupByFunctionPositions,
                         keyFunctions,
                         keyFunctionNodes,
-                        valueTypes
+                        valueTypes,
+                        factory.supportsDirectStr()
                 );
             } catch (Throwable e) {
                 Misc.freeObjList(groupByFunctions);
@@ -3641,11 +3721,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 groupByMetadata,
                                 groupByFunctions,
                                 compileWorkerGroupByFunctionsConditionally(
+                                        executionContext,
                                         model,
                                         groupByFunctions,
                                         executionContext.getSharedWorkerCount(),
                                         factory.getMetadata(),
-                                        executionContext
+                                        factory.supportsDirectStr()
                                 ),
                                 valueTypesCopy.getColumnCount(),
                                 compiledFilter,
@@ -3654,11 +3735,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 filter,
                                 reduceTaskFactory,
                                 compileWorkerFilterConditionally(
+                                        executionContext,
                                         filter,
                                         executionContext.getSharedWorkerCount(),
                                         nested.getWhereClause(),
-                                        factory.getMetadata(),
-                                        executionContext
+                                        factory.getMetadata()
                                 ),
                                 executionContext.getSharedWorkerCount()
                         );
@@ -3675,19 +3756,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             valueTypesCopy,
                             groupByFunctions,
                             compileWorkerGroupByFunctionsConditionally(
+                                    executionContext,
                                     model,
                                     groupByFunctions,
                                     executionContext.getSharedWorkerCount(),
                                     factory.getMetadata(),
-                                    executionContext
+                                    factory.supportsDirectStr()
                             ),
                             keyFunctions,
                             compileWorkerKeyFunctionsConditionally(
+                                    executionContext,
                                     keyFunctions,
                                     executionContext.getSharedWorkerCount(),
                                     keyFunctionNodes,
-                                    factory.getMetadata(),
-                                    executionContext
+                                    factory.getMetadata()
                             ),
                             recordFunctions,
                             compiledFilter,
@@ -3696,11 +3778,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             filter,
                             reduceTaskFactory,
                             compileWorkerFilterConditionally(
+                                    executionContext,
                                     filter,
                                     executionContext.getSharedWorkerCount(),
                                     nested.getWhereClause(),
-                                    factory.getMetadata(),
-                                    executionContext
+                                    factory.getMetadata()
                             ),
                             executionContext.getSharedWorkerCount()
                     );
@@ -5121,15 +5203,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    private void guardAgainstDotsInOrderByAdvice(QueryModel model) throws SqlException {
-        ObjList<ExpressionNode> advice = model.getOrderByAdvice();
-        for (int i = 0, n = advice.size(); i < n; i++) {
-            if (Chars.indexOf(advice.getQuick(i).token, '.') > -1) {
-                throw SqlException.$(advice.getQuick(i).position, "cannot use table-prefixed names in order by");
-            }
-        }
-    }
-
     private RecordCursorFactory generateUnionAllFactory(
             QueryModel model,
             SqlExecutionContext executionContext,
@@ -5255,6 +5328,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return timestampIndex;
         }
         return metadata.getTimestampIndex();
+    }
+
+    private void guardAgainstDotsInOrderByAdvice(QueryModel model) throws SqlException {
+        ObjList<ExpressionNode> advice = model.getOrderByAdvice();
+        for (int i = 0, n = advice.size(); i < n; i++) {
+            if (Chars.indexOf(advice.getQuick(i).token, '.') > -1) {
+                throw SqlException.$(advice.getQuick(i).position, "cannot use table-prefixed names in order by");
+            }
+        }
     }
 
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
@@ -5492,6 +5574,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return indices;
     }
 
+    // UNION_CAST_MATRIX captures all the combinations of "left" and "right" column types
+    // in a set operation (UNION etc.), providing the desired output type. Since there are many
+    // special cases in the conversion logic, we decided to use a matrix of literals instead.
+    // The matrix doesn't cover the geohash types since they have a more complex structure.
+    // Initially, we used the code below to print out the values for the matrix:
+    //
+//    public static void main(String[] args) {
+//        for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
+//            System.out.print("{ ");
+//            for (int typeB = 0; typeB <= ColumnType.NULL; typeB++) {
+//                int outType = (isGeoHashType(typeA) || isGeoHashType(typeB)) ? -1 : castToType(typeA, typeB);
+//                System.out.format("%2d, ", outType);
+//            }
+//            System.out.println("},");
+//        }
+//    }
+//    private static int castToType(int typeA, int typeB) {
+//        return (typeA == typeB && typeA != ColumnType.SYMBOL) ? typeA
+//                : (isStringyType(typeA) && isStringyType(typeB)) ? ColumnType.STRING
+//                : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
+//                : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
+//                : (isToSameOrWider(typeB, typeA) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) ? typeA
+//                : (isToSameOrWider(typeA, typeB) && typeB != ColumnType.SYMBOL && typeB != ColumnType.CHAR) ? typeB
+//                : (typeA == ColumnType.VARCHAR || typeB == ColumnType.VARCHAR) ? ColumnType.VARCHAR
+//                : ColumnType.STRING;
+//    }
+//    private static boolean isParseableType(int colType) {
+//        return colType == ColumnType.TIMESTAMP || colType == ColumnType.LONG256;
+//    }
+//    private static boolean isGeoHashType(int colType) {
+//        return colType >= ColumnType.GEOBYTE && colType <= ColumnType.GEOLONG;
+//    }
+
     private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {
         if (masterFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
             throw SqlException.$(position, "left side of time series join doesn't have ASC timestamp order");
@@ -5534,115 +5649,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return ColumnType.isString(columnType) ? Record.GET_STR : Record.GET_SYM;
-    }
-
-    // UNION_CAST_MATRIX captures all the combinations of "left" and "right" column types
-    // in a set operation (UNION etc.), providing the desired output type. Since there are many
-    // special cases in the conversion logic, we decided to use a matrix of literals instead.
-    // The matrix doesn't cover the geohash types since they have a more complex structure.
-    // Initially, we used the code below to print out the values for the matrix:
-    //
-//    public static void main(String[] args) {
-//        for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
-//            System.out.print("{ ");
-//            for (int typeB = 0; typeB <= ColumnType.NULL; typeB++) {
-//                int outType = (isGeoHashType(typeA) || isGeoHashType(typeB)) ? -1 : castToType(typeA, typeB);
-//                System.out.format("%2d, ", outType);
-//            }
-//            System.out.println("},");
-//        }
-//    }
-//    private static int castToType(int typeA, int typeB) {
-//        return (typeA == typeB && typeA != ColumnType.SYMBOL) ? typeA
-//                : (isStringyType(typeA) && isStringyType(typeB)) ? ColumnType.STRING
-//                : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
-//                : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
-//                : (isToSameOrWider(typeB, typeA) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) ? typeA
-//                : (isToSameOrWider(typeA, typeB) && typeB != ColumnType.SYMBOL && typeB != ColumnType.CHAR) ? typeB
-//                : (typeA == ColumnType.VARCHAR || typeB == ColumnType.VARCHAR) ? ColumnType.VARCHAR
-//                : ColumnType.STRING;
-//    }
-//    private static boolean isParseableType(int colType) {
-//        return colType == ColumnType.TIMESTAMP || colType == ColumnType.LONG256;
-//    }
-//    private static boolean isGeoHashType(int colType) {
-//        return colType >= ColumnType.GEOBYTE && colType <= ColumnType.GEOLONG;
-//    }
-
-    private static final int[][] UNION_CAST_MATRIX = new int[][] {
-            {  0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  0, },
-            { 11,  1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  1, },
-            { 11, 11,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  2, },
-            { 11, 11,  3,  3,  3,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  3, },
-            { 11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, },
-            { 11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  5, },
-            { 11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  6, },
-            { 11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  7, },
-            { 11, 11,  8,  8,  8,  8,  8,  8,  8,  9, 10, 11,  8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  8, },
-            { 11, 11,  9,  9,  9,  9,  9,  9,  9,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11,  9, },
-            { 11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 10, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 11, 11, 11, 11, 11, 11, },
-            { 11, 11, 11, 11, 11, 11, 11, 11,  8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 13, },
-            { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, },
-            { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, },
-            { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, },
-            { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 18, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 19, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 20, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, 11, 11, 11, 11, 21, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, 11, 11, 11, 22, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, 11, 11, 11, 23, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, 11, 11, 11, 24, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 25, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, 11, 11, 11, 25, },
-            { 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, 11, 11, 11, 27, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 28, 11, 11, 28, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 29, 11, 29, },
-            { 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 30, 30, },
-            {  0,  1,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, },
-    };
-
-    public static int getUnionCastType(int typeA, int typeB) {
-        short tagA = ColumnType.tagOf(typeA);
-        short tagB = ColumnType.tagOf(typeB);
-        int geoBitsA = getGeoHashBits(typeA);
-        int geoBitsB = getGeoHashBits(typeB);
-        boolean isGeoHashA = geoBitsA != 0;
-        boolean isGeoHashB = geoBitsB != 0;
-        if (isGeoHashA != isGeoHashB) {
-            // One type is geohash, the other isn't. Since a stringy type can be parsed
-            // into geohash, output geohash when the other type is stringy. If not,
-            // cast both types to string.
-            return isStringyType(typeA) ? typeB
-                    : isStringyType(typeB) ? typeA
-                    : ColumnType.STRING;
-        }
-        if (isGeoHashA) {
-            // Both types are geohash, resolve to the one with less geohash bits.
-            return geoBitsA < geoBitsB ? typeA : typeB;
-        }
-        // Neither type is geohash, use the type cast matrix to resolve.
-        return UNION_CAST_MATRIX[tagA][tagB];
-    }
-
-    private static boolean isStringyType(int colType) {
-        return colType == ColumnType.VARCHAR || colType == ColumnType.STRING;
-    }
-
-    private static RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) {
-        int columnCount = typesA.getColumnCount();
-        assert columnCount == typesB.getColumnCount();
-
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0; i < columnCount; i++) {
-            int typeA = typesA.getColumnType(i);
-            int typeB = typesB.getColumnType(i);
-            int targetType = getUnionCastType(typeA, typeB);
-            metadata.add(new TableColumnMetadata(typesA.getColumnName(i), targetType));
-        }
-        return metadata;
     }
 
     // used in tests

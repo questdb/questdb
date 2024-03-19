@@ -91,7 +91,12 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
     }
@@ -104,11 +109,6 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

@@ -74,6 +74,17 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
+    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.DATE);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -93,19 +104,8 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.DATE);
-    }
-
-    @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDate(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

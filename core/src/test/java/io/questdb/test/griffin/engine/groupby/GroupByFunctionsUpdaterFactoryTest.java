@@ -107,6 +107,14 @@ public class GroupByFunctionsUpdaterFactoryTest {
         }
 
         @Override
+        public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        }
+
+        @Override
+        public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+        }
+
+        @Override
         public void merge(MapValue destValue, MapValue srcValue) {
             long value = srcValue.getLong(0);
             destValue.putLong(0, value);
@@ -114,17 +122,9 @@ public class GroupByFunctionsUpdaterFactoryTest {
         }
 
         @Override
-        public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        }
-
-        @Override
         public void setNull(MapValue mapValue) {
             mapValue.putLong(0, -1);
             mapValue.putLong(1, -1);
-        }
-
-        @Override
-        public void setValueIndex(int valueIndex) {
         }
 
         @Override

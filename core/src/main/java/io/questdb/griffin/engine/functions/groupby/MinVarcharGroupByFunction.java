@@ -57,11 +57,6 @@ public final class MinVarcharGroupByFunction extends VarcharFunction implements 
     }
 
     @Override
-    public boolean supportsParallelism() {
-        return UnaryFunction.super.supportsParallelism();
-    }
-
-    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final Utf8Sequence val = arg.getVarcharA(record);
         if (val == null) {
@@ -103,12 +98,43 @@ public final class MinVarcharGroupByFunction extends VarcharFunction implements 
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        final long ptr = rec.getLong(valueIndex);
+        if (ptr != 0) {
+            sinkA.of(ptr);
+            utf8Sink.put(sinkA);
+        }
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        final long ptr = rec.getLong(valueIndex);
+        return ptr == 0 ? null : sinkA.of(ptr);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        return getVarcharA(rec);
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
     public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
         return false;
     }
 
@@ -130,12 +156,6 @@ public final class MinVarcharGroupByFunction extends VarcharFunction implements 
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-    }
-
-    @Override
     public void setAllocator(GroupByAllocator allocator) {
         sinkA.setAllocator(allocator);
         sinkB.setAllocator(allocator);
@@ -147,28 +167,8 @@ public final class MinVarcharGroupByFunction extends VarcharFunction implements 
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
-    }
-
-    @Override
-    public Utf8Sequence getVarcharA(Record rec) {
-        final long ptr = rec.getLong(valueIndex);
-        return ptr == 0 ? null : sinkA.of(ptr);
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        final long ptr = rec.getLong(valueIndex);
-        if (ptr != 0) {
-            sinkA.of(ptr);
-            utf8Sink.put(sinkA);
-        }
-    }
-
-    @Override
-    public Utf8Sequence getVarcharB(Record rec) {
-        return getVarcharA(rec);
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override

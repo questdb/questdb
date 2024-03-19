@@ -78,6 +78,17 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
+    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.IPv4);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -97,12 +108,6 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.IPv4);
-    }
-
-    @Override
     public void setInt(MapValue mapValue, int value) {
         mapValue.putInt(valueIndex, value);
     }
@@ -110,11 +115,6 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putInt(valueIndex, Numbers.IPv4_NULL);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

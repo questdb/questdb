@@ -76,6 +76,18 @@ class FirstGeoHashGroupByFunctionInt extends GeoIntFunction implements GroupByFu
     }
 
     @Override
+    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.INT);  // value
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return UnaryFunction.super.isReadThreadSafe();
     }
@@ -91,13 +103,6 @@ class FirstGeoHashGroupByFunctionInt extends GeoIntFunction implements GroupByFu
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // row id
-        columnTypes.add(ColumnType.INT);  // value
-    }
-
-    @Override
     public void setInt(MapValue mapValue, int value) {
         // This method is used to define interpolated points and to init
         // an empty value, so it's ok to reset the row id field here.
@@ -108,11 +113,6 @@ class FirstGeoHashGroupByFunctionInt extends GeoIntFunction implements GroupByFu
     @Override
     public void setNull(MapValue mapValue) {
         setInt(mapValue, GeoHashes.INT_NULL);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

@@ -112,6 +112,18 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
+    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -119,13 +131,6 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     @Override
     public boolean isReadThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.INT);
     }
 
     @Override
@@ -141,11 +146,6 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

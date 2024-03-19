@@ -167,6 +167,14 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+        }
+
+        @Override
+        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
+        }
+
+        @Override
         public CharSequence getStrA(Record rec) {
             return null;
         }
@@ -174,14 +182,6 @@ public class GroupByFunctionTest {
         @Override
         public CharSequence getStrA(Record rec, int arrayIndex) {
             return null;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
         }
 
         @Override
@@ -245,15 +245,15 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        }
+
+        @Override
+        public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
         }
 
         @Override
         public void setNull(MapValue mapValue) {
-        }
-
-        @Override
-        public void setValueIndex(int valueIndex) {
         }
     };
 

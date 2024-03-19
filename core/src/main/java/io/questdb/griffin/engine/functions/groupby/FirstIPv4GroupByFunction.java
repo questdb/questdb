@@ -75,6 +75,18 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
+    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.IPv4); // value
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -95,13 +107,6 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // row id
-        columnTypes.add(ColumnType.IPv4); // value
-    }
-
-    @Override
     public void setInt(MapValue mapValue, int value) {
         // This method is used to define interpolated points and to init
         // an empty value, so it's ok to reset the row id field here.
@@ -112,11 +117,6 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         setInt(mapValue, Numbers.IPv4_NULL);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

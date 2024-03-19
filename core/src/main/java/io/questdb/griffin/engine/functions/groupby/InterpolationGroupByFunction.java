@@ -214,16 +214,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public CharSequence getStrA(Record rec) {
-        return wrappedFunction.getStrA(rec);
-    }
-
-    @Override
-    public CharSequence getStrA(Record rec, int arrayIndex) {
-        return wrappedFunction.getStrA(rec, arrayIndex);
-    }
-
-    @Override
     public void getStr(Record rec, Utf16Sink utf16Sink) {
         wrappedFunction.getStr(rec, utf16Sink);
     }
@@ -231,6 +221,16 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     @Override
     public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
         wrappedFunction.getStr(rec, sink, arrayIndex);
+    }
+
+    @Override
+    public CharSequence getStrA(Record rec) {
+        return wrappedFunction.getStrA(rec);
+    }
+
+    @Override
+    public CharSequence getStrA(Record rec, int arrayIndex) {
+        return wrappedFunction.getStrA(rec, arrayIndex);
     }
 
     @Override
@@ -294,8 +294,13 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        wrappedFunction.pushValueTypes(columnTypes);
+    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        wrappedFunction.initValueIndex(valueIndex, directStrSupported);
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+        wrappedFunction.initValueTypes(columnTypes, directStrSupported);
     }
 
     @Override
@@ -305,11 +310,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     public void setTarget(Record target) {
         this.target = target;
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        wrappedFunction.setValueIndex(valueIndex);
     }
 
     public void startInterpolating(long startTime, long currentTime, long endTime) {

@@ -119,6 +119,16 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        utf8Sink.put(getVarcharA(rec));
+    }
+
+    @Override
     public @Nullable Utf8Sequence getVarcharA(Record rec) {
         final boolean nullValue = rec.getBool(valueIndex + 1);
         if (nullValue) {
@@ -128,18 +138,20 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
     }
 
     @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        utf8Sink.put(getVarcharA(rec));
-    }
-
-    @Override
     public @Nullable Utf8Sequence getVarcharB(Record rec) {
         return getVarcharA(rec);
     }
 
     @Override
-    public int getValueIndex() {
-        return valueIndex;
+    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.INT); // sink index
+        columnTypes.add(ColumnType.BOOLEAN); // null flag
     }
 
     @Override
@@ -153,20 +165,8 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT); // sink index
-        columnTypes.add(ColumnType.BOOLEAN); // null flag
-    }
-
-    @Override
     public void setNull(MapValue mapValue) {
         mapValue.putBool(valueIndex + 1, true);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

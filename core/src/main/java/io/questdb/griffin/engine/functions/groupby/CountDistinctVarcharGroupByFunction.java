@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.*;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Utf8SequenceHashSet;
 import io.questdb.std.str.Utf8Sequence;
 
 public class CountDistinctVarcharGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
@@ -110,6 +112,18 @@ public class CountDistinctVarcharGroupByFunction extends LongFunction implements
     }
 
     @Override
+    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -117,13 +131,6 @@ public class CountDistinctVarcharGroupByFunction extends LongFunction implements
     @Override
     public boolean isReadThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.INT);
     }
 
     @Override
@@ -139,11 +146,6 @@ public class CountDistinctVarcharGroupByFunction extends LongFunction implements
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override
