@@ -120,6 +120,26 @@ public class FirstStrGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public boolean isScalar() {
+            return false;
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            delegate.merge(destValue, srcValue);
+        }
+
+        @Override
         public void setAllocator(GroupByAllocator allocator) {
             delegate.setAllocator(allocator);
         }
@@ -132,6 +152,11 @@ public class FirstStrGroupByFunctionFactory implements FunctionFactory {
         @Override
         public boolean supportsParallelism() {
             return UnaryFunction.super.supportsParallelism();
+        }
+
+        @Override
+        public void toTop() {
+            UnaryFunction.super.toTop();
         }
 
         private void initDelegate(boolean directStrSupported) {
