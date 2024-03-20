@@ -1586,7 +1586,9 @@ public class SqlParser {
             atomicSpecified = true;
             model.setBatchSize(-1);
             tok = tok(lexer, "into");
-        } else if (SqlKeywords.isBatchKeyword(tok)) {
+        }
+
+        if (SqlKeywords.isBatchKeyword(tok)) {
             long val = expectLong(lexer);
             if (val > 0) {
                 model.setBatchSize(val);
@@ -1600,10 +1602,6 @@ public class SqlParser {
                 model.setO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
                 tok = tok(lexer, "into");
             }
-        } else if (SqlKeywords.isIntoKeyword(tok)) {
-            // noop, needed to stop fall through to else
-        } else {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected 'atomic' or 'into' or 'batch'");
         }
 
         if (!SqlKeywords.isIntoKeyword(tok)) {

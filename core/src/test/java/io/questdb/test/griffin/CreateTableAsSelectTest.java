@@ -50,12 +50,12 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampAscOrderBatched() throws Exception {
-        createPartitionedTableAsSelectWithOrderBy("order by ts asc", 1, "");
+        createPartitionedTableAsSelectWithOrderBy("order by ts asc", 54, "");
     }
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampAscOrderBatchedAndLagged() throws Exception {
-        createPartitionedTableAsSelectWithOrderBy("order by ts asc", 1, "1000ms");
+        createPartitionedTableAsSelectWithOrderBy("order by ts asc", 26, "1000ms");
     }
 
     @Test
@@ -65,12 +65,12 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampDescOrderBatched() throws Exception {
-        createPartitionedTableAsSelectWithOrderBy("order by ts desc", 1, "");
+        createPartitionedTableAsSelectWithOrderBy("order by ts desc", 54, "");
     }
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampDescOrderBatchedAndLagged() throws Exception {
-        createPartitionedTableAsSelectWithOrderBy("order by ts desc", 1, "1000ms");
+        createPartitionedTableAsSelectWithOrderBy("order by ts desc", 26, "1000ms");
     }
 
     @Test
@@ -80,12 +80,12 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampNoOrderBatched() throws Exception {
-        createPartitionedTableAsSelectWithOrderBy("", 1, "");
+        createPartitionedTableAsSelectWithOrderBy("", 54, "");
     }
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampNoOrderBatchedAndLagged() throws Exception {
-        createPartitionedTableAsSelectWithOrderBy("", 1, "1000ms");
+        createPartitionedTableAsSelectWithOrderBy("", 26, "1000ms");
     }
 
     @Test

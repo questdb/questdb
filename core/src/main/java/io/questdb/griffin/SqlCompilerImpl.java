@@ -3310,7 +3310,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
                         RecordCursor cursor = reader.getCursor();
                         //statement/query timeout value  is most likely too small for backup operation
-                        copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier, -1, 0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                        copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier, configuration.getCreateTableModelBatchSize(), configuration.getO3MaxLag(), SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
                         backupWriter.commit();
                     }
                 } // release reader lock
