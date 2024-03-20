@@ -27,11 +27,7 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectCharSequence;
-import io.questdb.std.str.DirectString;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 
 // contiguous readable
@@ -46,7 +42,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
     private final DirectUtf8String utf8viewA = new DirectUtf8String();
     private final DirectUtf8String utf8viewB = new DirectUtf8String();
-    protected int fd = -1;
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
@@ -55,7 +50,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     public long addressOf(long offset) {
         offset -= shiftAddressRight;
-        assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        assert offset <= size : "offset=" + offset + ", size=" + size;
         return pageAddress + offset;
     }
 
@@ -73,10 +68,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     @Override
     public DirectCharSequence getDirectStr(long offset) {
         return getStr(offset, csviewA);
-    }
-
-    public int getFd() {
-        return fd;
     }
 
     public FilesFacade getFilesFacade() {
