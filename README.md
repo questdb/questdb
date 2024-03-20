@@ -121,8 +121,8 @@ our multi-path [quickstart repository](https://github.com/questdb/questdb-quicks
 
 ## How QuestDB compares to other open source TSDBs
 
-Checkout [our article](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
-which compares open source time series databases across functionality, maturity and performance:
+Checkout [our benchmark blog post](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
+which compares QuestDB and InfluxDB across functionality, maturity and performance.
 
 <div align="center">
     <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
