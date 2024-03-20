@@ -3486,7 +3486,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         try {
             boolean designatedTimestamp = columnIndex == timestampColumnIndex;
-
             MemoryCR o3SrcDataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
             MemoryCR o3srcAuxMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
             MemoryMA dstDataMem = columns.get(getPrimaryColumnIndex(columnIndex));
