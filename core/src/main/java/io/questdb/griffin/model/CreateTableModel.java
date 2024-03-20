@@ -42,6 +42,8 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private long batchO3MaxLag = -1;
+    private long batchSize = -1;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableName;
     private int maxUncommittedRows;
@@ -52,8 +54,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private ExpressionNode timestamp;
     private CharSequence volumeAlias;
     private boolean walEnabled;
-    private long batchSize = -1;
-    private long batchO3MaxLag = -1;
 
     private CreateTableModel() {
 
@@ -108,6 +108,14 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         batchSize = -1;
     }
 
+    public long getBatchO3MaxLag() {
+        return batchO3MaxLag;
+    }
+
+    public long getBatchSize() {
+        return batchSize;
+    }
+
     public CharSequenceObjHashMap<ColumnCastModel> getColumnCastModels() {
         return columnCastModels;
     }
@@ -157,10 +165,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     @Override
     public long getO3MaxLag() {
         return o3MaxLag;
-    }
-
-    public long getBatchO3MaxLag() {
-        return batchO3MaxLag;
     }
 
     @Override
@@ -231,6 +235,14 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return walEnabled;
     }
 
+    public void setBatchO3MaxLag(long batchO3MaxLag) {
+        this.batchO3MaxLag = batchO3MaxLag;
+    }
+
+    public void setBatchSize(long batchSize) {
+        this.batchSize = batchSize;
+    }
+
     public void setDedupKeyFlag(int index) {
         int flagsIndex = index * 2 + 1;
         int flags = getLowAt(flagsIndex) | COLUMN_FLAG_DEDUP_KEY;
@@ -263,10 +275,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public void setO3MaxLag(long o3MaxLag) {
         this.o3MaxLag = o3MaxLag;
-    }
-
-    public void setBatchO3MaxLag(long batchO3MaxLag) {
-        this.batchO3MaxLag = batchO3MaxLag;
     }
 
     public void setPartitionBy(ExpressionNode partitionBy) {
@@ -423,13 +431,5 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         } else {
             columnBits.setQuick(index, Numbers.encodeLowHighInts(flags & ~COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
         }
-    }
-
-    public long getBatchSize() {
-        return batchSize;
-    }
-
-    public void setBatchSize(long batchSize) {
-        this.batchSize = batchSize;
     }
 }

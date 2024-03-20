@@ -550,8 +550,7 @@ public class SqlParser {
                 model.setBatchO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
                 expectTok(lexer, "table");
                 tok = tok(lexer, "table name or 'if'");
-            }
-            else {
+            } else {
                 tok = tok(lexer, "table name or 'if'");
             }
         } else if (SqlKeywords.isTableKeyword(tok)) {

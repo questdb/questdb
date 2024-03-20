@@ -186,13 +186,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getCreateTableModelPoolCapacity() {
-        return getDelegate().getCreateTableModelPoolCapacity();
+    public long getCreateTableModelBatchSize() {
+        return getDelegate().getCreateTableModelBatchSize();
     }
 
     @Override
-    public long getCreateTableModelBatchSize() {
-        return getDelegate().getCreateTableModelBatchSize();
+    public int getCreateTableModelPoolCapacity() {
+        return getDelegate().getCreateTableModelPoolCapacity();
     }
 
     @Override
@@ -341,13 +341,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getInsertModelPoolCapacity() {
-        return getDelegate().getInsertModelPoolCapacity();
+    public long getInsertModelBatchSize() {
+        return getDelegate().getInsertModelBatchSize();
     }
 
     @Override
-    public long getInsertModelBatchSize() {
-        return getDelegate().getInsertModelBatchSize();
+    public int getInsertModelPoolCapacity() {
+        return getDelegate().getInsertModelPoolCapacity();
     }
 
     @Override

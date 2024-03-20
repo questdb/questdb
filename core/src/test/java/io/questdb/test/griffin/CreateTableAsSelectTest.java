@@ -49,11 +49,6 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreatePartitionedTableAtomicAsSelectTimestampAscOrder() throws Exception {
-        createPartitionedTableAtomicAsSelectWithOrderBy("order by ts asc");
-    }
-
-    @Test
     public void testCreatePartitionedTableAsSelectTimestampAscOrderBatched() throws Exception {
         createPartitionedTableAsSelectWithOrderBy("order by ts asc", 1, "");
     }
@@ -66,11 +61,6 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     @Test
     public void testCreatePartitionedTableAsSelectTimestampDescOrder() throws Exception {
         createPartitionedTableAsSelectWithOrderBy("order by ts desc");
-    }
-
-    @Test
-    public void testCreatePartitionedTableAtomicAsSelectTimestampDescOrder() throws Exception {
-        createPartitionedTableAtomicAsSelectWithOrderBy("order by ts desc");
     }
 
     @Test
@@ -99,17 +89,18 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreatePartitionedTableAtomicAsSelectTimestampNoOrder() throws Exception {
-        createPartitionedTableAtomicAsSelectWithOrderBy("");
+    public void testCreatePartitionedTableAtomicAsSelectTimestampAscOrder() throws Exception {
+        createPartitionedTableAtomicAsSelectWithOrderBy("order by ts asc");
     }
 
-    private void createSrcTable() throws SqlException {
-        ddl("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
-        insert("insert into src values (0, 0);");
-        insert("insert into src values (10000, 1);");
-        insert("insert into src values (20000, 2);");
-        insert("insert into src values (30000, 3);");
-        insert("insert into src values (40000, 4);");
+    @Test
+    public void testCreatePartitionedTableAtomicAsSelectTimestampDescOrder() throws Exception {
+        createPartitionedTableAtomicAsSelectWithOrderBy("order by ts desc");
+    }
+
+    @Test
+    public void testCreatePartitionedTableAtomicAsSelectTimestampNoOrder() throws Exception {
+        createPartitionedTableAtomicAsSelectWithOrderBy("");
     }
 
     private void createPartitionedTableAsSelectWithOrderBy(String orderByClause) throws Exception {
@@ -190,5 +181,14 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                     true
             );
         });
+    }
+
+    private void createSrcTable() throws SqlException {
+        ddl("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
+        insert("insert into src values (0, 0);");
+        insert("insert into src values (10000, 1);");
+        insert("insert into src values (20000, 2);");
+        insert("insert into src values (30000, 3);");
+        insert("insert into src values (40000, 4);");
     }
 }

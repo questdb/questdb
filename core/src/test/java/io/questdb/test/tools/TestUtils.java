@@ -1788,7 +1788,7 @@ public final class TestUtils {
             case ColumnType.STRING:
                 CharSequence str = rr.getStrA(col);
                 Assert.assertTrue(str == null || str.length() == 1);
-                return str != null? str.charAt(0) : 0;
+                return str != null ? str.charAt(0) : 0;
             case ColumnType.VARCHAR:
                 Utf8Sequence vc = rr.getVarcharA(col);
                 Assert.assertTrue(vc == null || vc.size() == 1);

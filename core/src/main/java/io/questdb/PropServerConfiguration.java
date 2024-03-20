@@ -257,8 +257,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlCopyModelPoolCapacity;
     private final int sqlCountDistinctCapacity;
     private final double sqlCountDistinctLoadFactor;
-    private final int sqlCreateTableModelPoolCapacity;
     private final long sqlCreateTableModelBatchSize;
+    private final int sqlCreateTableModelPoolCapacity;
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
     private final int sqlDoubleToStrCastScale;
@@ -274,8 +274,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlHashJoinLightValuePageSize;
     private final int sqlHashJoinValueMaxPages;
     private final int sqlHashJoinValuePageSize;
-    private final int sqlInsertModelPoolCapacity;
     private final long sqlInsertModelBatchSize;
+    private final int sqlInsertModelPoolCapacity;
     private final int sqlJitBindVarsMemoryMaxPages;
     private final int sqlJitBindVarsMemoryPageSize;
     private final boolean sqlJitDebugEnabled;
@@ -2026,13 +2026,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getCreateTableModelPoolCapacity() {
-            return sqlCreateTableModelPoolCapacity;
+        public long getCreateTableModelBatchSize() {
+            return sqlCreateTableModelBatchSize;
         }
 
         @Override
-        public long getCreateTableModelBatchSize() {
-            return sqlCreateTableModelBatchSize;
+        public int getCreateTableModelPoolCapacity() {
+            return sqlCreateTableModelPoolCapacity;
         }
 
         @Override
@@ -2181,13 +2181,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getInsertModelPoolCapacity() {
-            return sqlInsertModelPoolCapacity;
+        public long getInsertModelBatchSize() {
+            return sqlInsertModelBatchSize;
         }
 
         @Override
-        public long getInsertModelBatchSize() {
-            return sqlInsertModelBatchSize;
+        public int getInsertModelPoolCapacity() {
+            return sqlInsertModelPoolCapacity;
         }
 
         @Override
@@ -3447,11 +3447,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isUseLegacyStringDefault() {
-            return useLegacyStringDefault;
-        }
-
-        @Override
         public int getDefaultPartitionBy() {
             return lineTcpDefaultPartitionBy;
         }
@@ -3494,6 +3489,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
+        }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
         }
     }
 
@@ -3576,11 +3576,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public short getDefaultColumnTypeForInteger() {
             return integerDefaultColumnType;
-        }
-
-        @Override
-        public boolean isUseLegacyStringDefault() {
-            return useLegacyStringDefault;
         }
 
         @Override
@@ -3691,6 +3686,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
+        }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
         }
     }
 
@@ -3901,6 +3901,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
+        }
+
+        @Override
         public boolean ownThread() {
             return lineUdpOwnThread;
         }
@@ -3908,11 +3913,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int ownThreadAffinity() {
             return lineUdpOwnThreadAffinity;
-        }
-
-        @Override
-        public boolean isUseLegacyStringDefault() {
-            return useLegacyStringDefault;
         }
     }
 

@@ -194,13 +194,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getCreateTableModelPoolCapacity() {
-        return 32;
+    public long getCreateTableModelBatchSize() {
+        return 1_000_000;
     }
 
     @Override
-    public long getCreateTableModelBatchSize() {
-        return 1_000_000;
+    public int getCreateTableModelPoolCapacity() {
+        return 32;
     }
 
     @Override
@@ -239,6 +239,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getDefaultSeqPartTxnCount() {
+        return 0;
+    }
+
+    @Override
     public boolean getDefaultSymbolCacheFlag() {
         return true;
     }
@@ -246,11 +251,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getDefaultSymbolCapacity() {
         return 128;
-    }
-
-    @Override
-    public int getDefaultSeqPartTxnCount() {
-        return 0;
     }
 
     @Override
@@ -349,13 +349,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getInsertModelPoolCapacity() {
-        return 8;
+    public long getInsertModelBatchSize() {
+        return 1_000_000;
     }
 
     @Override
-    public long getInsertModelBatchSize() {
-        return 1_000_000;
+    public int getInsertModelPoolCapacity() {
+        return 8;
     }
 
     @Override
@@ -535,13 +535,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSampleByIndexSearchPageSize() {
-        return 0;
+    public boolean getSampleByDefaultAlignmentCalendar() {
+        return true;
     }
 
     @Override
-    public boolean getSampleByDefaultAlignmentCalendar() {
-        return true;
+    public int getSampleByIndexSearchPageSize() {
+        return 0;
     }
 
     @Override

@@ -1123,6 +1123,21 @@ public class O3FailureTest extends AbstractO3Test {
         return Chars.toString(sink);
     }
 
+    private static void putRndStr(Rnd rnd, RecordMetadata metadata, TableWriter.Row r, int col, int len, Utf8StringSink sink) {
+        switch (metadata.getColumnType(col)) {
+            case ColumnType.STRING:
+                r.putStr(col, rnd.nextChars(len));
+                break;
+            case ColumnType.VARCHAR:
+                sink.clear();
+                rnd.nextUtf8Str(len, sink);
+                r.putVarchar(col, sink);
+                break;
+            default:
+                throw new UnsupportedOperationException();
+        }
+    }
+
     private static void testAllocateFailsAtO3OpenColumn0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -3623,21 +3638,6 @@ public class O3FailureTest extends AbstractO3Test {
                         "2010-02-14T23:52:59.000000Z\t40320\n"
         );
 
-    }
-
-    private static void putRndStr(Rnd rnd, RecordMetadata metadata, TableWriter.Row r, int col, int len, Utf8StringSink sink) {
-        switch (metadata.getColumnType(col)) {
-            case ColumnType.STRING:
-                r.putStr(col, rnd.nextChars(len));
-                break;
-            case ColumnType.VARCHAR:
-                sink.clear();
-                rnd.nextUtf8Str(len, sink);
-                r.putVarchar(col, sink);
-                break;
-            default:
-                throw new UnsupportedOperationException();
-        }
     }
 
     private static void testVarColumnStress(
