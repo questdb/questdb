@@ -28,35 +28,37 @@ import io.questdb.MessageBus;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
-import io.questdb.tasks.O3CallbackTask;
+import io.questdb.tasks.ColumnTask;
 import org.jetbrains.annotations.NotNull;
 
-public class O3CallbackJob extends AbstractQueueConsumerJob<O3CallbackTask> {
-    public O3CallbackJob(MessageBus messageBus) {
-        super(messageBus.getO3CallbackQueue(), messageBus.getO3CallbackSubSeq());
+public class ColumnTaskJob extends AbstractQueueConsumerJob<ColumnTask> {
+    public ColumnTaskJob(MessageBus messageBus) {
+        super(messageBus.getColumnTaskQueue(), messageBus.getColumnTaskSubSeq());
     }
 
-    public static void runCallbackWithCol(O3CallbackTask task, long cursor, @NotNull Sequence subSeq) {
+    public static void processColumnTask(ColumnTask task, long cursor, @NotNull Sequence subSeq) {
         final int columnIndex = task.getColumnIndex();
         final int columnType = task.getColumnType();
-        final long mergedTimestampsAddr = task.getMergedTimestampsAddr();
-        final long mergeCount = task.getMergeCount();
-        final long row1Count = task.getRow1Count();
-        final long row2Lo = task.getRow2Lo();
-        final long row2Hi = task.getRow2Hi();
-        final TableWriter.O3ColumnUpdateMethod callbackMethod = task.getWriterCallbackMethod();
+        final int timestampColumnIndex = task.getTimestampColumnIndex();
+        final long lon0 = task.getLong0();
+        final long long1 = task.getLong1();
+        final long long2 = task.getLong2();
+        final long long3 = task.getLong3();
+        final long long4 = task.getLong4();
+        final TableWriter.ColumnTaskHandler taskHandler = task.getTaskHandler();
         final CountDownLatchSPI countDownLatchSPI = task.getCountDownLatchSPI();
         subSeq.done(cursor);
 
         try {
-            callbackMethod.run(
+            taskHandler.run(
                     columnIndex,
                     columnType,
-                    mergedTimestampsAddr,
-                    mergeCount,
-                    row1Count,
-                    row2Lo,
-                    row2Hi
+                    timestampColumnIndex,
+                    lon0,
+                    long1,
+                    long2,
+                    long3,
+                    long4
             );
         } finally {
             countDownLatchSPI.countDown();
@@ -65,8 +67,8 @@ public class O3CallbackJob extends AbstractQueueConsumerJob<O3CallbackTask> {
 
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
-        O3CallbackTask task = queue.get(cursor);
-        runCallbackWithCol(task, cursor, subSeq);
+        ColumnTask task = queue.get(cursor);
+        processColumnTask(task, cursor, subSeq);
         return true;
     }
 }
