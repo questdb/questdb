@@ -74,7 +74,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
         runWalPurgeJob();
 
-        int expectedTxnCount = 334;
+        int expectedTxnCount = 500;
         assertSql("count\n" +
                 expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
 
