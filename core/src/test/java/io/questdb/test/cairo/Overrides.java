@@ -215,7 +215,7 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY.getPropertyPath(), "10");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY.getPropertyPath(), "64");
         properties.setProperty(PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY.getPropertyPath(), "16");
-        properties.setProperty(PropertyKey.CAIRO_SQL_CREATE_TABEL_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE.getPropertyPath(), "2097152");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE.getPropertyPath(), "16384");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE.getPropertyPath(), "1048576");

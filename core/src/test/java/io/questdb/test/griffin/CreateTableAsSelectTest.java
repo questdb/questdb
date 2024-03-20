@@ -45,29 +45,65 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampAscOrder() throws Exception {
-        testCreatePartitionedTableAsSelectWithOrderBy("order by ts asc");
+        createPartitionedTableAsSelectWithOrderBy("order by ts asc");
+    }
+
+    @Test
+    public void testCreatePartitionedTableAsSelectTimestampAscOrderBatched() throws Exception {
+        createPartitionedTableAsSelectWithOrderBy("order by ts asc", 54, "");
+    }
+
+    @Test
+    public void testCreatePartitionedTableAsSelectTimestampAscOrderBatchedAndLagged() throws Exception {
+        createPartitionedTableAsSelectWithOrderBy("order by ts asc", 26, "1000ms");
     }
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampDescOrder() throws Exception {
-        testCreatePartitionedTableAsSelectWithOrderBy("order by ts desc");
+        createPartitionedTableAsSelectWithOrderBy("order by ts desc");
+    }
+
+    @Test
+    public void testCreatePartitionedTableAsSelectTimestampDescOrderBatched() throws Exception {
+        createPartitionedTableAsSelectWithOrderBy("order by ts desc", 54, "");
+    }
+
+    @Test
+    public void testCreatePartitionedTableAsSelectTimestampDescOrderBatchedAndLagged() throws Exception {
+        createPartitionedTableAsSelectWithOrderBy("order by ts desc", 26, "1000ms");
     }
 
     @Test
     public void testCreatePartitionedTableAsSelectTimestampNoOrder() throws Exception {
-        testCreatePartitionedTableAsSelectWithOrderBy("");
+        createPartitionedTableAsSelectWithOrderBy("");
     }
 
-    private void createSrcTable() throws SqlException {
-        ddl("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
-        insert("insert into src values (0, 0);");
-        insert("insert into src values (10000, 1);");
-        insert("insert into src values (20000, 2);");
-        insert("insert into src values (30000, 3);");
-        insert("insert into src values (40000, 4);");
+    @Test
+    public void testCreatePartitionedTableAsSelectTimestampNoOrderBatched() throws Exception {
+        createPartitionedTableAsSelectWithOrderBy("", 54, "");
     }
 
-    private void testCreatePartitionedTableAsSelectWithOrderBy(String orderByClause) throws Exception {
+    @Test
+    public void testCreatePartitionedTableAsSelectTimestampNoOrderBatchedAndLagged() throws Exception {
+        createPartitionedTableAsSelectWithOrderBy("", 26, "1000ms");
+    }
+
+    @Test
+    public void testCreatePartitionedTableAtomicAsSelectTimestampAscOrder() throws Exception {
+        createPartitionedTableAtomicAsSelectWithOrderBy("order by ts asc");
+    }
+
+    @Test
+    public void testCreatePartitionedTableAtomicAsSelectTimestampDescOrder() throws Exception {
+        createPartitionedTableAtomicAsSelectWithOrderBy("order by ts desc");
+    }
+
+    @Test
+    public void testCreatePartitionedTableAtomicAsSelectTimestampNoOrder() throws Exception {
+        createPartitionedTableAtomicAsSelectWithOrderBy("");
+    }
+
+    private void createPartitionedTableAsSelectWithOrderBy(String orderByClause) throws Exception {
         assertMemoryLeak(() -> {
             createSrcTable();
 
@@ -86,5 +122,73 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
                     true
             );
         });
+    }
+
+    private void createPartitionedTableAsSelectWithOrderBy(String orderByClause, int batchSize, String o3MaxLag) throws Exception {
+        assertMemoryLeak(() -> {
+            createSrcTable();
+
+            String sql = "create ";
+
+            if (batchSize != -1) {
+                sql += "batch " + batchSize;
+            }
+
+            if (!o3MaxLag.isEmpty()) {
+                sql += " o3MaxLag " + o3MaxLag;
+            }
+
+            sql += " table dest as ";
+
+            sql += "(select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;";
+            ddl(sql);
+
+            String expected = "ts\tv\n" +
+                    "1970-01-01T00:00:00.000000Z\t0\n" +
+                    "1970-01-01T00:00:00.020000Z\t2\n" +
+                    "1970-01-01T00:00:00.040000Z\t4\n";
+
+            assertQuery(
+                    expected,
+                    "dest",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    private void createPartitionedTableAtomicAsSelectWithOrderBy(String orderByClause) throws Exception {
+        assertMemoryLeak(() -> {
+            createSrcTable();
+
+            String sql = "create atomic table dest as ";
+
+
+            sql += "(select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;";
+            ddl(sql);
+
+            String expected = "ts\tv\n" +
+                    "1970-01-01T00:00:00.000000Z\t0\n" +
+                    "1970-01-01T00:00:00.020000Z\t2\n" +
+                    "1970-01-01T00:00:00.040000Z\t4\n";
+
+            assertQuery(
+                    expected,
+                    "dest",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    private void createSrcTable() throws SqlException {
+        ddl("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
+        insert("insert into src values (0, 0);");
+        insert("insert into src values (10000, 1);");
+        insert("insert into src values (20000, 2);");
+        insert("insert into src values (30000, 3);");
+        insert("insert into src values (40000, 4);");
     }
 }

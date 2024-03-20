@@ -257,6 +257,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlCopyModelPoolCapacity;
     private final int sqlCountDistinctCapacity;
     private final double sqlCountDistinctLoadFactor;
+    private final long sqlCreateTableModelBatchSize;
     private final int sqlCreateTableModelPoolCapacity;
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
@@ -273,6 +274,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlHashJoinLightValuePageSize;
     private final int sqlHashJoinValueMaxPages;
     private final int sqlHashJoinValuePageSize;
+    private final long sqlInsertModelBatchSize;
     private final int sqlInsertModelPoolCapacity;
     private final int sqlJitBindVarsMemoryMaxPages;
     private final int sqlJitBindVarsMemoryPageSize;
@@ -890,7 +892,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerHaltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
             this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10_000);
             this.walApplySleepTimeout = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
-            this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 10);
+            this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
@@ -944,11 +946,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJoinMetadataMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_MAX_RESIZES, Integer.MAX_VALUE);
             int sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY, 64);
             this.sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY, sqlWindowColumnPoolCapacity);
-            this.sqlCreateTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABEL_MODEL_POOL_CAPACITY, 16);
+            this.sqlCreateTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_POOL_CAPACITY, 16);
+            this.sqlCreateTableModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE, 1_000_000);
             this.sqlColumnCastModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY, 16);
             this.sqlRenameTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY, 16);
             this.sqlWithClauseModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY, 128);
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
+            this.sqlInsertModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_BATCH_SIZE, 1_000_000);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
@@ -2022,6 +2026,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getCreateTableModelBatchSize() {
+            return sqlCreateTableModelBatchSize;
+        }
+
+        @Override
         public int getCreateTableModelPoolCapacity() {
             return sqlCreateTableModelPoolCapacity;
         }
@@ -2172,7 +2181,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getInsertPoolCapacity() {
+        public long getInsertModelBatchSize() {
+            return sqlInsertModelBatchSize;
+        }
+
+        @Override
+        public int getInsertModelPoolCapacity() {
             return sqlInsertModelPoolCapacity;
         }
 
@@ -3433,11 +3447,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isUseLegacyStringDefault() {
-            return useLegacyStringDefault;
-        }
-
-        @Override
         public int getDefaultPartitionBy() {
             return lineTcpDefaultPartitionBy;
         }
@@ -3480,6 +3489,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
+        }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
         }
     }
 
@@ -3562,11 +3576,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public short getDefaultColumnTypeForInteger() {
             return integerDefaultColumnType;
-        }
-
-        @Override
-        public boolean isUseLegacyStringDefault() {
-            return useLegacyStringDefault;
         }
 
         @Override
@@ -3677,6 +3686,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
+        }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
         }
     }
 
@@ -3887,6 +3901,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
+        }
+
+        @Override
         public boolean ownThread() {
             return lineUdpOwnThread;
         }
@@ -3894,11 +3913,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int ownThreadAffinity() {
             return lineUdpOwnThreadAffinity;
-        }
-
-        @Override
-        public boolean isUseLegacyStringDefault() {
-            return useLegacyStringDefault;
         }
     }
 
