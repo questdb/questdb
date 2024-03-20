@@ -39,6 +39,7 @@ import java.io.Closeable;
 public class TextQueryProcessorState implements Mutable, Closeable {
     final StringSink query = new StringSink();
     private final HttpConnectionContext httpConnectionContext;
+    boolean hasNext;
     int columnIndex;
     long count;
     boolean countRows = false;
@@ -48,7 +49,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     RecordMetadata metadata;
     boolean noMeta = false;
     boolean pausedQuery = false;
-    int queryState = JsonQueryProcessorState.QUERY_PREFIX;
+    int queryState;
     Record record;
     RecordCursorFactory recordCursorFactory;
     Rnd rnd;
@@ -58,6 +59,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
 
     public TextQueryProcessorState(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;
+        clear();
     }
 
     @Override
@@ -78,7 +80,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         }
         queryCacheable = false;
         query.clear();
-        queryState = JsonQueryProcessorState.QUERY_PREFIX;
+        queryState = JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
         skip = 0;
         stop = 0;
