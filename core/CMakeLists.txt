@@ -85,7 +85,12 @@ elseif (UNIX)
     if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
         MESSAGE("Building for FreeBSD")
         include_directories($ENV{JAVA_HOME}/include/freebsd/)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/freebsd)
+        if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
+            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armfreebsd)
+            set(AARCH64 1)
+        else ()
+            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/freebsd)
+        endif ()
         set(
                 SOURCE_FILES ${SOURCE_FILES}
                 src/main/c/freebsd/kqueue.c
