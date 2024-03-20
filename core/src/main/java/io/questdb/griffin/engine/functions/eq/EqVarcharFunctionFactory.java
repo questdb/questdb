@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -65,32 +67,55 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
 
-        if (a.isConstant() && !b.isConstant()) {
+        if (isAnytimeConstant(a) && !isAnytimeConstant(b)) {
             return createHalfConstantFunc(a, b);
         }
 
-        if (!a.isConstant() && b.isConstant()) {
+        if (!isAnytimeConstant(a) && isAnytimeConstant(b)) {
             return createHalfConstantFunc(b, a);
         }
 
         return new Func(a, b);
     }
 
+    private static boolean isAnytimeConstant(Function f) {
+        return f.isConstant() || f.isRuntimeConstant();
+    }
+
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        Utf8Sequence constValue = constFunc.getVarcharA(null);
-        if (constValue == null) {
-            return new NullCheckFunc(varFunc);
+        if (constFunc.isConstant()) {
+            Utf8Sequence constValue = constFunc.getVarcharA(null);
+            if (constValue == null) {
+                return new NullCheckFunc(varFunc);
+            }
+            return new ConstCheckFunc(varFunc, constValue);
         }
-        return new ConstCheckFunc(varFunc, constValue);
+        return new ConstCheckFunc(varFunc, constFunc);
     }
 
     public static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
-        private final Utf8Sequence constant;
+        private Function constFunc;
+        private Utf8Sequence constant;
 
         public ConstCheckFunc(Function arg, Utf8Sequence constant) {
             this.arg = arg;
+            this.constFunc = null;
             this.constant = constant;
+        }
+
+        public ConstCheckFunc(Function varFunc, Function constFunc) {
+            this.arg = varFunc;
+            this.constFunc = constFunc;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            if (constFunc != null) {
+                constant = constFunc.getVarcharA(null);
+                constFunc = null;
+            }
         }
 
         @Override
