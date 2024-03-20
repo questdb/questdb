@@ -531,7 +531,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailMergeWalVarIntoLagParallel() throws Exception {
-        executeWithPool(0, O3FailureTest::testFailMergeWalVarIntoLag0);
+        executeWithPool(2, O3FailureTest::testFailMergeWalVarIntoLag0);
     }
 
     @Test
