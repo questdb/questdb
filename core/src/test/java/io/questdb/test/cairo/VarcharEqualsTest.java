@@ -33,7 +33,7 @@ public class VarcharEqualsTest extends AbstractCairoTest {
     public void testConstFullyInlinedAscii() throws Exception {
         assertQuery(
                 "name\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\n",
-                "x where name = 'bac'",
+                "x where name = 'bac'::varchar",
                 "create table x as (select rnd_varchar(null, 'a', 'bac', 'sntht', 'šěčř', 'gcrlhtneu') name from long_sequence(100))",
                 null
         );
@@ -44,7 +44,7 @@ public class VarcharEqualsTest extends AbstractCairoTest {
         assertQuery(
                 "name\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\n" +
                         "gcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\ngcrlhtneu\n",
-                "x where name = 'gcrlhtneu'",
+                "x where name = 'gcrlhtneu'::varchar",
                 "create table x as (select rnd_varchar(null, 'a', 'bac', 'sntht', 'šěčř', 'gcrlhtneu') name from long_sequence(100))",
                 null
         );
@@ -54,7 +54,7 @@ public class VarcharEqualsTest extends AbstractCairoTest {
     public void testConstFullyInlinedNonAscii() throws Exception {
         assertQuery(
                 "name\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\nšěčř\n",
-                "x where name = 'šěčř'",
+                "x where name = 'šěčř'::varchar",
                 "create table x as (select rnd_varchar(null, 'a', 'bac', 'sntht', 'šěčř', 'gcrlhtneu') name from long_sequence(100))",
                 null
         );
@@ -65,7 +65,7 @@ public class VarcharEqualsTest extends AbstractCairoTest {
         assertQuery(
                 "name\nqwpgaslvbnsvslhf\nqwpgaslvbnsvslhf\nqwpgaslvbnsvslhf\nqwpgaslvbnsvslhf\nqwpgaslvbnsvslhf\n" +
                         "qwpgaslvbnsvslhf\nqwpgaslvbnsvslhf\nqwpgaslvbnsvslhf\n",
-                "x where name = 'qwpgaslvbnsvslhf'",
+                "x where name = 'qwpgaslvbnsvslhf'::varchar",
                 "create table x as (select rnd_varchar(null, 'gcrlhtneuv', 'gcrlht', 'qwpgaslvbnsvslhf') name from long_sequence(30))",
                 null
         );
@@ -75,7 +75,7 @@ public class VarcharEqualsTest extends AbstractCairoTest {
     public void testConstSplitNonAscii() throws Exception {
         assertQuery(
                 "name\něšščř\něšščř\něšščř\něšščř\něšščř\něšščř\n",
-                "x where name = 'ěšščř'",
+                "x where name = 'ěšščř'::varchar",
                 "create table x as (select rnd_varchar(null, 'ěšščř', 'ěššč', 'ěšščřěšščř') name from long_sequence(30))",
                 null
         );

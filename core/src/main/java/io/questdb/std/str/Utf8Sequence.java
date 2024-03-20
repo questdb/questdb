@@ -58,7 +58,7 @@ public interface Utf8Sequence {
         long result = 0;
         long limit = Math.min(size(), index + Long.BYTES);
         for (int i = index; i < limit; i++) {
-            result |= (long) (byteAt(i) & 0xff) << 8 * (i - index);
+            result |= (long) (byteAt(i) & 0xff) << (8 * (i - index));
         }
         return result;
     }
