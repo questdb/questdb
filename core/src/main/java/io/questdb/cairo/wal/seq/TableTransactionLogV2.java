@@ -56,9 +56,18 @@ import static io.questdb.cairo.wal.WalUtils.*;
  * To calculate the partition one can use the following formula:
  * {@code (txn - 1) / partTransactionCount}
  * <p>
- * Header and record is described in @link TableTransactionLogFile
+ * Record structure is optimized for storage, the rage of stored values are picked carafully:
+ * TX_LOG_STRUCTURE_VERSION_OFFSET_40: 5 bytes
  * <p>
- * Transaction record: 60 bytes
+ * Transaction record:
+ * Structure Version: 40 bits, range: 0-1T
+ * WAL Id: 32 bits, range: 0-4B (unchanged)
+ * Segment Txn: 24 bits, range: 0-16M
+ * Segment Id: 24 bits, range: 0-16M
+ * Commit Timestamp: 48 bits, stored in milliseconds, range: years 1970-10889
+ * Min Data Timestamp: 64 bits, microseconds
+ * Max Data Timestamp: 48 bits, stored as difference from Min Data Timestamp, microseconds. Range: 3 years from Min Data Timestamp
+ * Commit Row Count: 40 bits, range: 0-1T
  * <p>
  */
 public class TableTransactionLogV2 implements TableTransactionLogFile {
@@ -156,7 +165,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnPartMem.jumpTo(appendOffset + TX_LOG_MIN_TIMESTAMP_OFFSET_64);
         txnPartMem.putLong(txnMinTimestamp);
         txnPartMem.jumpTo(appendOffset + TX_LOG_MAX_TIMESTAMP_OFFSET_48);
-        txnPartMem.putLong(txnMaxTimestamp - txnMinTimestamp);
+        long maxMinDiff = txnMaxTimestamp - txnMinTimestamp;
+        if (maxMinDiff > MAX_TIMESTAMP_DIFF_MAX_VALUE) {
+            maxMinDiff = MAX_TIMESTAMP_DIFF_MAX_VALUE;
+        }
+        txnPartMem.putLong(maxMinDiff);
         txnPartMem.jumpTo(appendOffset + TX_LOG_ROW_COUNT_OFFSET_40);
         txnPartMem.putLong(txnRowCount);
         txnPartMem.jumpTo(appendOffset + RECORD_SIZE);
