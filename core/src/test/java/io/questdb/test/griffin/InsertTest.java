@@ -396,7 +396,7 @@ public class InsertTest extends AbstractCairoTest {
         assertInsertTimestamp(
                 "seq\tts\n" +
                         "1\t1970-01-01T00:00:00.123456Z\n",
-                "insert into tab select 1, '123456'",
+                "insert atomic into tab select 1, '123456'",
                 null,
                 false
         );
@@ -407,7 +407,7 @@ public class InsertTest extends AbstractCairoTest {
         assertInsertTimestamp(
                 "seq\tts\n" +
                         "1\t1970-01-01T00:00:00.123456Z\n",
-                "insert into tab select 1, '123456'::varchar",
+                "insert atomic into tab select 1, '123456'::varchar",
                 null,
                 false
         );
@@ -433,7 +433,7 @@ public class InsertTest extends AbstractCairoTest {
         assertInsertTimestamp(
                 "seq\tts\n" +
                         "1\t1970-01-01T00:00:00.123456Z\n",
-                "with x as (select 1, '123456') insert into tab  select * from x",
+                "with x as (select 1, '123456') insert atomic into tab select * from x",
                 null,
                 false
         );
@@ -444,7 +444,7 @@ public class InsertTest extends AbstractCairoTest {
         assertInsertTimestamp(
                 "seq\tts\n" +
                         "1\t1970-01-01T00:00:00.123456Z\n",
-                "with x as (select 1, '123456'::varchar) insert into tab  select * from x",
+                "with x as (select 1, '123456'::varchar) insert atomic into tab select * from x",
                 null,
                 false
         );

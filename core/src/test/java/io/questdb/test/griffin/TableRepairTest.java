@@ -39,7 +39,7 @@ public class TableRepairTest extends AbstractCairoTest {
     public void testDeleteActivePartition() throws Exception {
         // this delete partition actually deletes files, simulating manual intervention
         assertMemoryLeak(() -> {
-            ddl("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
+            ddl("create atomic table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
 
             engine.releaseAllWriters();
 
@@ -78,7 +78,7 @@ public class TableRepairTest extends AbstractCairoTest {
     public void testDeletePartitionInTheMiddle() throws Exception {
         // this delete partition actually deletes files, simulating manual intervention
         assertMemoryLeak(() -> {
-            ddl("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
+            ddl("create atomic table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
 
             engine.releaseAllWriters();
 

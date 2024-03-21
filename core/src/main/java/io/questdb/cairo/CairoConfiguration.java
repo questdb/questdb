@@ -126,6 +126,8 @@ public interface CairoConfiguration {
 
     int getCreateAsSelectRetryCount();
 
+    long getCreateTableModelBatchSize();
+
     int getCreateTableModelPoolCapacity();
 
     long getDataAppendPageSize();
@@ -144,11 +146,11 @@ public interface CairoConfiguration {
     @NotNull
     DateLocale getDefaultDateLocale();
 
+    int getDefaultSeqPartTxnCount();
+
     boolean getDefaultSymbolCacheFlag();
 
     int getDefaultSymbolCapacity();
-
-    int getDefaultSeqPartTxnCount();
 
     int getDetachedMkDirMode();
 
@@ -199,7 +201,9 @@ public interface CairoConfiguration {
 
     int getIndexValueBlockSize();
 
-    int getInsertPoolCapacity();
+    long getInsertModelBatchSize();
+
+    int getInsertModelPoolCapacity();
 
     int getLatestByQueueCapacity();
 
@@ -328,6 +332,8 @@ public interface CairoConfiguration {
     default RostiAllocFacade getRostiAllocFacade() {
         return RostiAllocFacadeImpl.INSTANCE;
     }
+
+    boolean getSampleByDefaultAlignmentCalendar();
 
     int getSampleByIndexSearchPageSize();
 
@@ -498,9 +504,9 @@ public interface CairoConfiguration {
 
     long getWalDataAppendPageSize();
 
-    long getWalEventAppendPageSize();
-
     boolean getWalEnabledDefault();
+
+    long getWalEventAppendPageSize();
 
     long getWalMaxLagSize();
 
@@ -582,8 +588,6 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterPreTouchEnabled();
 
     boolean isSqlParallelGroupByEnabled();
-
-    boolean getSampleByDefaultAlignmentCalendar();
 
     boolean isTableTypeConversionEnabled();
 
