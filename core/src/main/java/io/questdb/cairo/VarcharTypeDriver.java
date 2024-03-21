@@ -115,7 +115,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static void appendValue(MemoryA dataMem, @Nullable Utf8Sequence value) {
         if (value == null) {
-            dataMem.putInt(TableUtils.NULL_LEN); // NULL
+            dataMem.putInt(TableUtils.NULL_LEN);
             return;
         }
         final int size = value.size();
@@ -163,10 +163,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public static long getDataVectorSize(MemoryR auxMem, long offset) {
         final int raw = auxMem.getInt(offset);
         assert raw != 0;
-        final int flags = raw & HEADER_FLAGS_MASK;
         final long dataOffset = getDataOffset(auxMem, offset);
 
-        if ((flags & HEADER_FLAG_NULL) == HEADER_FLAG_NULL || (flags & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED) {
+        if (hasNullOrInlinedFlag(raw)) {
             return dataOffset;
         }
         // size of the string at this offset
@@ -225,15 +224,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
         int raw = auxMem.getInt(auxOffset);
         assert raw != 0;
-        int flags = raw & HEADER_FLAGS_MASK;
 
-        if ((flags & HEADER_FLAG_NULL) == HEADER_FLAG_NULL) {
+        if (hasNullFlag(raw)) {
             return null;
         }
 
-        boolean ascii = (flags & HEADER_FLAG_ASCII) == HEADER_FLAG_ASCII;
+        boolean ascii = hasAsciiFlag(raw);
 
-        if ((flags & 1) == 1) {
+        if (hasInlinedFlag(raw)) {
             // inlined string
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             return ab == 1 ? auxMem.getVarcharA(auxOffset + 1, size, ascii) : auxMem.getVarcharB(auxOffset + 1, size, ascii);
@@ -272,15 +270,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
         int raw = Unsafe.getUnsafe().getInt(auxEntry);
         assert raw != 0;
-        int flags = raw & HEADER_FLAGS_MASK;
 
-        if ((flags & HEADER_FLAG_NULL) == HEADER_FLAG_NULL) {
+        if (hasNullFlag(raw)) {
             return null;
         }
 
-        boolean ascii = (flags & HEADER_FLAG_ASCII) == HEADER_FLAG_ASCII;
+        boolean ascii = hasAsciiFlag(raw);
 
-        if ((flags & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED) {
+        if (hasInlinedFlag(raw)) {
             // inlined string
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             return utf8view.of(auxEntry + FULLY_INLINED_STRING_OFFSET, (byte) size, ascii);
@@ -292,6 +289,22 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
                 ascii
         );
+    }
+
+    private static boolean hasNullFlag(int auxHeader) {
+        return (auxHeader & HEADER_FLAG_NULL) == HEADER_FLAG_NULL;
+    }
+
+    private static boolean hasInlinedFlag(int auxHeader) {
+        return (auxHeader & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED;
+    }
+
+    private static boolean hasNullOrInlinedFlag(int auxHeader) {
+        return (auxHeader & (HEADER_FLAG_NULL | HEADER_FLAG_INLINED)) != 0;
+    }
+
+    private static boolean hasAsciiFlag(int auxHeader) {
+        return (auxHeader & HEADER_FLAG_ASCII) == HEADER_FLAG_ASCII;
     }
 
     @Override
@@ -358,7 +371,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         } else {
             lo = 0;
         }
-        long hi = getDataVectorSize(auxMem, VARCHAR_AUX_WIDTH_BYTES * (rowHi - HEADER_FLAG_INLINED));
+        long hi = getDataVectorSize(auxMem, VARCHAR_AUX_WIDTH_BYTES * (rowHi - 1));
         dataMem.ofOffset(
                 ff,
                 dataFd,
@@ -412,13 +425,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return 0;
         }
         final int raw = readInt(ff, auxFd, auxFileOffset);
-        final int flags = raw & HEADER_FLAGS_MASK;
 
         final int offsetLo = readInt(ff, auxFd, auxFileOffset + 8L);
         final int offsetHi = readInt(ff, auxFd, auxFileOffset + 12L);
         final long dataOffset = Numbers.encodeLowHighInts(offsetLo, offsetHi) >>> 16;
 
-        if ((flags & HEADER_FLAG_NULL) == HEADER_FLAG_NULL || (flags & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED) {
+        if (hasNullOrInlinedFlag(raw)) {
             // null flag is set or fully inlined value
             return dataOffset;
         }
@@ -562,10 +574,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     private static long getDataVectorSize(long auxEntry) {
         final int raw = Unsafe.getUnsafe().getInt(auxEntry);
-        final int flags = raw & HEADER_FLAGS_MASK;
         final long dataOffset = getDataOffset(auxEntry);
 
-        if ((flags & HEADER_FLAG_NULL) == HEADER_FLAG_NULL || (flags & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED) {
+        if (hasNullOrInlinedFlag(raw)) {
             return dataOffset;
         }
         // size of the string at this offset
