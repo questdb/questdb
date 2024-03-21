@@ -550,8 +550,35 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         int bestMatch = MATCH_NO_MATCH;
         boolean isWindowContext = !sqlExecutionContext.getWindowContext().isEmpty();
 
-        undefinedVariables.clear();
+        if (Chars.equals("cast", node.token)
+                && argCount == 2
+                && args.getQuick(0).isUndefined()
+                && args.getQuick(1).isConstant()
+        ) skipAssigningType: {
+            final Function undefinedArg = args.getQuick(0);
+            final int castToType = args.getQuick(1).getType();
+            final int assignType;
+            switch (castToType) {
+                case ColumnType.VARCHAR:
+                case ColumnType.STRING:
+                case ColumnType.CHAR:
+                    assignType = ColumnType.STRING;
+                    break;
+                case ColumnType.BYTE:
+                case ColumnType.SHORT:
+                case ColumnType.INT:
+                case ColumnType.LONG:
+                case ColumnType.FLOAT:
+                case ColumnType.DOUBLE:
+                    assignType = ColumnType.DOUBLE;
+                    break;
+                default:
+                    break skipAssigningType;
+            }
+            undefinedArg.assignType(assignType, sqlExecutionContext.getBindVariableService());
+        }
 
+        undefinedVariables.clear();
         // find all undefined args for the purpose of setting
         // their types when we find suitable candidate function
         for (int i = 0; i < argCount; i++) {
