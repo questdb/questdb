@@ -140,7 +140,7 @@ public class RecordSinkFactory {
         final int fGetFloat = asm.poolInterfaceMethod(Function.class, "getFloat", "(Lio/questdb/cairo/sql/Record;)F");
         final int fGetDouble = asm.poolInterfaceMethod(Function.class, "getDouble", "(Lio/questdb/cairo/sql/Record;)D");
         final int fGetStr = asm.poolInterfaceMethod(Function.class, "getStrA", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
-        final int fGetVarchar = asm.poolInterfaceMethod(Function.class, "getVarchar", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/str/Utf8Sequence;");
+        final int fGetVarchar = asm.poolInterfaceMethod(Function.class, "getVarcharA", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/str/Utf8Sequence;");
         final int fGetSym = asm.poolInterfaceMethod(Function.class, "getSymbol", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
         final int fGetBin = asm.poolInterfaceMethod(Function.class, "getBin", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/BinarySequence;");
         final int fGetRecord = asm.poolInterfaceMethod(Function.class, "getRecord", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/sql/Record;");

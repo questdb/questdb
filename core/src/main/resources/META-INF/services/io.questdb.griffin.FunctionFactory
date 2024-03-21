@@ -177,7 +177,9 @@ io.questdb.griffin.engine.functions.regex.NotMatchCharFunctionFactory
 
 #  like
 io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory
+io.questdb.griffin.engine.functions.regex.LikeVarcharFunctionFactory
 io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory
+io.questdb.griffin.engine.functions.regex.ILikeVarcharFunctionFactory
 
 # 'to_char'
 io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
