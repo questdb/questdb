@@ -8167,7 +8167,28 @@ create table tab as (
     }
 
     @Test
-    public void testSimpleVarcharBindVars() throws Exception {
+    public void testStringyColEqVarcharBindvar() throws Exception {
+        testVarcharBindVars(
+                "select v,s from x where v != ?::varchar and s != ?::varchar");
+    }
+
+    @Test
+    public void testVarcharBindvarEqStringyCol() throws Exception {
+        testVarcharBindVars(
+                "select v,s from x where ?::varchar != v and ?::varchar != s");
+    }
+
+    @Test
+    public void testStringyColEqStringBindvar() throws Exception {
+        testVarcharBindVars("select v,s from x where v != ? and s != ?");
+    }
+
+    @Test
+    public void testStringBindvarEqStringyCol() throws Exception {
+        testVarcharBindVars("select v,s from x where ? != v and ? != s");
+    }
+
+    private void testVarcharBindVars(String query) throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             PreparedStatement tbl = connection.prepareStatement("create table x as (" +
                     "select " +
@@ -8177,7 +8198,6 @@ create table tab as (
                     ")");
             tbl.execute();
 
-
             PreparedStatement insert = connection.prepareStatement("insert into x(v,s) values (?,?)");
             for (int i = 0; i < 5; i++) {
                 insert.setString(1, String.valueOf((char)('D' + i)));
@@ -8185,7 +8205,7 @@ create table tab as (
                 insert.execute();
             }
 
-            PreparedStatement stmnt = connection.prepareStatement("select v,s from x where v != ? and s != ?");
+            PreparedStatement stmnt = connection.prepareStatement(query);
             stmnt.setString(1, "D");
             stmnt.setString(2, "D");
 
