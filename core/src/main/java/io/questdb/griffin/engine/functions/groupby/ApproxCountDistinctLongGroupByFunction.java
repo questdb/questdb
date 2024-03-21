@@ -124,15 +124,15 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+    public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
         this.hllPtrIndex = valueIndex + 1;
         this.overwrittenFlagIndex = valueIndex + 2;
     }
 
     @Override
-    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
-        initValueIndex(columnTypes.getColumnCount(), directStrSupported);
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        initValueIndex(columnTypes.getColumnCount());
         columnTypes.add(ColumnType.LONG); // overwritten value
         columnTypes.add(ColumnType.LONG); // pointer to HyperLogLog
         columnTypes.add(ColumnType.BOOLEAN); // flag denoting whether the value has been overwritten

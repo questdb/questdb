@@ -137,11 +137,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public boolean supportsDirectStr() {
-        return framingSupported;
-    }
-
-    @Override
     public boolean supportsPageFrameCursor() {
         return framingSupported;
     }

@@ -89,12 +89,12 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+    public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
 
     @Override
-    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.LONG);

@@ -120,18 +120,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public DirectCharSequence getDirectStr(int columnIndex) {
-        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        if (dataPageAddress == 0) {
-            return NullMemoryMR.INSTANCE.getDirectStr(0);
-        }
-        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
-        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
-        final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
-        return getStrA(dataPageAddress, offset, size, csviewA);
-    }
-
-    @Override
     public double getDouble(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {

@@ -77,24 +77,20 @@ public interface GroupByFunction extends Function, Mutable {
     /**
      * Called for group by function cloned to be used in different threads of parallel execution.
      * Guaranteed to be called before any other call accessing the map or map values.
-     * {@link #initValueTypes(ArrayColumnTypes, boolean)} is not called on such functions.
+     * {@link #initValueTypes(ArrayColumnTypes)} is not called on such functions.
      *
-     * @param valueIndex         index of the first value of the original function in the type array
-     * @param directStrSupported flag indicating that the record used by the factory supports direct strings,
-     *                           so it's safe to call {@link Record#getDirectStr(int)}.
+     * @param valueIndex index of the first value of the original function in the type array
      */
-    void initValueIndex(int valueIndex, boolean directStrSupported);
+    void initValueIndex(int valueIndex);
 
     /**
      * Called for group by function to register its values to be used in the map.
      * Guaranteed to be called before any other call accessing the map or map values.
-     * {@link #initValueIndex(int, boolean)} is not called on such functions.
+     * {@link #initValueIndex(int)} is not called on such functions.
      *
-     * @param columnTypes        value type array
-     * @param directStrSupported flag indicating that the record used by the factory supports direct strings,
-     *                           so it's safe to call {@link Record#getDirectStr(int)}.
+     * @param columnTypes value type array
      */
-    void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported);
+    void initValueTypes(ArrayColumnTypes columnTypes);
 
     default void interpolateBoundary(
             MapValue mapValue1,

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -51,6 +52,7 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
     private static final int MIN_CAPACITY = 16;
     private GroupByAllocator allocator;
     private long ptr;
+    private boolean direct;
 
     /**
      * Returns capacity in chars.
@@ -61,13 +63,21 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
 
     @Override
     public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(ptr + HEADER_SIZE + 2L * index);
+        if (direct) {
+            long directPtr = Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE);
+            assert directPtr != 0;
+            assert index < length();
+            return Unsafe.getUnsafe().getChar(directPtr + 2L * index);
+        } else {
+            return Unsafe.getUnsafe().getChar(ptr + HEADER_SIZE + 2L * index);
+        }
     }
 
     @Override
     public void clear() {
         if (ptr != 0) {
             Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, 0);
+            direct = false;
         }
     }
 
@@ -77,12 +87,14 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
     }
 
     public GroupByCharSink of(long ptr) {
-        this.ptr = ptr;
+        // clear the top bit
+        this.ptr = ptr & 0x7FFFFFFFFFFFFFFFL;
+        this.direct = (ptr & 0x8000000000000000L) != 0;
         return this;
     }
 
     public long ptr() {
-        return ptr;
+        return ptr | (direct ? 0x8000000000000000L : 0);
     }
 
     @Override
@@ -92,7 +104,14 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
 
     @Override
     public GroupByCharSink put(@Nullable CharSequence cs) {
-        if (cs != null) {
+        if (cs instanceof DirectCharSequence && length() == 0) {
+            direct = true;
+            DirectCharSequence dcs = (DirectCharSequence) cs;
+            checkCapacity(4); // pointer is 8 bytes = 4 chars
+            Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, dcs.ptr());
+            Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, dcs.length());
+        } else if (cs != null) {
+            copyFromDirect();
             int thatLen = cs.length();
             checkCapacity(thatLen);
             int thisLen = length();
@@ -105,8 +124,26 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
         return this;
     }
 
+    private void copyFromDirect() {
+        if (!direct) {
+            return;
+        }
+        direct = false;
+        int len = length();
+        if (len == 0) {
+            return;
+        }
+        long directPtr = Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE);
+        assert directPtr != 0;
+        checkCapacity(0); // check we have enough space to transfer only the current length, no extra chars needed
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putChar(ptr + HEADER_SIZE + 2L * i, Unsafe.getUnsafe().getChar(directPtr + 2L * i));
+        }
+    }
+
     @Override
     public GroupByCharSink put(char c) {
+        copyFromDirect();
         checkCapacity(1);
         int len = length();
         long lo = ptr + HEADER_SIZE + 2L * len;
@@ -165,5 +202,9 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
             ptr = allocator.realloc(ptr, ((long) capacity << 1) + HEADER_SIZE, newSize);
             Unsafe.getUnsafe().putInt(ptr, newCapacity);
         }
+
+        assert ptr != 0 || nChars == 0;
+        // the highest bit is not set
+        assert (ptr & 0x8000000000000000L) == 0;
     }
 }

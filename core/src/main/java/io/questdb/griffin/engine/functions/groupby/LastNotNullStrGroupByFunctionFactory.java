@@ -24,17 +24,10 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -57,115 +50,6 @@ public class LastNotNullStrGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0));
-    }
-
-    /**
-     * Wraps {@link LastNotNullDirectStrGroupByFunction} and {@link LastNotNullStrGroupByFunction} depending
-     * on whether direct strings are supported by the record cursor factory or not.
-     */
-    public class Func extends StrFunction implements GroupByFunction, UnaryFunction {
-        private final Function arg;
-        private GroupByFunction delegate;
-
-        public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public void computeFirst(MapValue mapValue, Record record, long rowId) {
-            delegate.computeFirst(mapValue, record, rowId);
-        }
-
-        @Override
-        public void computeNext(MapValue mapValue, Record record, long rowId) {
-            delegate.computeNext(mapValue, record, rowId);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public String getName() {
-            return "last_not_null";
-        }
-
-        @Override
-        public CharSequence getStrA(Record rec) {
-            return delegate.getStrA(rec);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            return delegate.getStrB(rec);
-        }
-
-        @Override
-        public int getValueIndex() {
-            return delegate.getValueIndex();
-        }
-
-        @Override
-        public void initValueIndex(int valueIndex, boolean directStrSupported) {
-            initDelegate(directStrSupported);
-            delegate.initValueIndex(valueIndex, directStrSupported);
-        }
-
-        @Override
-        public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
-            initDelegate(directStrSupported);
-            delegate.initValueTypes(columnTypes, directStrSupported);
-        }
-
-        @Override
-        public boolean isConstant() {
-            return false;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public boolean isScalar() {
-            return false;
-        }
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            delegate.merge(destValue, srcValue);
-        }
-
-        @Override
-        public void setAllocator(GroupByAllocator allocator) {
-            delegate.setAllocator(allocator);
-        }
-
-        @Override
-        public void setNull(MapValue mapValue) {
-            delegate.setNull(mapValue);
-        }
-
-        @Override
-        public boolean supportsParallelism() {
-            return UnaryFunction.super.supportsParallelism();
-        }
-
-        @Override
-        public void toTop() {
-            UnaryFunction.super.toTop();
-        }
-
-        private void initDelegate(boolean directStrSupported) {
-            assert delegate == null;
-            if (directStrSupported && arg.supportsDirectStr()) {
-                delegate = new LastNotNullDirectStrGroupByFunction(arg);
-            } else {
-                delegate = new LastNotNullStrGroupByFunction(arg);
-            }
-        }
+        return new LastNotNullStrGroupByFunction(args.getQuick(0));
     }
 }

@@ -190,14 +190,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default void revertFromSampleByIndexDataFrameCursorFactory() {
     }
 
-    /**
-     * Returns true if {@link Record#getDirectStr(int)} method can be safely called
-     * on the record provided by the factory.
-     */
-    default boolean supportsDirectStr() {
-        return false;
-    }
-
     default boolean supportsPageFrameCursor() {
         return false;
     }

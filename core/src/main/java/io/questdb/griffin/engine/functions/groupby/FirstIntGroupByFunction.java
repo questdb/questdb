@@ -76,12 +76,12 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
-    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+    public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
 
     @Override
-    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG); // row id
         columnTypes.add(ColumnType.INT);  // value

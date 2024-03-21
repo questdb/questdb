@@ -564,8 +564,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             QueryModel model,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             int workerCount,
-            RecordMetadata metadata,
-            boolean directStrSupported
+            RecordMetadata metadata
     ) throws SqlException {
         boolean threadSafe = true;
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
@@ -585,8 +584,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         functionParser,
                         executionContext,
                         groupByFunctions,
-                        workerGroupByFunctions,
-                        directStrSupported
+                        workerGroupByFunctions
                 );
             }
             return allWorkerGroupByFunctions;
@@ -2853,8 +2851,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             groupByFunctionPositions,
                             null,
                             null,
-                            valueTypes,
-                            factory.supportsDirectStr()
+                            valueTypes
                     );
                 } catch (Throwable e) {
                     Misc.freeObjList(groupByFunctions);
@@ -2917,8 +2914,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         groupByFunctionPositions,
                         null,
                         null,
-                        valueTypes,
-                        factory.supportsDirectStr()
+                        valueTypes
                 );
             } catch (Throwable e) {
                 Misc.freeObjList(groupByFunctions);
@@ -3643,8 +3639,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         groupByFunctionPositions,
                         keyFunctions,
                         keyFunctionNodes,
-                        valueTypes,
-                        factory.supportsDirectStr()
+                        valueTypes
                 );
             } catch (Throwable e) {
                 Misc.freeObjList(groupByFunctions);
@@ -3725,8 +3720,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         model,
                                         groupByFunctions,
                                         executionContext.getSharedWorkerCount(),
-                                        factory.getMetadata(),
-                                        factory.supportsDirectStr()
+                                        factory.getMetadata()
                                 ),
                                 valueTypesCopy.getColumnCount(),
                                 compiledFilter,
@@ -3760,8 +3754,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     model,
                                     groupByFunctions,
                                     executionContext.getSharedWorkerCount(),
-                                    factory.getMetadata(),
-                                    factory.supportsDirectStr()
+                                    factory.getMetadata()
                             ),
                             keyFunctions,
                             compileWorkerKeyFunctionsConditionally(

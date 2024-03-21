@@ -103,12 +103,12 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
     }
 
     @Override
-    public void initValueIndex(int valueIndex, boolean directStrSupported) {
+    public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
 
     @Override
-    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG); // count
         columnTypes.add(ColumnType.LONG); // GroupByIntHashSet pointer

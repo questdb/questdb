@@ -294,13 +294,13 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public void initValueIndex(int valueIndex, boolean directStrSupported) {
-        wrappedFunction.initValueIndex(valueIndex, directStrSupported);
+    public void initValueIndex(int valueIndex) {
+        wrappedFunction.initValueIndex(valueIndex);
     }
 
     @Override
-    public void initValueTypes(ArrayColumnTypes columnTypes, boolean directStrSupported) {
-        wrappedFunction.initValueTypes(columnTypes, directStrSupported);
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        wrappedFunction.initValueTypes(columnTypes);
     }
 
     @Override
