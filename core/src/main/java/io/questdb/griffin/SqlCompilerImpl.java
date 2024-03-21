@@ -1122,7 +1122,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (reader != null) {
                 partitionBy = reader.getPartitionedBy();
             } else {
-                try(TableMetadata meta = engine.getTableMetadata(tableToken)) {
+                try (TableMetadata meta = engine.getTableMetadata(tableToken)) {
                     partitionBy = meta.getPartitionBy();
                 }
             }
@@ -1641,7 +1641,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
             copier.copy(record, row);
             row.append();
-            if (++rowCount > deadline) {
+            if (++rowCount >= deadline) {
                 writer.ic(o3MaxLag);
                 deadline = rowCount + batchSize;
             }
@@ -1670,7 +1670,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.TIMESTAMP));
             copier.copy(record, row);
             row.append();
-            if (++rowCount > deadline) {
+            if (++rowCount >= deadline) {
                 writer.ic(o3MaxLag);
                 deadline = rowCount + batchSize;
             }
@@ -1711,11 +1711,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableWriterAPI writer,
             RecordMetadata writerMetadata,
             RecordToRowCopier recordToRowCopier,
+            long batchSize,
+            long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         int timestampIndex = writerMetadata.getTimestampIndex();
         if (timestampIndex == -1) {
             return copyUnordered(cursor, writer, recordToRowCopier, circuitBreaker);
+        } else if (batchSize != -1) {
+            return copyOrderedBatched(writer, metadata, cursor, recordToRowCopier, timestampIndex, batchSize, o3MaxLag, circuitBreaker);
         } else {
             return copyOrdered(writer, metadata, cursor, recordToRowCopier, timestampIndex, circuitBreaker);
         }
@@ -1731,6 +1735,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             RecordCursor cursor,
             RecordMetadata cursorMetadata,
             int position,
+            long batchSize,
+            long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) throws SqlException {
         TableWriterAPI writerAPI = null;
@@ -1767,6 +1773,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             writerMetadata,
                             entityColumnFilter
                     ),
+                    batchSize,
+                    o3MaxLag,
                     circuitBreaker
             );
         } catch (CairoException e) {
@@ -1959,7 +1967,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try {
-                copyTableDataAndUnlock(executionContext.getSecurityContext(), tableToken, model.isWalEnabled(), cursor, metadata, position, circuitBreaker);
+                copyTableDataAndUnlock(
+                        executionContext.getSecurityContext(),
+                        tableToken,
+                        model.isWalEnabled(),
+                        cursor,
+                        metadata,
+                        position,
+                        model.getBatchSize(),
+                        model.getBatchO3MaxLag(),
+                        circuitBreaker
+                );
             } catch (CairoException e) {
                 LogRecord record = LOG.error().$(e.getFlyweightMessage());
                 if (!e.isCancellation()) {
@@ -2869,10 +2887,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    RecordCursorFactory generateWithRetries(
-            @Transient QueryModel initialQueryModel,
-            @Transient SqlExecutionContext executionContext
-    ) throws SqlException {
+    RecordCursorFactory generateWithRetries(@Transient QueryModel initialQueryModel, @Transient SqlExecutionContext executionContext) throws SqlException {
         QueryModel queryModel = initialQueryModel;
         int remainingRetries = maxRecompileAttempts;
         for (; ; ) {
@@ -3295,7 +3310,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
                         RecordCursor cursor = reader.getCursor();
                         //statement/query timeout value  is most likely too small for backup operation
-                        copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                        copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier, configuration.getCreateTableModelBatchSize(), configuration.getO3MaxLag(), SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
                         backupWriter.commit();
                     }
                 } // release reader lock

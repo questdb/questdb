@@ -49,9 +49,9 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence latestByPubSeq;
     private final RingQueue<LatestByTask> latestByQueue;
     private final MCSequence latestBySubSeq;
-    private final MPSequence o3CallbackPubSeq;
-    private final RingQueue<O3CallbackTask> o3CallbackQueue;
-    private final MCSequence o3CallbackSubSeq;
+    private final MPSequence columnTaskPubSeq;
+    private final RingQueue<ColumnTask> columnTaskQueue;
+    private final MCSequence columnTaskSubSeq;
     private final MPSequence o3CopyPubSeq;
     private final RingQueue<O3CopyTask> o3CopyQueue;
     private final MCSequence o3CopySubSeq;
@@ -98,10 +98,10 @@ public class MessageBusImpl implements MessageBus {
         this.vectorAggregateSubSeq = new MCSequence(vectorAggregateQueue.getCycle());
         vectorAggregatePubSeq.then(vectorAggregateSubSeq).then(vectorAggregatePubSeq);
 
-        this.o3CallbackQueue = new RingQueue<>(O3CallbackTask::new, configuration.getO3CallbackQueueCapacity());
-        this.o3CallbackPubSeq = new MPSequence(this.o3CallbackQueue.getCycle());
-        this.o3CallbackSubSeq = new MCSequence(this.o3CallbackQueue.getCycle());
-        o3CallbackPubSeq.then(o3CallbackSubSeq).then(o3CallbackPubSeq);
+        this.columnTaskQueue = new RingQueue<>(ColumnTask::new, configuration.getO3CallbackQueueCapacity());
+        this.columnTaskPubSeq = new MPSequence(this.columnTaskQueue.getCycle());
+        this.columnTaskSubSeq = new MCSequence(this.columnTaskQueue.getCycle());
+        columnTaskPubSeq.then(columnTaskSubSeq).then(columnTaskPubSeq);
 
         this.o3PartitionQueue = new RingQueue<>(O3PartitionTask::new, configuration.getO3PartitionQueueCapacity());
         this.o3PartitionPubSeq = new MPSequence(this.o3PartitionQueue.getCycle());
@@ -270,18 +270,18 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getO3CallbackPubSeq() {
-        return o3CallbackPubSeq;
+    public MPSequence getColumnTaskPubSeq() {
+        return columnTaskPubSeq;
     }
 
     @Override
-    public RingQueue<O3CallbackTask> getO3CallbackQueue() {
-        return o3CallbackQueue;
+    public RingQueue<ColumnTask> getColumnTaskQueue() {
+        return columnTaskQueue;
     }
 
     @Override
-    public MCSequence getO3CallbackSubSeq() {
-        return o3CallbackSubSeq;
+    public MCSequence getColumnTaskSubSeq() {
+        return columnTaskSubSeq;
     }
 
     @Override
