@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.NumericException;
 
 import static io.questdb.std.Numbers.IPv4_NULL;
@@ -47,7 +48,7 @@ public class ContainsIPv4Utils {
         if (strFunc.isConstant()) {
             CharSequence constValue = strFunc.getStrA(null);
             if (constValue == null) {
-                return new NullCheckFunc(ipv4Func);
+                return BooleanConstant.FALSE;
             }
 
             try {
@@ -96,30 +97,6 @@ public class ContainsIPv4Utils {
         }
     }
 
-    public static class NullCheckFunc extends BooleanFunction implements UnaryFunction {
-        private final Function arg;
-
-        public NullCheckFunc(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return arg.getIPv4(rec) == IPv4_NULL;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(arg);
-            sink.val("is null");
-        }
-    }
-
     private static class RuntimeConstStrFunc extends BooleanFunction implements BinaryFunction {
         private final Function ipv4Func;
         private final Function strFunc;
@@ -135,11 +112,8 @@ public class ContainsIPv4Utils {
 
         @Override
         public boolean getBool(Record rec) {
-            if (subnet == IPv4_NULL) {
-                return ipv4Func.getIPv4(rec) == IPv4_NULL;
-            }
             // if netmask = 32 then IP can't be strictly contained, if netmask = -1 that means arg is a single host - both are invalid
-            if (netmask == 32 || netmask == -1) {
+            if (subnet == IPv4_NULL || netmask == 32 || netmask == -1) {
                 return false;
             }
             return (ipv4Func.getIPv4(rec) & netmask) == subnet;
