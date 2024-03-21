@@ -27,10 +27,8 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -59,63 +57,41 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        // there are optimisation opportunities
-        // 1. when one of args is constant null comparison can boil down to checking
-        //    length of non-constant (must be -1)
-        // 2. when one of arguments is constant, save method call and use a field
+        // Optimizations:
+        // 1. If one arg is a compile-time constant, cache its value
+        // 2. If one arg is not a column value, ensure it is the second argument because
+        //    the 1st argument chooses the optimal varchar column data access pattern
 
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
 
-        if (isAnytimeConstant(a) && !isAnytimeConstant(b)) {
+        if (a.isConstant() && !b.isConstant()) {
             return createHalfConstantFunc(a, b);
         }
-
-        if (!isAnytimeConstant(a) && isAnytimeConstant(b)) {
+        if (!a.isConstant() && b.isConstant()) {
             return createHalfConstantFunc(b, a);
         }
-
+        if (a.isRuntimeConstant() && !b.isRuntimeConstant()) {
+            return new Func(b, a);
+        }
         return new Func(a, b);
     }
 
-    private static boolean isAnytimeConstant(Function f) {
-        return f.isConstant() || f.isRuntimeConstant();
-    }
-
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        if (constFunc.isConstant()) {
-            Utf8Sequence constValue = constFunc.getVarcharA(null);
-            if (constValue == null) {
-                return new NullCheckFunc(varFunc);
-            }
-            return new ConstCheckFunc(varFunc, constValue);
+        Utf8Sequence constValue = constFunc.getVarcharA(null);
+        if (constValue == null) {
+            return new NullCheckFunc(varFunc);
         }
-        return new ConstCheckFunc(varFunc, constFunc);
+        return new ConstCheckFunc(varFunc, constValue);
     }
 
     public static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
-        private Function constFunc;
-        private Utf8Sequence constant;
+        private final Utf8Sequence constant;
 
         public ConstCheckFunc(Function arg, Utf8Sequence constant) {
             this.arg = arg;
-            this.constFunc = null;
             this.constant = constant;
-        }
-
-        public ConstCheckFunc(Function varFunc, Function constFunc) {
-            this.arg = varFunc;
-            this.constFunc = constFunc;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (constFunc != null) {
-                constant = constFunc.getVarcharA(null);
-                constFunc = null;
-            }
         }
 
         @Override
