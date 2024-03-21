@@ -286,8 +286,8 @@ public final class Chars {
     /**
      * Case-insensitive comparison of two char sequences, with subsequence over second.
      *
-     * @param l left sequence
-     * @param r right sequence
+     * @param l   left sequence
+     * @param r   right sequence
      * @param rLo right sequence lower bound
      * @param rHi right sequence upper bound
      * @return true if sequences match exactly (ignoring char case)
@@ -628,6 +628,21 @@ public final class Chars {
             }
         }
         return true;
+    }
+
+    // todo: add tests (used in Ent)
+    public static boolean isDoubleQuote(char c) {
+        return c == '"';
+    }
+
+    // todo: add tests (used in Ent)
+    public static boolean isDoubleQuoted(CharSequence s) {
+        if (s == null || s.length() < 2) {
+            return false;
+        }
+
+        char open = s.charAt(0);
+        return isDoubleQuote(open) && open == s.charAt(s.length() - 1);
     }
 
     public static boolean isOnlyDecimals(CharSequence s) {
@@ -1153,7 +1168,7 @@ public final class Chars {
     }
 
     private static boolean equalsCharsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int len, int rLo, int rHi) {
-        assert len == (rHi-rLo);
+        assert len == (rHi - rLo);
         for (int i = 0; i < len; i++) {
             if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i + rLo))) {
                 return false;
