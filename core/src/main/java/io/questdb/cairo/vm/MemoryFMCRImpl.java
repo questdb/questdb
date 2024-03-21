@@ -29,6 +29,12 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
 public class MemoryFMCRImpl extends MemoryFCRImpl implements MemoryMR {
+
+    @Override
+    public int getFd() {
+        return -1;
+    }
+
     @Override
     public boolean isMapped(long offset, long len) {
         return false;
