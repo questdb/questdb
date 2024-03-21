@@ -886,9 +886,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.RPadFunctionFactory,
             io.questdb.griffin.engine.functions.str.RPadStrFunctionFactory,
             io.questdb.griffin.engine.functions.str.LPadVarcharFunctionFactory,
-            io.questdb.griffin.engine.functions.str.LPadStrVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LPadVarcharVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.str.RPadVarcharFunctionFactory,
-            io.questdb.griffin.engine.functions.str.RPadStrVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.str.RPadVarcharVarcharFunctionFactory,
             // size_pretty
             io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory,
             // substring

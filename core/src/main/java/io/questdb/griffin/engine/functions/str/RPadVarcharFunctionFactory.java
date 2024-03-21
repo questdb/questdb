@@ -104,7 +104,7 @@ public class RPadVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(final Record rec) {
-            return rPad(strFunc.getVarcharA(rec), lenFunc.getInt(rec), sinkB);
+            return rPad(strFunc.getVarcharB(rec), lenFunc.getInt(rec), sinkB);
         }
 
         @Nullable
