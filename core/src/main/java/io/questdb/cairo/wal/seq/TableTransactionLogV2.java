@@ -62,12 +62,27 @@ import static io.questdb.cairo.wal.WalUtils.*;
  * <p>
  */
 public class TableTransactionLogV2 implements TableTransactionLogFile {
-    public static final long MIN_TIMESTAMP_OFFSET = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
-    public static final long MAX_TIMESTAMP_OFFSET = MIN_TIMESTAMP_OFFSET + Long.BYTES;
-    public static final long ROW_COUNT_OFFSET = MAX_TIMESTAMP_OFFSET + Long.BYTES;
-    public static final long RESERVED_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
-    public static final long RECORD_SIZE = RESERVED_OFFSET + Long.BYTES;
+    public static final long MAX_TIMESTAMP_DIFF_MAX_VALUE = ~(-1L << 48);
+    public static final long ROW_COUNT_MAX_VALUE = ~(-1L << 40);
+    public static final int SEGMENT_ID_MAX_VALUE = ~(-1 << 24);
+    public static final int SEGMENT_TXN_MAX_VALUE = ~(-1 << 24);
+    public static final long STRUCTURE_VERSION_MAX_VALUE = ~(-1L << 40);
+    private static final long COMMIT_TIMESTAMP_MASK = ~(-1L << 38);
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
+    private static final long MAX_TIMESTAMP_DIFF_MASK = MAX_TIMESTAMP_DIFF_MAX_VALUE;
+    private static final long ROW_COUNT_MASK = ROW_COUNT_MAX_VALUE;
+    private static final int SEGMENT_ID_MASK = SEGMENT_ID_MAX_VALUE;
+    private static final int SEGMENT_TXN_MASK = SEGMENT_TXN_MAX_VALUE;
+    private static final long STRUCTURE_VERSION_MASK = STRUCTURE_VERSION_MAX_VALUE;
+    private static final long TX_LOG_STRUCTURE_VERSION_OFFSET_40 = 0L;
+    private static final long TX_LOG_WAL_ID_OFFSET_32 = TX_LOG_STRUCTURE_VERSION_OFFSET_40 + 5;
+    private static final long TX_LOG_SEGMENT_OFFSET_24 = TX_LOG_WAL_ID_OFFSET_32 + Integer.BYTES;
+    private static final long TX_LOG_SEGMENT_TXN_OFFSET_24 = TX_LOG_SEGMENT_OFFSET_24 + 3;
+    private static final long TX_LOG_COMMIT_TIMESTAMP_OFFSET_48 = TX_LOG_SEGMENT_TXN_OFFSET_24 + 3;
+    private static final long TX_LOG_MIN_TIMESTAMP_OFFSET_64 = TX_LOG_COMMIT_TIMESTAMP_OFFSET_48 + 6;
+    private static final long TX_LOG_MAX_TIMESTAMP_OFFSET_48 = TX_LOG_MIN_TIMESTAMP_OFFSET_64 + 8;
+    private static final long TX_LOG_ROW_COUNT_OFFSET_40 = TX_LOG_MAX_TIMESTAMP_OFFSET_48 + 6;
+    private static final long RECORD_SIZE = TX_LOG_ROW_COUNT_OFFSET_40 + 5;
     private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
@@ -112,7 +127,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             int partFd = -1;
             try {
                 partFd = TableUtils.openRO(ff, path, LOG);
-                long fileReadOffset = (prevTxn % partTransactionCount) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET;
+                long fileReadOffset = (prevTxn % partTransactionCount) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET_40;
                 return ff.readNonNegativeLong(partFd, fileReadOffset);
             } finally {
                 if (partFd > -1) {
@@ -128,15 +143,23 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
         openTxnPart();
 
+        long appendOffset = txnPartMem.getAppendOffset();
         txnPartMem.putLong(structureVersion);
+        txnPartMem.jumpTo(appendOffset + TX_LOG_WAL_ID_OFFSET_32);
         txnPartMem.putInt(walId);
         txnPartMem.putInt(segmentId);
+        txnPartMem.jumpTo(appendOffset + TX_LOG_SEGMENT_TXN_OFFSET_24);
         txnPartMem.putInt(segmentTxn);
-        txnPartMem.putLong(timestamp);
+        txnPartMem.jumpTo(appendOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET_48);
+        // Commit timestamp stored in milliseconds
+        txnPartMem.putLong(timestamp / 1000);
+        txnPartMem.jumpTo(appendOffset + TX_LOG_MIN_TIMESTAMP_OFFSET_64);
         txnPartMem.putLong(txnMinTimestamp);
-        txnPartMem.putLong(txnMaxTimestamp);
+        txnPartMem.jumpTo(appendOffset + TX_LOG_MAX_TIMESTAMP_OFFSET_48);
+        txnPartMem.putLong(txnMaxTimestamp - txnMinTimestamp);
+        txnPartMem.jumpTo(appendOffset + TX_LOG_ROW_COUNT_OFFSET_40);
         txnPartMem.putLong(txnRowCount);
-        txnPartMem.putLong(0L);
+        txnPartMem.jumpTo(appendOffset + RECORD_SIZE);
 
         Unsafe.getUnsafe().storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
@@ -150,15 +173,22 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         openTxnPart();
 
+        long appendOffset = txnPartMem.getAppendOffset();
         txnPartMem.putLong(newStructureVersion);
+        txnPartMem.jumpTo(appendOffset + TX_LOG_WAL_ID_OFFSET_32);
         txnPartMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
-        txnPartMem.putInt(-1);
-        txnPartMem.putInt(-1);
-        txnPartMem.putLong(timestamp);
+        txnPartMem.putInt(0);
+        txnPartMem.jumpTo(appendOffset + TX_LOG_SEGMENT_TXN_OFFSET_24);
+        txnPartMem.putInt(0);
+        txnPartMem.jumpTo(appendOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET_48);
+        // Commit timestamp stored in milliseconds
+        txnPartMem.putLong(timestamp / 1000);
+        txnPartMem.jumpTo(appendOffset + TX_LOG_MIN_TIMESTAMP_OFFSET_64);
         txnPartMem.putLong(serializer.getCommandType(instance));
         txnPartMem.putLong(0L);
         txnPartMem.putLong(0L);
         txnPartMem.putLong(0L);
+        txnPartMem.jumpTo(appendOffset + RECORD_SIZE);
     }
 
     @Override
@@ -211,7 +241,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             long prevTxn = lastTxn - 1;
             openTxnPart(prevTxn);
             long lastPartTxn = (prevTxn) % partTransactionCount;
-            return WalUtils.DROP_TABLE_WALID == txnPartMem.getLong(lastPartTxn * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
+            return WalUtils.DROP_TABLE_WALID == txnPartMem.getInt(lastPartTxn * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET_32);
         }
         return false;
     }
@@ -240,7 +270,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             long prevTxn = lastTxn - 1;
             openTxnPart(prevTxn);
             long lastPartTxn = (prevTxn) % partTransactionCount;
-            maxStructureVersion = txnPartMem.getLong(lastPartTxn * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
+            maxStructureVersion = txnPartMem.getLong(lastPartTxn * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET_40) & STRUCTURE_VERSION_MASK;
         }
         openTxnPart();
         // Open part can leave prev txn append position when part is the same
@@ -369,7 +399,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public long getCommitTimestamp() {
             assert address != 0;
-            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
+            // Commit timestamp stored in milliseconds
+            return (Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET_48) & COMMIT_TIMESTAMP_MASK) * 1000;
         }
 
         @Override
@@ -378,21 +409,26 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         @Override
+        public int getPartitionSize() {
+            return partTransactionCount;
+        }
+
+        @Override
         public int getSegmentId() {
             assert address != 0;
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
+            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET_24) & SEGMENT_ID_MASK;
         }
 
         @Override
         public int getSegmentTxn() {
             assert address != 0;
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
+            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET_24) & SEGMENT_TXN_MASK;
         }
 
         @Override
         public long getStructureVersion() {
             assert address != 0;
-            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);
+            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET_40) & STRUCTURE_VERSION_MASK;
         }
 
         @Override
@@ -403,19 +439,21 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public long getTxnMaxTimestamp() {
             assert address != 0;
-            return Unsafe.getUnsafe().getLong(address + txnOffset + MAX_TIMESTAMP_OFFSET);
+            long minTs = getTxnMinTimestamp();
+            long diff = Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_MAX_TIMESTAMP_OFFSET_48) & MAX_TIMESTAMP_DIFF_MASK;
+            return minTs + diff;
         }
 
         @Override
         public long getTxnMinTimestamp() {
             assert address != 0;
-            return Unsafe.getUnsafe().getLong(address + txnOffset + MIN_TIMESTAMP_OFFSET);
+            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_MIN_TIMESTAMP_OFFSET_64);
         }
 
         @Override
         public long getTxnRowCount() {
             assert address != 0;
-            return Unsafe.getUnsafe().getLong(address + txnOffset + ROW_COUNT_OFFSET);
+            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_ROW_COUNT_OFFSET_40) & ROW_COUNT_MASK;
         }
 
         @Override
@@ -426,7 +464,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public int getWalId() {
             assert address != 0;
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);
+            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET_32);
         }
 
         @Override
@@ -471,11 +509,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             }
             openPart(minTxn);
             txn = txnLo = minTxn;
-        }
-
-        @Override
-        public int getPartitionSize() {
-            return partTransactionCount;
         }
 
         @Override

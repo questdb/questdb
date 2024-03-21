@@ -471,14 +471,7 @@ public class WalWriter implements TableWriterAPI {
 
         if (uncommittedRows > 0) {
             final int oldSegmentId = segmentId;
-            final int newSegmentId = segmentId + 1;
-            if (newSegmentId > WalUtils.SEG_MAX_ID) {
-                throw CairoException.critical(0)
-                        .put("cannot roll over to new segment due to SEG_MAX_ID overflow ")
-                        .put("[table=").put(tableToken.getTableName())
-                        .put(", walId=").put(walId)
-                        .put(", segmentId=").put(newSegmentId).put(']');
-            }
+            final int newSegmentId = getNextSegmentId();
             final int oldSegmentLockFd = segmentLockFd;
             segmentLockFd = -1;
             try {
@@ -1147,13 +1140,15 @@ public class WalWriter implements TableWriterAPI {
         rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
     }
 
-    private void mayRollSegmentOnNextRow() {
-        if (rollSegmentOnNextRow) {
-            return;
+    private int getNextSegmentId() {
+        if (segmentId + 1 > WalUtils.SEG_MAX_ID) {
+            throw CairoException.critical(0)
+                    .put("cannot roll over to new segment due to SEG_MAX_ID overflow ")
+                    .put("[table=").put(tableToken.getTableName())
+                    .put(", walId=").put(walId)
+                    .put(", segmentId=").put(segmentId + 1).put(']');
         }
-        rollSegmentOnNextRow = (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())
-                || breachedRolloverSizeThreshold()
-                || (lastSegmentTxn > Integer.MAX_VALUE - 2);
+        return segmentId + 1;
     }
 
     private void mkWalDir() {
@@ -1197,9 +1192,18 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
+    private void mayRollSegmentOnNextRow() {
+        if (rollSegmentOnNextRow) {
+            return;
+        }
+        rollSegmentOnNextRow = (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())
+                || breachedRolloverSizeThreshold()
+                || (lastSegmentTxn > WalUtils.SEGMENT_TXN_MAX_VALUE - 2);
+    }
+
     private void openNewSegment() {
         final int oldSegmentId = segmentId;
-        final int newSegmentId = segmentId + 1;
+        final int newSegmentId = getNextSegmentId();
         final int oldSegmentLockFd = segmentLockFd;
         segmentLockFd = -1;
         final long oldSegmentRows = segmentRowCount;
