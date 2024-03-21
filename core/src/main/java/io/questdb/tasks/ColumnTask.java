@@ -27,16 +27,17 @@ package io.questdb.tasks;
 import io.questdb.cairo.TableWriter;
 import io.questdb.mp.CountDownLatchSPI;
 
-public class O3CallbackTask {
+public class ColumnTask {
     private int columnIndex;
     private int columnType;
     private CountDownLatchSPI countDownLatchSPI;
-    private long mergeCount;
-    private long mergedTimestampsAddr;
-    private long row1Count;
-    private long row2Hi;
-    private long row2Lo;
-    private TableWriter.O3ColumnUpdateMethod writerCallbackMethod;
+    private long long0;
+    private long long1;
+    private long long2;
+    private long long3;
+    private long long4;
+    private TableWriter.ColumnTaskHandler taskHandler;
+    private int timestampColumnIndex;
 
     public int getColumnIndex() {
         return columnIndex;
@@ -50,49 +51,55 @@ public class O3CallbackTask {
         return countDownLatchSPI;
     }
 
-    public long getMergeCount() {
-        return mergeCount;
+    public long getLong0() {
+        return long0;
     }
 
-    public long getMergedTimestampsAddr() {
-        return mergedTimestampsAddr;
+    public long getLong1() {
+        return long1;
     }
 
-    public long getRow1Count() {
-        return row1Count;
+    public long getLong2() {
+        return long2;
     }
 
-    public long getRow2Hi() {
-        return row2Hi;
+    public long getLong3() {
+        return long3;
     }
 
-    public long getRow2Lo() {
-        return row2Lo;
+    public long getLong4() {
+        return long4;
     }
 
-    public TableWriter.O3ColumnUpdateMethod getWriterCallbackMethod() {
-        return writerCallbackMethod;
+    public TableWriter.ColumnTaskHandler getTaskHandler() {
+        return taskHandler;
+    }
+
+    public int getTimestampColumnIndex() {
+        return timestampColumnIndex;
     }
 
     public void of(
             CountDownLatchSPI countDownLatchSPI,
             int columnIndex,
             int columnType,
-            long mergedTimestampsAddr,
-            long mergeCount,
-            long row1Count,
-            long row2Lo,
-            long row2Hi,
-            TableWriter.O3ColumnUpdateMethod writerCallbackMethod
+            int timestampIndex,
+            long long0,
+            long long1,
+            long long2,
+            long long3,
+            long long4,
+            TableWriter.ColumnTaskHandler taskHandler
     ) {
         this.countDownLatchSPI = countDownLatchSPI;
         this.columnIndex = columnIndex;
         this.columnType = columnType;
-        this.mergedTimestampsAddr = mergedTimestampsAddr;
-        this.mergeCount = mergeCount;
-        this.row1Count = row1Count;
-        this.row2Lo = row2Lo;
-        this.row2Hi = row2Hi;
-        this.writerCallbackMethod = writerCallbackMethod;
+        this.timestampColumnIndex = timestampIndex;
+        this.long0 = long0;
+        this.long1 = long1;
+        this.long2 = long2;
+        this.long3 = long3;
+        this.long4 = long4;
+        this.taskHandler = taskHandler;
     }
 }

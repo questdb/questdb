@@ -42,6 +42,8 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private long batchO3MaxLag = -1;
+    private long batchSize = -1;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableName;
     private int maxUncommittedRows;
@@ -54,6 +56,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private boolean walEnabled;
 
     private CreateTableModel() {
+
     }
 
     public void addColumn(CharSequence name, int type, int symbolCapacity) throws SqlException {
@@ -100,6 +103,17 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         columnNames.clear();
         columnNameIndexMap.clear();
         ignoreIfExists = false;
+        o3MaxLag = -1;
+        batchO3MaxLag = -1;
+        batchSize = -1;
+    }
+
+    public long getBatchO3MaxLag() {
+        return batchO3MaxLag;
+    }
+
+    public long getBatchSize() {
+        return batchSize;
     }
 
     public CharSequenceObjHashMap<ColumnCastModel> getColumnCastModels() {
@@ -192,6 +206,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return volumeAlias;
     }
 
+    public boolean isAtomic() {
+        return batchSize == -1;
+    }
+
     @Override
     public boolean isDedupKey(int index) {
         return (getLowAt(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) != 0;
@@ -215,6 +233,14 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     @Override
     public boolean isWalEnabled() {
         return walEnabled;
+    }
+
+    public void setBatchO3MaxLag(long batchO3MaxLag) {
+        this.batchO3MaxLag = batchO3MaxLag;
+    }
+
+    public void setBatchSize(long batchSize) {
+        this.batchSize = batchSize;
     }
 
     public void setDedupKeyFlag(int index) {
@@ -283,7 +309,18 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.putAscii("create table ");
+        sink.putAscii("create");
+        if (!isAtomic()) {
+            sink.putAscii(" batch ");
+            sink.put(batchSize);
+            if (batchO3MaxLag != -1) {
+                sink.putAscii(" o3MaxLag ");
+                sink.put(batchO3MaxLag);
+            }
+        } else {
+            sink.putAscii(" atomic");
+        }
+        sink.putAscii(" table ");
         sink.put(getName().token);
         if (getQueryModel() != null) {
             sink.putAscii(" as (");

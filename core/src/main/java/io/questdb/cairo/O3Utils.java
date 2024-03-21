@@ -75,7 +75,7 @@ public class O3Utils {
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
-        workerPool.assign(new O3CallbackJob(messageBus));
+        workerPool.assign(new ColumnTaskJob(messageBus));
         workerPool.freeOnExit(purgeDiscoveryJob);
 
         final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();

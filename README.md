@@ -25,15 +25,15 @@ ingestion and fast SQL queries with operational simplicity.
 QuestDB is well-suited for financial market data, IoT sensor data, ad-tech and real-time dashboards. It shines for datasets with [high cardinality](https://questdb.io/glossary/high-cardinality/)
 and is a drop-in replacement for InfluxDB via support for the InfluxDB Line Protocol.
 
-QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL extensions make it simple to filter and downsample data, 
-or correlate data from multiple sources using relational and time-series joins. 
+QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL extensions make it simple to filter and downsample data,
+or correlate data from multiple sources using relational and time-series joins.
 
-We achieve high performance by adopting a column-oriented storage model, parallelized vector execution, SIMD instructions, and low-latency techniques. 
+We achieve high performance by adopting a column-oriented storage model, parallelized vector execution, SIMD instructions, and low-latency techniques.
 The entire codebase is built from the ground up in Java, C++ and [Rust](https://questdb.io/blog/leveraging-rust-in-our-high-performance-java-database/) with no dependencies and zero garbage collection.
 
-QuestDB supports schema-agnostic streaming ingestion using the InfluxDB line protocol and a REST API for bulk imports and exports. 
+QuestDB supports schema-agnostic streaming ingestion using the InfluxDB line protocol and a REST API for bulk imports and exports.
 The QuestDB SQL Web Console is an interactive SQL editor facilitating CSV import. Finally, QuestDB also includes the Postgres Wire Protocol
-for programmatic queries. 
+for programmatic queries.
 
 Popular tools that integrate with QuestDB include [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/questdb-kafka/), [Grafana](https://questdb.io/docs/third-party-tools/grafana/),
 [Superset](https://questdb.io/docs/third-party-tools/superset/), [Telegraf](https://questdb.io/docs/third-party-tools/telegraf/) and [Apache Flink](https://questdb.io/docs/third-party-tools/flink/).
@@ -91,14 +91,14 @@ other installation and deployment methods.
 
 QuestDB Cloud is the fully managed version of QuestDB, with additional features such as Role-based access control,
 Cloud-native Replication, Compression, monitoring and cloud-native snapshots.
-Get started with $200 credits [here](https://cloud.questdb.com)
+[Get started with $200 credits](https://cloud.questdb.com).
 
 ### Connect to QuestDB
 
 You can interact with QuestDB using the following interfaces:
 
-- [Web Console](https://questdb.io/docs/develop/web-console/) for an interactive SQL editor and CSV import on port `9000`
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) for streaming ingestion on port `9009`
+- [Web Console](https://questdb.io/docs/web-console/) for an interactive SQL editor and CSV import on port `9000`
+- [InfluxDB line protocol](https://questdb.io/docs/reference/api/ilp/overview/) for streaming ingestion on port `9000`
 - [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) for programmatic queries and transactional inserts on port `8812`
 - [REST API](https://questdb.io/docs/reference/api/rest/) for CSV import and cURL on port `9000`
 
@@ -121,12 +121,8 @@ our multi-path [quickstart repository](https://github.com/questdb/questdb-quicks
 
 ## How QuestDB compares to other open source TSDBs
 
-[This article](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
-compares QuestDB to other open source time series databases spanning functionality, maturity and performance.
-
-Here are high-cardinality
-[Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
-results using the `cpu-only` use case with 12 workers on 48 CPUs and 96GB RAM:
+Checkout [our benchmark blog post](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
+which compares QuestDB and InfluxDB across functionality, maturity and performance.
 
 <div align="center">
     <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/questdb7.3.10-tsbs-benchmark.png" width="600"/>
@@ -173,7 +169,7 @@ requests or feedback. To get started with contributing:
   of QuestDB and submit a pull request with your proposed changes.
 
 ✨ As a sign of our gratitude, we also send **QuestDB swag** to our
-contributors. [Claim your swag here.](https://questdb.io/community)
+contributors. [Claim your swag](https://questdb.io/community).
 
 A big thanks goes to the following wonderful people who have contributed to
 QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
