@@ -31,15 +31,17 @@ final class FiltersCompiler {
     private FiltersCompiler() {
     }
 
-    public static native long callFunction(long fnAddress,
-                                           long colsAddress,
-                                           long colsSize,
-                                           long varLenIndexesAddress,
-                                           long varsAddress,
-                                           long varsSize,
-                                           long rowsAddress,
-                                           long rowsSize,
-                                           long rowsStartOffset);
+    public static native long callFunction(
+            long fnAddress,
+            long colsAddress,
+            long colsSize,
+            long varSizeIndexesAddress,
+            long varsAddress,
+            long varsSize,
+            long rowsAddress,
+            long rowsSize,
+            long rowsStartOffset
+    );
 
     public static native long compileFunction(long filterAddress, long filterSize, int options, JitError error);
 

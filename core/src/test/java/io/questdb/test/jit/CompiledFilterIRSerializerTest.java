@@ -98,12 +98,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 .col("astring", ColumnType.STRING)
                 .col("astring2", ColumnType.STRING)
                 .col("avarchar", ColumnType.VARCHAR)
-                    .col("avarchar2", ColumnType.VARCHAR)
-                    .col("abinary", ColumnType.BINARY)
+                .col("avarchar2", ColumnType.VARCHAR)
+                .col("abinary", ColumnType.BINARY)
                 .col("abinary2", ColumnType.BINARY)
                 .col("auuid", ColumnType.UUID)
                 .col("along128", ColumnType.LONG128)
-                    .col("along256", ColumnType.LONG256)
+                .col("along256", ColumnType.LONG256)
                 .timestamp();
         AbstractCairoTest.create(model);
 
@@ -487,6 +487,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // 16B
         filterToOptions.put("auuid = '11111111-1111-1111-1111-111111111111'", 16);
         filterToOptions.put("auuid = null", 16);
+        filterToOptions.put("avarchar = null", 16);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             int options = serialize(entry.getKey(), false, false, false);
@@ -739,6 +740,14 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i128 0 0L)(i128 auuid)(=)(ret)");
     }
 
+    @Test
+    public void testVarcharNullConstant() throws Exception {
+        serialize("avarchar <> null");
+        assertIR("(i32 -1L)(varchar_header avarchar)(<>)(ret)");
+        serialize("avarchar = null");
+        assertIR("(i32 -1L)(varchar_header avarchar)(=)(ret)");
+    }
+
     private void assertIR(String message, String expectedIR) {
         TestIRSerializer ser = new TestIRSerializer(irMemory, metadata);
         String actualIR = ser.serialize();
@@ -972,6 +981,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     return "string_header";
                 case BINARY_HEADER_TYPE:
                     return "binary_header";
+                case VARCHAR_HEADER_TYPE:
+                    return "varchar_header";
                 default:
                     return "unknown: " + type;
             }

@@ -36,7 +36,8 @@ enum class data_type_t : uint8_t {
     f64,
     i128,
     string_header,
-    binary_header
+    binary_header,
+    varchar_header
 };
 
 enum class data_kind_t : uint8_t {

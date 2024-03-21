@@ -102,7 +102,7 @@ namespace questdb::avx2 {
         }
     }
 
-    //https://stackoverflow.com/questions/36932240/avx2-what-is-the-most-efficient-way-to-pack-left-based-on-a-mask
+    // https://stackoverflow.com/questions/36932240/avx2-what-is-the-most-efficient-way-to-pack-left-based-on-a-mask
     inline Ymm compress_register(Compiler &c, const Ymm &ymm0, const Ymm &mask) {
         c.comment("compress_register");
         x86::Gp bits = to_bits32(c, mask);
@@ -137,6 +137,11 @@ namespace questdb::avx2 {
     inline Mem vec_double_null(Compiler &c) {
         int64_t nulls[4] = {0x7ff8000000000000LL, 0x7ff8000000000000LL, 0x7ff8000000000000LL, 0x7ff8000000000000LL};
         return c.newConst(ConstPool::kScopeLocal, &nulls, 32);
+    }
+
+    inline Mem vec_varchar_header_offsets(Compiler &c) {
+        int32_t offsets[8] = {0, 4, 8, 12, 16, 20, 24, 28};
+        return c.newConst(ConstPool::kScopeLocal, &offsets, 32);
     }
 
     inline Mem vec_sign_mask(Compiler &c, data_type_t type) {
@@ -742,7 +747,6 @@ namespace questdb::avx2 {
         Xmm xmm5 = c.newXmm();
         Xmm xmm6 = c.newXmm();
 
-
         c.vxorpd( xmm1, xmm1, xmm1);
         c.vxorpd( xmm2, xmm2, xmm2);
         c.vxorpd( xmm3, xmm3, xmm3);
@@ -763,7 +767,7 @@ namespace questdb::avx2 {
         c.vunpcklpd( xmm6, xmm3, xmm4);
         c.vinsertf128( dst, xmm5.ymm(), xmm6, 1);
         //c.vzeroupper();
-        if(null_check) {
+        if (null_check) {
             Ymm int_nulls_mask = cmp_eq_null(c, data_type_t::i64, rhs);
             Ymm nans = c.newYmm();
             c.vmovups(nans, vec_double_null(c));

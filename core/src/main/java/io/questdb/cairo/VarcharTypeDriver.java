@@ -33,26 +33,25 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.ColumnType.VARCHAR_AUX_SHL;
 
 public class VarcharTypeDriver implements ColumnTypeDriver {
+    public static final int HEADER_FLAG_NULL = 4;
     public static final VarcharTypeDriver INSTANCE = new VarcharTypeDriver();
     public static final int VARCHAR_AUX_WIDTH_BYTES = 2 * Long.BYTES;
+    // We store a prefix of this many bytes in auxiliary memory when the value is too large to inline.
+    public static final int VARCHAR_INLINED_PREFIX_BYTES = 6;
+    public static final long VARCHAR_INLINED_PREFIX_MASK = (1L << 8 * VARCHAR_INLINED_PREFIX_BYTES) - 1L;
     // Maximum byte length that we can fully inline into auxiliary memory. In this case
     // there is no need to store any part of the string in data memory.
     // When the string is longer than this, we store the first few bytes in auxiliary memory,
     // and the full value in data memory.
     public static final int VARCHAR_MAX_BYTES_FULLY_INLINED = 9;
-    // We store a prefix of this many bytes in auxiliary memory when the value is too large to inline.
-    public static final int VARCHAR_INLINED_PREFIX_BYTES = 6;
-    public static final long VARCHAR_INLINED_PREFIX_MASK = (1L << 8 * VARCHAR_INLINED_PREFIX_BYTES) - 1L;
     public static final long VARCHAR_MAX_COLUMN_SIZE = 1L << 48;
-
+    private static final int FULLY_INLINED_STRING_OFFSET = 1;
     private static final int HEADER_FLAGS_WIDTH = 4;
     private static final int HEADER_FLAGS_MASK = (1 << HEADER_FLAGS_WIDTH) - 1;
-    private static final int HEADER_FLAG_INLINED = 1;
     private static final int HEADER_FLAG_ASCII = 2;
-    private static final int HEADER_FLAG_NULL = 4;
-    private static final int FULLY_INLINED_STRING_OFFSET = 1;
-    private static final int INLINED_PREFIX_OFFSET = 4;
+    private static final int HEADER_FLAG_INLINED = 1;
     private static final int INLINED_LENGTH_MASK = (1 << 4) - 1;
+    private static final int INLINED_PREFIX_OFFSET = 4;
     // The exclusive limit on the byte length of a varchar value. The length is encoded in 28 bits.
     private static final int LENGTH_LIMIT_BYTES = 1 << 28;
     private static final int DATA_LENGTH_MASK = LENGTH_LIMIT_BYTES - 1;
@@ -84,7 +83,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                             .put(size).put(", max=").put(LENGTH_LIMIT_BYTES).put(']');
                 }
 
-                int flags = 0;  // not inlined
+                int flags = 0; // not inlined
                 if (value.isAscii()) {
                     flags |= HEADER_FLAG_ASCII;
                 }
@@ -191,9 +190,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         if (isNull(header)) {
             return null;
         }
-        return (ab == 1) ?
-                dataMem.getVarcharA(offset + Integer.BYTES, size(header), isAscii(header)) :
-                dataMem.getVarcharB(offset + Integer.BYTES, size(header), isAscii(header));
+        return (ab == 1)
+                ? dataMem.getVarcharA(offset + Integer.BYTES, size(header), isAscii(header))
+                : dataMem.getVarcharB(offset + Integer.BYTES, size(header), isAscii(header));
     }
 
     /**
@@ -214,10 +213,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     /**
      * Reads a UTF-8 value from a VARCHAR column.
      *
-     * @param rowNum the row number to read
+     * @param rowNum  the row number to read
      * @param dataMem base pointer of the data vector
-     * @param auxMem base pointer of the auxiliary vector
-     * @param ab whether to return the A or B flyweight
+     * @param auxMem  base pointer of the auxiliary vector
+     * @param ab      whether to return the A or B flyweight
      * @return a <code>Utf8Seqence</code> representing the value at <code>rowNum</code>
      */
     public static Utf8Sequence getValue(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
@@ -253,10 +252,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     /**
      * Reads a UTF-8 value from a VARCHAR column.
      *
-     * @param auxAddr base pointer of the auxiliary vector
-     * @param dataAddr base pointer of the data vector
-     * @param rowNum the row number to read
-     * @param utf8view flyweight for the inlined string
+     * @param auxAddr       base pointer of the auxiliary vector
+     * @param dataAddr      base pointer of the data vector
+     * @param rowNum        the row number to read
+     * @param utf8view      flyweight for the inlined string
      * @param utf8SplitView flyweight for the split string
      * @return utf8view or utf8SplitView loaded with the read value
      */
@@ -289,22 +288,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
                 ascii
         );
-    }
-
-    private static boolean hasNullFlag(int auxHeader) {
-        return (auxHeader & HEADER_FLAG_NULL) == HEADER_FLAG_NULL;
-    }
-
-    private static boolean hasInlinedFlag(int auxHeader) {
-        return (auxHeader & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED;
-    }
-
-    private static boolean hasNullOrInlinedFlag(int auxHeader) {
-        return (auxHeader & (HEADER_FLAG_NULL | HEADER_FLAG_INLINED)) != 0;
-    }
-
-    private static boolean hasAsciiFlag(int auxHeader) {
-        return (auxHeader & HEADER_FLAG_ASCII) == HEADER_FLAG_ASCII;
     }
 
     @Override
@@ -431,7 +414,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         final long dataOffset = Numbers.encodeLowHighInts(offsetLo, offsetHi) >>> 16;
 
         if (hasNullOrInlinedFlag(raw)) {
-            // null flag is set or fully inlined value
             return dataOffset;
         }
         // size of the string at this offset
@@ -585,6 +567,22 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 size, VARCHAR_MAX_BYTES_FULLY_INLINED, dataOffset);
 
         return dataOffset + size;
+    }
+
+    private static boolean hasAsciiFlag(int auxHeader) {
+        return (auxHeader & HEADER_FLAG_ASCII) == HEADER_FLAG_ASCII;
+    }
+
+    private static boolean hasInlinedFlag(int auxHeader) {
+        return (auxHeader & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED;
+    }
+
+    private static boolean hasNullFlag(int auxHeader) {
+        return (auxHeader & HEADER_FLAG_NULL) == HEADER_FLAG_NULL;
+    }
+
+    private static boolean hasNullOrInlinedFlag(int auxHeader) {
+        return (auxHeader & (HEADER_FLAG_NULL | HEADER_FLAG_INLINED)) != 0;
     }
 
     private static boolean isAscii(int header) {

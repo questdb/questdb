@@ -1955,6 +1955,27 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStringKeyGroupByWithNotNullCheckInFilter() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, min(ts), max(ts) FROM tab WHERE key IS NOT NULL ORDER BY key",
+                "key\tmin\tmax\n" +
+                        "k0\t1970-01-01T01:12:00.000000Z\t1970-02-10T12:00:00.000000Z\n" +
+                        "k1\t1970-01-01T00:14:24.000000Z\t1970-02-10T11:02:24.000000Z\n" +
+                        "k2\t1970-01-01T00:28:48.000000Z\t1970-02-10T11:16:48.000000Z\n" +
+                        "k3\t1970-01-01T00:43:12.000000Z\t1970-02-10T11:31:12.000000Z\n" +
+                        "k4\t1970-01-01T00:57:36.000000Z\t1970-02-10T11:45:36.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithNullCheckInFilter() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, min(ts), max(ts) FROM tab WHERE key IS NULL ORDER BY key",
+                "key\tmin\tmax\n"
+        );
+    }
+
+    @Test
     public void testParallelStringKeyGroupByWithReadThreadSafeTimestampFilter() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT key, count_distinct(anint) FROM tab " +

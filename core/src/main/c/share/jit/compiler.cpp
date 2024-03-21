@@ -51,7 +51,7 @@ static JitGlobalContext gGlobalContext;
 #endif
 
 using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count,
-                               int64_t *varlen_indexes,
+                               int64_t *varsize_indexes,
                                int64_t *vars, int64_t vars_count,
                                int64_t *rows, int64_t rows_count,
                                int64_t rows_start_offset);
@@ -84,7 +84,6 @@ struct Function {
     };
 
     void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1) {
-
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
 
@@ -94,7 +93,7 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::x86::emit_code(c, istream, size, values, null_check, cols_ptr, varlen_indexes_ptr, vars_ptr, input_index);
+            questdb::x86::emit_code(c, istream, size, values, null_check, cols_ptr, varsize_indexes_ptr, vars_ptr, input_index);
 
             auto mask = values.pop();
 
@@ -162,7 +161,7 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::avx2::emit_code(c, istream, size, values, null_check, cols_ptr, varlen_indexes_ptr, vars_ptr, input_index);
+            questdb::avx2::emit_code(c, istream, size, values, null_check, cols_ptr, varsize_indexes_ptr, vars_ptr, input_index);
 
             auto mask = values.pop();
 
@@ -200,9 +199,9 @@ struct Function {
         c.setArg(0, cols_ptr);
         c.setArg(1, cols_size);
 
-        varlen_indexes_ptr = c.newIntPtr("varlen_indexes_ptr");
+        varsize_indexes_ptr = c.newIntPtr("varsize_indexes_ptr");
 
-        c.setArg(2, varlen_indexes_ptr);
+        c.setArg(2, varsize_indexes_ptr);
 
         vars_ptr = c.newIntPtr("vars_ptr");
         vars_size = c.newInt64("vars_size");
@@ -238,7 +237,7 @@ struct Function {
 
     x86::Gp cols_ptr;
     x86::Gp cols_size;
-    x86::Gp varlen_indexes_ptr;
+    x86::Gp varsize_indexes_ptr;
     x86::Gp vars_ptr;
     x86::Gp vars_size;
     x86::Gp rows_ptr;
@@ -344,7 +343,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
                                                                          jlong fnAddress,
                                                                          jlong colsAddress,
                                                                          jlong colsSize,
-                                                                         jlong varlenIndexesAddress,
+                                                                         jlong varSizeIndexesAddress,
                                                                          jlong varsAddress,
                                                                          jlong varsSize,
                                                                          jlong rowsAddress,
@@ -354,7 +353,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
     auto fn = reinterpret_cast<CompiledFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
               colsSize,
-              reinterpret_cast<int64_t *>(varlenIndexesAddress),
+              reinterpret_cast<int64_t *>(varSizeIndexesAddress),
               reinterpret_cast<int64_t *>(varsAddress),
               varsSize,
               reinterpret_cast<int64_t *>(rowsAddress),

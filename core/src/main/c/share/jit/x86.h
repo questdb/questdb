@@ -38,36 +38,39 @@ namespace questdb::x86 {
         return {Mem(vars_ptr, 8 * idx, type_size), type, data_kind_t::kMemory};
     }
 
+    // Reads length of variable size column with header stored in data vector (string, binary).
     jit_value_t read_mem_varlen(Compiler &c,
                                 uint32_t header_size,
                                 int32_t column_idx,
-                                const Gp &column_address,
-                                const Gp &varlen_indexes_ptr,
+                                const Gp &cols_ptr,
+                                const Gp &varsize_indexes_ptr,
                                 const Gp &input_index) {
-        // Column has variable-length data. Load the value of its header
-        // (i.e., data length). It can also indicate a NULL value, encoded as length -1.
-        // We reach the header by looking up its offset in the varlen index.
-        // First try avoiding the data-dependent load of the header: load the next entry
-        // from the varlen index and subtract from it header_size + the value of the
-        // current one. This is equal to the length of the value.
+        // Column has variable-size data with header stored in data vector.
+        // First, we load this and the next data vector offsets from the aux vector.
+        // When the offset difference is zero, it can indicate an empty  value (length 0)
+        // or a NULL (length -1). In the zero difference case, we have to load the header
+        // from the data vector. In the positive difference case, the difference is equal
+        // to the length, so there is no need to do an extra load.
         Label l_nonzero = c.newLabel();
         Gp offset = c.newInt64("offset");
         Gp length = c.newInt64("length");
-        Gp varlen_index_address = c.newInt64("varlen_index_address");
+        Gp varsize_index_address = c.newInt64("varsize_index_address");
         Gp next_input_index = c.newInt64("next_input_index");
         c.mov(next_input_index, input_index);
         c.inc(next_input_index);
+        c.mov(varsize_index_address, ptr(varsize_indexes_ptr, 8 * column_idx, 8));
         auto offset_shift = type_shift(data_type_t::i64);
         auto offset_size = 1 << offset_shift;
-        c.mov(varlen_index_address, ptr(varlen_indexes_ptr, 8 * column_idx, 8));
-        c.mov(offset, ptr(varlen_index_address, input_index, offset_shift, 0, offset_size));
-        c.mov(length, ptr(varlen_index_address, next_input_index, offset_shift, 0, offset_size));
+        c.mov(offset, ptr(varsize_index_address, input_index, offset_shift, 0, offset_size));
+        c.mov(length, ptr(varsize_index_address, next_input_index, offset_shift, 0, offset_size));
         c.sub(length, offset);
         c.sub(length, header_size);
         // length now contains the length of the value. It can be zero for two reasons:
         // empty value or NULL value.
         c.jnz(l_nonzero);
         // If it's zero, we have to load the actual header value, which can be 0 or -1.
+        Gp column_address = c.newInt64("column_address");
+        c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
         c.mov(length, ptr(column_address, offset, 0, 0, header_size));
         c.bind(l_nonzero);
         if (header_size == 4) {
@@ -76,12 +79,39 @@ namespace questdb::x86 {
         return {length, data_type_t::i64, data_kind_t::kMemory};
     }
 
+    // Reads length part of the varchar header for aux vector.
+    // This part is stored in the lowest 4 bytes of the header
+    // (see VarcharTypeDriver to understand the format).
+    //
+    // Note: unlike read_mem_varlen this method doesn't return the length,
+    //       so it can only be used in NULL checks.
+    jit_value_t read_mem_varchar_len_header(Compiler &c,
+                                            int32_t column_idx,
+                                            const Gp &varsize_indexes_ptr,
+                                            const Gp &input_index) {
+        Gp header = c.newInt32("header");
+        Gp varsize_index_address = c.newInt64("varsize_index_address");
+        c.mov(varsize_index_address, ptr(varsize_indexes_ptr, 8 * column_idx, 8));
+
+        Gp header_index = c.newInt64("header_index");
+        c.mov(header_index, input_index);
+        // varchar header is 16 bytes while we need the 4 lowest bytes,
+        // so we need to multiple the index by 4.
+        c.sal(header_index, 2);
+
+        auto header_shift = type_shift(data_type_t::i32);
+        auto header_size = 1 << header_shift;
+        c.mov(header, ptr(varsize_index_address, header_index, header_shift, 0, header_size));
+        return {header.r32(), data_type_t::i32, data_kind_t::kMemory};
+    }
+
     jit_value_t read_mem(
             Compiler &c, data_type_t type, int32_t column_idx, const Gp &cols_ptr,
-            const Gp &varlen_indexes_ptr, const Gp &input_index
+            const Gp &varsize_indexes_ptr, const Gp &input_index
     ) {
-        Gp column_address = c.newInt64("column_address");
-        c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
+        if (type == data_type_t::varchar_header) {
+            return read_mem_varchar_len_header(c, column_idx, varsize_indexes_ptr, input_index);
+        }
 
         uint32_t header_size;
         switch (type) {
@@ -95,10 +125,14 @@ namespace questdb::x86 {
                 header_size = 0;
         }
         if (header_size != 0) {
-            return read_mem_varlen(c, header_size, column_idx, column_address, varlen_indexes_ptr, input_index);
+            return read_mem_varlen(c, header_size, column_idx, cols_ptr, varsize_indexes_ptr, input_index);
         }
 
         // Simple case: column has fixed-length data.
+
+        Gp column_address = c.newInt64("column_address");
+        c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
+
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
         if (type_size <= 8) {
@@ -309,6 +343,7 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
             case data_type_t::string_header:
+            case data_type_t::varchar_header:
                 return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
             case data_type_t::binary_header:
@@ -332,6 +367,7 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
             case data_type_t::string_header:
+            case data_type_t::varchar_header:
                 return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
             case data_type_t::binary_header:
@@ -612,6 +648,7 @@ namespace questdb::x86 {
             case data_type_t::i128:
             case data_type_t::string_header:
             case data_type_t::binary_header:
+            case data_type_t::varchar_header:
                 return std::make_pair(lhs, rhs);
             default:
                 __builtin_unreachable();
@@ -681,7 +718,7 @@ namespace questdb::x86 {
     emit_code(Compiler &c, const instruction_t *istream, size_t size, ZoneStack<jit_value_t> &values,
               bool null_check,
               const Gp &cols_ptr,
-              const Gp &varlen_indexes_ptr,
+              const Gp &varsize_indexes_ptr,
               const Gp &vars_ptr,
               const Gp &input_index) {
 
@@ -701,7 +738,7 @@ namespace questdb::x86 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx  = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(read_mem(c, type, idx, cols_ptr, varlen_indexes_ptr, input_index));
+                    values.append(read_mem(c, type, idx, cols_ptr, varsize_indexes_ptr, input_index));
                 }
                     break;
                 case opcodes::Imm:
