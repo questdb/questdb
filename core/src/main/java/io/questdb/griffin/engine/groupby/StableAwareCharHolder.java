@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.StableDirectSequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -53,7 +54,7 @@ import org.jetbrains.annotations.Nullable;
  * +---------------------+-------------------+----------------------+
  * </pre>
  */
-public class DirectStrAwareCharHolder implements CharSequence {
+public class StableAwareCharHolder implements CharSequence {
     private static final long HEADER_SIZE = 2 * Integer.BYTES;
     private static final long LEN_OFFSET = Integer.BYTES;
     private static final int MIN_CAPACITY = 4; // 4 chars = 8 bytes = enough to store a pointer
@@ -94,7 +95,7 @@ public class DirectStrAwareCharHolder implements CharSequence {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + LEN_OFFSET) : 0;
     }
 
-    public DirectStrAwareCharHolder of(long ptr) {
+    public StableAwareCharHolder of(long ptr) {
         // clear the top bit
         this.ptr = ptr & 0x7FFFFFFFFFFFFFFFL;
         // extract the top bit
@@ -108,7 +109,7 @@ public class DirectStrAwareCharHolder implements CharSequence {
 
     public void clearAndSet(@Nullable CharSequence cs) {
         clear();
-        if (cs instanceof DirectCharSequence) {
+        if (cs instanceof StableDirectSequence) {
             direct = true;
             DirectCharSequence dcs = (DirectCharSequence) cs;
             checkCapacity(4); // pointer is 8 bytes = 4 chars

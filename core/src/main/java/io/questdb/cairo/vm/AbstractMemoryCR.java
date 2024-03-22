@@ -27,19 +27,15 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectCharSequence;
-import io.questdb.std.str.DirectString;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 
 // contiguous readable
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-    private final DirectString csviewA = new DirectString();
-    private final DirectString csviewB = new DirectString();
+    private final StableDirectString csviewA = new StableDirectString();
+    private final StableDirectString csviewB = new StableDirectString();
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
@@ -121,12 +117,14 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return getStr(offset, csviewB);
     }
 
-    @Override @NotNull
+    @Override
+    @NotNull
     public Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
         return getVarchar(offset, size, utf8viewA, ascii);
     }
 
-    @Override @NotNull
+    @Override
+    @NotNull
     public Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
         return getVarchar(offset, size, utf8viewB, ascii);
     }

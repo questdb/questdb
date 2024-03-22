@@ -32,14 +32,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.groupby.DirectStrAwareCharHolder;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.StableAwareCharHolder;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
-    protected final DirectStrAwareCharHolder sink = new DirectStrAwareCharHolder();
+    protected final StableAwareCharHolder sink = new StableAwareCharHolder();
     protected int valueIndex;
 
     public FirstStrGroupByFunction(@NotNull Function arg) {

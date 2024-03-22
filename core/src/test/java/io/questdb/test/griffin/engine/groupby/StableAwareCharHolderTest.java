@@ -24,23 +24,24 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.griffin.engine.groupby.DirectStrAwareCharHolder;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
+import io.questdb.griffin.engine.groupby.StableAwareCharHolder;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.StableDirectString;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class DirectStrAwareCharHolderTest extends AbstractCairoTest {
+public class StableAwareCharHolderTest extends AbstractCairoTest {
     @Test
     public void testClearAndSet() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
-                DirectStrAwareCharHolder holder = new DirectStrAwareCharHolder();
+                StableAwareCharHolder holder = new StableAwareCharHolder();
                 holder.setAllocator(allocator);
                 holder.clearAndSet("foobar");
                 TestUtils.assertEquals("foobar", holder);
@@ -55,24 +56,26 @@ public class DirectStrAwareCharHolderTest extends AbstractCairoTest {
     public void testClearAndSetDirect() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
-                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16)
+                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16);
             ) {
-                DirectStrAwareCharHolder holder = new DirectStrAwareCharHolder();
-                holder.setAllocator(allocator);
                 directCharSequence.put("barbaz");
+                StableDirectString stableDirectString = new StableDirectString();
+                stableDirectString.of(directCharSequence.lo(), directCharSequence.hi());
+                StableAwareCharHolder holder = new StableAwareCharHolder();
+                holder.setAllocator(allocator);
 
-                // store a non-direct char sequence
+                // store a non-stable char sequence
                 holder.of(0).clearAndSet("foobar");
                 TestUtils.assertEquals("foobar", holder);
                 long foobarPtr = holder.ptr();
 
                 // store a direct char sequence into a new location
-                holder.of(0).clearAndSet(directCharSequence);
+                holder.of(0).clearAndSet(stableDirectString);
                 TestUtils.assertEquals("barbaz", holder);
                 long barbazPtr = holder.ptr();
 
                 // store a direct char sequence into the original location of the non-direct string
-                holder.of(foobarPtr).clearAndSet(directCharSequence);
+                holder.of(foobarPtr).clearAndSet(stableDirectString);
                 TestUtils.assertEquals("barbaz", holder);
 
                 // store a non-direct long char sequence into the original location of the direct string
@@ -87,7 +90,7 @@ public class DirectStrAwareCharHolderTest extends AbstractCairoTest {
         final int N = 1000;
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
-                DirectStrAwareCharHolder holder = new DirectStrAwareCharHolder();
+                StableAwareCharHolder holder = new StableAwareCharHolder();
                 holder.setAllocator(allocator);
                 Assert.assertEquals(0, holder.length());
 
