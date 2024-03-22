@@ -966,6 +966,10 @@ public final class TableUtils {
         return length > 0 && tableName.charAt(0) != ' ' && tableName.charAt(length - 1) != ' ';
     }
 
+    public static int lengthOf(@Nullable CharSequence columnValue) {
+        return columnValue != null ? columnValue.length() : NULL_LEN;
+    }
+
     public static int lock(FilesFacade ff, Path path, boolean verbose) {
 
         // workaround for https://github.com/docker/for-mac/issues/7004

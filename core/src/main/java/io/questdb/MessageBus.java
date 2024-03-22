@@ -63,11 +63,11 @@ public interface MessageBus extends Closeable {
 
     MCSequence getLatestBySubSeq();
 
-    MPSequence getO3CallbackPubSeq();
+    MPSequence getColumnTaskPubSeq();
 
-    RingQueue<O3CallbackTask> getO3CallbackQueue();
+    RingQueue<ColumnTask> getColumnTaskQueue();
 
-    MCSequence getO3CallbackSubSeq();
+    MCSequence getColumnTaskSubSeq();
 
     MPSequence getO3CopyPubSeq();
 
