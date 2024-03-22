@@ -29,6 +29,7 @@ import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.StableAwareStringHolder;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.StableDirectString;
 import io.questdb.test.AbstractCairoTest;
@@ -89,6 +90,38 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
                 // store a non-direct long char sequence into the original location of the direct string
                 holder.of(barbazPtr).clearAndSet("foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar");
                 TestUtils.assertEquals("foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar", holder);
+            }
+        });
+    }
+
+    @Test
+    public void testClearAndSetDirect_fuzzed() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
+                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16);
+            ) {
+                StableAwareStringHolder holder = new StableAwareStringHolder();
+                holder.setAllocator(allocator);
+                Rnd rnd = TestUtils.generateRandom(null);
+                StableDirectString stableDirectString = new StableDirectString();
+                for (int i = 0; i < 1_000; i++) {
+                    boolean useDirect = rnd.nextBoolean();
+                    int len = rnd.nextPositiveInt() % 100;
+                    if (len == 99) {
+                        holder.clearAndSet(null);
+                        Assert.assertEquals(0, holder.length());
+                    } else if (useDirect) {
+                        directCharSequence.clear();
+                        rnd.nextChars(directCharSequence, len);
+                        stableDirectString.of(directCharSequence.lo(), directCharSequence.hi());
+                        holder.clearAndSet(stableDirectString);
+                        TestUtils.assertEquals(stableDirectString, holder);
+                    } else {
+                        CharSequence cs = rnd.nextChars(len);
+                        holder.clearAndSet(cs);
+                        TestUtils.assertEquals(cs, holder);
+                    }
+                }
             }
         });
     }
