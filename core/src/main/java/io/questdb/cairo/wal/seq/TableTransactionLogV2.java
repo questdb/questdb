@@ -76,7 +76,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final int SEGMENT_ID_MAX_VALUE = ~(-1 << 24);
     public static final int SEGMENT_TXN_MAX_VALUE = ~(-1 << 24);
     public static final long STRUCTURE_VERSION_MAX_VALUE = ~(-1L << 40);
-    private static final long COMMIT_TIMESTAMP_MASK = ~(-1L << 38);
+    private static final long COMMIT_TIMESTAMP_MASK = ~(-1L << 48);
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
     private static final long MAX_TIMESTAMP_DIFF_MASK = MAX_TIMESTAMP_DIFF_MAX_VALUE;
     private static final long ROW_COUNT_MASK = ROW_COUNT_MAX_VALUE;
