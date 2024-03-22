@@ -143,7 +143,7 @@ QuestDB Cloud是QuestDB的全托管版本，具有更加强大的的功能，如
 
 <div align="center">
   <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/questdb7.3.10-tsbs-benchmark.png" width="600"/>
+    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src="../.github/questdb7.3.10-tsbs-benchmark.png" width="600"/>
   </a>
 </div>
 
