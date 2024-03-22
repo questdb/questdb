@@ -8,6 +8,16 @@ jobs:
         - Agent.Name -equals arm64-$(Build.BuildId)
     dependsOn:
       - StartArmAgent
+    strategy:
+      matrix:
+        griffin:
+          includeTests: "**/griffin/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        other:
+          excludeTests: "**/griffin/**"
+          javadoc_step: ""
+          javadoc_profile: ""
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:
