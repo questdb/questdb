@@ -39,8 +39,8 @@ import java.io.Closeable;
 public class PageAddressCacheRecord implements Record, Closeable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-    private final DirectString csviewA = new DirectString();
-    private final DirectString csviewB = new DirectString();
+    private final StableDirectString csviewA = new StableDirectString();
+    private final StableDirectString csviewB = new StableDirectString();
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
