@@ -122,7 +122,7 @@ public class JsonPlanSinkTest {
             sink.attr("geohash");
             sink.val(101010L, 32);
             sink.attr("long256");
-            sink.val(1L, 2L, 3L, 4L);
+            sink.valLong256(1L, 2L, 3L, 4L);
             sink.attr("plan");
             sink.val((Plannable) null);
             sink.attr("uuid");
