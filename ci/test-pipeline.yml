@@ -23,7 +23,7 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
-  - stage: SelfHostedRunTestsBranches
+  - stage: SelfHostedRunGriffin
     displayName: "ARM Griffin tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     dependsOn:
@@ -34,7 +34,7 @@ stages:
     variables:
       includeTests: "**/griffin/**"
 
-  - stage: SelfHostedRunTestsBranches
+  - stage: SelfHostedRunOther
     displayName: "ARM Other tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     dependsOn:
