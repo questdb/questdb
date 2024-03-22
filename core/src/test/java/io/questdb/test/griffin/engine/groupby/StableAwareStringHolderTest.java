@@ -78,6 +78,14 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
                 holder.of(foobarPtr).clearAndSet(stableDirectString);
                 TestUtils.assertEquals("barbaz", holder);
 
+                // now add a non-direct string without changing the address
+                holder.clearAndSet("something_else");
+                TestUtils.assertEquals("something_else", holder);
+
+                // and re-add the direct string. again, without changing the address
+                holder.clearAndSet(stableDirectString);
+                TestUtils.assertEquals("barbaz", holder);
+
                 // store a non-direct long char sequence into the original location of the direct string
                 holder.of(barbazPtr).clearAndSet("foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar");
                 TestUtils.assertEquals("foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar", holder);
