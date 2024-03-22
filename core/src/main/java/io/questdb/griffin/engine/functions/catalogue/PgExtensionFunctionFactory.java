@@ -146,12 +146,7 @@ public class PgExtensionFunctionFactory implements FunctionFactory {
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence str = getStrA(col);
-                    if (str != null) {
-                        return str.length();
-                    }
-
-                    return TableUtils.NULL_LEN;
+                    return TableUtils.lengthOf(getStrA(col));
                 }
             }
         }

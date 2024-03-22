@@ -153,10 +153,10 @@ public final class ConfStringParserTest {
     }
 
     @Test
-    public void testSchemaCaseInsensitive() {
+    public void testSchemaCaseSensitive() {
         assertSchemaOk("http::addr=localhost;USER=joe;pAsS=bloggs;", "http");
-        assertSchemaOk("HTTP::addr=localhost;USER=joe;pAsS=bloggs;", "http");
-        assertSchemaOk("HtTp::addr=localhost;USER=joe;pAsS=bloggs;", "http");
+        assertSchemaOk("HTTP::addr=localhost;USER=joe;pAsS=bloggs;", "HTTP");
+        assertSchemaOk("HtTp::addr=localhost;USER=joe;pAsS=bloggs;", "HtTp");
     }
 
     @Test
@@ -171,9 +171,9 @@ public final class ConfStringParserTest {
         assertSchemaError("x:;host=localhost;", "bad separator, expected '::' got ':;' at position 1");
         assertSchemaError("http://localhost:9000;host=localhost;", "bad separator, expected '::' got ':/' at position 4");
         assertSchemaOk("http::;", "http");
-        assertSchemaOk("HTTP::;", "http");
+        assertSchemaOk("HTTP::;", "HTTP");
         assertSchemaOk("http::addr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "http");
-        assertSchemaOk("TCP::addr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "tcp");
+        assertSchemaOk("TCP::addr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "TCP");
     }
 
     @Test
