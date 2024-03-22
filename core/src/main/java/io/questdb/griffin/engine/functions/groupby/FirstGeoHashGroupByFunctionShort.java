@@ -81,6 +81,18 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);  // row id
+        columnTypes.add(ColumnType.SHORT); // value
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return UnaryFunction.super.isReadThreadSafe();
     }
@@ -96,13 +108,6 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);  // row id
-        columnTypes.add(ColumnType.SHORT); // value
-    }
-
-    @Override
     public void setNull(MapValue mapValue) {
         setShort(mapValue, GeoHashes.SHORT_NULL);
     }
@@ -113,11 +118,6 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
         // an empty value, so it's ok to reset the row id field here.
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putShort(valueIndex + 1, value);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

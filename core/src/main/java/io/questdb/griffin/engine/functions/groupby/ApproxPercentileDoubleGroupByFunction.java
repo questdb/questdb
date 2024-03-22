@@ -135,6 +135,17 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -145,12 +156,6 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-    }
-
-    @Override
     public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0L);
     }
@@ -158,11 +163,6 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

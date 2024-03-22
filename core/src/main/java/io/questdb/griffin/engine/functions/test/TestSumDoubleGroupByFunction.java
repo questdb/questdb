@@ -78,7 +78,12 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
     }
@@ -91,11 +96,6 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

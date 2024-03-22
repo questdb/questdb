@@ -44,11 +44,13 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     protected int memoryTag = MemoryTag.MMAP_DEFAULT;
     private int madviseOpts = -1;
 
-    public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size, int memoryTag) {
+    public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean stableStrings) {
+        super(stableStrings);
         of(ff, name, 0, size, memoryTag, 0);
     }
 
     public MemoryCMRImpl() {
+        super(false);
         // intentionally left empty
     }
 

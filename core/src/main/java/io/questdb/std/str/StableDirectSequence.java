@@ -22,34 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.std.str;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-
-public class LastStrGroupByFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "last(S)";
-    }
-
-    @Override
-    public boolean isGroupBy() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return new LastStrGroupByFunction(args.getQuick(0));
-    }
+/**
+ * A specialization of {@link DirectSequence} that does not add new methods, but provides additional
+ * guarantees about the stability of the pointer returned by {@link DirectSequence#ptr()} method.
+ * <p>
+ * Indicates that a pointer returned by {@link DirectSequence#ptr()} method is stable during a query execution.
+ * Stable is defined as:
+ * - the pointer remains valid for the duration of the query execution
+ * - the sequence of bytes pointed to by the pointer does not change during the query execution
+ */
+public interface StableDirectSequence extends DirectSequence {
 }
