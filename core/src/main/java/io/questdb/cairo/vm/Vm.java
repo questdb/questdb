@@ -115,7 +115,11 @@ public class Vm {
     }
 
     public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag) {
-        return new MemoryCMRImpl(ff, name, size, memoryTag);
+        return new MemoryCMRImpl(ff, name, size, memoryTag, false);
+    }
+
+    public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean stableStrings) {
+        return new MemoryCMRImpl(ff, name, size, memoryTag, stableStrings);
     }
 
     public static MemoryCMOR getMemoryCMOR() {
