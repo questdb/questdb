@@ -24,57 +24,26 @@ stages:
       - template: templates/check-changes-job.yml
 
   - stage: SelfHostedRunTestsBranches
-    displayName: "Self Hosted Running tests"
+    displayName: "ARM Griffin tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     dependsOn:
       - CheckChanges
     jobs:
-      - job: StartArmAgent
-        displayName: "Start ARM Agent"
-        pool:
-          vmImage: "ubuntu-latest"
-        steps:
-          - checkout: none
-          - bash: |
-              echo "buildno: $(Build.BuildId)"
-              echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
-            env:
-              AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
-            displayName: "Login Azure DevOps Extension"
-          - bash:
-              az devops configure --defaults
-              organization=$(System.TeamFoundationCollectionUri)
-              project=$(System.TeamProject) --use-git-aliases true
-            displayName: "Set default Azure DevOps organization and project"
-          - task: LambdaInvokeFunction@1
-            displayName: "Start Agent 1"
-            name: "Start_Agent1"
-            inputs:
-              awsCredentials: "ondemand-dev"
-              regionName: "eu-west-1"
-              functionName: "ondemand-pipeline"
-              payload: |
-                {
-                  "pool": "arm64",
-                  "buildid": "$(Build.BuildId)"
-                }
-              outputVariable: "functionResult"
-          - bash: |
-              echo "Instance: $(functionResult)"
-            name: "Display_Instance"
-            displayName: "Display Instance"
-          - bash: |
-              echo "Starting agent... for pool arm64"
-              POOLID=$(az pipelines pool list | jq '.[]| select(.name == "arm64") | .id' -r)
-              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)") | .enabled' -r)" != "true" ]
-              do
-                echo "Still waiting for agent arm64-$(Build.BuildId) ... "
-                sleep 3
-              done
-              echo "Agent found ..."
-            name: "Check_agent"
-            displayName: "Check agent"
+      - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
+    variables:
+      includeTests: "**/griffin/**"
+
+  - stage: SelfHostedRunTestsBranches
+    displayName: "ARM Other tests"
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/start-self-hosted-job.yml
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      excludeTests: "**/griffin/**"
 
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"
