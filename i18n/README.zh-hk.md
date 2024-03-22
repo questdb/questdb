@@ -1,26 +1,17 @@
 <div align="center">
-   <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
+  <a href="https://questdb.io/" target="blank"><img alt="QuestDB 標誌" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
   <a href="https://slack.questdb.io">
-    <img
-      src="https://slack.questdb.io/badge.svg"
-      alt="QuestDB community Slack channel"
-    />
+    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB 社群 Slack 頻道"/>
   </a>
   <a href="#contribute">
-    <img
-      src="https://img.shields.io/github/all-contributors/questdb/questdb"
-      alt="QuestDB open source contributors"
-    />
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB 開源貢獻者"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img
-      src="https://img.shields.io/maven-central/v/org.questdb/questdb"
-      alt="QuestDB on Apache Maven"
-    />
+    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB 在 Apache Maven"/>
   </a>
 </p>
 
@@ -28,23 +19,28 @@
 
 # QuestDB
 
-QuestDB 是一個開源的時序數據庫，支持高吞吐數據獲取和快速 SQL 查詢，操作簡單。
-它支持使用InfluxDB連接協議、PostgreSQL協議和REST API進行批量無模式導入和導出。
+QuestDB 是一個開源的時序數據庫， 支援高吞吐數據獲取和快速 SQL 查詢，操作簡單。
+它支持使用 InfluxDB 連接協議、PostgreSQL 協議和 REST API 進行批量無模式導入和導出。
 
-QuestDB非常適用于金融市場數據、應用程序指標、傳感器數據、實時分析、儀表板和系統基礎設施監控。
+QuestDB 非常適用于金融市場數據、應用程序指標、傳感器數據、實時分析、儀表板和系統基礎設施監控。
+它適用於具有[高基數]的資料集(https://questdb.io/glossary/high-cardinality/)，
+並透過支援 InfluxDB 連接協議，取代 InfluxDB。
 
-QuestDB使用原生時間序列SQL插件實現了ANSI SQL。這些 SQL 擴展語義能更簡單的連接
-（JOIN）多個來源的關系型數據以及時間序列數據。我們通過列導向的存儲模型、大規模
-並行的矢量執行、SIMD 指令和各種低延遲技術實現了高性能。整個代碼庫是用 Java 和
-C++從頭開始構建的，沒有任何外部依賴，並且 100% 不受垃圾回收的影響。
+QuestDB 使用原生時間序列 SQL 插件實現了 ANSI SQL。
+這些 SQL 擴展語義使過濾和縮減資料採樣變得簡單，或你可使用關係和時間序列連接關聯多個來源的資料。
+
+我們通過列導向的存儲模型、大規模 並行的矢量執行、SIMD 指令和各種低延遲技術實現了高性能。
+整個代碼庫是用 Java 和 C++ 從頭開始構建的，沒有任何外部依賴，並且 100% 不受垃圾回收的影響。
+
+QuestDB 使用 InfluxDB 連接協議和用於批次匯入和匯出的 REST API，支援與模式無關的流數據採樣。
+QuestDB SQL Web 控制台是一個互動式 SQL 編輯器，可方便 CSV 匯入。
+最後，QuestDB 還包括用於程式設計查詢的 Postgres Wire 協議。
+
+與 QuestDB 整合的熱門工具包括 [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/questdb-kafka/)、[Grafana](https://questdb.io/docs/第三方工具/grafana/)、[Superset](https://questdb.io/docs/third-party-tools/superset/)、[Telegraf](https://questdb.io/docs/third-party-tools/telegraf/) 和 [Apache Flink](https://questdb.io/docs/third-party-tools/flink/)。
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img
-      alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart"
-      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png"
-      width="600"
-    />
+    <img alt="QuestDB 的 Web 控制台正在顯示 SQL 語句和查詢結果" src="../.github/console.png" width="600" />
   </a>
 </div>
 
@@ -54,7 +50,7 @@ C++從頭開始構建的，沒有任何外部依賴，並且 100% 不受垃圾�
 和幾個樣本數據集：
 
 - Trips： 近 10 年的紐約市出租車行程軌迹數據集，含 1.6 億行的數據。
-- Trades： 每月30M+的實時加密貨幣市場數據。
+- Trades： 每月 30M+ 的實時加密貨幣市場數據。
 - Pos： 含有 25 萬艘船的時序地理數據集。
 
 | 查詢                                                                          | 運行時間                                                                                                                                                                                            |
@@ -65,7 +61,8 @@ C++從頭開始構建的，沒有任何外部依賴，並且 100% 不受垃圾�
 | `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
 | `SELECT * FROM trades LATEST ON time PARTITION BY symbol`                     | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
 
-我們的[在線演示](https://demo.questdb.io/)運行在 `c5.metal` 上且僅使用 96 個線程中的 24 個線程。
+
+我們的[在線演示](https://demo.questdb.io/)運行在 `c5.metal` 上使用了 96 個線程中的 24 個。
 
 ## 如何開始
 
@@ -94,7 +91,7 @@ questdb stop  // To stop questdb
 
 你可以使用以下接口與 QuestDB 進行交互。
 
-- [web 控制台](https://questdb.io/docs/develop/web-console/): 將會啓動一個 web
+- [Web 控制台](https://questdb.io/docs/develop/web-console/): 將會啓動一個 web
   控制台，默認運行在 `9000` 端口
 - [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/): 支
   持高性能、高吞吐量單向數據插入，默認運行在 `9009` 端口
@@ -114,23 +111,23 @@ questdb stop  // To stop questdb
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
+### 端到端地快速入門
+
+想要了解從流數據採樣到使用 Grafana 進行所有內容視覺化嗎？ 
+請查看我們的多路徑[快速入門 Repository](https://github.com/questdb/questdb-quickstart)。
+
 ## QuestDB 與其他開源 TSDB 的對比
 
 參考[我們的文章](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)，
 其中在功能、性能和成熟度上比較了 QuestDB 和其他的開源時序數據庫。
 
-以下是 高維度[時間序列基准測試套件](https://github.com/timescale/tsbs) 運行 `cpu-only`
-用例的測試結果，基于使用 6 到 16 個工作線程在 32 個 CPU 和 64 GB RAM上測試對比得到：
-
 <div align="center">
   <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img
-      alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
-      src="../.github/readme-benchmark.png"
-      width="600"
-    />
+    <img alt="比較 QuestDB、InfluxDB 和 TimescaleDB 的採樣率的圖表。" src="../.github/questdb7.3.10-tsbs-benchmark.png" width="600"/>
   </a>
 </div>
+
+此基準測試測量不同數量主機的採樣率（行/秒）：總計 100、1K、100K 和 10M。 主機數量越多，資料集的基數就越高。即使主機數量增加，QuestDB 的採樣速度仍維持在 240 萬行/秒以上。相較之下，隨著資料集基數的增加，InfluxDB 和 TimescaleDB 的效能會受到影響，採樣率會顯著下降。
 
 ## 相關資源
 
@@ -180,6 +177,9 @@ questdb stop  // To stop questdb
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
 <!-- markdownlint-disable -->
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
 <table>
   <tbody>
     <tr>
@@ -330,6 +330,5 @@ questdb stop  // To stop questdb
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-本項目遵循
-[all-contributors](https://github.com/all-contributors/all-contributors) 標准.
+本項目遵循 [all-contributors](https://github.com/all-contributors/all-contributors) 的標準.
 歡迎任何形式的貢獻！
