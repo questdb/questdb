@@ -31,12 +31,21 @@
 QuestDB 是一个开源的時序数据库，支持高吞吐数据获取和快速 SQL 查询，操作简单。
 它支持使用InfluxDB连接协议、PostgreSQL协议和REST API进行批量无模式导入和导出。
 
-QuestDB非常适用于金融市场数据、应用程序指标、传感器数据、实时分析、仪表板和系统基础设施监控。
+QuestDB非常适用于金融市场数据、应用程序指标、传感器数据、实时分析、仪表板和系统基础设施监控。它适用于具有[高基数的数据集](https://questdb.io/glossary/high-cardinality/), 因为它支持 InfluxDB Line Protocol，可直接替代 InfluxDB。
 
-QuestDB使用原生时间序列SQL插件实现了ANSI SQL。这些 SQL 扩展语义能更简单的连接
-（JOIN）多个来源的关系型数据以及时间序列数据。我们通过列导向的存储模型、大规模
-并行的矢量执行、SIMD 指令和各种低延迟技术实现了高性能。整个代码库是用 Java 和
-C++从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾回收的影响。
+QuestDB 通过扩展原生时间序列SQL实现了ANSI SQL。这些 SQL 扩展使得数据过滤、下采样(downsample)更加简单，也可以使用关系连接和时间序列连接将来自多个源的数据关联起来。 
+ 
+我们采用列存储模型、并行向量执行、SIMD指令和低延迟技术来实现高性能。
+
+整个代码库是用 Java 、C++以及[Rust](https://questdb.io/blog/leveraging-rust-in-our-high-performance-java-database/)从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾回收的影响。
+
+
+QuestDB支持模式无关的流采集(ingestion)，使用InfluxDB line协议和用于批量导入和导出的REST API。 
+QuestDB SQL Web控制台是一个交互式SQL编辑器，可以方便地导入CSV数据。此外，QuestDB 还支持 Postgres Wire 协议 
+用于编程式查询。
+
+可与QuestDB集成的流行数据组件包括[Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/questdb-kafka/)、[Grafana](https://questdb.io/docs/third-party-tools/grafana/)、 
+[Superset](https://questdb.io/docs/third-party-tools/superset/)、[Telegraf](https://questdb.io/docs/third-party-tools/telegraf/)和[Apache Flink](https://questdb.io/docs/third-party-tools/flink/)。
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -65,13 +74,13 @@ C++从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾�
 | `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
 | `SELECT * FROM trades LATEST ON time PARTITION BY symbol`                     | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
 
-我们的[在线演示](https://demo.questdb.io/)运行在 `c5.metal` 上且仅使用 96 个线程中的 24 个线程。
+我们的[在线演示](https://demo.questdb.io/)运行在 `c5.metal` 上，使用了 96 个计算核心(cores)中的 24 个。
 
 ## 如何开始
 
 ### 安裝 QuestDB
 
-你可以使用 Docker 来快速启动一个 QuestDB 实例：
+你可以使用 [Docker](https://www.docker.com/) 来快速启动一个 QuestDB 实例：
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
@@ -90,17 +99,23 @@ questdb stop  // To stop questdb
 [QuestDB 下载页面](https://questdb.io/get-questdb/) 提供运行文件的直接下载，并
 提供其他安装和部署方式的详细信息。
 
+### QuestDB Cloud
+
+QuestDB Cloud是QuestDB的全托管版本，具有更加强大的的功能，如基于角色的访问控制， 
+云原生复制、压缩、监控和云原生快照等。
+[获取 $200 credits 优惠并开始](https://cloud.questdb.com).
+
 ### 连接到 QuestDB
 
 你可以使用以下接口与 QuestDB 进行交互。
 
-- [web 控制台](https://questdb.io/docs/develop/web-console/): 将会启动一个 web
+- [Web 控制台](https://questdb.io/docs/develop/web-console/): 将会启动一个 web
   控制台，默认运行在 `9000` 端口
 - [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/): 支
-  持高性能、高吞吐量单向数据插入，默认运行在 `9009` 端口
-- [REST API](https://questdb.io/docs/reference/api/rest/) : 默认运行在 `9000` 端口
+  持高性能、高吞吐量单向数据插入(ingestion)，默认运行在 `9009` 端口
 - [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/):
-  默认运行在 `8812` 端口
+  默认运行在 `8812` 端口，可用于编程交互及事务插入
+- [REST API](https://questdb.io/docs/reference/api/rest/) : 默认运行在 `9000` 端口
 
 ### 写入数据
 
@@ -114,6 +129,10 @@ questdb stop  // To stop questdb
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
+### 端到端地快速上手
+
+想要跑通全部细节，从流式数据摄取到Grafana上实现数据可视化，可以看看我们的[快速入门](https://github.com/questdb/questdb-quickstart).
+
 ## QuestDB 与其他开源 TSDB 的对比
 
 参考[我们的文章](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)，
@@ -124,20 +143,18 @@ questdb stop  // To stop questdb
 
 <div align="center">
   <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img
-      alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
-      src="../.github/readme-benchmark.png"
-      width="600"
-    />
+    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/questdb7.3.10-tsbs-benchmark.png" width="600"/>
   </a>
 </div>
+
+该基准测试测量了不同数量的主机的采集(ingestion)速率(行/秒):总共100、1K、100K和10M。主机的数量越多，数据集的基数(cardinality)就越高。即使主机数量增加，QuestDB也能保持2.4M行/秒以上的采集速度。相比之下，随着数据集基数的增加，InfluxDB 和 TimescaleDB的性能会受到影响，采集速率会显著下降。
 
 ## 相关资源
 
 ### 📚 阅读文档
 
 - [QuestDB 文档:](https://questdb.io/docs/introduction/) 描述了如何运行
-  和配置 QuestDB 的技术参考。
+  和配置 QuestDB 的技术介绍。
 - [教程](https://questdb.io/tutorial/) 逐步了解QuestDB的功能。
 - [产品路线图](https://github.com/questdb/questdb/projects) 了解我们下个产品发布的计划。
 
@@ -164,8 +181,7 @@ questdb stop  // To stop questdb
 - 请看一下 GitHub 上标有
   "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
   的问题。
-- 阅
-  读[贡献指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
+- 阅读[贡献指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
 - 有关构建 QuestDB 的详细信息，请参
   见[构建说明](https://github.com/questdb/questdb/blob/master/core/README.md)。
 - [创建 QuestDB 的一个分叉](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)，
@@ -175,7 +191,7 @@ questdb stop  // To stop questdb
 [在这里申领](https://questdb.io/community)
 
 衷心感谢以下为 QuestDB 作出贡献的优秀人士：
-（[表情符号键](https://allcontributors.org/docs/en/emoji-key)）：
+（[emoji-key](https://allcontributors.org/docs/en/emoji-key)）：
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
