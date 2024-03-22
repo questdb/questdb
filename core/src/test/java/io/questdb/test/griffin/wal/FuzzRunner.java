@@ -307,7 +307,7 @@ public class FuzzRunner {
         SharedRandom.RANDOM.set(new Rnd());
         if (engine.getTableTokenIfExists(tableName) == null) {
             engine.ddl(
-                    "create table " + tableName + " as (" +
+                    "create atomic table " + tableName + " as (" +
                             "select x as c1, " +
                             " rnd_symbol('AB', 'BC', 'CD') c2, " +
                             " timestamp_sequence('2022-02-24', 1000000L) ts, " +

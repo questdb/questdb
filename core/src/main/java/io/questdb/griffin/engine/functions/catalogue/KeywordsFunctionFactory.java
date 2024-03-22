@@ -145,8 +145,7 @@ public class KeywordsFunctionFactory implements FunctionFactory {
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence value = getStrA(col);
-                    return value != null ? value.length() : TableUtils.NULL_LEN;
+                    return TableUtils.lengthOf(getStrA(col));
                 }
             }
         }
