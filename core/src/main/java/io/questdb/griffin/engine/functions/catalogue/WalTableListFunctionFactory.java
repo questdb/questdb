@@ -216,8 +216,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence value = getStrA(col);
-                    return value != null ? value.length() : TableUtils.NULL_LEN;
+                    return TableUtils.lengthOf(getStrA(col));
                 }
 
                 private boolean switchTo(final TableToken tableToken) {

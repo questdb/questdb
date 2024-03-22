@@ -1,6 +1,5 @@
 package io.questdb.client.impl;
 
-import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
 
 /**
@@ -108,7 +107,7 @@ public final class ConfStringParser {
                         output.put("empty schema at position 0");
                         return -1;
                     }
-                    Chars.toLowerCase(input, 0, i - 1, output);
+                    output.put(input, 0, i - 1);
                     return i + 1;
                 } else {
                     output.put("bad separator, expected '::' got ':").put(c).put("' at position ").put(i - 1);

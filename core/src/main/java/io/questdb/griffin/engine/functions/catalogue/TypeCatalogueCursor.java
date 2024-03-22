@@ -137,9 +137,8 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public int getStrLen(int col) {
-            CharSequence str = getStrA(col);
-            return str == null ? TableUtils.NULL_LEN : str.length();
-        }
+            return TableUtils.lengthOf(getStrA(col));
+       }
     }
 
     static {
