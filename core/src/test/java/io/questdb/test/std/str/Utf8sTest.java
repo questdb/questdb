@@ -67,7 +67,11 @@ public class Utf8sTest {
     @Test
     public void testContainsLowerCaseAscii() {
         Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("аз съм грут foo bar baz"), new Utf8String("bar")));
+        Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("аз съм грут FoO BaR BaZ"), new Utf8String("bar")));
         Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("foo bar baz"), new Utf8String("foo")));
+        Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("FOO bar baz"), new Utf8String("foo")));
+        Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("foo bar baz"), new Utf8String("baz")));
+        Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("FOO BAR BAZ"), new Utf8String("baz")));
         Assert.assertFalse(Utf8s.containsLowerCaseAscii(new Utf8String("foo bar baz"), new Utf8String("buz")));
         Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("foo bar baz"), Utf8String.EMPTY));
         Assert.assertFalse(Utf8s.containsLowerCaseAscii(Utf8String.EMPTY, new Utf8String("foobar")));
