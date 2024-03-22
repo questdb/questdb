@@ -88,6 +88,18 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.FLOAT);
+        columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -106,13 +118,6 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.FLOAT);
-        columnTypes.add(ColumnType.LONG);
-    }
-
-    @Override
     public void setFloat(MapValue mapValue, float value) {
         mapValue.putFloat(valueIndex, value);
         mapValue.putLong(valueIndex + 1, 1);
@@ -122,11 +127,6 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void setNull(MapValue mapValue) {
         mapValue.putFloat(valueIndex, Float.NaN);
         mapValue.putLong(valueIndex + 1, 0);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override
