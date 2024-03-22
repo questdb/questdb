@@ -6,7 +6,7 @@ jobs:
     steps:
       - checkout: none
       - bash: |
-          echo "buildno: $(Build.BuildId)"
+          echo "buildno: $(System.StageName)$(Build.BuildId)"
           echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
         env:
           AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
@@ -26,7 +26,7 @@ jobs:
           payload: |
             {
               "pool": "arm64",
-              "buildid": "$(Build.BuildId)"
+              "buildid": "$(System.StageName)$(Build.BuildId)"
             }
           outputVariable: "functionResult"
       - bash: |
@@ -36,9 +36,9 @@ jobs:
       - bash: |
           echo "Starting agent... for pool arm64"
           POOLID=$(az pipelines pool list | jq '.[]| select(.name == "arm64") | .id' -r)
-          while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)") | .enabled' -r)" != "true" ]
+          while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(System.StageName)$(Build.BuildId)") | .enabled' -r)" != "true" ]
           do
-            echo "Still waiting for agent arm64-$(Build.BuildId) ... "
+            echo "Still waiting for agent arm64-$(System.StageName)$(Build.BuildId) ... "
             sleep 3
           done
           echo "Agent found ..."
