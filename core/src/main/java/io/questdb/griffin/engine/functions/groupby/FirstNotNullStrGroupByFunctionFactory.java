@@ -50,10 +50,6 @@ public class FirstNotNullStrGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function arg = args.getQuick(0);
-        if (arg.supportsDirectStr()) {
-            return new FirstNotNullDirectStrGroupByFunction(arg);
-        }
-        return new FirstNotNullStrGroupByFunction(arg);
+        return new FirstNotNullStrGroupByFunction(args.getQuick(0));
     }
 }

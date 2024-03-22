@@ -83,7 +83,12 @@ public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.BOOLEAN);
         columnTypes.add(ColumnType.IPv4);
@@ -92,11 +97,6 @@ public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements Gro
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putBool(valueIndex, true);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

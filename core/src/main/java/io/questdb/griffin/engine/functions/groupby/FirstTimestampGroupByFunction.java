@@ -75,6 +75,18 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);      // row id
+        columnTypes.add(ColumnType.TIMESTAMP); // value
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return UnaryFunction.super.isReadThreadSafe();
     }
@@ -90,21 +102,9 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);      // row id
-        columnTypes.add(ColumnType.TIMESTAMP); // value
-    }
-
-    @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putTimestamp(valueIndex + 1, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

@@ -136,6 +136,18 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -151,13 +163,6 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.INT);
-    }
-
-    @Override
     public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0L);
     }
@@ -170,11 +175,6 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

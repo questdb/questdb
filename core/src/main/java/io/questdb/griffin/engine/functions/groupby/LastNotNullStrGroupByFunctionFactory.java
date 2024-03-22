@@ -50,10 +50,6 @@ public class LastNotNullStrGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function arg = args.getQuick(0);
-        if (arg.supportsDirectStr()) {
-            return new LastNotNullDirectStrGroupByFunction(arg);
-        }
-        return new LastNotNullStrGroupByFunction(arg);
+        return new LastNotNullStrGroupByFunction(args.getQuick(0));
     }
 }
