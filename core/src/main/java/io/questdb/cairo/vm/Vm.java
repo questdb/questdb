@@ -118,6 +118,13 @@ public class Vm {
         return new MemoryCMRImpl(ff, name, size, memoryTag, false);
     }
 
+
+    /**
+     * note: set stable strings to true if the memory is used for query evaluation and strings are expected to be stable
+     * for the duration of the query.
+     *
+     * @see io.questdb.std.str.StableDirectSequence
+     */
     public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean stableStrings) {
         return new MemoryCMRImpl(ff, name, size, memoryTag, stableStrings);
     }
