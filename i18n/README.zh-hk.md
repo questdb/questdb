@@ -40,7 +40,7 @@ QuestDB SQL Web 控制台是一個互動式 SQL 編輯器，可方便 CSV 匯入
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img alt="QuestDB 的 Web 控制台正在顯示 SQL 語句和查詢結果" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
+    <img alt="QuestDB 的 Web 控制台正在顯示 SQL 語句和查詢結果" src="../.github/console.png" width="600" />
   </a>
 </div>
 
@@ -123,7 +123,7 @@ questdb stop  // To stop questdb
 
 <div align="center">
   <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img alt="比較 QuestDB、InfluxDB 和 TimescaleDB 的採樣率的圖表。" src=".github/questdb7.3.10-tsbs-benchmark.png" width="600"/>
+    <img alt="比較 QuestDB、InfluxDB 和 TimescaleDB 的採樣率的圖表。" src="../.github/questdb7.3.10-tsbs-benchmark.png" width="600"/>
   </a>
 </div>
 
