@@ -157,8 +157,7 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public int getStrLen(Record rec) {
-        final CharSequence str = getStrA(rec);
-        return str == null ? TableUtils.NULL_LEN : str.length();
+        return TableUtils.lengthOf(getStrA(rec));
     }
 
     @Override

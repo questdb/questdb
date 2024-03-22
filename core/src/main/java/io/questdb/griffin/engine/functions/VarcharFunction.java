@@ -187,8 +187,7 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public int getStrLen(Record rec) {
-        CharSequence cs = getStrA(rec);
-        return cs != null ? cs.length() : TableUtils.NULL_LEN;
+        return TableUtils.lengthOf(getStrA(rec));
     }
 
     @Override
