@@ -49,6 +49,11 @@ public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR, MemoryC
     }
 
     @Override
+    public int getFd() {
+        return -1;
+    }
+
+    @Override
     public void of(long pageAddress, long size) {
         this.pageAddress = pageAddress;
         this.size = size;

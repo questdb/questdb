@@ -101,6 +101,11 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     @Override
+    public int getFd() {
+        return -1;
+    }
+
+    @Override
     public long getPageSize() {
         return getExtendSegmentSize();
     }

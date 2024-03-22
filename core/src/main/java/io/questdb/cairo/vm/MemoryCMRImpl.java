@@ -40,6 +40,7 @@ import static io.questdb.cairo.vm.Vm.PARANOIA_MODE;
 //contiguous mapped readable 
 public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
+    protected int fd = -1;
     protected int memoryTag = MemoryTag.MMAP_DEFAULT;
     private int madviseOpts = -1;
 
@@ -76,6 +77,11 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         if (newSize > size) {
             setSize0(newSize);
         }
+    }
+
+    @Override
+    public int getFd() {
+        return fd;
     }
 
     @Override
