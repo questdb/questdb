@@ -25,7 +25,7 @@
 package io.questdb.std.str;
 
 /**
- * A specializations of {@link DirectSequence} that is not adding any new methods, but provides additional
+ * A specialization of {@link DirectSequence} that does not add new methods, but provides additional
  * guarantees about the stability of the pointer returned by {@link DirectSequence#ptr()} method.
  * <p>
  * Indicates that a pointer returned by {@link DirectSequence#ptr()} method is stable during a query execution.

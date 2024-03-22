@@ -54,7 +54,7 @@ import org.jetbrains.annotations.Nullable;
  * +---------------------+-------------------+----------------------+
  * </pre>
  */
-public class StableAwareCharHolder implements CharSequence {
+public class StableAwareStringHolder implements CharSequence {
     private static final long HEADER_SIZE = 2 * Integer.BYTES;
     private static final long LEN_OFFSET = Integer.BYTES;
     private static final int MIN_CAPACITY = 4; // 4 chars = 8 bytes = enough to store a pointer
@@ -95,7 +95,7 @@ public class StableAwareCharHolder implements CharSequence {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + LEN_OFFSET) : 0;
     }
 
-    public StableAwareCharHolder of(long ptr) {
+    public StableAwareStringHolder of(long ptr) {
         // clear the top bit
         this.ptr = ptr & 0x7FFFFFFFFFFFFFFFL;
         // extract the top bit

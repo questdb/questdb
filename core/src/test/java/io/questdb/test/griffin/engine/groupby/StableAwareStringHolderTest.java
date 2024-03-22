@@ -26,7 +26,7 @@ package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
-import io.questdb.griffin.engine.groupby.StableAwareCharHolder;
+import io.questdb.griffin.engine.groupby.StableAwareStringHolder;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectUtf16Sink;
@@ -36,12 +36,12 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class StableAwareCharHolderTest extends AbstractCairoTest {
+public class StableAwareStringHolderTest extends AbstractCairoTest {
     @Test
     public void testClearAndSet() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
-                StableAwareCharHolder holder = new StableAwareCharHolder();
+                StableAwareStringHolder holder = new StableAwareStringHolder();
                 holder.setAllocator(allocator);
                 holder.clearAndSet("foobar");
                 TestUtils.assertEquals("foobar", holder);
@@ -61,7 +61,7 @@ public class StableAwareCharHolderTest extends AbstractCairoTest {
                 directCharSequence.put("barbaz");
                 StableDirectString stableDirectString = new StableDirectString();
                 stableDirectString.of(directCharSequence.lo(), directCharSequence.hi());
-                StableAwareCharHolder holder = new StableAwareCharHolder();
+                StableAwareStringHolder holder = new StableAwareStringHolder();
                 holder.setAllocator(allocator);
 
                 // store a non-stable char sequence
@@ -90,7 +90,7 @@ public class StableAwareCharHolderTest extends AbstractCairoTest {
         final int N = 1000;
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
-                StableAwareCharHolder holder = new StableAwareCharHolder();
+                StableAwareStringHolder holder = new StableAwareStringHolder();
                 holder.setAllocator(allocator);
                 Assert.assertEquals(0, holder.length());
 
