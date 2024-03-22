@@ -321,6 +321,13 @@ public class CharsTest {
     }
 
     @Test
+    public void testIsAscii() {
+        Assert.assertTrue(Chars.isAscii(""));
+        Assert.assertTrue(Chars.isAscii("foo bar baz"));
+        Assert.assertFalse(Chars.isAscii("фу бар баз"));
+    }
+
+    @Test
     public void testIsBlank() {
         Assert.assertTrue(Chars.isBlank(null));
         Assert.assertTrue(Chars.isBlank(""));
