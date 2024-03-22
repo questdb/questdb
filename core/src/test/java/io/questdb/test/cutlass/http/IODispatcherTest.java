@@ -945,6 +945,14 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testHttpEscapesErrorMessage() throws Exception {
+        getSimpleTester().run(engine -> testHttpClient.assertGet(
+                "{\"query\":\"into into testlike2 select ('foo', 'bar') from long_sequence(1);\",\"error\":\"table and column names that are SQL keywords have to be enclosed in double quotes, such as \\\"into\\\"\",\"position\":0}",
+                "into into testlike2 select ('foo', 'bar') from long_sequence(1);"
+        ));
+    }
+
+    @Test
     public void testHttpLong256AndCharImport() {
         // this script uploads text file:
         // 0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060,a
