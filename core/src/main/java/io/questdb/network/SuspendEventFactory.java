@@ -35,6 +35,7 @@ public class SuspendEventFactory {
         switch (Os.type) {
             case Os.LINUX_AMD64:
             case Os.LINUX_ARM64:
+            case Os.LINUX_LOONGARCH64:
                 return new EventFdSuspendEvent(configuration.getEpollFacade());
             case Os.OSX_AMD64:
             case Os.OSX_ARM64:

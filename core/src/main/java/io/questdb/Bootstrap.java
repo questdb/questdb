@@ -128,6 +128,9 @@ public class Bootstrap {
             case Os.LINUX_ARM64:
                 archName = "OS/Arch linux/arm64";
                 break;
+            case Os.LINUX_LOONGARCH64:
+                archName = "OS/Arch linux/loongarch64";
+                break;
             case Os.FREEBSD:
                 archName = "OS/ARCH freebsd/amd64";
                 break;
