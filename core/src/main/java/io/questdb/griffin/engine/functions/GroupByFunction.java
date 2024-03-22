@@ -74,6 +74,24 @@ public interface GroupByFunction extends Function, Mutable {
 
     int getValueIndex();
 
+    /**
+     * Called for group by function cloned to be used in different threads of parallel execution.
+     * Guaranteed to be called before any other call accessing the map or map values.
+     * {@link #initValueTypes(ArrayColumnTypes)} is not called on such functions.
+     *
+     * @param valueIndex index of the first value of the original function in the type array
+     */
+    void initValueIndex(int valueIndex);
+
+    /**
+     * Called for group by function to register its values to be used in the map.
+     * Guaranteed to be called before any other call accessing the map or map values.
+     * {@link #initValueIndex(int)} is not called on such functions.
+     *
+     * @param columnTypes value type array
+     */
+    void initValueTypes(ArrayColumnTypes columnTypes);
+
     default void interpolateBoundary(
             MapValue mapValue1,
             MapValue mapValue2,
@@ -112,8 +130,6 @@ public interface GroupByFunction extends Function, Mutable {
     default void merge(MapValue destValue, MapValue srcValue) {
         throw new UnsupportedOperationException();
     }
-
-    void pushValueTypes(ArrayColumnTypes columnTypes);
 
     default void setAllocator(GroupByAllocator allocator) {
         // no-op
@@ -154,8 +170,6 @@ public interface GroupByFunction extends Function, Mutable {
     default void setShort(MapValue mapValue, short value) {
         throw new UnsupportedOperationException();
     }
-
-    void setValueIndex(int valueIndex);
 
     @Override
     default boolean supportsParallelism() {

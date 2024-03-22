@@ -945,6 +945,14 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testHttpEscapesErrorMessage() throws Exception {
+        getSimpleTester().run(engine -> testHttpClient.assertGet(
+                "{\"query\":\"into into testlike2 select ('foo', 'bar') from long_sequence(1);\",\"error\":\"table and column names that are SQL keywords have to be enclosed in double quotes, such as \\\"into\\\"\",\"position\":0}",
+                "into into testlike2 select ('foo', 'bar') from long_sequence(1);"
+        ));
+    }
+
+    @Test
     public void testHttpLong256AndCharImport() {
         // this script uploads text file:
         // 0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060,a
@@ -4801,7 +4809,7 @@ public class IODispatcherTest extends AbstractTest {
                                 "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
                                 "select i, avg(l), max(l) from t group by i order by i asc limit 3",
                                 null, null, null, null,
-                                "400"
+                                "408"
                         );
                     }
                 });
@@ -7336,19 +7344,13 @@ public class IODispatcherTest extends AbstractTest {
                 .run((engine) -> {
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
-                        // We expect header only to be sent and then a disconnect.
-                        new SendAndReceiveRequestBuilder()
-                                .withExpectReceiveDisconnect(true)
-                                .executeWithStandardRequestHeaders(
-                                        "GET /exp?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: text/csv; charset=utf-8\r\n" +
-                                                "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                                                "Keep-Alive: timeout=5, max=10000\r\n"
-                                );
+                        testHttpClient.assertGetRegexp(
+                                "/exp",
+                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"\\[-1\\] timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
+                                QUERY_TIMEOUT_SELECT,
+                                null, null, null, null,
+                                "408"
+                        );
                     }
                 });
     }

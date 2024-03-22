@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.DirectCharSequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -100,19 +99,6 @@ public class TableReaderSelectedColumnRecord implements Record {
         final long offset = getAdjustedRecordIndex(col) * Character.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         return reader.getColumn(absoluteColumnIndex).getChar(offset);
-    }
-
-    @Override
-    public DirectCharSequence getDirectStr(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-                recordIndex,
-                TableReader.getPrimaryColumnIndex(columnBase, col)
-        );
-        long offset = reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex);
-        assert recordIndex != 0 || (offset == 0 || offset == Numbers.LONG_NaN);
-        return reader.getColumn(absoluteColumnIndex).getDirectStr(offset);
     }
 
     @Override

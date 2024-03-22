@@ -107,6 +107,17 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -134,12 +145,6 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-    }
-
-    @Override
     public void setAllocator(GroupByAllocator allocator) {
         sinkA.setAllocator(allocator);
         sinkB.setAllocator(allocator);
@@ -148,11 +153,6 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override
