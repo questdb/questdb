@@ -102,8 +102,8 @@ io.questdb.griffin.engine.functions.lt.LtCharFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtStrFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtLongFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtLong256FunctionFactory
-io.questdb.griffin.engine.functions.lt.LtVarcharStrFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtStrVarcharFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtVarcharStrFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtVarcharFunctionFactory
 
 # '+' operator
@@ -177,6 +177,7 @@ io.questdb.griffin.engine.functions.regex.MatchVarcharFunctionFactory
 
 # '!~'
 io.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory
+io.questdb.griffin.engine.functions.regex.NotMatchVarcharFunctionFactory
 io.questdb.griffin.engine.functions.regex.NotMatchCharFunctionFactory
 
 #  like
@@ -792,6 +793,7 @@ io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory
 
 # regexp_replace()
 io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory
+io.questdb.griffin.engine.functions.regex.RegexpReplaceVarcharFunctionFactory
 
 # left()/right()
 io.questdb.griffin.engine.functions.str.LeftStrFunctionFactory

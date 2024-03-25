@@ -65,14 +65,14 @@ public class LtVarcharFunctionFactory implements FunctionFactory {
             if (constValue == null) {
                 return BooleanConstant.FALSE;
             }
-            return new LtVarcharStrFunctionFactory.ConstOnLeftFunc(constValue, b);
+            return new LtStrVarcharFunctionFactory.ConstOnLeftFunc(constValue, b);
         }
         if (!a.isConstant() && b.isConstant()) {
             Utf8Sequence constValue = b.getVarcharA(null);
             if (constValue == null) {
                 return BooleanConstant.FALSE;
             }
-            return new LtStrVarcharFunctionFactory.ConstOnRightFunc(a, constValue);
+            return new LtVarcharStrFunctionFactory.ConstOnRightFunc(a, constValue);
         }
         return new Func(a, b);
     }

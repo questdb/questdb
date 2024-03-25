@@ -25,12 +25,13 @@
 package io.questdb.griffin.engine.functions.regex;
 
 /**
- * This is tactical implementation of regex match over varchar column.
+ * This is tactical implementation of regex replace over varchar column.
  * It exploits the ability of a varchar column to return a CharSequence view of the sequence.
  */
-public class MatchVarcharFunctionFactory extends MatchStrFunctionFactory {
+public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctionFactory {
     @Override
     public String getSignature() {
-        return "~(ØS)";
+        return "regexp_replace(ØSS)";
     }
 }
+

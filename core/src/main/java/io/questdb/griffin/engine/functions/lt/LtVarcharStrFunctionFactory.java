@@ -36,14 +36,13 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
 public class LtVarcharStrFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "<(SØ)";
+        return "<(ØS)";
     }
 
     @Override
@@ -66,39 +65,41 @@ public class LtVarcharStrFunctionFactory implements FunctionFactory {
             if (constValue == null) {
                 return BooleanConstant.FALSE;
             }
-            return new ConstOnLeftFunc(new Utf8String(constValue), b);
+            return new LtStrFunctionFactory.ConstOnLeftFunc(constValue, b);
         }
         if (!a.isConstant() && b.isConstant()) {
-            CharSequence constValue = b.getStrA(null);
+            Utf8Sequence constValue = b.getVarcharA(null);
             if (constValue == null) {
                 return BooleanConstant.FALSE;
             }
-            return new LtStrFunctionFactory.ConstOnRightFunc(a, constValue);
+            return new ConstOnRightFunc(a, constValue);
         }
+        // This implementation does not handle runtime constant for optimisations.
+        // This is deemed to be unpopular function, so we don't need to optimise it.
         return new LtStrFunctionFactory.Func(a, b);
     }
 
-    static class ConstOnLeftFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static class ConstOnRightFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Utf8Sequence constant;
-        private final Function right;
+        private final Function left;
 
-        public ConstOnLeftFunc(Utf8Sequence constant, Function right) {
+        public ConstOnRightFunc(Function left, Utf8Sequence constant) {
             this.constant = constant;
-            this.right = right;
+            this.left = left;
         }
 
         @Override
         public Function getArg() {
-            return right;
+            return left;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            final Utf8Sequence r = right.getVarcharB(rec);
-            if (r == null) {
+            final Utf8Sequence l = left.getVarcharA(rec);
+            if (l == null) {
                 return false;
             }
-            return negated == (Utf8s.compare(constant, r) >= 0);
+            return negated == (Utf8s.compare(l, constant) >= 0);
         }
 
         @Override
@@ -112,9 +113,9 @@ public class LtVarcharStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val('\'').val(constant).val('\'');
+            sink.val(left);
             sink.val(getName());
-            sink.val(right);
+            sink.val('\'').val(constant).val('\'');
         }
     }
 }
