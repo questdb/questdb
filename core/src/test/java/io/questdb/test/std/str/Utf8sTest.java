@@ -48,11 +48,33 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testContains() {
+        Assert.assertTrue(Utf8s.contains(new Utf8String("аз съм грут"), new Utf8String("грут")));
+        Assert.assertTrue(Utf8s.contains(new Utf8String("foo bar baz"), new Utf8String("bar")));
+        Assert.assertFalse(Utf8s.contains(new Utf8String("foo bar baz"), new Utf8String("buz")));
+        Assert.assertTrue(Utf8s.contains(new Utf8String("foo bar baz"), Utf8String.EMPTY));
+        Assert.assertFalse(Utf8s.contains(Utf8String.EMPTY, new Utf8String("foobar")));
+    }
+
+    @Test
     public void testContainsAscii() {
         Assert.assertTrue(Utf8s.containsAscii(new Utf8String("foo bar baz"), "bar"));
         Assert.assertFalse(Utf8s.containsAscii(new Utf8String("foo bar baz"), "buz"));
         Assert.assertTrue(Utf8s.containsAscii(new Utf8String("foo bar baz"), ""));
         Assert.assertFalse(Utf8s.containsAscii(Utf8String.EMPTY, "foobar"));
+    }
+
+    @Test
+    public void testContainsLowerCaseAscii() {
+        Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("аз съм грут foo bar baz"), new Utf8String("bar")));
+        Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("аз съм грут FoO BaR BaZ"), new Utf8String("bar")));
+        Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("foo bar baz"), new Utf8String("foo")));
+        Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("FOO bar baz"), new Utf8String("foo")));
+        Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("foo bar baz"), new Utf8String("baz")));
+        Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("FOO BAR BAZ"), new Utf8String("baz")));
+        Assert.assertFalse(Utf8s.containsLowerCaseAscii(new Utf8String("foo bar baz"), new Utf8String("buz")));
+        Assert.assertTrue(Utf8s.containsLowerCaseAscii(new Utf8String("foo bar baz"), Utf8String.EMPTY));
+        Assert.assertFalse(Utf8s.containsLowerCaseAscii(Utf8String.EMPTY, new Utf8String("foobar")));
     }
 
     @Test
@@ -76,6 +98,15 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testEndsWith() {
+        Assert.assertTrue(Utf8s.endsWith(new Utf8String("фу бар баз"), new Utf8String("баз")));
+        Assert.assertTrue(Utf8s.endsWith(new Utf8String("foo bar baz"), new Utf8String("baz")));
+        Assert.assertFalse(Utf8s.endsWith(new Utf8String("foo bar baz"), new Utf8String("bar")));
+        Assert.assertTrue(Utf8s.endsWith(new Utf8String("foo bar baz"), Utf8String.EMPTY));
+        Assert.assertFalse(Utf8s.endsWith(Utf8String.EMPTY, new Utf8String("foo")));
+    }
+
+    @Test
     public void testEndsWithAscii() {
         Assert.assertTrue(Utf8s.endsWithAscii(new Utf8String("foo bar baz"), "baz"));
         Assert.assertFalse(Utf8s.endsWithAscii(new Utf8String("foo bar baz"), "bar"));
@@ -89,6 +120,15 @@ public class Utf8sTest {
         Assert.assertFalse(Utf8s.endsWithAscii(new Utf8String("foo bar baz"), 'f'));
         Assert.assertFalse(Utf8s.endsWithAscii(new Utf8String("foo bar baz"), (char) 0));
         Assert.assertFalse(Utf8s.endsWithAscii(Utf8String.EMPTY, ' '));
+    }
+
+    @Test
+    public void testEndsWithLowerCaseAscii() {
+        Assert.assertTrue(Utf8s.endsWithLowerCaseAscii(new Utf8String("FOO BAR BAZ"), new Utf8String("baz")));
+        Assert.assertTrue(Utf8s.endsWithLowerCaseAscii(new Utf8String("foo bar baz"), new Utf8String("baz")));
+        Assert.assertFalse(Utf8s.endsWithLowerCaseAscii(new Utf8String("foo bar baz"), new Utf8String("bar")));
+        Assert.assertTrue(Utf8s.endsWithLowerCaseAscii(new Utf8String("foo bar baz"), Utf8String.EMPTY));
+        Assert.assertFalse(Utf8s.endsWithLowerCaseAscii(Utf8String.EMPTY, new Utf8String("foo")));
     }
 
     @Test
@@ -195,6 +235,13 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testIndexOf() {
+        Assert.assertEquals(1, Utf8s.indexOf(new Utf8String("foo bar baz"), 0, 7, new Utf8String("oo")));
+        Assert.assertEquals(-1, Utf8s.indexOf(new Utf8String("foo bar baz"), 2, 4, new Utf8String("y")));
+        Assert.assertEquals(-1, Utf8s.indexOf(Utf8String.EMPTY, 0, 0, new Utf8String("byz")));
+    }
+
+    @Test
     public void testIndexOfAscii() {
         Assert.assertEquals(1, Utf8s.indexOfAscii(new Utf8String("foo bar baz"), 0, 7, "oo"));
         Assert.assertEquals(1, Utf8s.indexOfAscii(new Utf8String("foo bar baz"), 0, 7, "oo", -1));
@@ -216,6 +263,15 @@ public class Utf8sTest {
         Assert.assertEquals(2, Utf8s.indexOfAscii(new Utf8String("foo bar baz"), 0, 4, 'o', -1));
         Assert.assertEquals(-1, Utf8s.indexOfAscii(new Utf8String("foo bar baz"), 2, 4, 'y'));
         Assert.assertEquals(-1, Utf8s.indexOfAscii(Utf8String.EMPTY, 0, 0, 'y'));
+    }
+
+    @Test
+    public void testIndexOfLowerCaseAscii() {
+        Assert.assertEquals(20, Utf8s.indexOfLowerCaseAscii(new Utf8String("фу бар баз FOO BAR BAZ"), 0, 30, new Utf8String("oo")));
+        Assert.assertEquals(1, Utf8s.indexOfLowerCaseAscii(new Utf8String("FOO BAR BAZ"), 0, 7, new Utf8String("oo")));
+        Assert.assertEquals(1, Utf8s.indexOfLowerCaseAscii(new Utf8String("foo bar baz"), 0, 7, new Utf8String("oo")));
+        Assert.assertEquals(-1, Utf8s.indexOfLowerCaseAscii(new Utf8String("foo bar baz"), 2, 4, new Utf8String("y")));
+        Assert.assertEquals(-1, Utf8s.indexOfLowerCaseAscii(Utf8String.EMPTY, 0, 0, new Utf8String("byz")));
     }
 
     @Test
@@ -409,6 +465,15 @@ public class Utf8sTest {
         Assert.assertFalse(Utf8s.startsWithAscii(new Utf8String("foo bar baz"), "bar"));
         Assert.assertTrue(Utf8s.startsWithAscii(new Utf8String("foo bar baz"), ""));
         Assert.assertFalse(Utf8s.startsWithAscii(Utf8String.EMPTY, "foo"));
+    }
+
+    @Test
+    public void testStartsWithLowerCaseAscii() {
+        Assert.assertTrue(Utf8s.startsWithLowerCaseAscii(new Utf8String("FOO BAR BAZ"), new Utf8String("foo")));
+        Assert.assertTrue(Utf8s.startsWithLowerCaseAscii(new Utf8String("foo bar baz"), new Utf8String("foo")));
+        Assert.assertFalse(Utf8s.startsWithLowerCaseAscii(new Utf8String("foo bar baz"), new Utf8String("bar")));
+        Assert.assertTrue(Utf8s.startsWithLowerCaseAscii(new Utf8String("foo bar baz"), Utf8String.EMPTY));
+        Assert.assertFalse(Utf8s.startsWithLowerCaseAscii(Utf8String.EMPTY, new Utf8String("foo")));
     }
 
     @Test

@@ -257,6 +257,21 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCaseExpressionKeyGroupBy3() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT CASE WHEN (value > 2023.5) THEN key ELSE '' END AS key, avg(value) " +
+                        "FROM tab GROUP BY key ORDER BY key",
+                "key\tavg\n" +
+                        "\t1024.3435935935936\n" +
+                        "k0\t3025.155860349127\n" +
+                        "k1\t3023.65625\n" +
+                        "k2\t3024.65625\n" +
+                        "k3\t3025.65625\n" +
+                        "k4\t3024.155860349127\n"
+        );
+    }
+
+    @Test
     public void testParallelCountOverMultiKeyGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);

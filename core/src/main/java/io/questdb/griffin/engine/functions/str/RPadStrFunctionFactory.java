@@ -105,7 +105,7 @@ public class RPadStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrB(final Record rec) {
-            return rPadStr(strFunc.getStrA(rec), lenFunc.getInt(rec), fillTextFunc.getStrA(rec), sinkB);
+            return rPadStr(strFunc.getStrB(rec), lenFunc.getInt(rec), fillTextFunc.getStrB(rec), sinkB);
         }
 
         @Override

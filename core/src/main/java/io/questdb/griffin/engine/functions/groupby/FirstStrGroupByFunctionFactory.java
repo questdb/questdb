@@ -50,10 +50,6 @@ public class FirstStrGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function arg = args.getQuick(0);
-        if (arg.supportsDirectStr()) {
-            return new FirstDirectStrGroupByFunction(arg);
-        }
-        return new FirstStrGroupByFunction(arg);
+        return new FirstStrGroupByFunction(args.getQuick(0));
     }
 }

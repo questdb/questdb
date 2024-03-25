@@ -97,7 +97,7 @@ public class LPadFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrB(final Record rec) {
-            return lPad(strFunc.getStrA(rec), lenFunc.getInt(rec), sinkB);
+            return lPad(strFunc.getStrB(rec), lenFunc.getInt(rec), sinkB);
         }
 
         @Override

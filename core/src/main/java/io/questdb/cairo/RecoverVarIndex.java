@@ -80,7 +80,8 @@ public class RecoverVarIndex extends RebuildColumnBase {
                     ff,
                     path.$(),
                     maxOffset,
-                    MemoryTag.MMAP_DEFAULT
+                    MemoryTag.MMAP_DEFAULT,
+                    false
             )) {
 
                 path.trimTo(colNameLen).put(".i");

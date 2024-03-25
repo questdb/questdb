@@ -667,6 +667,25 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Checks that all the order by advice tokens appear as columns for this join model.
+     *
+     * @param model         model to check
+     * @param orderByAdvice advice
+     * @return all order by advice appears in model columns list
+     */
+    private boolean allAdviceIsForThisTable(QueryModel model, ObjList<ExpressionNode> orderByAdvice) {
+        CharSequence alias;
+        LowerCaseCharSequenceObjHashMap<QueryColumn> columnMap = model.getAliasToColumnMap();
+        for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
+            alias = orderByAdvice.getQuick(i).token;
+            if (!columnMap.contains(alias)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     //checks join equality condition and pushes it to optimal join contexts (could be a different join context)
     //NOTE on LEFT JOIN :
     // - left join condition MUST remain as is otherwise it'll produce wrong results
@@ -996,6 +1015,43 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        return false;
+    }
+
+    /**
+     * Checks whether the given advice is for one table only i.e consistent table prefix.
+     *
+     * @param orderByAdvice the given advice
+     * @return whether prefix is consistent or not
+     */
+    private boolean checkForConsistentPrefix(ObjList<ExpressionNode> orderByAdvice) {
+        CharSequence prefix = "";
+        for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
+            CharSequence token = orderByAdvice.getQuick(i).token;
+            int loc = Chars.indexOf(token, '.');
+            if (loc > -1) {
+                if (prefix.length() == 0) {
+                    prefix = token.subSequence(0, loc);
+                } else if (!Chars.equalsIgnoreCase(prefix, token, 0, loc)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Checks for a dot in the token.
+     *
+     * @param orderByAdvice the given advice
+     * @return whether dot is present or not
+     */
+    private boolean checkForDot(ObjList<ExpressionNode> orderByAdvice) {
+        for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
+            if (Chars.indexOf(orderByAdvice.getQuick(i).token, '.') > -1) {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -1707,6 +1763,25 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Copies orderByAdvice and removes table prefixes.
+     *
+     * @return prefix-less advice
+     */
+    private ObjList<ExpressionNode> duplicateAdviceAndTakeSuffix() {
+        int d;
+        CharSequence token;
+        ExpressionNode node;
+        ObjList<ExpressionNode> advice = new ObjList<>();
+        for (int j = 0, m = orderByAdvice.size(); j < m; j++) {
+            node = orderByAdvice.getQuick(j);
+            token = node.token;
+            d = Chars.indexOf(token, '.');
+            advice.add(expressionNodePool.next().of(node.type, token.subSequence(d + 1, token.length()), node.precedence, node.position));
+        }
+        return advice;
+    }
+
     private void emitAggregatesAndLiterals(
             @Transient ExpressionNode node,
             QueryModel groupByModel,
@@ -2284,7 +2359,7 @@ public class SqlOptimiser implements Mutable {
         return expr;
     }
 
-    private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b)  {
+    private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) {
         assert a.slaveIndex == b.slaveIndex;
 
         deletedContexts.clear();
@@ -2991,179 +3066,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    /**
-     * Propagates orderByAdvice to nested join models if certain conditions are met.
-     * Advice should only be propagated if relevant.
-     * Cases:
-     *     ASOF JOIN
-     *         Propagate if the ordering is for the primary table only, and timestamp-first
-     *     OTHER JOINs
-     *         Propagate down primary table only.
-     *
-     * @param model The current query model
-     * @param jm The join model list for the current query model
-     * @param orderByMnemonic The advice 'strength'
-     * @param orderByDirectionAdvice The advice direction
-     */
-    private void pushDownOrderByAdviceToJoinModels(QueryModel model, ObjList<QueryModel> jm, int orderByMnemonic, IntList orderByDirectionAdvice) {
-        if (model == null) {
-            return;
-        }
-        // don't propagate though group by, sample by or distinct
-        if (model.getGroupBy().size() != 0
-                || model.getSampleBy() != null
-                || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
-            return;
-        }
-        // placeholder for prefix-stripped advice
-        ObjList<ExpressionNode> advice = null;
-        // Check if the orderByAdvice has names qualified by table names i.e 't1.ts' versus 'ts'
-        final boolean orderByAdviceHasDot = checkForDot(orderByAdvice);
-        // loop over the join models
-        // get primary model
-        QueryModel jm1 = jm.getQuiet(0);
-        jm1 = jm1 != null ? jm1.getNestedModel() : null;
-        if (jm1 == null) {
-            return;
-        }
-        // get secondary model
-        QueryModel jm2 = jm1.getJoinModels().getQuiet(1);
-        // if order by advice has no table prefixes, we preserve original behaviour and pass it on.
-        if (!orderByAdviceHasDot) {
-            if (allAdviceIsForThisTable(jm1, orderByAdvice)) {
-                setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
-            }
-            optimiseOrderBy(jm1, orderByMnemonic);
-            return;
-        }
-        // if the order by advice is for more than one table, don't propagate it, as a sort will be needed anyway
-        if (!checkForConsistentPrefix(orderByAdvice)) {
-            return;
-        }
-        // if the orderByAdvice prefixes do not match the primary table name, don't propagate it
-        final CharSequence adviceToken = orderByAdvice.getQuick(0).token;
-        final int dotLoc = Chars.indexOf(adviceToken, '.');
-        if (!(Chars.equalsNc(jm1.getTableName(), adviceToken, 0, dotLoc)
-                || (jm1.getAlias() != null && Chars.equals(jm1.getAlias().token, adviceToken, 0, dotLoc)))) {
-            optimiseOrderBy(jm1, orderByMnemonic);
-            return;
-        }
-        // order by advice is pushable, so now we copy it and strip the table prefix
-        advice = duplicateAdviceAndTakeSuffix();
-        // if there's a join, we need to handle it differently.
-        if (jm2 != null) {
-            final int joinType = jm2.getJoinType();
-            if (joinType == QueryModel.JOIN_ASOF) {// For asof join, we only propagate advice if its ordered beginning with the designated timestamp
-                CharSequence token = advice.getQuick(0).token;
-                QueryColumn qc = jm1.getAliasToColumnMap().get(token);
-                // if there is a matching column, and it is the designated timestamp, then propagate advice
-                if (qc != null
-                        && qc.getColumnType() == ColumnType.TIMESTAMP
-                        && Chars.equalsIgnoreCase(jm1.getTimestamp().token, qc.getAst().token)) {
-                    setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
-                }
-            } else {
-                setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
-            }
-        }
-        else {
-            // fallback to copy the advice to primary
-            setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
-        }
-        // recursive call
-        optimiseOrderBy(jm1, orderByMnemonic);
-    }
-
-
-    /**
-     * Checks that all the order by advice tokens appear as columns for this join model.
-     * @param model model to check
-     * @param orderByAdvice advice
-     * @return all order by advice appears in model columns list
-     */
-    private boolean allAdviceIsForThisTable(QueryModel model, ObjList<ExpressionNode> orderByAdvice) {
-        CharSequence alias;
-        LowerCaseCharSequenceObjHashMap<QueryColumn> columnMap = model.getAliasToColumnMap();
-        for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
-            alias = orderByAdvice.getQuick(i).token;
-            if (!columnMap.contains(alias)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Copies orderByAdvice and removes table prefixes.
-     *
-     * @return prefix-less advice
-     */
-    private ObjList<ExpressionNode> duplicateAdviceAndTakeSuffix() {
-        int d;
-        CharSequence token;
-        ExpressionNode node;
-        ObjList<ExpressionNode> advice = new ObjList<>();
-        for (int j = 0, m = orderByAdvice.size(); j < m; j++) {
-            node = orderByAdvice.getQuick(j);
-            token = node.token;
-            d = Chars.indexOf(token, '.');
-            advice.add(expressionNodePool.next().of(node.type, token.subSequence(d + 1, token.length()), node.precedence, node.position));
-        }
-        return advice;
-    }
-
-    /**
-     * Copies the provided order by advice into the given model.
-     *
-     * @param model The target model
-     * @param advice The order by advice to copy
-     * @param orderByMnemonic The advice 'strength'
-     * @param orderByDirectionAdvice The advice direction
-     */
-    private void setAndCopyAdvice(QueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
-        model.setOrderByAdviceMnemonic(orderByMnemonic);
-        model.copyOrderByAdvice(advice);
-        model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
-    }
-
-    /**
-     * Checks for a dot in the token.
-     *
-     * @param orderByAdvice the given advice
-     * @return whether dot is present or not
-     */
-    private boolean checkForDot(ObjList<ExpressionNode> orderByAdvice) {
-        for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
-            if (Chars.indexOf(orderByAdvice.getQuick(i).token, '.') > -1) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Checks whether the given advice is for one table only i.e consistent table prefix.
-     *
-     * @param orderByAdvice the given advice
-     * @return whether prefix is consistent or not
-     */
-    private boolean checkForConsistentPrefix(ObjList<ExpressionNode> orderByAdvice) {
-        CharSequence prefix = "";
-        for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
-            CharSequence token = orderByAdvice.getQuick(i).token;
-            int loc = Chars.indexOf(token, '.');
-            if (loc > -1) {
-                if (prefix.length() == 0) {
-                    prefix = token.subSequence(0, loc);
-                }
-                else if (!Chars.equalsIgnoreCase(prefix, token, 0, loc)) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
     private void parseFunctionAndEnumerateColumns(
             @NotNull QueryModel model,
             @NotNull SqlExecutionContext executionContext,
@@ -3459,6 +3361,88 @@ public class SqlOptimiser implements Mutable {
             // we've to use this value because union-ed models don't have a back-reference and might not know they participate in set operation
             propagateTopDownColumns(unionModel, allowColumnsChange);
         }
+    }
+
+    /**
+     * Propagates orderByAdvice to nested join models if certain conditions are met.
+     * Advice should only be propagated if relevant.
+     * Cases:
+     * ASOF JOIN
+     * Propagate if the ordering is for the primary table only, and timestamp-first
+     * OTHER JOINs
+     * Propagate down primary table only.
+     *
+     * @param model                  The current query model
+     * @param jm                     The join model list for the current query model
+     * @param orderByMnemonic        The advice 'strength'
+     * @param orderByDirectionAdvice The advice direction
+     */
+    private void pushDownOrderByAdviceToJoinModels(QueryModel model, ObjList<QueryModel> jm, int orderByMnemonic, IntList orderByDirectionAdvice) {
+        if (model == null) {
+            return;
+        }
+        // don't propagate though group by, sample by or distinct
+        if (model.getGroupBy().size() != 0
+                || model.getSampleBy() != null
+                || model.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
+            return;
+        }
+        // placeholder for prefix-stripped advice
+        ObjList<ExpressionNode> advice = null;
+        // Check if the orderByAdvice has names qualified by table names i.e 't1.ts' versus 'ts'
+        final boolean orderByAdviceHasDot = checkForDot(orderByAdvice);
+        // loop over the join models
+        // get primary model
+        QueryModel jm1 = jm.getQuiet(0);
+        jm1 = jm1 != null ? jm1.getNestedModel() : null;
+        if (jm1 == null) {
+            return;
+        }
+        // get secondary model
+        QueryModel jm2 = jm1.getJoinModels().getQuiet(1);
+        // if order by advice has no table prefixes, we preserve original behaviour and pass it on.
+        if (!orderByAdviceHasDot) {
+            if (allAdviceIsForThisTable(jm1, orderByAdvice)) {
+                setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
+            }
+            optimiseOrderBy(jm1, orderByMnemonic);
+            return;
+        }
+        // if the order by advice is for more than one table, don't propagate it, as a sort will be needed anyway
+        if (!checkForConsistentPrefix(orderByAdvice)) {
+            return;
+        }
+        // if the orderByAdvice prefixes do not match the primary table name, don't propagate it
+        final CharSequence adviceToken = orderByAdvice.getQuick(0).token;
+        final int dotLoc = Chars.indexOf(adviceToken, '.');
+        if (!(Chars.equalsNc(jm1.getTableName(), adviceToken, 0, dotLoc)
+                || (jm1.getAlias() != null && Chars.equals(jm1.getAlias().token, adviceToken, 0, dotLoc)))) {
+            optimiseOrderBy(jm1, orderByMnemonic);
+            return;
+        }
+        // order by advice is pushable, so now we copy it and strip the table prefix
+        advice = duplicateAdviceAndTakeSuffix();
+        // if there's a join, we need to handle it differently.
+        if (jm2 != null) {
+            final int joinType = jm2.getJoinType();
+            if (joinType == QueryModel.JOIN_ASOF) {// For asof join, we only propagate advice if its ordered beginning with the designated timestamp
+                CharSequence token = advice.getQuick(0).token;
+                QueryColumn qc = jm1.getAliasToColumnMap().get(token);
+                // if there is a matching column, and it is the designated timestamp, then propagate advice
+                if (qc != null
+                        && qc.getColumnType() == ColumnType.TIMESTAMP
+                        && Chars.equalsIgnoreCase(jm1.getTimestamp().token, qc.getAst().token)) {
+                    setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+                }
+            } else {
+                setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+            }
+        } else {
+            // fallback to copy the advice to primary
+            setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
+        }
+        // recursive call
+        optimiseOrderBy(jm1, orderByMnemonic);
     }
 
     private ExpressionNode pushOperationOutsideAgg(ExpressionNode agg, ExpressionNode op, ExpressionNode column, ExpressionNode constant, QueryModel model) {
@@ -4424,7 +4408,7 @@ public class SqlOptimiser implements Mutable {
                 // will change the outcome of existing queries, if those supported wildcards for
                 // as group-by keys.
 
-                for (int i = 0, n = model.getColumns().size(); i <n; i++) {
+                for (int i = 0, n = model.getColumns().size(); i < n; i++) {
                     QueryColumn column = model.getColumns().getQuick(i);
                     if (Chars.endsWith(column.getAst().token, '*')) {
                         throw SqlException.$(column.getAst().position, "wildcard column select is not allowed in sample-by queries");
@@ -5360,6 +5344,20 @@ public class SqlOptimiser implements Mutable {
                 model.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
             }
         }
+    }
+
+    /**
+     * Copies the provided order by advice into the given model.
+     *
+     * @param model                  The target model
+     * @param advice                 The order by advice to copy
+     * @param orderByMnemonic        The advice 'strength'
+     * @param orderByDirectionAdvice The advice direction
+     */
+    private void setAndCopyAdvice(QueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
+        model.setOrderByAdviceMnemonic(orderByMnemonic);
+        model.copyOrderByAdvice(advice);
+        model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
     }
 
     private CharSequence setAndGetModelAlias(QueryModel model) {
