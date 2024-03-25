@@ -73,7 +73,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
                 "sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType\n" +
                         "1\t2023-11-22T19:00:53.950468Z\t1\t0\t0\t0\t\t\tNaN\t0\n" +
                         "2\t2023-11-22T19:00:53.950468Z\t1\t0\t1\t0\t\t\tNaN\t0\n" +
-                        "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tNaN\t0\n",
+                        "3\t2023-11-22T19:00:53.950468Z\t-1\t0\t0\t1\t\t\tNaN\t0\n",
                 "select * from wal_transactions('x')"
         );
     }
@@ -90,7 +90,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
 
         assertSql(
                 "sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType\n" +
-                        "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tNaN\t0\n",
+                        "3\t2023-11-22T19:00:53.950468Z\t-1\t0\t0\t1\t\t\tNaN\t0\n",
                 "select * from wal_transactions('x') limit -1"
         );
     }
@@ -109,10 +109,10 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
 
         assertSql(
                 "sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType\n" +
-                        "1\t2023-11-22T19:00:53.950468Z\t1\t0\t0\t0\t2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\t1\t0\n" +
-                        "2\t2023-11-22T19:00:53.950468Z\t1\t0\t1\t0\t2020-02-01T00:00:00.000000Z\t2020-02-01T00:00:00.000000Z\t1\t0\n" +
-                        "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tNaN\t1\n" +
-                        "4\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t2\t\t\tNaN\t8\n",
+                        "1\t2023-11-22T19:00:53.950000Z\t1\t0\t0\t0\t2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\t1\t0\n" +
+                        "2\t2023-11-22T19:00:53.950000Z\t1\t0\t1\t0\t2020-02-01T00:00:00.000000Z\t2020-02-01T00:00:00.000000Z\t1\t0\n" +
+                        "3\t2023-11-22T19:00:53.950000Z\t-1\t0\t0\t1\t\t\tNaN\t1\n" +
+                        "4\t2023-11-22T19:00:53.950000Z\t-1\t0\t0\t2\t\t\tNaN\t8\n",
                 "select * from wal_transactions('x')"
         );
     }

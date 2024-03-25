@@ -51,12 +51,12 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
         }
 
         @Override
-        public void toSink(Object obj, MemoryA sink) {
+        public short getCommandType(Object instance) {
+            return 0;
         }
 
         @Override
-        public short getCommandType(Object instance) {
-            return 0;
+        public void toSink(Object obj, MemoryA sink) {
         }
     };
 
@@ -141,13 +141,13 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
                 assertEquals(i, cursor.getWalId());
                 assertEquals(i + 1, cursor.getSegmentId());
                 assertEquals(i + 2, cursor.getSegmentTxn());
-                assertEquals(i + 123, cursor.getCommitTimestamp());
+                assertEquals((i + 123) * 1000, cursor.getCommitTimestamp());
             } else {
                 assertEquals(sv, cursor.getStructureVersion());
                 assertEquals(STRUCTURAL_CHANGE_WAL_ID, cursor.getWalId());
-                assertEquals(-1, cursor.getSegmentId());
-                assertEquals(-1, cursor.getSegmentTxn());
-                assertEquals(i + 125, cursor.getCommitTimestamp());
+                assertEquals(0, cursor.getSegmentId());
+                assertEquals(0, cursor.getSegmentTxn());
+                assertEquals((i + 125) * 1000, cursor.getCommitTimestamp());
             }
         }
     }
@@ -175,9 +175,9 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
 
     private void writeTxn(int txnId, int structureVersion, TableTransactionLogFile txnLogFile, int i) {
         if (txnId == 0) {
-            txnLogFile.addEntry(structureVersion, i, i + 1, i + 2, i + 123, 0, 0, 0);
+            txnLogFile.addEntry(structureVersion, i, i + 1, i + 2, (i + 123) * 1000L, 0, 0, 0);
         } else {
-            txnLogFile.beginMetadataChangeEntry(structureVersion, voidSerializer, null, i + 125);
+            txnLogFile.beginMetadataChangeEntry(structureVersion, voidSerializer, null, (i + 125) * 1000L);
             txnLogFile.endMetadataChangeEntry();
         }
     }

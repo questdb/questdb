@@ -56,8 +56,13 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  * See the format of the header and transaction record in @link TableTransactionLogFile
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
-    public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
+    private static final long TX_LOG_STRUCTURE_VERSION_OFFSET = 0L;
+    private static final long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES;
+    private static final long TX_LOG_SEGMENT_OFFSET = TX_LOG_WAL_ID_OFFSET + Integer.BYTES;
+    private static final long TX_LOG_SEGMENT_TXN_OFFSET = TX_LOG_SEGMENT_OFFSET + Integer.BYTES;
+    private static final long TX_LOG_COMMIT_TIMESTAMP_OFFSET = TX_LOG_SEGMENT_TXN_OFFSET + Integer.BYTES;
+    private static final long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
@@ -96,8 +101,8 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         txnMem.putLong(newStructureVersion);
         txnMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
-        txnMem.putInt(-1);
-        txnMem.putInt(-1);
+        txnMem.putInt(0);
+        txnMem.putInt(0);
         txnMem.putLong(timestamp);
     }
 
@@ -239,6 +244,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
 
         @Override
+        public int getPartitionSize() {
+            return 0;
+        }
+
+        @Override
         public int getSegmentId() {
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
         }
@@ -306,11 +316,6 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         @Override
         public void toMinTxn() {
             toTop();
-        }
-
-        @Override
-        public int getPartitionSize() {
-            return 0;
         }
 
         @Override
