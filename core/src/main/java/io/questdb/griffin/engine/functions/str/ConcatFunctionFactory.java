@@ -185,6 +185,11 @@ public class ConcatFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("concat(").val(functions).val(')');
         }

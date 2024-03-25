@@ -48,7 +48,13 @@ public class SubStringFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(final int position, final ObjList<Function> args, IntList argPositions, final CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final Function strFunc = args.getQuick(0);
         final Function startFunc = args.getQuick(1);
         final Function lenFunc = args.getQuick(2);
@@ -69,7 +75,6 @@ public class SubStringFunctionFactory implements FunctionFactory {
     }
 
     private static class SubStringFunc extends StrFunction implements TernaryFunction {
-
         private final boolean isSimplifiable;
         private final Function lenFunc;
         private final StringSink sinkA = new StringSink();
@@ -135,6 +140,11 @@ public class SubStringFunctionFactory implements FunctionFactory {
             }
             int end = Math.min(strLen, rawStart + len - 1);
             return Math.max(0, end - start);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Nullable
