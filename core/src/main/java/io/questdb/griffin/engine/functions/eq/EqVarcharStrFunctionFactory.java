@@ -56,12 +56,12 @@ public class EqVarcharStrFunctionFactory implements FunctionFactory {
         return newInstance(str, varchar);
     }
 
-    private Function createStrConstantFunc(Function constFunc, Function varFunc) {
-        Utf8Sequence constValue = constFunc.getVarcharA(null);
+    private Function createStrConstantFunc(Function constVarcharFunc, Function varStrFunc) {
+        Utf8Sequence constValue = constVarcharFunc.getVarcharA(null);
         if (constValue == null) {
-            return new EqStrFunctionFactory.NullCheckFunc(varFunc);
+            return new EqStrFunctionFactory.NullCheckFunc(varStrFunc);
         }
-        return new EqStrFunctionFactory.ConstCheckFunc(varFunc, Utf8s.toString(constValue));
+        return new EqStrFunctionFactory.ConstCheckFunc(varStrFunc, Utf8s.toString(constValue));
     }
 
     private Function createVarcharConstantFunc(Function a, Function b) {
