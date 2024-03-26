@@ -15,26 +15,28 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) |
-Türkçe | [हिंदी](./README.hn-in.md)
+English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.zh-hk.md) | [العربية](./i18n/README.ar-dz.md) | [Italiano](./i18n/README.it-it.md) | [Українська](./i18n/README.ua-ua.md) | [Español](./i18n/README.es-es.md) | [Português](./i18n/README.pt.md) | [日本語](./i18n/README.ja-ja.md) | [Türkçe](./i18n/README.tr-tr.md) | [हिंदी](./i18n/README.hn-in.md)
 
 # QuestDB
 
 QuestDB yüksek aktarım verimliliği gösteren, hızlı ve basit SQL sorguları sunan açık kaynak kodlu
-bir [time-series database](https://questdb.io/glossary/time-series-database/) 'dir.
-Bu database InfluxDB line protokolünü, PostgreSQL wire protokolünü ve toplu import-export işlemleri için
-bir REST API kullanarak schema-agnostic veri aktarımını destekler.
+bir time-series database'dir.
 
-QuestDB finansal piyasa verileri, uygulama metrikleri, sensör verileri, real-time analizler,
-kontrol panelleri ve altyapı izleme araçları için iyi bir şekilde donanımlandırılmıştır.
+QuestDB; finansal piyasa verileri, IoT sensör verileri, reklam teknolojisi ve gerçek zamanlı kontrol panelleri için iyi bir şekilde donanımlandırılmıştır. [Yüksek kardinaliteli](https://questdb.io/glossary/high-cardinality/) veri setlerinde öne çıkar 
+ve InfluxDB Line Protokolü desteği ile InfluxDB yerine tam alternatifdir.
 
-QuestDB, ANSI SQL'i yerel time-series SQL uzantılarıyla uygular. Bu SQL uzantıları,
-ilişkisel ve time-series olan join'leri kullanarak birden çok kaynaktan gelen
-verileri ilişkilendirmeyi basitleştirir.
-Column-oriented bir depolama modeli, parallelized vektör yürütme,
-SIMD talimatları ve düşük gecikmeli teknikler benimseyerek yüksek performans elde ediyoruz.
-Tüm kod temeli sıfırdan Java ve C++ ile hiçbir bağımlılık kullanmadan
-ve garbage collection olmadan oluşturulmuştur.
+QuestDB, ANSI SQL'i yerel time-series SQL uzantıları aracılığıyla uygular. Bu SQL uzantıları, verileri filtrelemeyi ve alt örneklemeyi basitleştirir veya ilişkisel ve time-series olan join'leri kullanarak birden çok kaynaktan gelen
+verileri ilişkilendirir.
+
+Column-oriented bir depolama modeli, paralelleştirilmiş vektör yürütme, SIMD talimatları ve düşük gecikmeli teknikler benimseyerek yüksek performans elde ediyoruz.
+Tüm kod temeli sıfırdan Java, C++ ve [Rust](https://questdb.io/blog/leveraging-rust-in-our-high-performance-java-database/) ile hiçbir bağımlılık kullanmadan ve garbage collection olmadan oluşturulmuştur.
+
+QuestDB, InfluxDB line protokolünü ve toplu import-export işlemleri için bir REST API kullanarak schema-agnostic veri aktarımını destekler.
+QuestDB SQL Web Konsolu, CSV içe aktarımını kolaylaştıran etkileşimli bir SQL editorüdür. Son olarak QuestDB, 
+programatik sorgular için Postgres Wire Protokolünü de içerir.
+
+QuestDB ile entegre olan popüler araçlara [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/questdb-kafka/), [Grafana](https://questdb.io/docs/third-party-tools/grafana/),
+[Superset](https://questdb.io/docs/third-party-tools/superset/), [Telegraf](https://questdb.io/docs/third-party-tools/telegraf/) ve [Apache Flink](https://questdb.io/docs/third-party-tools/flink/) dahildir.
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -42,13 +44,15 @@ ve garbage collection olmadan oluşturulmuştur.
   </a>
 </div>
 
-## QuestDB' yi Dene
+## QuestDB' yi Deneyin
 
 QuestDB'nin son sürümünü [canlı demo](https://demo.questdb.io/) ve örnek veri setleri ile birlikte sunuyoruz:
 
-- Trips: 1.6 milyar satır ile NYC taksi'nin 10 yıllık yolculukları
+- Trips: 1.6 milyar satır ile NYC Taksi'nin 10 yıllık yolculukları
 - Trades: Her ay 30M+ satır ile canlı kripto piyasa verisi
 - Pos: 250 bin tane benzersiz geminin coğrafi konumu
+
+> QuestDB ve Grafana ile güçlendirilmiş [etkileşimli gerçek zamanlı market verisi kontrol panellerine](https://questdb.io/dashboards/crypto/) ve [NYC Taksi Verisi Analitik Kontrol Panellerine ](https://questdb.io/dashboards/taxi/) göz at.
 
 | Sorgu                                                                         | Çalışma Süresi                                                                                                                                                                                      |
 |-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -76,29 +80,31 @@ macOS kullanıcıları Homebrew kullanabilir:
 brew install questdb
 brew services start questdb
 
-questdb start // To start questdb
-questdb stop  // To stop questdb
+questdb start // QuestDB yi başlatmak için
+questdb stop  // QuestDB yi durdurmak için
 ```
 
-[QuestDB download sayfası](https://questdb.io/get-questdb/) binary dosyalar için
-direkt indirme sağlar. Ayrıca diğer kurulum ve dağıtım yöntemleri için detayları barındırır.
+[QuestDB downloads sayfası](https://questdb.io/get-questdb/) binary dosyalar için
+direkt indirme sağlar ve diğer kurulum ve dağıtım yöntemleri için detayları barındırır.
+
+### QuestDB Cloud
+
+QuestDB Cloud; rol temelli erişim yönetimi,
+Buluta Özgün Çoğaltma, Sıkıştırma, monitör etme ve buluta özgün snapshot'lar gibi ek özellikler içeren tam kontrollü QuestDB sürümüdür.
+[$200 kredi ile başla](https://cloud.questdb.com).
 
 ### QuestDB'ye Bağlan
 
 Aşağıdaki arayüzleri kullanarak QuestDB ile etkileşime geçebilirsiniz:
 
-- [Web Console](https://questdb.io/docs/develop/web-console/) `9000` portunda
-  etkileşimli SQl editörü
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) `9009`
-  portunda yüksek verimli veri aktarımı
-- [REST API](https://questdb.io/docs/reference/api/rest/) `9000` portunda
-- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) `8812`
-  portunda
+- Etkileşimli SQL editörü ve CSV içe aktarımı için `9000` portunda [Web Konsolu](https://questdb.io/docs/web-console/) 
+- Veri akışı için `9009` portunda [InfluxDB line protokolü](https://questdb.io/docs/reference/api/ilp/overview/)
+- CSV içe aktarımı ve cURL için `9000` portunda [REST API](https://questdb.io/docs/reference/api/rest/)
+- Programatik sorgular ve transactional eklemeler için `8812` portunda [PostgreSQL wire protokolü](https://questdb.io/docs/reference/api/postgres/) 
 
 ### Veri ekleyin
 
-Aşağıda popüler programlama diller için resmi
-questdb istemcilerimizi bulabilirsiniz:
+Aşağıda, InfluxDB Line Protokolü aracılığıyla veri almak için kullanılan resmi QuestDB istemcileri bulunmaktadır::
 
 - [.NET](https://github.com/questdb/net-questdb-client)
 - [C/C++](https://github.com/questdb/c-questdb-client)
@@ -108,20 +114,22 @@ questdb istemcilerimizi bulabilirsiniz:
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
+### Uçtan uca Hızlı Başlangıç
+
+Akış aktarımından Grafana ile görselleştirmeye, hepsini baştan sona görmek mi istiyorsun? 
+Çok yollu [başlangıç repository'imize](https://github.com/questdb/questdb-quickstart) göz atın.
+
 ## QuestDB'nin diğer açık kaynak kodlu TSDB'ler ile karşılaştırması
 
-[Bu makale](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
-QuestDB'yi işlevsellik, olgunluk ve performansı kapsamında diğer açık kaynak kodlu time series veri tabanları
-ile karşılaştırmaktadır.
-
-32 çekirdekli CPU ve 64 GB RAM ile 6-16 thread `yalnızca cpu` kullanılarak yüksek kardinaliteli
-[Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
-sonuçları:
+QuestDB ve InfluxDB'yi işlevsellik, olgunluk ve performans açısından karşılaştıran 
+[benchmark blog gönderimize](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/) göz atın.
 
 <div align="center">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png" width="600"/>
+    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src="../.github/questdb7.3.10-tsbs-benchmark.png" width="600"/>
   </a>
 </div>
+
+Bu benchmark testi, farklı sayıda ana bilgisayar (toplam 100, 1K, 100K ve 10M.) için veri aktarım oranını (satır/saniye) ölçer. Ana bilgisayar sayısı ne kadar fazla olursa, veri kümesinin kardinalitesi de o kadar yüksek olur. QuestDB, ana bilgisayar sayısı artsa bile veri aktarım hızını 2,4 milyon satır/sn'nin üzerinde tutar. Aksine, veri kümesi kardinalitesi arttıkça InfluxDB ve TimescaleDB'nin performansı düşüyor ve veri aktarım oranı önemli ölçüde düşüyor.
 
 ## Kaynaklar
 
@@ -143,7 +151,7 @@ sonuçları:
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) yaygın sorun
   giderme çözümlerini arayın.
 
-### 🚢 QuestDB'yi hazır edin
+### 🚢 QuestDB'yi Ayağa Kaldırın
 
 - [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
 - [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
@@ -170,7 +178,7 @@ başlamak için:
 hediye olarak gönderiyoruz. [Hediyenizi burdan alın.](https://questdb.io/community)
 
 QuestDB'ye katkıda bulunan aşağıdaki harika insanlara
-çok büyük teşekkürler: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+çok büyük teşekkürler: ([emoji anahtar tablosu](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
