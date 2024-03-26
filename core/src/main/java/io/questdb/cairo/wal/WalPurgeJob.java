@@ -184,7 +184,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         ) != TableUtils.TABLE_EXISTS
                 ) {
                     // Fully deregister the table
-                    LOG.info().$("table is fully dropped [tableDir=").$(tableToken.getDirName()).I$();
                     Path pathToDelete = Path.getThreadLocal(configuration.getRoot()).concat(tableToken).$();
                     Path symLinkTarget = null;
                     if (ff.isSoftLink(path)) {
@@ -203,7 +202,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     // wait for them to be closed before fully removing the token from name registry
                     // and marking table as fully deleted.
                     if (fullyDeleted) {
+                        LOG.info().$("table is fully dropped [tableDir=").$(pathToDelete).I$();
                         engine.removeTableToken(tableToken);
+                    } else {
+                        LOG.info().$("could not fully remove table, some files left on the disk [tableDir=").$(pathToDelete).I$();
                     }
                 } else {
                     LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [tableDir=").$(tableToken.getDirName()).I$();
@@ -669,9 +671,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private class FsDeleter implements Deleter {
         @Override
         public void deleteSegmentDirectory(int walId, int segmentId, int lockFd) {
-            LOG.debug().$("deleting WAL segment directory [table=").utf8(tableToken.getDirName())
+            LOG.info().$("deleting WAL segment directory [table=").utf8(tableToken.getDirName())
                     .$(", walId=").$(walId)
                     .$(", segmentId=").$(segmentId).$(']').$();
+            if (tableToken.getTableId() == 11 && walId == 1 && segmentId == 0) {
+                int i = 0;
+            }
+
             if (recursiveDelete(setSegmentPath(tableToken, walId, segmentId).$())) {
                 ff.closeRemove(lockFd, setSegmentLockPath(tableToken, walId, segmentId));
             } else {
@@ -690,8 +696,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         @Override
         public void deleteWalDirectory(int walId, int lockFd) {
-            LOG.debug().$("deleting WAL directory [table=").utf8(tableToken.getDirName())
+            LOG.info().$("deleting WAL directory [table=").utf8(tableToken.getDirName())
                     .$(", walId=").$(walId).$(']').$();
+
+            if (tableToken.getTableId() == 11 && walId == 1) {
+                int i = 0;
+            }
+
             if (recursiveDelete(setWalPath(tableToken, walId))) {
                 ff.closeRemove(lockFd, setWalLockPath(tableToken, walId));
             } else {
