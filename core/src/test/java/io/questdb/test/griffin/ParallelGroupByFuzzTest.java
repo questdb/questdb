@@ -1875,6 +1875,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStringKeyGroupByWithFilter2() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE upper(key) = 'K3' ORDER BY key",
+                "key\tavg\tsum\tcount\n" +
+                        "k3\t2025.5\t1640400.0\t1600\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithFilter3() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE substring(key,2,1) = '3' ORDER BY key",
+                "key\tavg\tsum\tcount\n" +
+                        "k3\t2025.5\t1640400.0\t1600\n"
+        );
+    }
+
+    @Test
     public void testParallelStringKeyGroupByWithLimit() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -2671,7 +2689,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 sqlExecutionContext
                         );
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
-
 
                         // now drop the String table and recreate it with a Varchar key
                         engine.drop("DROP TABLE tab", sqlExecutionContext);

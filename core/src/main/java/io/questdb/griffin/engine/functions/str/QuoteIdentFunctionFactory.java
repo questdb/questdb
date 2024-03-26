@@ -51,7 +51,13 @@ public class QuoteIdentFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             CharSequence val = arg.getStrA(null);
@@ -62,14 +68,11 @@ public class QuoteIdentFunctionFactory implements FunctionFactory {
                 return new StrConstant(quotedVal.toString());
             }
         }
-
         return new QuoteIdentFunction(arg);
     }
 
     static class QuoteIdentFunction extends StrFunction implements UnaryFunction {
-
         private final Function arg;
-
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
@@ -95,6 +98,11 @@ public class QuoteIdentFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             return quote(sinkB, arg.getStrA(rec));
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         private static StringSink quote(StringSink sink, CharSequence str) {
