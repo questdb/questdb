@@ -57,6 +57,17 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return true;
     }
@@ -65,12 +76,6 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcCount = srcValue.getLong(valueIndex);
         destValue.addLong(valueIndex, srcCount);
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -86,11 +91,6 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

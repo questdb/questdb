@@ -56,8 +56,17 @@ public final class Utf8s {
         return Integer.compare(ll, rl);
     }
 
-    public static boolean containsAscii(Utf8Sequence sequence, CharSequence term) {
-        return indexOfAscii(sequence, 0, sequence.size(), term) != -1;
+    public static boolean contains(@NotNull Utf8Sequence sequence, @NotNull Utf8Sequence term) {
+        return indexOf(sequence, 0, sequence.size(), term) != -1;
+    }
+
+    public static boolean containsAscii(@NotNull Utf8Sequence sequence, @NotNull CharSequence asciiTerm) {
+        return indexOfAscii(sequence, 0, sequence.size(), asciiTerm) != -1;
+    }
+
+    // Pattern has to be lower-case.
+    public static boolean containsLowerCaseAscii(@NotNull Utf8Sequence sequence, @NotNull Utf8Sequence asciiTerm) {
+        return indexOfLowerCaseAscii(sequence, 0, sequence.size(), asciiTerm) != -1;
     }
 
     public static int encodeUtf16Char(@NotNull Utf8Sink sink, @NotNull CharSequence cs, int hi, int i, char c) {
@@ -74,6 +83,16 @@ public final class Utf8s {
         return i;
     }
 
+    public static boolean endsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence ends) {
+        int size = ends.size();
+        if (size == 0) {
+            return true;
+        }
+
+        int seqSize = seq.size();
+        return !(seqSize == 0 || seqSize < size) && equalsBytes(ends, seq, seqSize - size, seqSize);
+    }
+
     public static boolean endsWithAscii(@NotNull Utf8Sequence seq, @NotNull CharSequence endsAscii) {
         int l = endsAscii.length();
         if (l == 0) {
@@ -87,6 +106,16 @@ public final class Utf8s {
     public static boolean endsWithAscii(@NotNull Utf8Sequence us, char asciiChar) {
         final int size = us.size();
         return size != 0 && asciiChar == us.byteAt(size - 1);
+    }
+
+    // Pattern has to be lower-case.
+    public static boolean endsWithLowerCaseAscii(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence asciiEnds) {
+        final int size = asciiEnds.size();
+        if (size == 0) {
+            return true;
+        }
+        final int seqSize = seq.size();
+        return !(seqSize == 0 || seqSize < size) && equalsAsciiLowerCase(asciiEnds, seq, seqSize - size, seqSize);
     }
 
     public static boolean equals(@NotNull DirectUtf8String l, @NotNull Utf8String r) {
@@ -208,8 +237,8 @@ public final class Utf8s {
     }
 
     public static boolean equalsIgnoreCaseAscii(@NotNull Utf8Sequence lSeq, @NotNull Utf8Sequence rSeq) {
-        int size;
-        if ((size = lSeq.size()) != rSeq.size()) {
+        int size = lSeq.size();
+        if (size != rSeq.size()) {
             return false;
         }
         for (int index = 0; index < size; index++) {
@@ -237,8 +266,8 @@ public final class Utf8s {
     }
 
     public static boolean equalsIgnoreCaseAscii(@NotNull CharSequence asciiSeq, @NotNull Utf8Sequence seq) {
-        int len;
-        if ((len = asciiSeq.length()) != seq.size()) {
+        int len = asciiSeq.length();
+        if (len != seq.size()) {
             return false;
         }
         for (int index = 0; index < len; index++) {
@@ -325,6 +354,37 @@ public final class Utf8s {
             h = 31 * h + value.byteAt(p);
         }
         return h;
+    }
+
+    public static int indexOf(@NotNull Utf8Sequence seq, int seqLo, int seqHi, @NotNull Utf8Sequence term) {
+        int termSize = term.size();
+        if (termSize == 0) {
+            return 0;
+        }
+
+        byte first = term.byteAt(0);
+        int max = seqHi - termSize;
+
+        for (int i = seqLo; i <= max; ++i) {
+            if (seq.byteAt(i) != first) {
+                do {
+                    ++i;
+                } while (i <= max && seq.byteAt(i) != first);
+            }
+
+            if (i <= max) {
+                int j = i + 1;
+                int end = j + termSize - 1;
+                for (int k = 1; j < end && seq.byteAt(j) == term.byteAt(k); ++k) {
+                    ++j;
+                }
+                if (j == end) {
+                    return i;
+                }
+            }
+        }
+
+        return -1;
     }
 
     public static int indexOfAscii(@NotNull Utf8Sequence seq, char asciiChar) {
@@ -470,6 +530,38 @@ public final class Utf8s {
         return -1;
     }
 
+    // Term has to be lower-case.
+    public static int indexOfLowerCaseAscii(@NotNull Utf8Sequence seq, int seqLo, int seqHi, @NotNull Utf8Sequence termLC) {
+        int termSize = termLC.size();
+        if (termSize == 0) {
+            return 0;
+        }
+
+        byte first = termLC.byteAt(0);
+        int max = seqHi - termSize;
+
+        for (int i = seqLo; i <= max; ++i) {
+            if (toLowerCaseAscii(seq.byteAt(i)) != first) {
+                do {
+                    ++i;
+                } while (i <= max && toLowerCaseAscii(seq.byteAt(i)) != first);
+            }
+
+            if (i <= max) {
+                int j = i + 1;
+                int end = j + termSize - 1;
+                for (int k = 1; j < end && toLowerCaseAscii(seq.byteAt(j)) == termLC.byteAt(k); ++k) {
+                    ++j;
+                }
+                if (j == end) {
+                    return i;
+                }
+            }
+        }
+
+        return -1;
+    }
+
     public static int lastIndexOfAscii(@NotNull Utf8Sequence seq, char asciiTerm) {
         for (int i = seq.size() - 1; i > -1; i--) {
             if (seq.byteAt(i) == asciiTerm) {
@@ -502,14 +594,23 @@ public final class Utf8s {
         return h;
     }
 
-    public static boolean startsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence term) {
-        final int size = term.size();
-        return seq.size() >= size && equalsBytes(seq, term, size);
+    public static boolean startsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence starts) {
+        final int size = starts.size();
+        return seq.size() >= size && equalsBytes(seq, starts, size);
     }
 
-    public static boolean startsWithAscii(@NotNull Utf8Sequence seq, @NotNull CharSequence asciiTerm) {
-        final int len = asciiTerm.length();
-        return seq.size() >= len && equalsAscii(asciiTerm, seq, 0, len);
+    public static boolean startsWithAscii(@NotNull Utf8Sequence seq, @NotNull CharSequence asciiStarts) {
+        final int len = asciiStarts.length();
+        return seq.size() >= len && equalsAscii(asciiStarts, seq, 0, len);
+    }
+
+    // Pattern has to be lower-case.
+    public static boolean startsWithLowerCaseAscii(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence asciiStarts) {
+        final int size = asciiStarts.size();
+        if (size == 0) {
+            return true;
+        }
+        return seq.size() >= size && equalsAsciiLowerCase(asciiStarts, seq, size);
     }
 
     public static void strCpy(@NotNull Utf8Sequence src, int destLen, long destAddr) {
@@ -974,9 +1075,48 @@ public final class Utf8s {
         return pos;
     }
 
+    // Left hand has to be lower-case.
+    private static boolean equalsAsciiLowerCase(@NotNull Utf8Sequence lLC, @NotNull Utf8Sequence r, int size) {
+        for (int i = 0; i < size; i++) {
+            if (lLC.byteAt(i) != toLowerCaseAscii(r.byteAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Left hand has to be lower-case.
+    private static boolean equalsAsciiLowerCase(@NotNull Utf8Sequence lLC, @NotNull Utf8Sequence r, int rLo, int rHi) {
+        int ls = lLC.size();
+        if (ls != rHi - rLo) {
+            return false;
+        }
+
+        for (int i = 0; i < ls; i++) {
+            if (lLC.byteAt(i) != toLowerCaseAscii(r.byteAt(i + rLo))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static boolean equalsBytes(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r, int size) {
         for (int i = 0; i < size; i++) {
             if (l.byteAt(i) != r.byteAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean equalsBytes(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r, int rLo, int rHi) {
+        int lsize = l.size();
+        if (lsize != rHi - rLo) {
+            return false;
+        }
+
+        for (int i = 0; i < lsize; i++) {
+            if (l.byteAt(i) != r.byteAt(i + rLo)) {
                 return false;
             }
         }

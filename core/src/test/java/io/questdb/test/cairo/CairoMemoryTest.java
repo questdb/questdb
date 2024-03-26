@@ -354,7 +354,7 @@ public class CairoMemoryTest extends AbstractTest {
                 }
                 Assert.assertEquals(8L * N, mem.getAppendOffset());
             }
-            try (MemoryMR mem = new MemoryCMRImpl(FF, path, 8L * N, MemoryTag.MMAP_DEFAULT)) {
+            try (MemoryMR mem = new MemoryCMRImpl(FF, path, 8L * N, MemoryTag.MMAP_DEFAULT, false)) {
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
@@ -417,7 +417,7 @@ public class CairoMemoryTest extends AbstractTest {
                     mem.jumpTo(800);
                 }
 
-                try (MemoryMR roMem = new MemoryCMRImpl(FF, path, 800, MemoryTag.MMAP_DEFAULT)) {
+                try (MemoryMR roMem = new MemoryCMRImpl(FF, path, 800, MemoryTag.MMAP_DEFAULT, false)) {
                     for (int i = 0; i < 50; i++) {
                         Assert.assertEquals(50 - i, roMem.getLong(i * 8));
                     }

@@ -30,7 +30,6 @@ import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Rows;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -98,18 +97,6 @@ public class TableReaderRecord implements Record, Sinkable {
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
         return reader.getColumn(absoluteColumnIndex).getChar(offset);
-    }
-
-    @Override
-    public DirectCharSequence getDirectStr(int col) {
-        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-                recordIndex,
-                TableReader.getPrimaryColumnIndex(columnBase, col)
-        );
-        return reader.getColumn(absoluteColumnIndex).getDirectStr(
-                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
-        );
     }
 
     @Override
@@ -310,12 +297,14 @@ public class TableReaderRecord implements Record, Sinkable {
         return getRowId();
     }
 
-    @Override @Nullable
+    @Override
+    @Nullable
     public Utf8Sequence getVarcharA(int col) {
         return getVarchar(col, 1);
     }
 
-    @Override @Nullable
+    @Override
+    @Nullable
     public Utf8Sequence getVarcharB(int col) {
         return getVarchar(col, 2);
     }
