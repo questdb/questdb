@@ -550,6 +550,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         int bestMatch = MATCH_NO_MATCH;
         boolean isWindowContext = !sqlExecutionContext.getWindowContext().isEmpty();
 
+        // If a bind variable of unknown type appears inside a cast expression, we should
+        // assign a default type to it. Otherwise, since casting is a heavily overloaded
+        // operation (can cast lots of things to a string/number), we'll end up picking
+        // whatever happens to be the first cast function in the traversal order, and force
+        // the bind variable to that type. This will then fail when an actual value is bound
+        // to the variable, and it's most likely not that arbitrary type.
         if (Chars.equals("cast", node.token)
                 && argCount == 2
                 && args.getQuick(0).isUndefined()
