@@ -40,47 +40,33 @@ public class Utf8String implements Utf8Sequence {
     private final boolean ascii;
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final byte[] bytes;
-    private final int length;
+
+    public Utf8String(byte @NotNull [] bytes, boolean ascii) {
+        this.bytes = bytes;
+        this.ascii = ascii;
+    }
+
+    public Utf8String(@NotNull String str) {
+        this.bytes = str.getBytes(StandardCharsets.UTF_8);
+        this.ascii = (str.length() == bytes.length);
+    }
+
+    public Utf8String(char ch) {
+        this.bytes = String.valueOf(ch).getBytes(StandardCharsets.UTF_8);
+        this.ascii = (bytes.length == 1);
+    }
+
+    public Utf8String(@NotNull CharSequence seq) {
+        this.bytes = seq.toString().getBytes(StandardCharsets.UTF_8);
+        this.ascii = (seq.length() == bytes.length);
+    }
 
     public static Utf8String newInstance(@NotNull Utf8Sequence src) {
         byte[] bytes = new byte[src.size()];
         for (int i = 0, n = src.size(); i < n; i++) {
             bytes[i] = src.byteAt(i);
         }
-        return new Utf8String(bytes, src.size(), src.isAscii());
-    }
-
-    public Utf8String(byte @NotNull [] bytes, boolean ascii) {
-        this.bytes = bytes;
-        this.length = bytes.length;
-        this.ascii = ascii;
-    }
-
-    public Utf8String(@NotNull String str) {
-        byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
-        this.bytes = bytes;
-        this.length = bytes.length;
-        this.ascii = (str.length() == bytes.length);
-    }
-
-    public Utf8String(char ch) {
-        byte[] bytes = String.valueOf(ch).getBytes(StandardCharsets.UTF_8);
-        this.bytes = bytes;
-        this.length = bytes.length;
-        this.ascii = (bytes.length == 1);
-    }
-
-    public Utf8String(@NotNull CharSequence seq) {
-        byte[] bytes = seq.toString().getBytes(StandardCharsets.UTF_8);
-        this.bytes = bytes;
-        this.length = bytes.length;
-        this.ascii = (seq.length() == bytes.length);
-    }
-
-    private Utf8String(byte @NotNull [] bytes, int length, boolean ascii) {
-        this.bytes = bytes;
-        this.length = length;
-        this.ascii = ascii;
+        return new Utf8String(bytes, src.isAscii());
     }
 
     @Override
@@ -93,13 +79,13 @@ public class Utf8String implements Utf8Sequence {
         return bytes[index];
     }
 
+    public int intAt(int index) {
+        return Unsafe.byteArrayGetInt(bytes, index);
+    }
+
     @Override
     public long longAt(int offset) {
         return Unsafe.byteArrayGetLong(bytes, offset);
-    }
-
-    public int intAt(int index) {
-        return Unsafe.byteArrayGetInt(bytes, index);
     }
 
     @Override
@@ -116,7 +102,7 @@ public class Utf8String implements Utf8Sequence {
 
     @Override
     public int size() {
-        return length;
+        return bytes.length;
     }
 
     @Override
