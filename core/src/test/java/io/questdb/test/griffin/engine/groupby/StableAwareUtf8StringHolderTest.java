@@ -72,28 +72,35 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
 
                 // store a non-stable sequence
                 holder.of(0).clearAndSet(new Utf8String("foobar"));
+                Assert.assertTrue(holder.isAscii());
                 TestUtils.assertEquals("foobar", holder);
                 long foobarPtr = holder.ptr();
 
                 // store a direct sequence into a new location
                 holder.of(0).clearAndSet(stableDirectString);
+                // direct string doesn't copy ascii flag
+                Assert.assertFalse(holder.isAscii());
                 TestUtils.assertEquals("barbaz", holder);
                 long barbazPtr = holder.ptr();
 
                 // store a direct sequence into the original location of the non-direct string
                 holder.of(foobarPtr).clearAndSet(stableDirectString);
+                Assert.assertFalse(holder.isAscii());
                 TestUtils.assertEquals("barbaz", holder);
 
                 // now add a non-direct string without changing the address
                 holder.clearAndSet(new Utf8String("something_else"));
+                Assert.assertTrue(holder.isAscii());
                 TestUtils.assertEquals("something_else", holder);
 
                 // and re-add the direct string. again, without changing the address
                 holder.clearAndSet(stableDirectString);
+                Assert.assertFalse(holder.isAscii());
                 TestUtils.assertEquals("barbaz", holder);
 
                 // store a non-direct long char sequence into the original location of the direct string
                 holder.of(barbazPtr).clearAndSet(new Utf8String("foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar"));
+                Assert.assertTrue(holder.isAscii());
                 TestUtils.assertEquals("foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar", holder);
             }
         });
@@ -104,29 +111,32 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (
                     GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
-                    DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16);
+                    DirectUtf8Sink directSink = new DirectUtf8Sink(16);
             ) {
+                Utf8StringSink sink = new Utf8StringSink();
                 StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
                 holder.setAllocator(allocator);
                 Rnd rnd = TestUtils.generateRandom(null);
                 StableDirectUtf8String stableDirectString = new StableDirectUtf8String();
-                Utf8StringSink sink = new Utf8StringSink();
                 for (int i = 0; i < 1_000; i++) {
                     boolean useDirect = rnd.nextBoolean();
                     int size = rnd.nextPositiveInt() % 100;
                     if (size == 99) {
                         holder.clearAndSet(null);
+                        Assert.assertTrue(holder.isAscii());
                         Assert.assertEquals(0, holder.size());
                     } else if (useDirect) {
-                        directCharSequence.clear();
-                        rnd.nextChars(directCharSequence, size);
-                        stableDirectString.of(directCharSequence.lo(), directCharSequence.hi());
+                        directSink.clear();
+                        rnd.nextUtf8Str(size, directSink);
+                        stableDirectString.of(directSink.lo(), directSink.hi());
                         holder.clearAndSet(stableDirectString);
+                        Assert.assertFalse(holder.isAscii());
                         TestUtils.assertEquals(stableDirectString, holder);
                     } else {
                         sink.clear();
                         rnd.nextUtf8Str(size, sink);
                         holder.clearAndSet(sink);
+                        Assert.assertEquals(sink.isAscii(), holder.isAscii());
                         TestUtils.assertEquals(sink, holder);
                     }
                 }
@@ -151,6 +161,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
 
                 holder.clearAndSet(splitString);
                 Assert.assertEquals(holder.size(), 9);
+                Assert.assertTrue(holder.isAscii());
                 TestUtils.assertEquals("foobarbaz", splitString);
             }
         });

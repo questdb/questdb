@@ -105,6 +105,11 @@ public class StableAwareUtf8StringHolder implements Utf8Sequence {
         }
     }
 
+    @Override
+    public boolean isAscii() {
+        return ptr == 0 || Unsafe.getUnsafe().getBoolean(null, ptr + IS_ASCII_OFFSET);
+    }
+
     public StableAwareUtf8StringHolder of(long ptr) {
         // clear the top bit
         this.ptr = ptr & 0x7FFFFFFFFFFFFFFFL;
