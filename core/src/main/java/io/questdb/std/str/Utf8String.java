@@ -93,6 +93,11 @@ public class Utf8String implements Utf8Sequence {
         return bytes[index];
     }
 
+    @Override
+    public long longAt(int offset) {
+        return Unsafe.byteArrayGetLong(bytes, offset);
+    }
+
     public int intAt(int index) {
         return Unsafe.byteArrayGetInt(bytes, index);
     }
@@ -102,12 +107,10 @@ public class Utf8String implements Utf8Sequence {
         return ascii;
     }
 
-    public long longAt(int index) {
-        return Unsafe.byteArrayGetLong(bytes, index);
-    }
-
     @Override
     public long zeroPaddedSixPrefix() {
+        assert size() > VARCHAR_MAX_BYTES_FULLY_INLINED
+                : String.format("size %,d <= %d", size(), VARCHAR_MAX_BYTES_FULLY_INLINED);
         return longAt(0) & VARCHAR_INLINED_PREFIX_MASK;
     }
 
