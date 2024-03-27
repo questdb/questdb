@@ -4651,6 +4651,50 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByWithProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY;");
+            insert("insert into trades \n" +
+                    "select \n" +
+                    "rnd_symbol('a', 'b', 'c'),\n" +
+                    "rnd_double(),\n" +
+                    "rnd_double(),\n" +
+                    "timestamp_sequence('2022-02-24', 60* 1000000L)\n" +
+                    "from long_sequence(10)\n");
+
+            assertSql(
+                    "symbol\tsum\tvwap\tNYTime\n" +
+                            "a\t0.6390492980774742\t0.3421677972133922\t2022-02-23T19:00:00.000000Z\n" +
+                            "c\t0.20447441837877756\t0.299199045961845\t2022-02-23T19:00:00.000000Z\n" +
+                            "b\t1.2527510748803818\t0.12497877004395191\t2022-02-23T19:00:00.000000Z\n" +
+                            "b\t0.42215759939956354\t0.33181055449773833\t2022-02-23T19:05:00.000000Z\n" +
+                            "c\t2.1714261356369606\t0.5397631964717502\t2022-02-23T19:05:00.000000Z\n",
+                    "select symbol,sum(amount), vwap(price, amount), to_timezone(timestamp,'EST') NYTime\n" +
+                            "from trades\n" +
+                            "sample by 5m ALIGN TO FIRST OBSERVATION;"
+            );
+
+            assertSql(
+                    "symbol\tsum\tvwap\tNYTime\n" +
+                            "a\t0.6390492980774742\t0.3421677972133922\t2022-02-23T19:00:00.000000Z\n" +
+                            "c\t0.20447441837877756\t0.299199045961845\t2022-02-23T19:00:00.000000Z\n" +
+                            "b\t1.2527510748803818\t0.12497877004395191\t2022-02-23T19:00:00.000000Z\n" +
+                            "b\t0.42215759939956354\t0.33181055449773833\t2022-02-23T19:05:00.000000Z\n" +
+                            "c\t2.1714261356369606\t0.5397631964717502\t2022-02-23T19:05:00.000000Z\n",
+                    "select symbol,sum(amount), vwap(price, amount), to_timezone(timestamp,'EST') NYTime\n" +
+                            "-- timestamp\n" +
+                            "from trades\n" +
+                            "sample by 5m;"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByWithOrderByDescTimestamp() throws Exception {
         assertQuery(
                 "created_at\tfirst\n" +
