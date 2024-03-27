@@ -8192,8 +8192,8 @@ create table tab as (
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             PreparedStatement tbl = connection.prepareStatement("create table x as (" +
                     "select " +
-                    "rnd_varchar('A','B','C') v, " +
-                    "rnd_str('A','B','C') s, " +
+                    "rnd_varchar('A','ABCDEFGHI','abcdefghijk') v, " +
+                    "rnd_str('A','ABCDEFGHI','abcdefghijk') s, " +
                     "from long_sequence(5)" +
                     ")");
             tbl.execute();
@@ -8213,10 +8213,10 @@ create table tab as (
 
             final String expected = "v[VARCHAR],s[VARCHAR]\n" +
                     "A,A\n" +
-                    "B,C\n" +
-                    "C,C\n" +
-                    "C,B\n" +
-                    "A,B\n" +
+                    "ABCDEFGHI,abcdefghijk\n" +
+                    "abcdefghijk,abcdefghijk\n" +
+                    "abcdefghijk,ABCDEFGHI\n" +
+                    "A,ABCDEFGHI\n" +
                     "E,E\n" +
                     "F,F\n" +
                     "G,G\n" +
