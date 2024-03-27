@@ -70,7 +70,7 @@ case `uname` in
 esac
 
 function usage {
-    echo "Usage: $0 start|status|stop [-f] [-d path] [-t tag]"
+    echo "Usage: $0 start|status|stop [-f] [-n] [-d path] [-t tag]"
     echo
     exit 55
 }
