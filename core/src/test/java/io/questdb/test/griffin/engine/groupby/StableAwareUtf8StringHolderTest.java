@@ -24,30 +24,34 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
-import io.questdb.griffin.engine.groupby.StableAwareStringHolder;
+import io.questdb.griffin.engine.groupby.StableAwareUtf8StringHolder;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.DirectUtf16Sink;
-import io.questdb.std.str.StableDirectString;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class StableAwareStringHolderTest extends AbstractCairoTest {
+public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
+
     @Test
     public void testClearAndSet() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
-                StableAwareStringHolder holder = new StableAwareStringHolder();
+                StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
                 holder.setAllocator(allocator);
-                holder.clearAndSet("foobar");
+                holder.clearAndSet(new Utf8String("foobar"));
                 TestUtils.assertEquals("foobar", holder);
 
-                holder.clearAndSet("barbaz");
+                holder.clearAndSet(new Utf8String("barbaz"));
                 TestUtils.assertEquals("barbaz", holder);
             }
         });
@@ -56,31 +60,32 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
     @Test
     public void testClearAndSetDirect() throws Exception {
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
-                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16);
+            try (
+                    GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
+                    DirectUtf8Sink directSink = new DirectUtf8Sink(16)
             ) {
-                directCharSequence.put("barbaz");
-                StableDirectString stableDirectString = new StableDirectString();
-                stableDirectString.of(directCharSequence.lo(), directCharSequence.hi());
-                StableAwareStringHolder holder = new StableAwareStringHolder();
+                directSink.put("barbaz");
+                StableDirectUtf8String stableDirectString = new StableDirectUtf8String();
+                stableDirectString.of(directSink.lo(), directSink.hi());
+                StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
                 holder.setAllocator(allocator);
 
-                // store a non-stable char sequence
-                holder.of(0).clearAndSet("foobar");
+                // store a non-stable sequence
+                holder.of(0).clearAndSet(new Utf8String("foobar"));
                 TestUtils.assertEquals("foobar", holder);
                 long foobarPtr = holder.ptr();
 
-                // store a direct char sequence into a new location
+                // store a direct sequence into a new location
                 holder.of(0).clearAndSet(stableDirectString);
                 TestUtils.assertEquals("barbaz", holder);
                 long barbazPtr = holder.ptr();
 
-                // store a direct char sequence into the original location of the non-direct string
+                // store a direct sequence into the original location of the non-direct string
                 holder.of(foobarPtr).clearAndSet(stableDirectString);
                 TestUtils.assertEquals("barbaz", holder);
 
                 // now add a non-direct string without changing the address
-                holder.clearAndSet("something_else");
+                holder.clearAndSet(new Utf8String("something_else"));
                 TestUtils.assertEquals("something_else", holder);
 
                 // and re-add the direct string. again, without changing the address
@@ -88,7 +93,7 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
                 TestUtils.assertEquals("barbaz", holder);
 
                 // store a non-direct long char sequence into the original location of the direct string
-                holder.of(barbazPtr).clearAndSet("foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar");
+                holder.of(barbazPtr).clearAndSet(new Utf8String("foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar"));
                 TestUtils.assertEquals("foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar", holder);
             }
         });
@@ -97,29 +102,32 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
     @Test
     public void testClearAndSetDirect_fuzzed() throws Exception {
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
-                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16)
+            try (
+                    GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
+                    DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16);
             ) {
-                StableAwareStringHolder holder = new StableAwareStringHolder();
+                StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
                 holder.setAllocator(allocator);
                 Rnd rnd = TestUtils.generateRandom(null);
-                StableDirectString stableDirectString = new StableDirectString();
+                StableDirectUtf8String stableDirectString = new StableDirectUtf8String();
+                Utf8StringSink sink = new Utf8StringSink();
                 for (int i = 0; i < 1_000; i++) {
                     boolean useDirect = rnd.nextBoolean();
-                    int len = rnd.nextPositiveInt() % 100;
-                    if (len == 99) {
+                    int size = rnd.nextPositiveInt() % 100;
+                    if (size == 99) {
                         holder.clearAndSet(null);
-                        Assert.assertEquals(0, holder.length());
+                        Assert.assertEquals(0, holder.size());
                     } else if (useDirect) {
                         directCharSequence.clear();
-                        rnd.nextChars(directCharSequence, len);
+                        rnd.nextChars(directCharSequence, size);
                         stableDirectString.of(directCharSequence.lo(), directCharSequence.hi());
                         holder.clearAndSet(stableDirectString);
                         TestUtils.assertEquals(stableDirectString, holder);
                     } else {
-                        CharSequence cs = rnd.nextChars(len);
-                        holder.clearAndSet(cs);
-                        TestUtils.assertEquals(cs, holder);
+                        sink.clear();
+                        rnd.nextUtf8Str(size, sink);
+                        holder.clearAndSet(sink);
+                        TestUtils.assertEquals(sink, holder);
                     }
                 }
             }
@@ -127,23 +135,47 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPutCharSequence() throws Exception {
+    public void testPutSplitString() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
+                    MemoryCARW auxMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW dataMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
+                holder.setAllocator(allocator);
+                Assert.assertEquals(0, holder.size());
+
+                VarcharTypeDriver.appendValue(dataMem, auxMem, new Utf8String("foobarbaz"));
+                Utf8Sequence splitString = VarcharTypeDriver.getValue(0, dataMem, auxMem, 1);
+
+                holder.clearAndSet(splitString);
+                Assert.assertEquals(holder.size(), 9);
+                TestUtils.assertEquals("foobarbaz", splitString);
+            }
+        });
+    }
+
+    @Test
+    public void testPutUtf8Sequence() throws Exception {
         final int N = 1000;
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
-                StableAwareStringHolder holder = new StableAwareStringHolder();
+                StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
                 holder.setAllocator(allocator);
-                Assert.assertEquals(0, holder.length());
+                Assert.assertEquals(0, holder.size());
 
                 for (int i = 0; i < 3; i++) {
-                    holder.clearAndSet("");
-                    Assert.assertEquals(0, holder.length());
+                    holder.clearAndSet(Utf8String.EMPTY);
+                    Assert.assertEquals(0, holder.size());
                 }
 
-                holder.clearAndSet(Chars.repeat("a", N));
-                Assert.assertEquals(holder.length(), N);
+                Utf8StringSink sink = new Utf8StringSink();
+                sink.put(Chars.repeat("a", N));
+                holder.clearAndSet(sink);
+                Assert.assertEquals(holder.size(), N);
                 for (int i = 0; i < N; i++) {
-                    Assert.assertEquals('a', holder.charAt(i));
+                    Assert.assertEquals((byte) 'a', holder.byteAt(i));
                 }
             }
         });
