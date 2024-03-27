@@ -33,8 +33,8 @@ public class InlinedVarchar implements Utf8Sequence {
 
     private long ptr;
     private byte size;
-    private long valueMask;
     private boolean isAscii;
+    private long valueMask;
 
     public InlinedVarchar of(long ptr, byte size, boolean isAscii) {
         this.ptr = ptr;
@@ -51,20 +51,22 @@ public class InlinedVarchar implements Utf8Sequence {
 
     @Override
     public byte byteAt(int index) {
-        // mask should be 0xff for index < size, and 0 for index >= size
-        byte mask = (byte) (index - size >> 24);
-        return (byte) (Unsafe.getUnsafe().getByte(ptr + index) & mask);
+        return Unsafe.getUnsafe().getByte(ptr + index);
     }
 
     @Override
-    public long zeroPaddedLongAt(int index) {
-        assert index == 0 : String.format("index %,d != 0", index);
-        return Unsafe.getUnsafe().getLong(ptr) & valueMask;
+    public long longAt(int offset) {
+        return Unsafe.getUnsafe().getLong(ptr + offset);
     }
 
     @Override
     public boolean equalsAssumingSameSize(Utf8Sequence other) {
-        return zeroPaddedLongAt(0) == other.zeroPaddedLongAt(0) && (size <= 8 || byteAt(8) == other.byteAt(8));
+        if (other instanceof InlinedVarchar) {
+            return ((longAt(0) ^ other.longAt(0)) & valueMask) == 0
+                    && (size <= 8 || byteAt(8) == other.byteAt(8));
+
+        }
+        return Utf8Sequence.super.equalsAssumingSameSize(other);
     }
 
     @Override

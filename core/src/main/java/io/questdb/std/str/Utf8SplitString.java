@@ -55,15 +55,13 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
     }
 
     @Override
-    public long zeroPaddedSixPrefix() {
-        return Unsafe.getUnsafe().getLong(lo1) & VARCHAR_INLINED_PREFIX_MASK;
+    public long longAt(int offset) {
+        return Unsafe.getUnsafe().getLong(lo2 + offset);
     }
 
     @Override
-    public long zeroPaddedLongAt(int index) {
-        return index <= size() - Long.BYTES
-                ? Unsafe.getUnsafe().getLong(lo2 + index)
-                : Utf8Sequence.super.zeroPaddedLongAt(index);
+    public long zeroPaddedSixPrefix() {
+        return Unsafe.getUnsafe().getLong(lo1) & VARCHAR_INLINED_PREFIX_MASK;
     }
 
     @Override
@@ -73,11 +71,16 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
         }
         int i = VARCHAR_INLINED_PREFIX_BYTES;
         for (; i <= size() - Long.BYTES; i += Long.BYTES) {
-            if (Unsafe.getUnsafe().getLong(lo2 + i) != other.zeroPaddedLongAt(i)) {
+            if (longAt(i) != other.longAt(i)) {
                 return false;
             }
         }
-        return i == size() || Utf8Sequence.super.zeroPaddedLongAt(i) == other.zeroPaddedLongAt(i);
+        for (; i < size(); i++) {
+            if (byteAt(i) != other.byteAt(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
