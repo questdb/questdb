@@ -24,8 +24,11 @@
 
 package io.questdb.std.str;
 
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.cairo.VarcharTypeDriver.*;
 
 /**
  * A sequence of UTF-8 bytes.
@@ -68,13 +71,20 @@ public interface Utf8Sequence {
     }
 
     /**
-     * Returns the first 6 bytes of this UTF-8 sequence. This prefix is stored inline
-     * in the auxiliary vector of a VARCHAR column, so asking for it is a matter of
-     * optimized data access. This is not a general access method, it is implemented
-     * only where needed to support the optimization.
+     * Returns the first 6 bytes of this UTF-8 sequence packed into a zero-padded long
+     * value, in little-endian order. This prefix is stored inline in the auxiliary vector
+     * of a VARCHAR column, so asking for it is a matter of optimized data access. This is
+     * not a general access method, it shouldn't be called except when looking to optimize
+     * the access of the VARCHAR column.
+     *
+     * This method should be called only on a UTF-8 sequence longer than {@value
+     * VarcharTypeDriver#VARCHAR_MAX_BYTES_FULLY_INLINED}. VARCHAR values shorter than that
+     * are stored in a different format.
      */
     default long zeroPaddedSixPrefix() {
-        throw new UnsupportedOperationException();
+        assert size() > VARCHAR_MAX_BYTES_FULLY_INLINED
+                : String.format("size %,d <= %d", size(), VARCHAR_MAX_BYTES_FULLY_INLINED);
+        return longAt(0) & VARCHAR_INLINED_PREFIX_MASK;
     }
 
     /**
