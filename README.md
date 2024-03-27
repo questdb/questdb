@@ -125,9 +125,11 @@ Checkout [our benchmark blog post](https://questdb.io/blog/2024/02/26/questdb-ve
 which compares QuestDB and InfluxDB across functionality, maturity and performance.
 
 <div align="center">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/questdb7.3.10-tsbs-benchmark.png" width="600"/>
   </a>
 </div>
+
+This benchmark measures the ingestion rate (rows/second) for different numbers of hosts: 100, 1K, 100K and 10M total. The larger the number of hosts, the higher the cardinality of the dataset. QuestDB maintains its ingestion speed above 2.4M rows/s even as the number of hosts increases. By contrast, as the dataset cardinality increases, InfluxDB and TimescaleDB take a performance hit, with the ingestion rate degrading significantly.
 
 ## Resources
 
