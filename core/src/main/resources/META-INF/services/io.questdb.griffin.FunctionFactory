@@ -800,6 +800,7 @@ io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory
 
 # substring()
 io.questdb.griffin.engine.functions.str.SubStringFunctionFactory
+io.questdb.griffin.engine.functions.str.SubStringVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.QuoteIdentFunctionFactory
 
 #starts_with()
@@ -875,9 +876,13 @@ io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByDefaultFu
 
 # Change string case
 io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory
+io.questdb.griffin.engine.functions.str.ToUppercaseVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory
+io.questdb.griffin.engine.functions.str.ToLowercaseVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.LowerFunctionFactory
+io.questdb.griffin.engine.functions.str.LowerVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.UpperFunctionFactory
+io.questdb.griffin.engine.functions.str.UpperVarcharFunctionFactory
 
 # Pad string
 io.questdb.griffin.engine.functions.str.LPadFunctionFactory
