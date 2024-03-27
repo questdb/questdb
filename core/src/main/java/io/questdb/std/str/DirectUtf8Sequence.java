@@ -35,4 +35,9 @@ public interface DirectUtf8Sequence extends Utf8Sequence, DirectSequence {
     default byte byteAt(int index) {
         return Unsafe.getUnsafe().getByte(ptr() + index);
     }
+
+    @Override
+    default long longAt(int offset) {
+        return Unsafe.getUnsafe().getLong(ptr() + offset);
+    }
 }
