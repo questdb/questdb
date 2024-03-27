@@ -51,14 +51,18 @@ public interface Utf8Sequence {
     byte byteAt(int index);
 
     /**
-     * Returns 8 bytes of content packed into a long (little-endian).
-     * Bytes beyond the end of the string are 0.
+     * Returns eight bytes of the UTF-8 sequence located at the provided
+     * byte offset, packed into a single `long` value. The bytes are arranged
+     * in little-endian order. The method does not check bounds and will
+     * load the memory from any provided offset.
+     *
+     * @param offset offset of the first byte to load
+     * @return byte at offset
      */
-    default long zeroPaddedLongAt(int index) {
+    default long longAt(int offset) {
         long result = 0;
-        long limit = Math.min(size(), index + Long.BYTES);
-        for (int i = index; i < limit; i++) {
-            result |= (long) (byteAt(i) & 0xff) << (8 * (i - index));
+        for (int i = offset; i < offset + Long.BYTES; i++) {
+            result |= (long) (byteAt(i) & 0xff) << (8 * (i - offset));
         }
         return result;
     }
