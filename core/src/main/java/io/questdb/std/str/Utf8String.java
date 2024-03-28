@@ -40,30 +40,25 @@ public class Utf8String implements Utf8Sequence {
     private final boolean ascii;
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final byte[] bytes;
-    private final int size;
 
     public Utf8String(byte @NotNull [] bytes, boolean ascii) {
         this.bytes = bytes;
         this.ascii = ascii;
-        this.size = bytes.length;
     }
 
     public Utf8String(@NotNull String str) {
         this.bytes = str.getBytes(StandardCharsets.UTF_8);
-        this.size = bytes.length;
         this.ascii = (str.length() == bytes.length);
     }
 
     public Utf8String(char ch) {
         this.bytes = String.valueOf(ch).getBytes(StandardCharsets.UTF_8);
         this.ascii = (bytes.length == 1);
-        this.size = 1;
     }
 
     public Utf8String(@NotNull CharSequence seq) {
         this.bytes = seq.toString().getBytes(StandardCharsets.UTF_8);
         this.ascii = (seq.length() == bytes.length);
-        this.size =  bytes.length;
     }
 
     public static Utf8String newInstance(@NotNull Utf8Sequence src) {
@@ -107,7 +102,7 @@ public class Utf8String implements Utf8Sequence {
 
     @Override
     public int size() {
-        return size;
+        return bytes.length;
     }
 
     @Override

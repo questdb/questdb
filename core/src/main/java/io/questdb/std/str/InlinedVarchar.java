@@ -24,7 +24,6 @@
 
 package io.questdb.std.str;
 
-import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -61,7 +60,7 @@ public class InlinedVarchar implements Utf8Sequence {
 
     @Override
     public boolean equalsAssumingSameSize(Utf8Sequence other) {
-        if (other.size() <= VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED) {
+        if (other instanceof InlinedVarchar) {
             return ((longAt(0) ^ other.longAt(0)) & valueMask) == 0
                     && (size <= 8 || byteAt(8) == other.byteAt(8));
 
