@@ -38,9 +38,9 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
 public class Utf8SplitString implements Utf8Sequence, Mutable {
     public static final Factory FACTORY = new Factory();
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    protected long dataLo;
     private boolean ascii;
-    private long lo1;
-    private long lo2;
+    private long auxLo;
     private int size;
 
     @Override
@@ -50,12 +50,12 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte((index < VARCHAR_INLINED_PREFIX_BYTES ? lo1 : lo2) + index);
+        return Unsafe.getUnsafe().getByte((index < VARCHAR_INLINED_PREFIX_BYTES ? auxLo : dataLo) + index);
     }
 
     @Override
     public void clear() {
-        this.lo1 = this.lo2 = 0;
+        this.auxLo = this.dataLo = 0;
         this.ascii = false;
     }
 
@@ -64,9 +64,9 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
         return ascii;
     }
 
-    public Utf8SplitString of(long lo1, long lo2, int size, boolean ascii) {
-        this.lo1 = lo1;
-        this.lo2 = lo2;
+    public Utf8SplitString of(long auxLo, long dataLo, int size, boolean ascii) {
+        this.auxLo = auxLo;
+        this.dataLo = dataLo;
         this.size = size;
         this.ascii = ascii;
         return this;

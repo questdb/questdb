@@ -38,10 +38,10 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private final DirectString csviewB;
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
-    private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
-    private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
-    private final DirectUtf8String utf8viewA = new DirectUtf8String();
-    private final DirectUtf8String utf8viewB = new DirectUtf8String();
+    private final Utf8SplitString utf8SplitViewA;
+    private final Utf8SplitString utf8SplitViewB;
+    private final DirectUtf8String utf8viewA;
+    private final DirectUtf8String utf8viewB;
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
@@ -52,9 +52,17 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         if (stableStrings) {
             csviewA = new StableDirectString();
             csviewB = new StableDirectString();
+            utf8SplitViewA = new StableUtf8SplitString();
+            utf8SplitViewB = new StableUtf8SplitString();
+            utf8viewA = new StableDirectUtf8String();
+            utf8viewB = new StableDirectUtf8String();
         } else {
             csviewA = new DirectString();
             csviewB = new DirectString();
+            utf8SplitViewA = new Utf8SplitString();
+            utf8SplitViewB = new Utf8SplitString();
+            utf8viewA = new DirectUtf8String();
+            utf8viewB = new DirectUtf8String();
         }
     }
 
@@ -62,6 +70,16 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         offset -= shiftAddressRight;
         assert offset <= size : "offset=" + offset + ", size=" + size;
         return pageAddress + offset;
+    }
+
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringA() {
+        return utf8SplitViewA;
+    }
+
+    @Override
+    public Utf8SplitString borrowUtf8SplitStringB() {
+        return utf8SplitViewB;
     }
 
     public void clear() {
@@ -92,16 +110,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     public Long256 getLong256B(long offset) {
         getLong256(offset, long256B);
         return long256B;
-    }
-
-    @Override
-    public Utf8SplitString borrowUtf8SplitStringA() {
-        return utf8SplitViewA;
-    }
-
-    @Override
-    public Utf8SplitString borrowUtf8SplitStringB() {
-        return utf8SplitViewB;
     }
 
     @Override
