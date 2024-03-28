@@ -276,7 +276,7 @@ public class ServerMain implements Closeable {
                 addShutdownHook();
             }
             workerPoolManager.start(log);
-            Bootstrap.logWebConsoleUrls(config, log, banner, webConsoleSchema());
+            Bootstrap.logBannerAndEndpoints(config, log, banner, webConsoleSchema());
             System.gc(); // final GC
             log.advisoryW().$("enjoy").$();
         }

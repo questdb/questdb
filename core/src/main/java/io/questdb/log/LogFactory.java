@@ -329,13 +329,13 @@ public class LogFactory implements Closeable {
         // prevent creating blank log dir from unit tests
         String logDir = ".";
         if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
-            logDir = Paths.get(rootDir, "log").toString();
+            logDir = Paths.get(rootDir, "log").toAbsolutePath().toString();
             File logDirFile = new File(logDir);
             if (!logDirFile.exists() && logDirFile.mkdir()) {
                 System.err.printf("Created log directory: %s%n", logDir);
             }
 
-            String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toString();
+            String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toAbsolutePath().toString();
             File f = new File(logPath);
             if (f.isFile() && f.canRead()) {
                 System.err.printf("Reading log configuration from %s%n", logPath);

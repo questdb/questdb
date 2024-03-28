@@ -36,7 +36,8 @@ public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
                     "    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n" +
                     "   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n" +
                     "   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n" +
-                    "    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n";
+                    "    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n" +
+                    "                        www.questdb.io\n\n";
 
     @Override
     public String getBanner() {

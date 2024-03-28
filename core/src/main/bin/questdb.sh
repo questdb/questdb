@@ -202,10 +202,10 @@ function start {
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
         ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1
     elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1 &
+        ${JAVA} ${JAVA_OPTS} -Dhello-to-stderr -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt &
         sleep 0.5
     else
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1
+        ${JAVA} ${JAVA_OPTS} -Dhello-to-stderr -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > ${QDB_LOG}/stdout-${DATE}.txt
     fi
 }
 
@@ -250,19 +250,6 @@ function stop {
         echo "Stopped ${OUR_PID}"
     fi
 }
-
-function banner {
-    echo ''
-    echo '  ___                  _   ____  ____'
-    echo ' / _ \ _   _  ___  ___| |_|  _ \| __ )'
-    echo '| | | | | | |/ _ \/ __| __| | | |  _ \'
-    echo '| |_| | |_| |  __/\__ \ |_| |_| | |_) |'
-    echo ' \__\_\\__,_|\___||___/\__|____/|____/'
-    echo -e "$QUESTDB_BANNER"
-    echo
-}
-
-banner
 
 if [[ $# -gt 0 ]]; then
     command=$1

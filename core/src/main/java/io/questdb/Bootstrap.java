@@ -33,11 +33,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import sun.misc.Signal;
@@ -587,10 +589,19 @@ public class Bootstrap {
         }
     }
 
-    static void logWebConsoleUrls(ServerConfiguration config, Log log, String banner, String schema) {
+    static void logBannerAndEndpoints(ServerConfiguration config, Log log, String banner, String schema) {
+        final boolean ilpEnabled = config.getHttpServerConfiguration().getLineHttpProcessorConfiguration().isEnabled();
+        final StringBuilder sb = new StringBuilder();
+        sb.append('\n').append(banner);
         if (config.getHttpServerConfiguration().isEnabled()) {
-            final LogRecord r = log.infoW().$('\n').$(banner).$("Web Console URL(s):").$("\n\n");
-
+            sb.append('\t');
+            String col1Header = "Web Console URL";
+            sb.append(col1Header);
+            if (ilpEnabled) {
+                padToNextCol(sb, col1Header.length());
+                sb.append("ILP Client Connection String");
+            }
+            sb.append("\n\n");
             final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();
             final int bindPort = httpConf.getBindPort();
@@ -600,18 +611,48 @@ public class Bootstrap {
                         for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
                             InetAddress inetAddress = addr.nextElement();
                             if (inetAddress instanceof Inet4Address) {
-                                r.$('\t').$(schema).$(inetAddress.getHostAddress()).$(':').$(bindPort).$('\n');
+                                String leftCol = schema + inetAddress.getHostAddress() + ':' + bindPort;
+                                sb.append('\t').append(leftCol);
+                                if (ilpEnabled) {
+                                    padToNextCol(sb, leftCol.length());
+                                    String proto = schema.substring(0, schema.length() - 2);
+                                    sb.append(proto).append(":addr=").append(inetAddress.getHostAddress()).append(':').append(bindPort).append(';');
+                                }
+                                sb.append('\n');
                             }
                         }
                     }
                 } catch (SocketException se) {
                     throw new Bootstrap.BootstrapException("Cannot access network interfaces");
                 }
-                r.$('\n').$();
+                sb.append('\n');
             } else {
-                r.$('\t').$("http://").$ip(bindIP).$(':').$(bindPort).$('\n').$();
+                sb.append('\t').append(schema);
+                final Utf8StringSink sink = new Utf8StringSink();
+                Net.appendIP4(sink, bindIP);
+                sb.append(sink).append(':').append(bindPort).append('\n');
             }
+            if (!ilpEnabled) {
+                sb.append("InfluxDB Line Protocol is disabled for HTTP. Enable in server.conf: line.http.enabled=true\n\n");
+            }
+        } else {
+            sb.append("HTTP server is disabled. Enable in server.conf: http.enabled=true\n\n");
         }
+        final String helloMsg = sb.toString();
+        log.infoW().$(helloMsg).$();
+        if (System.getProperty("hello-to-stderr") != null) {
+            System.err.print(helloMsg);
+        }
+    }
+
+    private static StringBuilder padToNextCol(StringBuilder sb, int headerWidth) {
+        int colWidth = 35;
+        // Insert at least one space between columns
+        sb.append("  ");
+        for (int i = headerWidth + 2; i < colWidth; i++) {
+            sb.append(' ');
+        }
+        return sb;
     }
 
     protected String getPublicZipPath() {
