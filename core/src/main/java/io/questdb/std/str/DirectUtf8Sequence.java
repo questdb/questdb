@@ -31,14 +31,13 @@ import io.questdb.std.Unsafe;
  */
 public interface DirectUtf8Sequence extends Utf8Sequence, DirectSequence {
 
-    /**
-     * Returns byte at index.
-     * Note: Unchecked bounds.
-     *
-     * @param index byte index
-     * @return byte at index
-     */
+    @Override
     default byte byteAt(int index) {
         return Unsafe.getUnsafe().getByte(ptr() + index);
+    }
+
+    @Override
+    default long longAt(int offset) {
+        return Unsafe.getUnsafe().getLong(ptr() + offset);
     }
 }

@@ -29,6 +29,9 @@ import org.jetbrains.annotations.NotNull;
 
 import java.nio.charset.StandardCharsets;
 
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED;
+
 /**
  * An immutable on-heap sequence of UTF-8 bytes.
  */
@@ -81,12 +84,20 @@ public class Utf8String implements Utf8Sequence {
     }
 
     @Override
+    public long longAt(int offset) {
+        return Unsafe.byteArrayGetLong(bytes, offset);
+    }
+
+    @Override
     public boolean isAscii() {
         return ascii;
     }
 
-    public long longAt(int index) {
-        return Unsafe.byteArrayGetLong(bytes, index);
+    @Override
+    public long zeroPaddedSixPrefix() {
+        assert size() > VARCHAR_MAX_BYTES_FULLY_INLINED
+                : String.format("size %,d <= %d", size(), VARCHAR_MAX_BYTES_FULLY_INLINED);
+        return longAt(0) & VARCHAR_INLINED_PREFIX_MASK;
     }
 
     @Override

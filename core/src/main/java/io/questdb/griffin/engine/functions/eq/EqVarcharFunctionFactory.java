@@ -57,10 +57,10 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        // there are optimisation opportunities
-        // 1. when one of args is constant null comparison can boil down to checking
-        //    length of non-constant (must be -1)
-        // 2. when one of arguments is constant, save method call and use a field
+        // Optimizations:
+        // 1. If one arg is a compile-time constant, cache its value
+        // 2. If one arg is not a column value, ensure it is the second argument because
+        //    the 1st argument chooses the optimal varchar column data access pattern
 
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
@@ -68,11 +68,12 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
         if (a.isConstant() && !b.isConstant()) {
             return createHalfConstantFunc(a, b);
         }
-
         if (!a.isConstant() && b.isConstant()) {
             return createHalfConstantFunc(b, a);
         }
-
+        if (a.isRuntimeConstant() && !b.isRuntimeConstant()) {
+            return new Func(b, a);
+        }
         return new Func(a, b);
     }
 
@@ -100,7 +101,11 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != Utf8s.equalsNc(constant, arg.getVarcharA(rec));
+            // argument order to equalsNc is important: the first argument can be either an inlined or
+            // a split varchar. That implementation should choose the data access pattern that is optimal
+            // for it, and the constant implementation can easily adapt to both patterns.
+            final Utf8Sequence val = arg.getVarcharA(rec);
+            return negated != (val != null && Utf8s.equals(val, constant));
         }
 
         @Override

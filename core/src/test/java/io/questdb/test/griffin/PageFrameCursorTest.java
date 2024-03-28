@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.InlinedVarchar;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8SplitString;
 import io.questdb.test.AbstractCairoTest;
@@ -198,7 +198,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
         );
 
         final Utf8SplitString utf8SplitView = new Utf8SplitString();
-        final DirectUtf8String utf8view = new DirectUtf8String();
+        final InlinedVarchar utf8view = new InlinedVarchar();
 
         final StringSink actualSink = new StringSink();
         // header

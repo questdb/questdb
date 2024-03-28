@@ -8167,16 +8167,36 @@ create table tab as (
     }
 
     @Test
-    public void testSimpleVarcharBindVars() throws Exception {
+    public void testStringyColEqVarcharBindvar() throws Exception {
+        testVarcharBindVars(
+                "select v,s from x where v != ?::varchar and s != ?::varchar");
+    }
+
+    @Test
+    public void testVarcharBindvarEqStringyCol() throws Exception {
+        testVarcharBindVars(
+                "select v,s from x where ?::varchar != v and ?::varchar != s");
+    }
+
+    @Test
+    public void testStringyColEqStringBindvar() throws Exception {
+        testVarcharBindVars("select v,s from x where v != ? and s != ?");
+    }
+
+    @Test
+    public void testStringBindvarEqStringyCol() throws Exception {
+        testVarcharBindVars("select v,s from x where ? != v and ? != s");
+    }
+
+    private void testVarcharBindVars(String query) throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             PreparedStatement tbl = connection.prepareStatement("create table x as (" +
                     "select " +
-                    "rnd_varchar('A','B','C') v, " +
-                    "rnd_str('A','B','C') s, " +
+                    "rnd_varchar('A','ABCDEFGHI','abcdefghijk') v, " +
+                    "rnd_str('A','ABCDEFGHI','abcdefghijk') s, " +
                     "from long_sequence(5)" +
                     ")");
             tbl.execute();
-
 
             PreparedStatement insert = connection.prepareStatement("insert into x(v,s) values (?,?)");
             for (int i = 0; i < 5; i++) {
@@ -8185,7 +8205,7 @@ create table tab as (
                 insert.execute();
             }
 
-            PreparedStatement stmnt = connection.prepareStatement("select v,s from x where v != ? and s != ?");
+            PreparedStatement stmnt = connection.prepareStatement(query);
             stmnt.setString(1, "D");
             stmnt.setString(2, "D");
 
@@ -8193,10 +8213,10 @@ create table tab as (
 
             final String expected = "v[VARCHAR],s[VARCHAR]\n" +
                     "A,A\n" +
-                    "B,C\n" +
-                    "C,C\n" +
-                    "C,B\n" +
-                    "A,B\n" +
+                    "ABCDEFGHI,abcdefghijk\n" +
+                    "abcdefghijk,abcdefghijk\n" +
+                    "abcdefghijk,ABCDEFGHI\n" +
+                    "A,ABCDEFGHI\n" +
                     "E,E\n" +
                     "F,F\n" +
                     "G,G\n" +
