@@ -43,11 +43,9 @@ public class Utf8StringIntHashMapBenchmark {
 
     private final DirectString utf16String = new DirectString();
     private final DirectUtf8String utf8String = new DirectUtf8String();
-    //@Param({"16", "256", "1024"})
-    @Param({"1024"})
+    @Param({"16", "256", "1024"})
     private int n;
-    //@Param({"5", "7", "31", "63"})
-    @Param({"5"})
+    @Param({"5", "7", "31", "63"})
     private int prefixLength;
     private long[] utf16Addresses;
     private CharSequenceIntHashMap utf16Map = new CharSequenceIntHashMap();
@@ -98,7 +96,7 @@ public class Utf8StringIntHashMapBenchmark {
         utf16Map = new CharSequenceIntHashMap();
     }
 
-    //@Benchmark
+    @Benchmark
     public long testUtf16Map() {
         int sum = 0;
         for (int i = 0; i < n; i++) {
