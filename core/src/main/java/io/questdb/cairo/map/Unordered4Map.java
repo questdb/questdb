@@ -86,7 +86,7 @@ public class Unordered4Map implements Map, Reopenable {
     private int initialKeyCapacity;
     private int keyCapacity;
     private long keyMemStart; // Key look-up memory start pointer.
-    private int mask;
+    private long mask;
     private long memLimit; // Hash table memory limit pointer.
     private long memStart; // Hash table memory start pointer.
     private int nResizes;
@@ -251,7 +251,7 @@ public class Unordered4Map implements Map, Reopenable {
                 continue;
             }
 
-            long destAddr = getStartAddress(Hash.hashInt(key) & mask);
+            long destAddr = getStartAddress(Hash.hashInt64(key) & mask);
             for (; ; ) {
                 int k = Unsafe.getUnsafe().getInt(destAddr);
                 if (k == 0) {
@@ -340,7 +340,7 @@ public class Unordered4Map implements Map, Reopenable {
         return key.init();
     }
 
-    private Unordered4MapValue asNew(long startAddress, int key, int hashCode, Unordered4MapValue value) {
+    private Unordered4MapValue asNew(long startAddress, int key, long hashCode, Unordered4MapValue value) {
         Unsafe.getUnsafe().putInt(startAddress, key);
         if (--free == 0) {
             rehash();
@@ -368,15 +368,15 @@ public class Unordered4Map implements Map, Reopenable {
         return memStart;
     }
 
-    private long getStartAddress(long memStart, int index) {
+    private long getStartAddress(long memStart, long index) {
         return memStart + entrySize * index;
     }
 
-    private long getStartAddress(int index) {
+    private long getStartAddress(long index) {
         return getStartAddress(memStart, index);
     }
 
-    private Unordered4MapValue probe0(int key, long startAddress, int hashCode, Unordered4MapValue value) {
+    private Unordered4MapValue probe0(int key, long startAddress, long hashCode, Unordered4MapValue value) {
         for (; ; ) {
             startAddress = getNextAddress(startAddress);
             int k = Unsafe.getUnsafe().getInt(startAddress);
@@ -427,7 +427,7 @@ public class Unordered4Map implements Map, Reopenable {
                 continue;
             }
 
-            long newAddr = getStartAddress(newMemStart, Hash.hashInt(key) & newMask);
+            long newAddr = getStartAddress(newMemStart, Hash.hashInt64(key) & newMask);
             while (Unsafe.getUnsafe().getInt(newAddr) != 0) {
                 newAddr += entrySize;
                 if (newAddr >= newMemLimit) {
@@ -480,11 +480,11 @@ public class Unordered4Map implements Map, Reopenable {
             if (key == 0) {
                 return createZeroKeyValue();
             }
-            return createNonZeroKeyValue(key, Hash.hashInt(key));
+            return createNonZeroKeyValue(key, Hash.hashInt64(key));
         }
 
         @Override
-        public MapValue createValue(int hashCode) {
+        public MapValue createValue(long hashCode) {
             int key = Unsafe.getUnsafe().getInt(keyMemStart);
             if (key == 0) {
                 return createZeroKeyValue();
@@ -508,8 +508,8 @@ public class Unordered4Map implements Map, Reopenable {
         }
 
         @Override
-        public int hash() {
-            return Hash.hashInt(Unsafe.getUnsafe().getInt(keyMemStart));
+        public long hash() {
+            return Hash.hashInt64(Unsafe.getUnsafe().getInt(keyMemStart));
         }
 
         public Key init() {
@@ -628,8 +628,8 @@ public class Unordered4Map implements Map, Reopenable {
             appendAddress += bytes;
         }
 
-        private MapValue createNonZeroKeyValue(int key, int hashCode) {
-            int index = hashCode & mask;
+        private MapValue createNonZeroKeyValue(int key, long hashCode) {
+            long index = hashCode & mask;
             long startAddress = getStartAddress(index);
             int k = Unsafe.getUnsafe().getInt(startAddress);
             if (k == 0) {
@@ -654,8 +654,8 @@ public class Unordered4Map implements Map, Reopenable {
                 return hasZero ? valueOf(zeroMemStart, false, value) : null;
             }
 
-            int hashCode = Hash.hashInt(key);
-            int index = hashCode & mask;
+            long hashCode = Hash.hashInt64(key);
+            long index = hashCode & mask;
             long startAddress = getStartAddress(index);
             int k = Unsafe.getUnsafe().getInt(startAddress);
             if (k == 0) {

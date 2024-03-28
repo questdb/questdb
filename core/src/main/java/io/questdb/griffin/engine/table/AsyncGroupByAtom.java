@@ -48,8 +48,8 @@ import java.io.Closeable;
 import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
-    // We use the first 8 bits of a hash code to determine the shard, hence 128 as the max number of shards.
-    private static final int MAX_SHARDS = 128;
+    // We use the first 8 bits of a hash code to determine the shard, hence 256 as the max number of shards.
+    private static final int MAX_SHARDS = 256;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
@@ -123,7 +123,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
             shardCount = Math.min(Numbers.ceilPow2(2 * workerCount), MAX_SHARDS);
-            shardCountShr = Integer.numberOfLeadingZeros(shardCount) + 1;
+            shardCountShr = Long.numberOfLeadingZeros(shardCount) + 1;
             ownerParticle = new Particle();
             perWorkerParticles = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
@@ -422,8 +422,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             return map;
         }
 
-        public Map getShardMap(int hashCode) {
-            return shards.getQuick(hashCode >>> shardCountShr);
+        public Map getShardMap(long hashCode) {
+            return shards.getQuick((int) (hashCode >>> shardCountShr));
         }
 
         public ObjList<Map> getShardMaps() {
@@ -471,7 +471,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 RecordCursor cursor = map.getCursor();
                 MapRecord record = map.getRecord();
                 while (cursor.hasNext()) {
-                    final int hashCode = record.keyHashCode();
+                    final long hashCode = record.keyHashCode();
                     final Map shard = getShardMap(hashCode);
                     MapKey shardKey = shard.withKey();
                     record.copyToKey(shardKey);

@@ -3364,7 +3364,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (u uuid, ts timestamp) timestamp(ts);",
                 "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')",
                 "Async Filter workers: 1\n" +
-                        "  filter: u in ['33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111']\n" +
+                        "  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"

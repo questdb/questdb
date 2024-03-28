@@ -312,7 +312,7 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
-        public MapValue createValue(int hashCode) {
+        public MapValue createValue(long hashCode) {
             return createValue();
         }
 
@@ -332,7 +332,7 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
-        public int hash() {
+        public long hash() {
             return 0; // no-op
         }
 
