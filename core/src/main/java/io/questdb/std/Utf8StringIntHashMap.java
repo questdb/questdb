@@ -45,7 +45,7 @@ public class Utf8StringIntHashMap implements Mutable {
     private int[] values;
 
     public Utf8StringIntHashMap() {
-        this(8);
+        this(MIN_INITIAL_CAPACITY);
     }
 
     public Utf8StringIntHashMap(int initialCapacity) {
