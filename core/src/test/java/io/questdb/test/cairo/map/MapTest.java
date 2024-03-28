@@ -385,7 +385,7 @@ public class MapTest extends AbstractCairoTest {
                     MapKey key = map.withKey();
                     key.putInt(i);
                     key.commit();
-                    int hashCode = key.hash();
+                    long hashCode = key.hash();
                     keyHashCodes.add(hashCode);
 
                     MapValue value = key.createValue(hashCode);

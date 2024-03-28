@@ -36,7 +36,7 @@ public interface MapRecord extends Record {
 
     MapValue getValue();
 
-    int keyHashCode();
+    long keyHashCode();
 
     void setSymbolTableResolver(RecordCursor resolver, IntList symbolTableIndex);
 }

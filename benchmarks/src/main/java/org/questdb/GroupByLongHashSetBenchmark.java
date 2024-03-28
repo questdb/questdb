@@ -78,7 +78,7 @@ public class GroupByLongHashSetBenchmark {
     @Benchmark
     public void testGroupByLongHashSet() {
         long value = rnd.nextLong(size);
-        int index = groupByLongHashSet.of(ptr).keyIndex(value);
+        long index = groupByLongHashSet.of(ptr).keyIndex(value);
         if (index >= 0) {
             groupByLongHashSet.addAt(index, value);
             ptr = groupByLongHashSet.ptr();

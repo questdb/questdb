@@ -31,17 +31,6 @@ import io.questdb.std.str.Utf8s;
 
 import java.util.Arrays;
 
-/**
- * A copy implementation of CharSequenceObjHashMap. It is there to work with concrete classes
- * and avoid incurring performance penalty of megamorphic virtual calls. These calls originate
- * from calling charAt() on CharSequence interface. C2 compiler cannot inline these calls due to
- * multiple implementations of charAt(). It resorts to a virtual method call via itable. ILP is the
- * main victim of itable, suffering from non-deterministic performance loss. With this specific
- * implementation of the map C2 compiler seems to be able to inline chatAt() calls and itables are
- * no longer present in the async profiler.
- * <p>
- * This map is optimized for ASCII and UTF-8 DirectUtf8String lookups.
- */
 public class Utf8StringObjHashMap<V> implements Mutable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
@@ -56,11 +45,11 @@ public class Utf8StringObjHashMap<V> implements Mutable {
     private V[] values;
 
     public Utf8StringObjHashMap() {
-        this(8);
+        this(MIN_INITIAL_CAPACITY);
     }
 
     public Utf8StringObjHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5);
+        this(initialCapacity, 0.4);
     }
 
     @SuppressWarnings("unchecked")
@@ -105,7 +94,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
     }
 
     public int keyIndex(DirectUtf8Sequence key) {
-        int hashCode = Hash.hashMem32(key);
+        int hashCode = Hash.hashUtf8(key);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
             return index;
@@ -117,7 +106,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
     }
 
     public int keyIndex(Utf8String key) {
-        int hashCode = Hash.hashMem32(key);
+        int hashCode = Hash.hashUtf8(key);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
             return index;
@@ -147,7 +136,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
             return false;
         }
         keys[index] = key;
-        hashCodes[index] = Hash.hashMem32(key);
+        hashCodes[index] = Hash.hashUtf8(key);
         values[index] = value;
         if (--free == 0) {
             rehash();
@@ -164,7 +153,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         }
         Utf8String onHeapKey = Utf8String.newInstance(key);
         keys[index] = onHeapKey;
-        hashCodes[index] = Hash.hashMem32(key);
+        hashCodes[index] = Hash.hashUtf8(key);
         values[index] = value;
         if (--free == 0) {
             rehash();
@@ -209,7 +198,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
                     key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int hashCode = Hash.hashMem32(key);
+                int hashCode = Hash.hashUtf8(key);
                 int idealHit = Hash.spread(hashCode) & mask;
                 if (idealHit != from) {
                     int to;

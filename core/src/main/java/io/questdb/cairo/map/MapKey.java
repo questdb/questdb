@@ -43,7 +43,7 @@ public interface MapKey extends RecordSinkSPI {
     MapValue createValue();
 
     // Same as createValue(), but doesn't calculate hash code.
-    MapValue createValue(int hashCode);
+    MapValue createValue(long hashCode);
 
     // Commits implicitly.
     MapValue findValue();
@@ -55,7 +55,7 @@ public interface MapKey extends RecordSinkSPI {
     MapValue findValue3();
 
     // Must be called after commit.
-    int hash();
+    long hash();
 
     default boolean notFound() {
         return findValue() == null;

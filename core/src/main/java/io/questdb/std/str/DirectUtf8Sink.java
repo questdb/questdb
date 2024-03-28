@@ -84,6 +84,11 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     }
 
     @Override
+    public boolean isAscii() {
+        return ascii;
+    }
+
+    @Override
     public long ptr() {
         return sink.ptr();
     }

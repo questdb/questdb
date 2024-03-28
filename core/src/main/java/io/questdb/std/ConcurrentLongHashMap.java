@@ -1550,7 +1550,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
     /* ---------------- Table Initialization and Resizing -------------- */
 
     private static int keyHashCode(final long key) {
-        return Hash.hashLong(key);
+        return Hash.hashLong32(key);
     }
 
     private static long mix64(long z) {

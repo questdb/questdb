@@ -81,7 +81,7 @@ public class GroupByLong256HashSetBenchmark {
         long l1 = rnd.nextLong(size);
         long l2 = rnd.nextLong(size);
         long l3 = rnd.nextLong(size);
-        int index = groupByLong256HashSet.of(ptr).keyIndex(l0, l1, l2, l3);
+        long index = groupByLong256HashSet.of(ptr).keyIndex(l0, l1, l2, l3);
         if (index >= 0) {
             groupByLong256HashSet.addAt(index, l0, l1, l2, l3);
             ptr = groupByLong256HashSet.ptr();

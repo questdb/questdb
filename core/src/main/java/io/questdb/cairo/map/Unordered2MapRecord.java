@@ -290,7 +290,7 @@ final class Unordered2MapRecord implements MapRecord {
     }
 
     @Override
-    public int keyHashCode() {
+    public long keyHashCode() {
         return 0; // no-op
     }
 

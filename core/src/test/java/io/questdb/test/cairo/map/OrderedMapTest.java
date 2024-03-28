@@ -1171,12 +1171,12 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)) {
                 final int N = 100000;
-                final IntList keyHashCodes = new IntList(N);
+                final LongList keyHashCodes = new LongList(N);
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     key.putInt(i);
                     key.putLong(i + 1);
-                    int hashCode = key.hash();
+                    long hashCode = key.hash();
                     keyHashCodes.add(hashCode);
 
                     MapValue value = key.createValue(hashCode);
@@ -1184,7 +1184,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     value.putLong(0, i + 2);
                 }
 
-                final IntList recordHashCodes = new IntList(N);
+                final LongList recordHashCodes = new LongList(N);
                 RecordCursor cursor = map.getCursor();
                 MapRecord record = map.getRecord();
                 while (cursor.hasNext()) {
@@ -1208,13 +1208,13 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)) {
                 final int N = 100000;
-                final IntList keyHashCodes = new IntList(N);
+                final LongList keyHashCodes = new LongList(N);
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     key.putInt(i);
                     key.putStr(Chars.repeat("a", i % 32));
                     key.commit();
-                    int hashCode = key.hash();
+                    long hashCode = key.hash();
                     keyHashCodes.add(hashCode);
 
                     MapValue value = key.createValue(hashCode);
@@ -1222,7 +1222,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     value.putLong(0, i + 2);
                 }
 
-                final IntList recordHashCodes = new IntList(N);
+                final LongList recordHashCodes = new LongList(N);
                 RecordCursor cursor = map.getCursor();
                 MapRecord record = map.getRecord();
                 while (cursor.hasNext()) {

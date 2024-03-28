@@ -125,7 +125,7 @@ public class GroupByLong128HashSetTest extends AbstractCairoTest {
                 for (int i = 0; i < N; i++) {
                     long lo = rnd.nextPositiveLong() + 1;
                     long hi = rnd.nextPositiveLong() + 1;
-                    int index = set.keyIndex(lo, hi);
+                    long index = set.keyIndex(lo, hi);
                     Assert.assertTrue(index >= 0);
                     set.addAt(index, lo, hi);
                 }

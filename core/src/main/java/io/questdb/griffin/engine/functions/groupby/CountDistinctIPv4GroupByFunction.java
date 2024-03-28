@@ -73,7 +73,7 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
         final int val = arg.getIPv4(record);
         if (val != Numbers.IPv4_NULL) {
             long ptr = mapValue.getLong(valueIndex + 1);
-            final int index = setA.of(ptr).keyIndex(val);
+            final long index = setA.of(ptr).keyIndex(val);
             if (index >= 0) {
                 setA.addAt(index, val);
                 mapValue.addLong(valueIndex, 1);

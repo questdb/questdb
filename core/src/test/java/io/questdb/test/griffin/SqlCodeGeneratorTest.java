@@ -6622,41 +6622,43 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "3\tB\n" +
                         "16\tA\n" +
                         "18\tB\n",
-                "select min(x), sym timestamp from test1 sample by 15s align to first observation",
+                "select min(x), sym timestamp from test1 sample by 15s align to first observation order by min",
                 "create table test1 as (" +
                         "select rnd_symbol('A', 'B') sym, x, timestamp_sequence('2023-07-20', 1000000) timestamp " +
                         "from long_sequence(20)) " +
                         "timestamp(timestamp)",
                 null,
-                false,
+                true,
                 false
         );
 
         assertQuery(
                 "min\ttimestamp\n" +
-                        "3\tB\n" +
                         "1\tA\n" +
-                        "18\tB\n" +
-                        "16\tA\n",
-                "select min(x), sym timestamp from test1 sample by 15s align to calendar",
+                        "3\tB\n" +
+                        "16\tA\n" +
+                        "18\tB\n",
+                "select min(x), sym timestamp from test1 sample by 15s align to calendar order by min",
                 null,
                 true,
                 true
         );
 
-        assertPlan("select min(x), sym timestamp from test1 sample by 15s align to first observation",
-                "SampleBy\n" +
-                        "  keys: [timestamp]\n" +
-                        "  values: [min(x)]\n" +
-                        "    SelectedRecord\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: test1\n");
+        assertPlan("select min(x), sym timestamp from test1 sample by 15s align to first observation order by min",
+                "Sort\n" +
+                        "  keys: [min]\n" +
+                        "    SampleBy\n" +
+                        "      keys: [timestamp]\n" +
+                        "      values: [min(x)]\n" +
+                        "        SelectedRecord\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: test1\n");
 
-        assertPlan("select min(x), sym timestamp from test1 sample by 15s align to calendar",
+        assertPlan("select min(x), sym timestamp from test1 sample by 15s align to calendar order by min",
                 "SelectedRecord\n" +
                         "    Sort light\n" +
-                        "      keys: [timestamp1]\n" +
+                        "      keys: [min]\n" +
                         "        Async Group By workers: 1\n" +
                         "          keys: [timestamp,timestamp1]\n" +
                         "          values: [min(x)]\n" +
@@ -6672,7 +6674,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "2\tA\tB\n" +
                         "16\tA\tB\n" +
                         "17\tB\tB\n",
-                "select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s align to first observation",
+                "select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s align to first observation order by min",
                 "create table test2 as (" +
                         "select rnd_symbol('A', 'B') sym1, " +
                         "       rnd_symbol('B') sym2, " +
@@ -6681,17 +6683,17 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "from long_sequence(20)) " +
                         "timestamp(timestamp)",
                 null,
-                false,
+                true,
                 false
         );
 
         assertQuery(
                 "min\ttimestamp\ttimestamp0\n" +
-                        "2\tA\tB\n" +
                         "1\tB\tB\n" +
+                        "2\tA\tB\n" +
                         "16\tA\tB\n" +
                         "17\tB\tB\n",
-                "select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s align to calendar",
+                "select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s align to calendar order by min",
                 null,
                 true,
                 true
@@ -7407,6 +7409,19 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 null,
                 false
         );
+    }
+
+    @Test
+    public void testUnionCastTypeSymmetry() {
+        for (int typeA = 0; typeA <= ColumnType.VARCHAR; typeA++) {
+            for (int typeB = 0; typeB <= typeA; typeB++) {
+                Assert.assertEquals(
+                        "typeA: " + typeA + ", typeB: " + typeB,
+                        SqlCodeGenerator.getUnionCastType(typeA, typeB),
+                        SqlCodeGenerator.getUnionCastType(typeB, typeA)
+                );
+            }
+        }
     }
 
     @Test
@@ -8250,18 +8265,5 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "tab latest on ts partition by symbol"
             );
         });
-    }
-
-    @Test
-    public void testUnionCastTypeSymmetry() {
-        for (int typeA = 0; typeA <= ColumnType.VARCHAR; typeA++) {
-            for (int typeB = 0; typeB <= typeA; typeB++) {
-                Assert.assertEquals(
-                        "typeA: " + typeA + ", typeB: " + typeB,
-                        SqlCodeGenerator.getUnionCastType(typeA, typeB),
-                        SqlCodeGenerator.getUnionCastType(typeB, typeA)
-                );
-            }
-        }
     }
 }

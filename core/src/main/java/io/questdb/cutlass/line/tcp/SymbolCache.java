@@ -36,12 +36,6 @@ import io.questdb.std.str.*;
 
 import java.io.Closeable;
 
-/**
- * Important note:
- * This cache is optimized for ASCII and UTF8 DirectByteCharSequence lookups. Lookups of UTF16
- * strings (j.l.String) with non-ASCII chars will not work correctly, so make sure to re-encode
- * the string in UTF8.
- */
 public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
     private final MicrosecondClock clock;
     private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();

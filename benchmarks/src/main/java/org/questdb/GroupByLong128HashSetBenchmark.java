@@ -79,7 +79,7 @@ public class GroupByLong128HashSetBenchmark {
     public void testGroupByLong128HashSet() {
         long lo = rnd.nextLong(size);
         long hi = rnd.nextLong(size);
-        int index = groupByLong128HashSet.of(ptr).keyIndex(lo, hi);
+        long index = groupByLong128HashSet.of(ptr).keyIndex(lo, hi);
         if (index >= 0) {
             groupByLong128HashSet.addAt(index, lo, hi);
             ptr = groupByLong128HashSet.ptr();

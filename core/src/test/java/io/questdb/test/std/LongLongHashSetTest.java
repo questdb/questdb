@@ -72,7 +72,7 @@ public class LongLongHashSetTest {
         for (int i = 0; i < 10_000; i++) {
             long key1 = rnd.nextLong();
             long key2 = rnd.nextLong();
-            final int index = longSet.keySlot(key1, key2);
+            final int index = longSet.keyIndex(key1, key2);
             if (index < 0) {
                 continue;
             }
@@ -196,7 +196,7 @@ public class LongLongHashSetTest {
         longSet.add(2, 1);
         StringSink sink = new StringSink();
         longSet.toSink(sink);
-        assertEquals("[[2,1],[1,1]]", sink.toString());
+        assertEquals("[[1,1],[2,1]]", sink.toString());
     }
 
     @Test
@@ -206,7 +206,7 @@ public class LongLongHashSetTest {
         longSet.add(2, 1);
         StringSink sink = new StringSink();
         longSet.toSink(sink);
-        String expected = "['" + new UUID(1, 2) + "','" + new UUID(1, 1) + "']";
+        String expected = "['" + new UUID(1, 1) + "','" + new UUID(1, 2) + "']";
         assertEquals(expected, sink.toString());
     }
 

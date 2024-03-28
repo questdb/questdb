@@ -109,7 +109,7 @@ public class GroupByLongHashSetTest extends AbstractCairoTest {
 
                 for (int i = 0; i < N; i++) {
                     long val = rnd.nextPositiveLong() + 1;
-                    int index = set.keyIndex(val);
+                    long index = set.keyIndex(val);
                     Assert.assertTrue(index >= 0);
                     set.addAt(index, val);
                 }

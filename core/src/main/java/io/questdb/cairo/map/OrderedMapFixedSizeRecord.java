@@ -295,8 +295,8 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public int keyHashCode() {
-        return Hash.hashMem32(keyAddress, keySize);
+    public long keyHashCode() {
+        return Hash.hashMem64(keyAddress, keySize);
     }
 
     @Override

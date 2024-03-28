@@ -86,7 +86,7 @@ public class Unordered16Map implements Map, Reopenable {
     private int initialKeyCapacity;
     private int keyCapacity;
     private long keyMemStart; // Key look-up memory start pointer.
-    private int mask;
+    private long mask;
     private long memLimit; // Hash table memory limit pointer.
     private long memStart; // Hash table memory start pointer.
     private int nResizes;
@@ -254,7 +254,7 @@ public class Unordered16Map implements Map, Reopenable {
                 continue;
             }
 
-            long destAddr = getStartAddress(Hash.hashLong128(key1, key2) & mask);
+            long destAddr = getStartAddress(Hash.hashLong128_64(key1, key2) & mask);
             for (; ; ) {
                 long k1 = Unsafe.getUnsafe().getLong(destAddr);
                 long k2 = Unsafe.getUnsafe().getLong(destAddr + 8L);
@@ -344,7 +344,7 @@ public class Unordered16Map implements Map, Reopenable {
         return key.init();
     }
 
-    private Unordered16MapValue asNew(long startAddress, long key1, long key2, int hashCode, Unordered16MapValue value) {
+    private Unordered16MapValue asNew(long startAddress, long key1, long key2, long hashCode, Unordered16MapValue value) {
         Unsafe.getUnsafe().putLong(startAddress, key1);
         Unsafe.getUnsafe().putLong(startAddress + 8L, key2);
         if (--free == 0) {
@@ -374,15 +374,15 @@ public class Unordered16Map implements Map, Reopenable {
         return memStart;
     }
 
-    private long getStartAddress(long memStart, int index) {
+    private long getStartAddress(long memStart, long index) {
         return memStart + entrySize * index;
     }
 
-    private long getStartAddress(int index) {
+    private long getStartAddress(long index) {
         return getStartAddress(memStart, index);
     }
 
-    private Unordered16MapValue probe0(long key1, long key2, long startAddress, int hashCode, Unordered16MapValue value) {
+    private Unordered16MapValue probe0(long key1, long key2, long startAddress, long hashCode, Unordered16MapValue value) {
         for (; ; ) {
             startAddress = getNextAddress(startAddress);
             long k1 = Unsafe.getUnsafe().getLong(startAddress);
@@ -436,7 +436,7 @@ public class Unordered16Map implements Map, Reopenable {
                 continue;
             }
 
-            long newAddr = getStartAddress(newMemStart, Hash.hashLong128(key1, key2) & newMask);
+            long newAddr = getStartAddress(newMemStart, Hash.hashLong128_64(key1, key2) & newMask);
             while (Unsafe.getUnsafe().getLong(newAddr) != 0 || Unsafe.getUnsafe().getLong(newAddr + 8L) != 0) {
                 newAddr += entrySize;
                 if (newAddr >= newMemLimit) {
@@ -492,11 +492,11 @@ public class Unordered16Map implements Map, Reopenable {
             if (key1 == 0 && key2 == 0) {
                 return createZeroKeyValue();
             }
-            return createNonZeroKeyValue(key1, key2, Hash.hashLong128(key1, key2));
+            return createNonZeroKeyValue(key1, key2, Hash.hashLong128_64(key1, key2));
         }
 
         @Override
-        public MapValue createValue(int hashCode) {
+        public MapValue createValue(long hashCode) {
             long key1 = Unsafe.getUnsafe().getLong(keyMemStart);
             long key2 = Unsafe.getUnsafe().getLong(keyMemStart + 8L);
             if (key1 == 0 && key2 == 0) {
@@ -521,10 +521,10 @@ public class Unordered16Map implements Map, Reopenable {
         }
 
         @Override
-        public int hash() {
+        public long hash() {
             long key1 = Unsafe.getUnsafe().getLong(keyMemStart);
             long key2 = Unsafe.getUnsafe().getLong(keyMemStart + 8L);
-            return Hash.hashLong128(key1, key2);
+            return Hash.hashLong128_64(key1, key2);
         }
 
         public Key init() {
@@ -647,8 +647,8 @@ public class Unordered16Map implements Map, Reopenable {
             appendAddress += bytes;
         }
 
-        private MapValue createNonZeroKeyValue(long key1, long key2, int hashCode) {
-            int index = hashCode & mask;
+        private MapValue createNonZeroKeyValue(long key1, long key2, long hashCode) {
+            long index = hashCode & mask;
             long startAddress = getStartAddress(index);
             long k1 = Unsafe.getUnsafe().getLong(startAddress);
             long k2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
@@ -675,8 +675,8 @@ public class Unordered16Map implements Map, Reopenable {
                 return hasZero ? valueOf(zeroMemStart, false, value) : null;
             }
 
-            int hashCode = Hash.hashLong128(key1, key2);
-            int index = hashCode & mask;
+            long hashCode = Hash.hashLong128_64(key1, key2);
+            long index = hashCode & mask;
             long startAddress = getStartAddress(index);
             long k1 = Unsafe.getUnsafe().getLong(startAddress);
             long k2 = Unsafe.getUnsafe().getLong(startAddress + 8L);

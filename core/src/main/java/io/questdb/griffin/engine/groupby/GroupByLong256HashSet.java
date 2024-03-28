@@ -52,7 +52,7 @@ public class GroupByLong256HashSet {
     private final double loadFactor;
     private final long noKeyValue;
     private GroupByAllocator allocator;
-    private int mask;
+    private long mask;
     private long ptr;
 
     public GroupByLong256HashSet(int initialCapacity, double loadFactor, long noKeyValue) {
@@ -74,7 +74,7 @@ public class GroupByLong256HashSet {
      * @return false if key is already in the set and true otherwise.
      */
     public boolean add(long k0, long k1, long k2, long k3) {
-        int index = keyIndex(k0, k1, k2, k3);
+        long index = keyIndex(k0, k1, k2, k3);
         if (index < 0) {
             return false;
         }
@@ -82,7 +82,7 @@ public class GroupByLong256HashSet {
         return true;
     }
 
-    public void addAt(int index, long k0, long k1, long k2, long k3) {
+    public void addAt(long index, long k0, long k1, long k2, long k3) {
         setKeyAt(index, k0, k1, k2, k3);
         int size = size();
         int sizeLimit = sizeLimit();
@@ -96,13 +96,13 @@ public class GroupByLong256HashSet {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
     }
 
-    public long keyAddrAt(int index) {
+    public long keyAddrAt(long index) {
         return ptr + HEADER_SIZE + 32L * index;
     }
 
-    public int keyIndex(long k0, long k1, long k2, long k3) {
-        int hashCode = Hash.hashLong256(k0, k1, k2, k3);
-        int index = hashCode & mask;
+    public long keyIndex(long k0, long k1, long k2, long k3) {
+        long hashCode = Hash.hashLong256_64(k0, k1, k2, k3);
+        long index = hashCode & mask;
         long p = keyAddrAt(index);
         long k0Key = Unsafe.getUnsafe().getLong(p);
         long k1Key = Unsafe.getUnsafe().getLong(p + 8L);
@@ -138,7 +138,7 @@ public class GroupByLong256HashSet {
             long k2 = Unsafe.getUnsafe().getLong(p + 16L);
             long k3 = Unsafe.getUnsafe().getLong(p + 24L);
             if (k0 != noKeyValue || k1 != noKeyValue || k2 != noKeyValue || k3 != noKeyValue) {
-                final int index = keyIndex(k0, k1, k2, k3);
+                final long index = keyIndex(k0, k1, k2, k3);
                 if (index >= 0) {
                     addAt(index, k0, k1, k2, k3);
                 }
@@ -181,7 +181,7 @@ public class GroupByLong256HashSet {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
     }
 
-    private int probe(long k0, long k1, long k2, long k3, int index) {
+    private long probe(long k0, long k1, long k2, long k3, long index) {
         do {
             index = (index + 1) & mask;
             long p = keyAddrAt(index);
@@ -220,7 +220,7 @@ public class GroupByLong256HashSet {
             long k2 = Unsafe.getUnsafe().getLong(p + 16L);
             long k3 = Unsafe.getUnsafe().getLong(p + 24L);
             if (k0 != noKeyValue || k1 != noKeyValue || k2 != noKeyValue || k3 != noKeyValue) {
-                int index = keyIndex(k0, k1, k2, k3);
+                long index = keyIndex(k0, k1, k2, k3);
                 setKeyAt(index, k0, k1, k2, k3);
             }
         }
@@ -228,7 +228,7 @@ public class GroupByLong256HashSet {
         allocator.free(oldPtr, HEADER_SIZE + 32L * oldCapacity);
     }
 
-    private void setKeyAt(int index, long k0, long k1, long k2, long k3) {
+    private void setKeyAt(long index, long k0, long k1, long k2, long k3) {
         long p = keyAddrAt(index);
         Unsafe.getUnsafe().putLong(p, k0);
         Unsafe.getUnsafe().putLong(p + 8L, k1);

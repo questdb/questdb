@@ -30,17 +30,6 @@ import io.questdb.std.str.Utf8s;
 
 import java.util.Arrays;
 
-/**
- * A copy implementation of CharSequenceIntHashMap. It is there to work with concrete classes
- * and avoid incurring performance penalty of megamorphic virtual calls. These calls originate
- * from calling charAt() on CharSequence interface. C2 compiler cannot inline these calls due to
- * multiple implementations of charAt(). It resorts to a virtual method call via itable. ILP is the
- * main victim of itable, suffering from non-deterministic performance loss. With this specific
- * implementation of the map C2 compiler seems to be able to inline chatAt() calls and itables are
- * no longer present in the async profiler.
- * <p>
- * This map is optimized for ASCII and UTF-8 DirectUtf8String lookups.
- */
 public class Utf8StringIntHashMap implements Mutable {
 
     public static final int NO_ENTRY_VALUE = -1;
@@ -56,11 +45,11 @@ public class Utf8StringIntHashMap implements Mutable {
     private int[] values;
 
     public Utf8StringIntHashMap() {
-        this(8);
+        this(MIN_INITIAL_CAPACITY);
     }
 
     public Utf8StringIntHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5, NO_ENTRY_VALUE);
+        this(initialCapacity, 0.4, NO_ENTRY_VALUE);
     }
 
     public Utf8StringIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
@@ -109,8 +98,8 @@ public class Utf8StringIntHashMap implements Mutable {
     }
 
     public int keyIndex(DirectUtf8Sequence key) {
-        int hashCode = Hash.hashMem32(key);
-        int index = hashCode & mask;
+        int hashCode = Hash.hashUtf8(key);
+        int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
             return index;
         }
@@ -121,8 +110,8 @@ public class Utf8StringIntHashMap implements Mutable {
     }
 
     public int keyIndex(Utf8String key) {
-        int hashCode = Hash.hashMem32(key);
-        int index = hashCode & mask;
+        int hashCode = Hash.hashUtf8(key);
+        int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
             return index;
         }
@@ -173,8 +162,8 @@ public class Utf8StringIntHashMap implements Mutable {
                     key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int hashCode = Hash.hashMem32(key);
-                int idealHit = hashCode & mask;
+                int hashCode = Hash.hashUtf8(key);
+                int idealHit = Hash.spread(hashCode) & mask;
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != null) {
@@ -253,7 +242,7 @@ public class Utf8StringIntHashMap implements Mutable {
 
     private void putAt0(int index, Utf8String key, int value) {
         keys[index] = key;
-        hashCodes[index] = Hash.hashMem32(key);
+        hashCodes[index] = Hash.hashUtf8(key);
         values[index] = value;
         if (--free == 0) {
             rehash();
