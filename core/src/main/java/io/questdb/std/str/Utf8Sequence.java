@@ -95,7 +95,7 @@ public interface Utf8Sequence {
      * both sides.
      */
     default boolean equalsAssumingSameSize(Utf8Sequence other) {
-        for (int i = 0; i < size(); i++) {
+        for (int i = 0, n = size(); i < n; i++) {
             if (byteAt(i) != other.byteAt(i)) {
                 return false;
             }

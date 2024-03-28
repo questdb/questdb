@@ -104,7 +104,8 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
             // argument order to equalsNc is important: the first argument can be either an inlined or
             // a split varchar. That implementation should choose the data access pattern that is optimal
             // for it, and the constant implementation can easily adapt to both patterns.
-            return negated != Utf8s.equalsNc(arg.getVarcharA(rec), constant);
+            final Utf8Sequence val = arg.getVarcharA(rec);
+            return negated != (val != null && Utf8s.equals(val, constant));
         }
 
         @Override

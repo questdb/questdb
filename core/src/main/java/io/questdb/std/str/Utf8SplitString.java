@@ -66,16 +66,17 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
 
     @Override
     public boolean equalsAssumingSameSize(Utf8Sequence other) {
-        if (zeroPaddedSixPrefix() != other.zeroPaddedSixPrefix()) {
-            return false;
-        }
+        return zeroPaddedSixPrefix() == other.zeroPaddedSixPrefix() && dataEquals(other);
+    }
+
+    private boolean dataEquals(Utf8Sequence other) {
         int i = VARCHAR_INLINED_PREFIX_BYTES;
-        for (; i <= size() - Long.BYTES; i += Long.BYTES) {
+        for (int n = size() - Long.BYTES + 1; i < n; i += Long.BYTES) {
             if (longAt(i) != other.longAt(i)) {
                 return false;
             }
         }
-        for (; i < size(); i++) {
+        for (int n = size() ; i < n; i++) {
             if (byteAt(i) != other.byteAt(i)) {
                 return false;
             }

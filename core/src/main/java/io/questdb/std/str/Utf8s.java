@@ -161,13 +161,10 @@ public final class Utf8s {
     }
 
     public static boolean equals(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r) {
-        if (l == r) {
-            return true;
-        }
         if (l.size() != r.size()) {
             return false;
         }
-        return l.equalsAssumingSameSize(r);
+        return l == r  || l.equalsAssumingSameSize(r);
     }
 
     public static boolean equals(@NotNull Utf8Sequence l, int lLo, int lHi, @NotNull Utf8Sequence r, int rLo, int rHi) {
