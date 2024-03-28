@@ -195,11 +195,12 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testGuaranteedLoggingForClasses() {
+    public void testGuaranteedLoggingForClasses() throws Exception {
+        final File x = temp.newFile();
         try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
-                w.setLocation("io");
+                w.setLocation(x.getAbsolutePath());
                 return w;
             }));
 
@@ -213,11 +214,6 @@ public class LogFactoryTest {
 
             LogFactory.disableGuaranteedLogging(SqlCompilerImpl.class);
             Assert.assertEquals(Logger.class, getLogger(SqlCompilerImpl.class).getClass());
-        } finally {
-            final Path ioPath = Path.getThreadLocal("io");
-            if (Files.exists(ioPath)) {
-                Files.remove(ioPath);
-            }
         }
     }
 
