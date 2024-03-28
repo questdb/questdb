@@ -97,9 +97,8 @@ public final class Hash {
             i += 4;
         }
         for (; i < len; i++) {
-            h = h * M2 + (Unsafe.getUnsafe().getByte(p + i) & 0xff);
+            h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
         }
-        h = h * M2;
         return fmix64(h);
     }
 
@@ -127,9 +126,8 @@ public final class Hash {
             i += 4;
         }
         for (; i < len; i++) {
-            h = h * M2 + (us.byteAt(i) & 0xff);
+            h = h * M2 + us.byteAt(i);
         }
-        h *= M2;
         return (int) fmix64(h);
     }
 
