@@ -67,7 +67,13 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPos,
+            CairoConfiguration config,
+            SqlExecutionContext context
+    ) {
         return new SizePretty(args.getQuick(0));
     }
 
@@ -100,11 +106,16 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
             return getStr0(size.getLong(rec), sinkB);
         }
 
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
         @Nullable
-        private StringSink getStr0(long s, StringSink sinkA) {
+        private StringSink getStr0(long s, StringSink sink) {
             if (s != Numbers.LONG_NaN) {
-                toSizePretty(sinkA, s);
-                return sinkA;
+                toSizePretty(sink, s);
+                return sink;
             }
             return null;
         }

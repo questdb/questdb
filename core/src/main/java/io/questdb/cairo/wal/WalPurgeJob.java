@@ -184,7 +184,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         ) != TableUtils.TABLE_EXISTS
                 ) {
                     // Fully deregister the table
-                    LOG.info().$("table is fully dropped [tableDir=").$(tableToken.getDirName()).I$();
                     Path pathToDelete = Path.getThreadLocal(configuration.getRoot()).concat(tableToken).$();
                     Path symLinkTarget = null;
                     if (ff.isSoftLink(path)) {
@@ -197,13 +196,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     if (symLinkTarget != null) {
                         ff.rmdir(symLinkTarget, false);
                     }
-                    TableUtils.lockName(pathToDelete);
 
                     // Sometimes on Windows sequencer files can be open at this point,
                     // wait for them to be closed before fully removing the token from name registry
                     // and marking table as fully deleted.
                     if (fullyDeleted) {
                         engine.removeTableToken(tableToken);
+                        LOG.info().$("table is fully dropped [tableDir=").$(pathToDelete).I$();
+                        TableUtils.lockName(pathToDelete);
+                        ff.removeQuiet(pathToDelete);
+                    } else {
+                        LOG.info().$("could not fully remove table, some files left on the disk [tableDir=").$(pathToDelete).I$();
                     }
                 } else {
                     LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [tableDir=").$(tableToken.getDirName()).I$();

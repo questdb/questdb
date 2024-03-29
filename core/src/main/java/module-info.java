@@ -882,9 +882,13 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.PositionFunctionFactory,
             // Change string case
             io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory,
+            io.questdb.griffin.engine.functions.str.ToUppercaseVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory,
+            io.questdb.griffin.engine.functions.str.ToLowercaseVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.str.LowerFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LowerVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.str.UpperFunctionFactory,
+            io.questdb.griffin.engine.functions.str.UpperVarcharFunctionFactory,
             // left/right
             io.questdb.griffin.engine.functions.str.LeftStrFunctionFactory,
             io.questdb.griffin.engine.functions.str.LeftVarcharFunctionFactory,
@@ -903,6 +907,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory,
             // substring
             io.questdb.griffin.engine.functions.str.SubStringFunctionFactory,
+            io.questdb.griffin.engine.functions.str.SubStringVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.str.QuoteIdentFunctionFactory,
 
             // trim

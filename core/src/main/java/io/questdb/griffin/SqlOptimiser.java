@@ -4410,7 +4410,7 @@ public class SqlOptimiser implements Mutable {
 
                 for (int i = 0, n = model.getColumns().size(); i < n; i++) {
                     QueryColumn column = model.getColumns().getQuick(i);
-                    if (Chars.endsWith(column.getAst().token, '*')) {
+                    if (column.getAst().isWildcard()) {
                         throw SqlException.$(column.getAst().position, "wildcard column select is not allowed in sample-by queries");
                     }
                 }

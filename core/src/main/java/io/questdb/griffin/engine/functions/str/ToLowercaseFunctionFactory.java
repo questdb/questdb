@@ -43,15 +43,19 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(final int position, final ObjList<Function> args, IntList argPositions, final CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new ToLowercaseFunc(args.get(0));
     }
 
     private static class ToLowercaseFunc extends StrFunction implements UnaryFunction {
         private final Function arg;
-
         private final StringSink sinkA = new StringSink();
-
         private final StringSink sinkB = new StringSink();
 
         public ToLowercaseFunc(final Function arg) {
@@ -74,7 +78,6 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
             if (str == null) {
                 return null;
             }
-
             sinkA.clear();
             Chars.toLowerCase(str, sinkA);
             return sinkA;
@@ -86,7 +89,6 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
             if (str == null) {
                 return null;
             }
-
             sinkB.clear();
             Chars.toLowerCase(str, sinkB);
             return sinkB;
@@ -95,6 +97,11 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
         @Override
         public int getStrLen(final Record rec) {
             return arg.getStrLen(rec);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 }
