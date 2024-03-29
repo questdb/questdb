@@ -31,6 +31,7 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 
 /**
  * An immutable flyweight for a UTF-8 string stored in native memory.
@@ -51,6 +52,36 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
     @Override
     public byte byteAt(int index) {
         return Unsafe.getUnsafe().getByte((index < VARCHAR_INLINED_PREFIX_BYTES ? lo1 : lo2) + index);
+    }
+
+    @Override
+    public long longAt(int offset) {
+        return Unsafe.getUnsafe().getLong(lo2 + offset);
+    }
+
+    @Override
+    public long zeroPaddedSixPrefix() {
+        return Unsafe.getUnsafe().getLong(lo1) & VARCHAR_INLINED_PREFIX_MASK;
+    }
+
+    @Override
+    public boolean equalsAssumingSameSize(Utf8Sequence other) {
+        return zeroPaddedSixPrefix() == other.zeroPaddedSixPrefix() && dataEquals(other);
+    }
+
+    private boolean dataEquals(Utf8Sequence other) {
+        int i = VARCHAR_INLINED_PREFIX_BYTES;
+        for (int n = size() - Long.BYTES + 1; i < n; i += Long.BYTES) {
+            if (longAt(i) != other.longAt(i)) {
+                return false;
+            }
+        }
+        for (int n = size() ; i < n; i++) {
+            if (byteAt(i) != other.byteAt(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
