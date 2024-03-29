@@ -8900,7 +8900,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = $1::string ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=$0::double::string\n" +
+                        "  filter: l=$0::string\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
