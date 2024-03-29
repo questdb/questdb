@@ -40,4 +40,7 @@ public interface DirectUtf8Sequence extends Utf8Sequence, DirectSequence {
     default long longAt(int offset) {
         return Unsafe.getUnsafe().getLong(ptr() + offset);
     }
+
+    @Override
+    long ptr();
 }

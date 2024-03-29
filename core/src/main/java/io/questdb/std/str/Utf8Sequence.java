@@ -28,7 +28,8 @@ import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.VarcharTypeDriver.*;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED;
 
 /**
  * A sequence of UTF-8 bytes.
@@ -52,40 +53,6 @@ public interface Utf8Sequence {
      * @return byte at index
      */
     byte byteAt(int index);
-
-    /**
-     * Returns eight bytes of the UTF-8 sequence located at the provided
-     * byte offset, packed into a single `long` value. The bytes are arranged
-     * in little-endian order. The method does not check bounds and will
-     * load the memory from any provided offset.
-     *
-     * @param offset offset of the first byte to load
-     * @return byte at offset
-     */
-    default long longAt(int offset) {
-        long result = 0;
-        for (int i = offset; i < offset + Long.BYTES; i++) {
-            result |= (long) (byteAt(i) & 0xff) << (8 * (i - offset));
-        }
-        return result;
-    }
-
-    /**
-     * Returns the first 6 bytes of this UTF-8 sequence packed into a zero-padded long
-     * value, in little-endian order. This prefix is stored inline in the auxiliary vector
-     * of a VARCHAR column, so asking for it is a matter of optimized data access. This is
-     * not a general access method, it shouldn't be called except when looking to optimize
-     * the access of the VARCHAR column.
-     *
-     * This method should be called only on a UTF-8 sequence longer than {@value
-     * VarcharTypeDriver#VARCHAR_MAX_BYTES_FULLY_INLINED}. VARCHAR values shorter than that
-     * are stored in a different format.
-     */
-    default long zeroPaddedSixPrefix() {
-        assert size() > VARCHAR_MAX_BYTES_FULLY_INLINED
-                : String.format("size %,d <= %d", size(), VARCHAR_MAX_BYTES_FULLY_INLINED);
-        return longAt(0) & VARCHAR_INLINED_PREFIX_MASK;
-    }
 
     /**
      * Called as a part of equality check that has already ensured the two strings
@@ -112,6 +79,41 @@ public interface Utf8Sequence {
     }
 
     /**
+     * Returns true if the pointer returned by {@link #ptr()} method is stable during a query execution.
+     * Stable is defined as:
+     * - the pointer remains valid for the duration of the query execution
+     * - the sequence of bytes pointed to by the pointer does not change during the query execution
+     */
+    default boolean isStable() {
+        return false;
+    }
+
+    /**
+     * Returns eight bytes of the UTF-8 sequence located at the provided
+     * byte offset, packed into a single `long` value. The bytes are arranged
+     * in little-endian order. The method does not check bounds and will
+     * load the memory from any provided offset.
+     *
+     * @param offset offset of the first byte to load
+     * @return byte at offset
+     */
+    default long longAt(int offset) {
+        long result = 0;
+        for (int i = offset; i < offset + Long.BYTES; i++) {
+            result |= (long) (byteAt(i) & 0xff) << (8 * (i - offset));
+        }
+        return result;
+    }
+
+    /**
+     * For off-heap sequences returns address of the first character.
+     * For on-heap sequences returns -1.
+     */
+    default long ptr() {
+        return -1;
+    }
+
+    /**
      * Number of bytes in the string.
      * <p>
      * This is NOT the number of 16-bit chars or code points in the string.
@@ -123,5 +125,22 @@ public interface Utf8Sequence {
         for (int i = lo; i < hi; i++) {
             Unsafe.getUnsafe().putByte(addr++, byteAt(i));
         }
+    }
+
+    /**
+     * Returns the first 6 bytes of this UTF-8 sequence packed into a zero-padded long
+     * value, in little-endian order. This prefix is stored inline in the auxiliary vector
+     * of a VARCHAR column, so asking for it is a matter of optimized data access. This is
+     * not a general access method, it shouldn't be called except when looking to optimize
+     * the access of the VARCHAR column.
+     * <p>
+     * This method should be called only on a UTF-8 sequence longer than {@value
+     * VarcharTypeDriver#VARCHAR_MAX_BYTES_FULLY_INLINED}. VARCHAR values shorter than that
+     * are stored in a different format.
+     */
+    default long zeroPaddedSixPrefix() {
+        assert size() > VARCHAR_MAX_BYTES_FULLY_INLINED
+                : String.format("size %,d <= %d", size(), VARCHAR_MAX_BYTES_FULLY_INLINED);
+        return longAt(0) & VARCHAR_INLINED_PREFIX_MASK;
     }
 }

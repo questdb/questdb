@@ -26,7 +26,6 @@ package io.questdb.std.str;
 
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -36,13 +35,17 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 /**
  * An immutable flyweight for a UTF-8 string stored in native memory.
  */
-public class Utf8SplitString implements Utf8Sequence, Mutable {
-    public static final Factory FACTORY = new Factory();
+public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    private final boolean stable;
     protected long dataLo;
     private boolean ascii;
     private long auxLo;
     private int size;
+
+    public Utf8SplitString(boolean stable) {
+        this.stable = stable;
+    }
 
     @Override
     public @NotNull CharSequence asAsciiCharSequence() {
@@ -71,6 +74,11 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
     }
 
     @Override
+    public boolean isStable() {
+        return stable;
+    }
+
+    @Override
     public long longAt(int offset) {
         return Unsafe.getUnsafe().getLong(dataLo + offset);
     }
@@ -81,6 +89,12 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
         this.size = size;
         this.ascii = ascii;
         return this;
+    }
+
+    @Override
+    public long ptr() {
+        // Always return pointer to the data vector since it contains the full string.
+        return dataLo;
     }
 
     @Override
@@ -114,12 +128,5 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
             }
         }
         return true;
-    }
-
-    public static final class Factory implements ObjectFactory<Utf8SplitString> {
-        @Override
-        public Utf8SplitString newInstance() {
-            return new Utf8SplitString();
-        }
     }
 }

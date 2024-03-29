@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AsciiCharSequence;
-import io.questdb.std.str.StableDirectSequence;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -88,14 +87,16 @@ public class StableAwareUtf8StringHolder implements Utf8Sequence {
 
     public void clearAndSet(@Nullable Utf8Sequence us) {
         clear();
-        if (us instanceof StableDirectSequence) {
+        if (us == null) {
+            return;
+        }
+        if (us.isStable()) {
             direct = true;
-            StableDirectSequence sds = (StableDirectSequence) us;
-            checkCapacity(4); // pointer is 8 bytes = 4 chars
-            Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, sds.ptr());
+            checkCapacity(8); // pointer is 8 bytes
+            Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, us.ptr());
             Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, us.size());
             Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, us.isAscii());
-        } else if (us != null) {
+        } else {
             int thatSize = us.size();
             checkCapacity(thatSize);
             long lo = ptr + HEADER_SIZE;

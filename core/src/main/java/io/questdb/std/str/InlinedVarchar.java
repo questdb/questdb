@@ -27,9 +27,9 @@ package io.questdb.std.str;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-public class InlinedVarchar implements Utf8Sequence, StableDirectSequence {
+public class InlinedVarchar implements DirectUtf8Sequence {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
-    private boolean isAscii;
+    private boolean ascii;
     private long ptr;
     private byte size;
     private long valueMask;
@@ -50,12 +50,17 @@ public class InlinedVarchar implements Utf8Sequence, StableDirectSequence {
             return ((longAt(0) ^ other.longAt(0)) & valueMask) == 0
                     && (size <= 8 || byteAt(8) == other.byteAt(8));
         }
-        return Utf8Sequence.super.equalsAssumingSameSize(other);
+        return DirectUtf8Sequence.super.equalsAssumingSameSize(other);
     }
 
     @Override
     public boolean isAscii() {
-        return isAscii;
+        return ascii;
+    }
+
+    @Override
+    public boolean isStable() {
+        return true;
     }
 
     @Override
@@ -66,7 +71,7 @@ public class InlinedVarchar implements Utf8Sequence, StableDirectSequence {
     public InlinedVarchar of(long ptr, byte size, boolean isAscii) {
         this.ptr = ptr;
         this.size = size;
-        this.isAscii = isAscii;
+        this.ascii = isAscii;
         this.valueMask = size < 8 ? (1L << 8 * size) - 1 : -1L;
         return this;
     }

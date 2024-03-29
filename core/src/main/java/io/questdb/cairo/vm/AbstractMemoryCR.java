@@ -52,34 +52,20 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         if (stableStrings) {
             csviewA = new StableDirectString();
             csviewB = new StableDirectString();
-            utf8SplitViewA = new StableUtf8SplitString();
-            utf8SplitViewB = new StableUtf8SplitString();
-            utf8viewA = new StableDirectUtf8String();
-            utf8viewB = new StableDirectUtf8String();
         } else {
             csviewA = new DirectString();
             csviewB = new DirectString();
-            utf8SplitViewA = new Utf8SplitString();
-            utf8SplitViewB = new Utf8SplitString();
-            utf8viewA = new DirectUtf8String();
-            utf8viewB = new DirectUtf8String();
         }
+        utf8SplitViewA = new Utf8SplitString(stableStrings);
+        utf8SplitViewB = new Utf8SplitString(stableStrings);
+        utf8viewA = new DirectUtf8String(stableStrings);
+        utf8viewB = new DirectUtf8String(stableStrings);
     }
 
     public long addressOf(long offset) {
         offset -= shiftAddressRight;
         assert offset <= size : "offset=" + offset + ", size=" + size;
         return pageAddress + offset;
-    }
-
-    @Override
-    public Utf8SplitString borrowUtf8SplitStringA() {
-        return utf8SplitViewA;
-    }
-
-    @Override
-    public Utf8SplitString borrowUtf8SplitStringB() {
-        return utf8SplitViewB;
     }
 
     public void clear() {
@@ -120,6 +106,16 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     @Override
     public int getPageCount() {
         return pageAddress == 0 ? 0 : 1;
+    }
+
+    @Override
+    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
+        return utf8SplitViewA.of(auxLo, dataLo, size, ascii);
+    }
+
+    @Override
+    public Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
+        return utf8SplitViewB.of(auxLo, dataLo, size, ascii);
     }
 
     public final CharSequence getStrA(long offset) {

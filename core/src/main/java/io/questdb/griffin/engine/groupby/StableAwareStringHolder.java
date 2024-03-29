@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.StableDirectSequence;
+import io.questdb.std.str.StableDirectString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -76,13 +76,16 @@ public class StableAwareStringHolder implements CharSequence {
 
     public void clearAndSet(@Nullable CharSequence cs) {
         clear();
-        if (cs instanceof StableDirectSequence) {
+        if (cs == null) {
+            return;
+        }
+        if (cs instanceof StableDirectString) {
             direct = true;
-            StableDirectSequence sds = (StableDirectSequence) cs;
+            StableDirectString sds = (StableDirectString) cs;
             checkCapacity(4); // pointer is 8 bytes = 4 chars
             Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, sds.ptr());
             Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, cs.length());
-        } else if (cs != null) {
+        } else {
             int thatLen = cs.length();
             checkCapacity(thatLen);
             long lo = ptr + HEADER_SIZE;
