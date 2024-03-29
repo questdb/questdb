@@ -239,7 +239,7 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
-    public final void close() {
+    public void close() {
         Misc.free(offsets);
         if (heapStart != 0) {
             Unsafe.free(heapStart, heapSize, heapMemoryTag);

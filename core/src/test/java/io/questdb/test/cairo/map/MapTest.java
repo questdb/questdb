@@ -621,6 +621,7 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertEquals(N, map.size());
 
                 map.close();
+                map.close(); // Close must be idempotent
                 map.reopen();
 
                 Assert.assertEquals(0, map.size());

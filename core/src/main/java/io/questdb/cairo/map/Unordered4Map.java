@@ -188,7 +188,7 @@ public class Unordered4Map implements Map, Reopenable {
     }
 
     @Override
-    public final void close() {
+    public void close() {
         if (memStart != 0) {
             memLimit = memStart = Unsafe.free(memStart, memLimit - memStart, memoryTag);
             keyMemStart = Unsafe.free(keyMemStart, KEY_SIZE, memoryTag);
