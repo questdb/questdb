@@ -633,11 +633,18 @@ public class Bootstrap {
                 sb.append(sink).append(':').append(bindPort).append('\n');
             }
             if (!ilpEnabled) {
-                sb.append("InfluxDB Line Protocol is disabled for HTTP. Enable in server.conf: line.http.enabled=true\n\n");
+                sb.append("InfluxDB Line Protocol is disabled for HTTP. Enable in server.conf: line.http.enabled=true\n");
             }
         } else {
-            sb.append("HTTP server is disabled. Enable in server.conf: http.enabled=true\n\n");
+            sb.append("HTTP server is disabled. Enable in server.conf: http.enabled=true\n");
         }
+        sb.append("QuestDB configuration files are in ");
+        try {
+            sb.append(new File(rootDirectory, "conf").getCanonicalPath());
+        } catch (IOException e) {
+            sb.append(new File(rootDirectory, "conf").getAbsolutePath());
+        }
+        sb.append("\n\n");
         final String helloMsg = sb.toString();
         log.infoW().$(helloMsg).$();
         createHelloFile(helloMsg);
