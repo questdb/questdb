@@ -73,6 +73,7 @@ public class Utf8StringIntHashMapBenchmark {
         utf8Addresses[0] = utf8Sink.ptr();
         utf16Addresses[0] = utf16Sink.ptr();
         for (int i = 0; i < n; i++) {
+            // The keys have identical prefix, but different suffixes.
             for (int j = 0; j < prefixLength; j++) {
                 utf8Sink.put('a');
                 utf16Sink.put('a');
