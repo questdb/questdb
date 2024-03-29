@@ -3829,11 +3829,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     colDataOffset = columnTypeDriver.getDataVectorOffset(colAuxMemAddr + alignedExtraLen, 0);
                     columnTypeDriver.shiftCopyAuxVector(
                             colDataOffset - o3dataOffset,
-                            // add one row to where we shift from
-                            colAuxMemAddr + alignedExtraLen + columnTypeDriver.getMinAuxVectorSize(),
+                            colAuxMemAddr + alignedExtraLen,
                             0,
                             transientRowsAdded - 1, // inclusive
-                            o3auxMem.addressOf(o3auxMemAppendOffset)
+                            o3auxMem.addressOf(o3auxMemAppendOffset) - columnTypeDriver.getMinAuxVectorSize()
                     );
 
                     if (locallyMapped) {
