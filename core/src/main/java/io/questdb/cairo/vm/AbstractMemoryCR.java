@@ -79,11 +79,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return getBin(offset, bsview);
     }
 
-    @Override
-    public DirectCharSequence getDirectStr(long offset) {
-        return getStr(offset, csviewA);
-    }
-
     public FilesFacade getFilesFacade() {
         return ff;
     }
