@@ -612,12 +612,11 @@ public class Bootstrap {
                         for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
                             InetAddress inetAddress = addr.nextElement();
                             if (inetAddress instanceof Inet4Address) {
-                                String leftCol = schema + inetAddress.getHostAddress() + ':' + bindPort;
+                                String leftCol = schema + "://" + inetAddress.getHostAddress() + ':' + bindPort;
                                 sb.append(indent).append(leftCol);
                                 if (ilpEnabled) {
                                     padToNextCol(sb, leftCol.length());
-                                    String proto = schema.substring(0, schema.length() - 2);
-                                    sb.append(proto).append(":addr=").append(inetAddress.getHostAddress()).append(':').append(bindPort).append(';');
+                                    sb.append(schema).append("::addr=").append(inetAddress.getHostAddress()).append(':').append(bindPort).append(';');
                                 }
                                 sb.append('\n');
                             }
