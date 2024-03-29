@@ -591,10 +591,11 @@ public class Bootstrap {
 
     static void logBannerAndEndpoints(ServerConfiguration config, Log log, String banner, String schema) {
         final boolean ilpEnabled = config.getHttpServerConfiguration().getLineHttpProcessorConfiguration().isEnabled();
+        final String indent = "    ";
         final StringBuilder sb = new StringBuilder();
         sb.append('\n').append(banner);
         if (config.getHttpServerConfiguration().isEnabled()) {
-            sb.append('\t');
+            sb.append(indent);
             String col1Header = "Web Console URL";
             sb.append(col1Header);
             if (ilpEnabled) {
@@ -612,7 +613,7 @@ public class Bootstrap {
                             InetAddress inetAddress = addr.nextElement();
                             if (inetAddress instanceof Inet4Address) {
                                 String leftCol = schema + inetAddress.getHostAddress() + ':' + bindPort;
-                                sb.append('\t').append(leftCol);
+                                sb.append(indent).append(leftCol);
                                 if (ilpEnabled) {
                                     padToNextCol(sb, leftCol.length());
                                     String proto = schema.substring(0, schema.length() - 2);
@@ -646,7 +647,7 @@ public class Bootstrap {
     }
 
     private static StringBuilder padToNextCol(StringBuilder sb, int headerWidth) {
-        int colWidth = 35;
+        int colWidth = 32;
         // Insert at least one space between columns
         sb.append("  ");
         for (int i = headerWidth + 2; i < colWidth; i++) {
