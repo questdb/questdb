@@ -202,10 +202,11 @@ function start {
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
         ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1
     elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
-        ${JAVA} ${JAVA_OPTS} -Dhello-to-stderr -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt &
-        sleep 0.5
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1 &
+        $BASE/print-hello.sh ${QDB_ROOT}
     else
-        ${JAVA} ${JAVA_OPTS} -Dhello-to-stderr -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > ${QDB_LOG}/stdout-${DATE}.txt
+        $BASE/print-hello.sh ${QDB_ROOT} &
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1
     fi
 }
 

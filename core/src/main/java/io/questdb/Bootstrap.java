@@ -589,7 +589,7 @@ public class Bootstrap {
         }
     }
 
-    static void logBannerAndEndpoints(ServerConfiguration config, Log log, String banner, String schema) {
+    void logBannerAndEndpoints(String schema) {
         final boolean ilpEnabled = config.getHttpServerConfiguration().getLineHttpProcessorConfiguration().isEnabled();
         final String indent = "    ";
         final StringBuilder sb = new StringBuilder();
@@ -640,19 +640,30 @@ public class Bootstrap {
         }
         final String helloMsg = sb.toString();
         log.infoW().$(helloMsg).$();
-        if (System.getProperty("hello-to-stderr") != null) {
-            System.err.print(helloMsg);
-        }
+        createHelloFile(helloMsg);
     }
 
-    private static StringBuilder padToNextCol(StringBuilder sb, int headerWidth) {
+    private static void padToNextCol(StringBuilder sb, int headerWidth) {
         int colWidth = 32;
         // Insert at least one space between columns
         sb.append("  ");
         for (int i = headerWidth + 2; i < colWidth; i++) {
             sb.append(' ');
         }
-        return sb;
+    }
+
+    private void createHelloFile(String helloMsg) {
+        final File helloFile = new File(rootDirectory, "log/hello.txt");
+        final File growingFile = new File(helloFile.getParentFile(), helloFile.getName() + ".tmp");
+        try (Writer w = new FileWriter(growingFile)) {
+            w.write(helloMsg);
+        } catch (IOException e) {
+            log.infoW().$("Failed to create ").$(growingFile.getAbsolutePath()).$();
+        }
+        if (!growingFile.renameTo(helloFile)) {
+            log.infoW().$("Failed to rename ").$(growingFile.getAbsolutePath()).$(" to ").$(helloFile.getName()).$();
+        }
+        helloFile.deleteOnExit();
     }
 
     protected String getPublicZipPath() {
