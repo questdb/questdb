@@ -31,6 +31,7 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 
 /**
  * An immutable flyweight for a UTF-8 string stored in native memory.
@@ -60,8 +61,18 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
     }
 
     @Override
+    public boolean equalsAssumingSameSize(Utf8Sequence other) {
+        return zeroPaddedSixPrefix() == other.zeroPaddedSixPrefix() && dataEquals(other);
+    }
+
+    @Override
     public boolean isAscii() {
         return ascii;
+    }
+
+    @Override
+    public long longAt(int offset) {
+        return Unsafe.getUnsafe().getLong(dataLo + offset);
     }
 
     public Utf8SplitString of(long auxLo, long dataLo, int size, boolean ascii) {
@@ -83,6 +94,26 @@ public class Utf8SplitString implements Utf8Sequence, Mutable {
         Utf16Sink utf16Sink = Misc.getThreadLocalSink();
         Utf8s.utf8ToUtf16(this, utf16Sink);
         return utf16Sink.toString();
+    }
+
+    @Override
+    public long zeroPaddedSixPrefix() {
+        return Unsafe.getUnsafe().getLong(auxLo) & VARCHAR_INLINED_PREFIX_MASK;
+    }
+
+    private boolean dataEquals(Utf8Sequence other) {
+        int i = VARCHAR_INLINED_PREFIX_BYTES;
+        for (int n = size() - Long.BYTES + 1; i < n; i += Long.BYTES) {
+            if (longAt(i) != other.longAt(i)) {
+                return false;
+            }
+        }
+        for (int n = size(); i < n; i++) {
+            if (byteAt(i) != other.byteAt(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static final class Factory implements ObjectFactory<Utf8SplitString> {
