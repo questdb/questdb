@@ -52,7 +52,7 @@ public class GroupByLongHashSet {
     private final double loadFactor;
     private final long noKeyValue;
     private GroupByAllocator allocator;
-    private int mask;
+    private long mask;
     private long ptr;
 
     public GroupByLongHashSet(int initialCapacity, double loadFactor, long noKeyValue) {
@@ -71,7 +71,7 @@ public class GroupByLongHashSet {
      * @return false if key is already in the set and true otherwise.
      */
     public boolean add(long key) {
-        int index = keyIndex(key);
+        long index = keyIndex(key);
         if (index < 0) {
             return false;
         }
@@ -79,7 +79,7 @@ public class GroupByLongHashSet {
         return true;
     }
 
-    public void addAt(int index, long key) {
+    public void addAt(long index, long key) {
         setKeyAt(index, key);
         int size = size();
         int sizeLimit = sizeLimit();
@@ -93,13 +93,13 @@ public class GroupByLongHashSet {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
     }
 
-    public long keyAt(int index) {
+    public long keyAt(long index) {
         return Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE + 8L * index);
     }
 
-    public int keyIndex(long key) {
-        int hashCode = Hash.hashLong(key);
-        int index = hashCode & mask;
+    public long keyIndex(long key) {
+        long hashCode = Hash.hashLong64(key);
+        long index = hashCode & mask;
         long k = keyAt(index);
         if (k == noKeyValue) {
             return index;
@@ -128,7 +128,7 @@ public class GroupByLongHashSet {
         for (long p = srcSet.ptr + HEADER_SIZE, lim = srcSet.ptr + HEADER_SIZE + 8L * srcSet.capacity(); p < lim; p += 8L) {
             long val = Unsafe.getUnsafe().getLong(p);
             if (val != noKeyValue) {
-                final int index = keyIndex(val);
+                final long index = keyIndex(val);
                 if (index >= 0) {
                     addAt(index, val);
                 }
@@ -171,7 +171,7 @@ public class GroupByLongHashSet {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
     }
 
-    private int probe(long key, int index) {
+    private long probe(long key, long index) {
         do {
             index = (index + 1) & mask;
             long k = keyAt(index);
@@ -203,7 +203,7 @@ public class GroupByLongHashSet {
         for (long p = oldPtr + HEADER_SIZE, lim = oldPtr + HEADER_SIZE + 8L * oldCapacity; p < lim; p += 8L) {
             long key = Unsafe.getUnsafe().getLong(p);
             if (key != noKeyValue) {
-                int index = keyIndex(key);
+                long index = keyIndex(key);
                 setKeyAt(index, key);
             }
         }
@@ -211,7 +211,7 @@ public class GroupByLongHashSet {
         allocator.free(oldPtr, HEADER_SIZE + 8L * oldCapacity);
     }
 
-    private void setKeyAt(int index, long key) {
+    private void setKeyAt(long index, long key) {
         Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE + 8L * index, key);
     }
 

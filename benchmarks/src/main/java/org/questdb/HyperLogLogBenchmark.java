@@ -80,7 +80,7 @@ public class HyperLogLogBenchmark {
     @Benchmark
     public void testGroupByLongHashSet() {
         long value = rnd.nextLong(N);
-        int index = set.of(setPtr).keyIndex(value);
+        long index = set.of(setPtr).keyIndex(value);
         if (index >= 0) {
             set.addAt(index, value);
             setPtr = set.ptr();
