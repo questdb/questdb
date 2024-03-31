@@ -357,6 +357,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return Chars.equals(token, ">=");
     }
 
+    private static boolean isVarSizeType(int type) {
+        return type == STRING_HEADER_TYPE || type == BINARY_HEADER_TYPE || type == VARCHAR_HEADER_TYPE;
+    }
+
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
         int position = node.position;
         CharSequence token = node.token;
@@ -448,7 +452,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // If none of the above, assume it's a binary operator
                     int lhsType = typeStack.pop();
                     int rhsType = typeStack.pop();
-                    if (lhsType == rhsType && (lhsType == STRING_HEADER_TYPE || lhsType == BINARY_HEADER_TYPE || lhsType == VARCHAR_HEADER_TYPE)) {
+                    if ((lhsType != rhsType && isVarSizeType(lhsType) && isVarSizeType(rhsType))
+                            || (lhsType == rhsType && isVarSizeType(lhsType))) {
                         throw SqlException.$(0, "var-size columns can only be used in NULL checks");
                     }
                     typeStack.push(typeCode);
