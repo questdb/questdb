@@ -296,6 +296,11 @@ public class RecordChainTest extends AbstractCairoTest {
                     TestUtils.assertEquals(us, us1);
                     Assert.assertFalse(us1 != null && us1 == us2);
                     TestUtils.assertEquals(us, us2);
+                    if (us1 == null) {
+                        Assert.assertEquals(TableUtils.NULL_LEN, actual.getVarcharSize(i));
+                    } else {
+                        Assert.assertEquals(us1.size(), actual.getVarcharSize(i));
+                    }
                     if (us != null && us1 != null && us2 != null) {
                         Assert.assertEquals(us.isAscii(), us1.isAscii());
                         Assert.assertEquals(us.isAscii(), us2.isAscii());
