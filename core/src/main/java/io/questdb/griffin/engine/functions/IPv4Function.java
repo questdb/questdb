@@ -148,16 +148,16 @@ public abstract class IPv4Function implements ScalarFunction {
     }
 
     @Override
-    public final CharSequence getStrA(Record rec) {
-        return getStringSink(rec, sinkA);
-    }
-
-    @Override
     public final void getStr(Record rec, Utf16Sink utf16Sink) {
         final int value = getIPv4(rec);
         if (value != IPv4_NULL) {
             Numbers.intToIPv4Sink(utf16Sink, value);
         }
+    }
+
+    @Override
+    public final CharSequence getStrA(Record rec) {
+        return getStringSink(rec, sinkA);
     }
 
     @Override
@@ -218,6 +218,11 @@ public abstract class IPv4Function implements ScalarFunction {
         utf8SinkB.clear();
         Numbers.intToIPv4Sink(utf8SinkB, value);
         return utf8SinkB;
+    }
+
+    @Override
+    public final int getVarcharSize(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Nullable

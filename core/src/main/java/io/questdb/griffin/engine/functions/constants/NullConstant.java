@@ -170,22 +170,22 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public CharSequence getStrA(Record rec) {
-        return StrConstant.NULL.getStrA(null);
-    }
-
-    @Override
     public void getStr(Record rec, Utf16Sink utf16Sink) {
         // intentionally left empty
     }
 
     @Override
-    public CharSequence getStrA(Record rec, int arrayIndex) {
+    public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
+    public CharSequence getStrA(Record rec) {
+        return StrConstant.NULL.getStrA(null);
+    }
+
+    @Override
+    public CharSequence getStrA(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 
@@ -242,6 +242,11 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         return null;
+    }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        return VarcharConstant.NULL.getVarcharSize(null);
     }
 
     @Override

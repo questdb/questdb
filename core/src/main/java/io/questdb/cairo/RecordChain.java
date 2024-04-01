@@ -505,6 +505,15 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             return VarcharTypeDriver.getValue(mem, offset, 2); // VarcharB
         }
 
+        @Override
+        public int getVarcharSize(int col) {
+            final long offset = varWidthColumnOffset(col);
+            if (offset > -1) {
+                return VarcharTypeDriver.getValueSize(mem, offset);
+            }
+            return TableUtils.NULL_LEN;
+        }
+
         private long fixedWithColumnOffset(int index) {
             return fixedOffset + columnOffsets[index];
         }

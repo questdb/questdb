@@ -57,11 +57,13 @@ public class StringNullCheckBenchmark {
     private static final CairoConfiguration configuration =
             new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
 
-    @Param({"0", "1", "3", "100"})
+    //@Param({"0", "1", "3", "100"})
+    @Param({"0"})
     public int a_nullFreq;
     @Param({"false", "true"})
     public boolean b_useComplexFilter;
-    @Param({"SIMD", "SCALAR", "DISABLED"})
+    //@Param({"SIMD", "SCALAR", "DISABLED"})
+    @Param({"DISABLED"})
     public JitMode c_jitMode;
 
     private Blackhole blackHole;

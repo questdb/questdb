@@ -98,6 +98,14 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     @Override
+    public int getVarcharSize(Record rec) {
+        if (isNull) {
+            return -1;
+        }
+        return utf8Sink.size();
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return true;
     }

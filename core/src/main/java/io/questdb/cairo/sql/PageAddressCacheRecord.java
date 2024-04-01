@@ -321,6 +321,16 @@ public class PageAddressCacheRecord implements Record, Closeable {
         return getVarchar(columnIndex, utf8viewB, utf8SplitViewB);
     }
 
+    @Override
+    public int getVarcharSize(int columnIndex) {
+        final long auxPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
+        if (auxPageAddress == 0) {
+            // Column top.
+            return TableUtils.NULL_LEN;
+        }
+        return VarcharTypeDriver.getValueSize(auxPageAddress, rowIndex);
+    }
+
     public void of(SymbolTableSource symbolTableSource, PageAddressCache pageAddressCache) {
         this.symbolTableSource = symbolTableSource;
         this.pageAddressCache = pageAddressCache;
@@ -412,12 +422,12 @@ public class PageAddressCacheRecord implements Record, Closeable {
 
     @Nullable
     private Utf8Sequence getVarchar(int columnIndex, InlinedVarchar utf8view, Utf8SplitString utf8SplitView) {
-        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         final long auxPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         if (auxPageAddress == 0) {
             // Column top.
             return null;
         }
+        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         return VarcharTypeDriver.getValue(
                 auxPageAddress,
                 dataPageAddress,

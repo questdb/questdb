@@ -47,7 +47,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public static final long VARCHAR_MAX_COLUMN_SIZE = 1L << 48;
     private static final int FULLY_INLINED_STRING_OFFSET = 1;
     private static final int HEADER_FLAGS_WIDTH = 4;
-    private static final int HEADER_FLAGS_MASK = (1 << HEADER_FLAGS_WIDTH) - 1;
     private static final int HEADER_FLAG_ASCII = 2;
     private static final int HEADER_FLAG_INLINED = 1;
     private static final int INLINED_LENGTH_MASK = (1 << 4) - 1;
@@ -176,12 +175,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
     }
 
-    /*
+    /**
      * Reads UTF8 varchar type from the memory with a header.
      *
-     * @param dataMem memory contains UTF8 bytes
-     * @param offset in the memory
-     * @param ab 1 for A memory
+     * @param dataMem memory with header and UTF8 bytes
+     * @param offset  in the memory
+     * @param ab      1 for A memory
      */
     public static Utf8Sequence getValue(@NotNull MemoryR dataMem, long offset, int ab) {
         long address = dataMem.addressOf(offset);
@@ -217,7 +216,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param dataMem base pointer of the data vector
      * @param auxMem  base pointer of the auxiliary vector
      * @param ab      whether to return the A or B flyweight
-     * @return a <code>Utf8Seqence</code> representing the value at <code>rowNum</code>
+     * @return a Utf8Sequence representing the value at rowNum
      */
     public static Utf8Sequence getValue(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
         final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
@@ -235,9 +234,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             return ab == 1 ? auxMem.getVarcharA(auxOffset + 1, size, ascii) : auxMem.getVarcharB(auxOffset + 1, size, ascii);
         }
-        // string is split, prefix is in auxMem and the suffix is in data mem
+        // string is split, prefix is duplicated in auxMem
         Utf8SplitString utf8SplitString = ab == 1 ? auxMem.borrowUtf8SplitStringA() : auxMem.borrowUtf8SplitStringB();
-
         if (utf8SplitString != null) {
             return utf8SplitString.of(
                     auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET),
@@ -288,6 +286,59 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
                 ascii
         );
+    }
+
+    /**
+     * Reads UTF8 varchar size from the memory with a header.
+     *
+     * @param dataMemAddr memory with header and UTF8 bytes
+     */
+    public static int getValueSize(long dataMemAddr) {
+        int header = Unsafe.getUnsafe().getInt(dataMemAddr);
+        if (isNull(header)) {
+            return TableUtils.NULL_LEN;
+        }
+        return size(header);
+    }
+
+    /**
+     * Reads a UTF-8 value size from a VARCHAR column.
+     *
+     * @param auxAddr base pointer of the auxiliary vector
+     * @param rowNum  the row number to read
+     * @return value size or {@link TableUtils#NULL_LEN} in case of NULL
+     */
+    public static int getValueSize(long auxAddr, long rowNum) {
+        long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
+        int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        if (hasNullFlag(raw)) {
+            return TableUtils.NULL_LEN;
+        }
+        if (hasInlinedFlag(raw)) {
+            // inlined string
+            return (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
+        }
+        return (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
+    }
+
+    /**
+     * Reads a UTF-8 value size from a VARCHAR column.
+     *
+     * @param auxMem auxiliary memory
+     * @param rowNum the row number to read
+     * @return value size or {@link TableUtils#NULL_LEN} in case of NULL
+     */
+    public static int getValueSize(MemoryR auxMem, long rowNum) {
+        final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
+        int raw = auxMem.getInt(auxOffset);
+        if (hasNullFlag(raw)) {
+            return TableUtils.NULL_LEN;
+        }
+        if (hasInlinedFlag(raw)) {
+            // inlined string
+            return (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
+        }
+        return (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
     }
 
     @Override

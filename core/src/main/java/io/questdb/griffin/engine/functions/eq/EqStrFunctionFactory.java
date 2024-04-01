@@ -77,11 +77,9 @@ public class EqStrFunctionFactory implements FunctionFactory {
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
         CharSequence constValue = constFunc.getStrA(null);
-
         if (constValue == null) {
             return new NullCheckFunc(varFunc);
         }
-
         return new ConstCheckFunc(varFunc, constValue);
     }
 

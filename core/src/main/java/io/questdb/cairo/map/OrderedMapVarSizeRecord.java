@@ -439,6 +439,12 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
+    public int getVarcharSize(int columnIndex) {
+        long address = addressOfColumn(columnIndex);
+        return VarcharTypeDriver.getValueSize(address);
+    }
+
+    @Override
     public long keyHashCode() {
         int keySize = Unsafe.getUnsafe().getInt(startAddress);
         return Hash.hashMem64(startAddress + Integer.BYTES, keySize);

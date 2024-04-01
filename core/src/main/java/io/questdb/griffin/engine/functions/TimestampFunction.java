@@ -152,12 +152,12 @@ public abstract class TimestampFunction implements ScalarFunction {
     }
 
     @Override
-    public final CharSequence getStrA(Record rec) {
+    public final void getStr(Record rec, Utf16Sink utf16Sink) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final void getStr(Record rec, Utf16Sink utf16Sink) {
+    public final CharSequence getStrA(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -198,6 +198,11 @@ public abstract class TimestampFunction implements ScalarFunction {
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
     }
 }

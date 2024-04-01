@@ -154,13 +154,13 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public CharSequence getStrA(Record rec) {
-        return getSymbol(rec);
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        throw new UnsupportedOperationException();
+    public CharSequence getStrA(Record rec) {
+        return getSymbol(rec);
     }
 
     @Override
@@ -200,6 +200,11 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
         utf8SinkB.clear();
         utf8SinkB.put(getStrB(rec));
         return utf8SinkB;
+    }
+
+    @Override
+    public final int getVarcharSize(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     public abstract boolean isSymbolTableStatic();

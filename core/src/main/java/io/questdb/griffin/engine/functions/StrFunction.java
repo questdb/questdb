@@ -198,4 +198,15 @@ public abstract class StrFunction implements ScalarFunction {
         utf8SinkB.put(getStrB(rec));
         return utf8SinkB;
     }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        CharSequence utf16Value = getStrA(rec);
+        if (utf16Value == null) {
+            return TableUtils.NULL_LEN;
+        }
+        utf8SinkA.clear();
+        utf8SinkA.put(utf16Value);
+        return utf8SinkA.size();
+    }
 }
