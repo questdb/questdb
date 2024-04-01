@@ -1,83 +1,74 @@
 <div align="center">
-   <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
+  <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
   <a href="https://slack.questdb.io">
-    <img
-      src="https://slack.questdb.io/badge.svg"
-      alt="QuestDB community Slack channel"
-    />
+    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
   </a>
   <a href="#contribute">
-    <img
-      src="https://img.shields.io/github/all-contributors/questdb/questdb"
-      alt="QuestDB open source contributors"
-    />
+    <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img
-      src="https://img.shields.io/maven-central/v/org.questdb/questdb"
-      alt="QuestDB on Apache Maven"
-    />
+    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | 简体中文 | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](./README.ja-ja.md) | [Türkçe](./README.tr-tr.md) | [हिंदी](./README.hn-in.md) | [Tiếng Việt](README.vi-vn.md)
+[English](https://github.com/questdb/questdb) | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.zh-hk.md) | [العربية](./i18n/README.ar-dz.md) | [Italiano](./i18n/README.it-it.md) | [Українська](./i18n/README.ua-ua.md) | [Español](./i18n/README.es-es.md) | [Português](./i18n/README.pt.md) | [日本語](./i18n/README.ja-ja.md) | [Türkçe](./i18n/README.tr-tr.md) | [हिंदी](./i18n/README.hn-in.md) | Tiếng Việt
 
 # QuestDB
 
-QuestDB 是一个开源的時序数据库，支持高吞吐数据获取和快速 SQL 查询，操作简单。
-它支持使用InfluxDB连接协议、PostgreSQL协议和REST API进行批量无模式导入和导出。
+QuestDB là một cơ sở dữ liệu chuỗi thời gian mã nguồn mở, được thiết kế để xử lý lưu lượng dữ liệu lớn và truy vấn SQL nhanh chóng với tính đơn giản trong vận hành.
 
-QuestDB非常适用于金融市场数据、应用程序指标、传感器数据、实时分析、仪表板和系统基础设施监控。
+QuestDB rất phù hợp cho dữ liệu thị trường tài chính, dữ liệu cảm biến IoT, quảng cáo công nghệ và bảng điều khiển thời gian thực. Nó nổi bật với các tập dữ liệu có [độ phức tạp cao](https://questdb.io/glossary/high-cardinality/) và có thể thay thế InfluxDB thông qua việc hỗ trợ giao thức InfluxDB Line.
 
-QuestDB使用原生时间序列SQL插件实现了ANSI SQL。这些 SQL 扩展语义能更简单的连接
-（JOIN）多个来源的关系型数据以及时间序列数据。我们通过列导向的存储模型、大规模
-并行的矢量执行、SIMD 指令和各种低延迟技术实现了高性能。整个代码库是用 Java 和
-C++从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾回收的影响。
+QuestDB triển khai ANSI SQL với các phần mở rộng SQL chuỗi thời gian. Các phần mở rộng SQL này giúp đơn giản hóa việc lọc và giảm mẫu dữ liệu, hoặc tương quan dữ liệu từ nhiều nguồn bằng cách sử dụng các liên kết quan hệ và chuỗi thời gian.
+
+Chúng tôi đạt được hiệu suất cao bằng cách áp dụng mô hình lưu trữ hướng cột, thực thi vector song song, các chỉ thị SIMD và các kỹ thuật thấp độ trễ. Toàn bộ mã nguồn được xây dựng từ đầu bằng Java, C++ và [Rust](https://questdb.io/blog/leveraging-rust-in-our-high-performance-java-database/) mà không có phụ thuộc và không có thu gom rác.
+
+QuestDB hỗ trợ việc nhập dữ liệu theo luồng không cần xác định cấu trúc bằng cách sử dụng giao thức InfluxDB Line và một REST API cho việc nhập và xuất dữ liệu hàng loạt. Bảng điều khiển SQL Web của QuestDB là một trình chỉnh sửa SQL tương tác giúp dễ dàng nhập dữ liệu CSV. Cuối cùng, QuestDB cũng bao gồm Giao thức Dây Postgres cho các truy vấn chương trình.
+
+Các công cụ phổ biến tích hợp với QuestDB bao gồm [Apache Kafka](https://questdb.io/docs/third-party-tools/kafka/questdb-kafka/), [Grafana](https://questdb.io/docs/third-party-tools/grafana/),
+[Superset](https://questdb.io/docs/third-party-tools/superset/), [Telegraf](https://questdb.io/docs/third-party-tools/telegraf/) và [Apache Flink](https://questdb.io/docs/third-party-tools/flink/).
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img
-      alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart"
-      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png"
-      width="600"
-    />
+    <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
   </a>
 </div>
 
-## 尝试 QuestDB
+## Thử QuestDB
 
-我们提供了一个[在线演示](https://demo.questdb.io/)，其中包括最新的 QuestDB 版本
-和几个样本数据集：
+Chúng tôi cung cấp một [bản demo trực tuyến](https://demo.questdb.io/) được cung cấp với phiên bản QuestDB mới nhất và các tập dữ liệu mẫu:
 
-- Trips： 近 10 年的纽约市出租车行程轨迹数据集，含 1.6 亿行的数据。
-- Trades： 每月30M+的实时加密货币市场数据。
-- Pos： 含有 25 万艘船的时序地理数据集。
+- Trips: 10 năm dữ liệu chuyến taxi NYC với 1,6 tỷ hàng
+- Trades: dữ liệu thị trường tiền điện tử trực tiếp với hơn 30 triệu hàng mỗi tháng
+- Pos: vị trí địa lý của 250.000 tàu duy nhất theo thời gian
 
-| 查询                                                                          | 运行时间                                                                                                                                                                                            |
-| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
-| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
-| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
-| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
-| `SELECT * FROM trades LATEST ON time PARTITION BY symbol`                     | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+> Kiểm tra các [bảng điều khiển dữ liệu thị trường thời gian thực tương tác](https://questdb.io/dashboards/crypto/) và [Bảng điều khiển Phân tích dữ liệu Taxi NYC](https://questdb.io/dashboards/taxi/) được cung cấp bởi QuestDB và Grafana.
 
-我们的[在线演示](https://demo.questdb.io/)运行在 `c5.metal` 上且仅使用 96 个线程中的 24 个线程。
+| Truy vấn                                                                         | Thời gian thực thi                                                                                                                                                                                      |
+|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `SELECT sum(double) FROM trips`                                               | [0.15 giây](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
+| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 giây](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
+| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 giây](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
+| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 giây](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
+| `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                | [0.00025 giây](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
 
-## 如何开始
+Bản demo của chúng tôi đang chạy trên phiên bản `c5.metal` và sử dụng 24 lõi trong tổng số 96 lõi.
 
-### 安裝 QuestDB
+## Bắt đầu
 
-你可以使用 Docker 来快速启动一个 QuestDB 实例：
+### Cài đặt QuestDB
+
+Để chạy QuestDB, bạn có thể sử dụng [Docker](https://www.docker.com/) để bắt đầu nhanh chóng:
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-macOS 用户可以使用 Homebrew 来启动：
+người dùng macOS có thể sử dụng Homebrew:
 
 ```bash
 brew install questdb
@@ -87,24 +78,26 @@ questdb start // To start questdb
 questdb stop  // To stop questdb
 ```
 
-[QuestDB 下载页面](https://questdb.io/get-questdb/) 提供运行文件的直接下载，并
-提供其他安装和部署方式的详细信息。
+[Trang tải xuống QuestDB](https://questdb.io/get-questdb/) cung cấp các bản tải xuống trực tiếp cho các tệp nhị phân và có thông tin chi tiết về các phương pháp cài đặt và triển khai khác.
 
-### 连接到 QuestDB
+### QuestDB Cloud
 
-你可以使用以下接口与 QuestDB 进行交互。
+QuestDB Cloud là phiên bản được quản lý hoàn toàn của QuestDB, với các tính năng bổ sung như kiểm soát truy cập dựa trên vai trò,
+Sao lưu theo chuẩn Cloud-native, Nén dữ liệu, giám sát và chụp ảnh theo chuẩn Cloud-native.
+[Bắt đầu với $200 tín dụng](https://cloud.questdb.com).
 
-- [web 控制台](https://questdb.io/docs/develop/web-console/): 将会启动一个 web
-  控制台，默认运行在 `9000` 端口
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/): 支
-  持高性能、高吞吐量单向数据插入，默认运行在 `9009` 端口
-- [REST API](https://questdb.io/docs/reference/api/rest/) : 默认运行在 `9000` 端口
-- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/):
-  默认运行在 `8812` 端口
+### Kết nối với QuestDB
 
-### 写入数据
+Bạn có thể tương tác với QuestDB bằng cách sử dụng các giao diện sau:
 
-以下是我们官方开发的questdb客户端，支持多种编程语言：
+- [Web Console](https://questdb.io/docs/web-console/) để sử dụng trình chỉnh sửa SQL tương tác và nhập CSV trên cổng `9000`
+- [Giao thức dòng InfluxDB](https://questdb.io/docs/reference/api/ilp/overview/) để nhập dữ liệu theo luồng trên cổng `9000`
+- [Giao thức dây PostgreSQL](https://questdb.io/docs/reference/api/postgres/) để truy vấn theo chương trình và chèn giao dịch trên cổng `8812`
+- [REST API](https://questdb.io/docs/reference/api/rest/) để nhập CSV và sử dụng cURL trên cổng `9000`
+
+### Chèn dữ liệu
+
+Dưới đây là các khách hàng chính thức của QuestDB để nhập dữ liệu qua Giao thức Dòng InfluxDB:
 
 - [.NET](https://github.com/questdb/net-questdb-client)
 - [C/C++](https://github.com/questdb/c-questdb-client)
@@ -114,41 +107,36 @@ questdb stop  // To stop questdb
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
-## QuestDB 与其他开源 TSDB 的对比
+### Hướng dẫn nhanh từ đầu đến cuối
 
-参考[我们的文章](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)，
-其中在功能、性能和成熟度上比较了 QuestDB 和其他的开源时序数据库。
+Muốn đi qua mọi thứ, từ nhập dữ liệu theo luồng đến trực quan hóa với Grafana? Hãy kiểm tra
+kho lưu trữ [quickstart](https://github.com/questdb/questdb-quickstart) đa đường dẫn của chúng tôi.
 
-以下是 高维度[时间序列基准测试套件](https://github.com/timescale/tsbs) 运行 `cpu-only`
-用例的测试结果，基于使用 6 到 16 个工作线程在 32 个 CPU 和 64 GB RAM上测试对比得到：
+## So sánh QuestDB với các hệ thống cơ sở dữ liệu chuỗi thời gian mã nguồn mở khác
+
+Xem [bài đăng so sánh](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
+giữa QuestDB và InfluxDB về chức năng, tính chín muối và hiệu suất.
 
 <div align="center">
-  <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img
-      alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
-      src="../.github/readme-benchmark.png"
-      width="600"
-    />
+    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
   </a>
 </div>
 
-## 相关资源
+## Tài liệu
 
-### 📚 阅读文档
+### 📚 Đọc tài liệu
 
-- [QuestDB 文档:](https://questdb.io/docs/introduction/) 描述了如何运行
-  和配置 QuestDB 的技术参考。
-- [教程](https://questdb.io/tutorial/) 逐步了解QuestDB的功能。
-- [产品路线图](https://github.com/questdb/questdb/projects) 了解我们下个产品发布的计划。
+- [Tài liệu QuestDB:](https://questdb.io/docs/introduction/) hiểu cách chạy và cấu hình QuestDB.
+- [Hướng dẫn:](https://questdb.io/tutorial/) tìm hiểu những gì có thể làm được với QuestDB từng bước một.
+- [Lộ trình sản phẩm:](https://github.com/orgs/questdb/projects/1/views/5) xem kế hoạch của chúng tôi cho các phiên bản sắp tới.
 
-### ❓ 寻求支持
+### ❓ Nhận hỗ trợ
 
-- [Community Slack:](https://slack.questdb.io) 加入技术讨论，提问问题，与其他用户见面！
-- [GitHub issues:](https://github.com/questdb/questdb/issues) 报告 QuestDB bugs与问题
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) 寻找常见
-  问题的解决方法。
+- [Cộng đồng Slack:](https://slack.questdb.io) tham gia thảo luận kỹ thuật, đặt câu hỏi và gặp gỡ người dùng khác!
+- [Vấn đề GitHub:](https://github.com/questdb/questdb/issues) báo cáo lỗi hoặc vấn đề với QuestDB.
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) tìm kiếm các giải pháp sửa lỗi thông thường.
 
-### 🚢 部署 QuestDB
+### 🚢 Triển khai QuestDB
 
 - [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
 - [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
@@ -156,26 +144,19 @@ questdb stop  // To stop questdb
 - [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
 
-## 贡献
+## Đóng góp
 
-我们总是乐于接受对项目的贡献，无论是源代码、文档、错误报告、功能请求还是反馈。如
-果要开始贡献：
+Chúng tôi hoan nghênh mọi đóng góp cho dự án, bao gồm mã nguồn, tài liệu, báo cáo lỗi, yêu cầu tính năng hoặc phản hồi. Để bắt đầu đóng góp:
 
-- 请看一下 GitHub 上标有
-  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-  的问题。
-- 阅
-  读[贡献指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
-- 有关构建 QuestDB 的详细信息，请参
-  见[构建说明](https://github.com/questdb/questdb/blob/master/core/README.md)。
-- [创建 QuestDB 的一个分叉](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)，
-  并提交一个 pull request，说明你的修改建议。
+- Xem qua các vấn đề trên GitHub được gắn nhãn "[Vấn đề đầu tiên tốt](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
+- Đối với Hacktoberfest, xem các [vấn đề được gắn nhãn](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest) tương ứng.
+- Đọc [hướng dẫn đóng góp](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
+- Để biết chi tiết về việc xây dựng QuestDB, xem [hướng dẫn xây dựng](https://github.com/questdb/questdb/blob/master/core/README.md).
+- [Tạo một bản sao](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) của QuestDB và gửi yêu cầu kéo với các thay đổi đề xuất của bạn.
 
-✨ 为了表示感谢，我们将向贡献者发送一些我们的 QuestDB 礼品，如贴纸和 T 恤衫
-[在这里申领](https://questdb.io/community)
+✨ Như một dấu hiệu của lòng biết ơn, chúng tôi cũng gửi **quà tặng QuestDB** cho các đóng góp viên của chúng tôi. [Nhận quà của bạn](https://questdb.io/community).
 
-衷心感谢以下为 QuestDB 作出贡献的优秀人士：
-（[表情符号键](https://allcontributors.org/docs/en/emoji-key)）：
+Một lời cảm ơn lớn gửi đến những người tuyệt vời sau đây đã đóng góp cho QuestDB: ([khóa biểu tượng](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -330,6 +311,6 @@ questdb stop  // To stop questdb
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-本项目遵循
-[all-contributors](https://github.com/all-contributors/all-contributors) 标准.
-欢迎任何形式的贡献！
+Dự án này tuân thủ theo
+[tất cả những người đóng góp](https://github.com/all-contributors/all-contributors)
+quy định. Mọi đóng góp đều được hoan nghênh!
