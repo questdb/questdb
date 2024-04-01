@@ -139,11 +139,6 @@ namespace questdb::avx2 {
         return c.newConst(ConstPool::kScopeLocal, &nulls, 32);
     }
 
-    inline Mem vec_varchar_header_offsets(Compiler &c) {
-        int32_t offsets[8] = {0, 4, 8, 12, 16, 20, 24, 28};
-        return c.newConst(ConstPool::kScopeLocal, &offsets, 32);
-    }
-
     inline Mem vec_sign_mask(Compiler &c, data_type_t type) {
         switch (type) {
             case data_type_t::i8: {

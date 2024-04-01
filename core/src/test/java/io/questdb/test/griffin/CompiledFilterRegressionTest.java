@@ -564,6 +564,20 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertGeneratedQueryNullable("select * from x", ddl, gen);
     }
 
+    @Test
+    public void testVarcharNullComparison() throws Exception {
+        final String ddl = "create table x as (select" +
+                " x," +
+                " timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_varchar(1, 5, 3) varchar_value" +
+                " from long_sequence(1000)) timestamp(k)";
+        final FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("varchar_value")
+                .withEqualityOperator()
+                .withAnyOf("null");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
     private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen, boolean notNull) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {

@@ -221,25 +221,25 @@ namespace questdb::avx2 {
         Gp varsize_index_address = c.newInt64("varsize_index_address");
         c.mov(varsize_index_address, ptr(varsize_indexes_ptr, 8 * column_idx, 8));
 
-        Gp address_offset = c.newInt64("address_offset");
-        c.mov(address_offset, input_index);
-        // varchar header is 16 bytes, so we need to multiple the index by 16.
-        c.sal(address_offset, 4);
-        c.add(varsize_index_address, address_offset);
-
-        Ymm header_offsets = c.newYmm("header_offsets");
-        c.vmovdqu(header_offsets, vec_varchar_header_offsets(c));
-
-        Ymm header_mask = c.newYmm("header_mask");
-        // Set the mask to all ones.
-        c.vpcmpeqw(header_mask, header_mask, header_mask);
-
-        Ymm length_data = c.newYmm("length_data");
-        auto header_shift = type_shift(data_type_t::i32);
+        auto header_shift = type_shift(data_type_t::i128);
         auto header_size = 1 << header_shift;
-        c.vpgatherdd(length_data, ptr(varsize_index_address, header_offsets, header_shift, 0, header_size), header_mask);
+        Gp header_offset = c.newInt64("header_offset");
+        c.mov(header_offset, input_index);
+        c.sal(header_offset, header_shift);
 
-        return {length_data, data_type_t::i32, data_kind_t::kMemory};
+        Ymm header_data = c.newYmm();
+        c.vmovdqu(header_data, ymmword_ptr(varsize_index_address, header_offset, 0));
+
+        // Mask higher bits since they store the data vector offset
+        // and we don't need it in null checks.
+        Ymm header_masks = c.newYmm("header_masks");
+        // Erase 64 highest bits (LE) in each aux header value.
+        int64_t masks[4] = {-1, 0, -1, 0};
+        Mem masksMem = c.newConst(ConstPool::kScopeLocal, &masks, 32);
+        c.vmovdqu(header_masks, masksMem);
+        c.vpand(header_data, header_data, header_masks);
+
+        return {header_data, data_type_t::i128, data_kind_t::kMemory};
     }
 
     jit_value_t

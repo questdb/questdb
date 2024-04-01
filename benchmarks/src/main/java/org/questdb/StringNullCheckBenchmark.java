@@ -102,8 +102,6 @@ public class StringNullCheckBenchmark {
                                 : " rnd_varchar('', 'a', 'aa') varchar_value,") +
                         " rnd_long(1, 10, 0) long_value1," +
                         " rnd_long(1, 10, 0) long_value2," +
-                        " rnd_int(1, 10, 0) int_value1," +
-                        " rnd_int(1, 10, 0) int_value2," +
                         " timestamp_sequence(to_timestamp('2024-02-04', 'yyyy-MM-dd'), 100000L) ts" +
                         " from long_sequence(" + NUM_ROWS + ")) timestamp(ts)", sqlExecutionContext);
             }
@@ -166,7 +164,7 @@ public class StringNullCheckBenchmark {
                     ", actual=" + stringFilterFactory.usesCompiledFilter());
         }
         varcharFilterFactory = compiler.compile("select count(*) from x where " +
-                (b_useComplexFilter ? "int_value1 > 0 and int_value2 > 0 and" : "") +
+                (b_useComplexFilter ? "long_value1 > 0 and long_value2 > 0 and" : "") +
                 " varchar_value is null", ctx).getRecordCursorFactory();
         if (varcharFilterFactory.usesCompiledFilter() != shouldBeJitCompiled) {
             throw new IllegalStateException("Unexpected JIT usage reported by factory: " +

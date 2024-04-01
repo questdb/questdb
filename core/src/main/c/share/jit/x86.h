@@ -89,20 +89,26 @@ namespace questdb::x86 {
                                             int32_t column_idx,
                                             const Gp &varsize_indexes_ptr,
                                             const Gp &input_index) {
-        Gp header = c.newInt32("header");
         Gp varsize_index_address = c.newInt64("varsize_index_address");
         c.mov(varsize_index_address, ptr(varsize_indexes_ptr, 8 * column_idx, 8));
 
-        Gp header_index = c.newInt64("header_index");
-        c.mov(header_index, input_index);
-        // varchar header is 16 bytes while we need the 4 lowest bytes,
-        // so we need to multiple the index by 4.
-        c.sal(header_index, 2);
-
-        auto header_shift = type_shift(data_type_t::i32);
+        auto header_shift = type_shift(data_type_t::i128);
         auto header_size = 1 << header_shift;
-        c.mov(header, ptr(varsize_index_address, header_index, header_shift, 0, header_size));
-        return {header.r32(), data_type_t::i32, data_kind_t::kMemory};
+        Gp header_offset = c.newInt64("header_offset");
+        c.mov(header_offset, input_index);
+        c.sal(header_offset, header_shift);
+
+        Xmm header_data = c.newXmm();
+        c.movdqu(header_data, ptr(varsize_index_address, header_offset, 0));
+
+        Xmm header_mask = c.newXmm("header_masks");
+        // Erase 64 highest bits (LE) in each aux header value.
+        int64_t masks[4] = {-1, 0};
+        Mem masksMem = c.newConst(ConstPool::kScopeLocal, &masks, 16);
+        c.vmovdqu(header_mask, masksMem);
+        c.vpand(header_data, header_data, header_mask);
+
+        return {header_data, data_type_t::i128, data_kind_t::kMemory};
     }
 
     jit_value_t read_mem(
@@ -199,9 +205,10 @@ namespace questdb::x86 {
                 return {imm(instr.ipayload.lo), type, data_kind_t::kConst};
             }
             case data_type_t::i128: {
-                return { c.newConst(ConstPool::kScopeLocal, &instr.ipayload, 16),
-                         type,
-                         data_kind_t::kMemory
+                return {
+                    c.newConst(ConstPool::kScopeLocal, &instr.ipayload, 16),
+                    type,
+                    data_kind_t::kMemory
                 };
             }
             case data_type_t::f32:
@@ -343,12 +350,12 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
             case data_type_t::string_header:
-            case data_type_t::varchar_header:
                 return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
             case data_type_t::binary_header:
                 return {int64_eq(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
             case data_type_t::i128:
+            case data_type_t::varchar_header:
                 return {int128_eq(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
             case data_type_t::f32:
                 return {float_eq_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk};
@@ -367,12 +374,12 @@ namespace questdb::x86 {
             case data_type_t::i16:
             case data_type_t::i32:
             case data_type_t::string_header:
-            case data_type_t::varchar_header:
                 return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
             case data_type_t::binary_header:
                 return {int64_ne(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
             case data_type_t::i128:
+            case data_type_t::varchar_header:
                 return {int128_ne(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
             case data_type_t::f32:
                 return {float_ne_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk};
