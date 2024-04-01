@@ -227,7 +227,7 @@ public class WalEventCursor {
     }
 
     private Utf8Sequence readVarchar() {
-        Utf8Sequence seq = VarcharTypeDriver.getValue(eventMem, offset, 1);
+        Utf8Sequence seq = VarcharTypeDriver.getPlainValue(eventMem, offset, 1);
         if (seq == null) {
             offset += Integer.BYTES;
             return null;

@@ -315,7 +315,6 @@ public class RecordChainTest extends AbstractCairoTest {
                     break;
                 default:
                     throw CairoException.critical(0).put("Record chain does not support: ").put(ColumnType.nameOf(metadata.getColumnType(i)));
-
             }
         }
     }

@@ -441,7 +441,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     @Override
     public int getVarcharSize(int columnIndex) {
         long address = addressOfColumn(columnIndex);
-        return VarcharTypeDriver.getValueSize(address);
+        return VarcharTypeDriver.getPlainValueSize(address);
     }
 
     @Override
@@ -539,6 +539,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     private Utf8Sequence getVarchar0(int index, DirectUtf8String us) {
         long address = addressOfColumn(index);
-        return VarcharTypeDriver.getValue(address, us);
+        return VarcharTypeDriver.getPlainValue(address, us);
     }
 }

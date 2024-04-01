@@ -285,7 +285,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             // appendAddressFor grows the memory if necessary
             int byteCount = VarcharTypeDriver.getSingleMemValueByteCount(value);
             final long appendAddress = mem.appendAddressFor(varAppendOffset, byteCount);
-            VarcharTypeDriver.appendValue(appendAddress, value, false);
+            VarcharTypeDriver.appendPlainValue(appendAddress, value, false);
             varAppendOffset += byteCount;
         } else {
             putNull();
@@ -493,7 +493,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             if (offset == -1) {
                 return null;
             }
-            return VarcharTypeDriver.getValue(mem, offset, 1); // VarcharA
+            return VarcharTypeDriver.getPlainValue(mem, offset, 1); // VarcharA
         }
 
         @Override
@@ -502,14 +502,14 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             if (offset == -1) {
                 return null;
             }
-            return VarcharTypeDriver.getValue(mem, offset, 2); // VarcharB
+            return VarcharTypeDriver.getPlainValue(mem, offset, 2); // VarcharB
         }
 
         @Override
         public int getVarcharSize(int col) {
             final long offset = varWidthColumnOffset(col);
             if (offset > -1) {
-                return VarcharTypeDriver.getValueSize(mem, offset);
+                return VarcharTypeDriver.getPlainValueSize(mem, offset);
             }
             return TableUtils.NULL_LEN;
         }

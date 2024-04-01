@@ -56,6 +56,32 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     private static final int DATA_LENGTH_MASK = LENGTH_LIMIT_BYTES - 1;
 
     /**
+     * Appends UTF8 varchar type to the memory address with a header.
+     * This is unsafe method, and it is assumed that the memory address is valid and has enough space to store the header and UTF8 bytes.
+     * The number of bytes to be written can be obtained from {@link #getSingleMemValueByteCount(Utf8Sequence)}
+     *
+     * @param dataMemAddr    memory address to store header and UTF8 bytes in
+     * @param value          the UTF8 string to be stored
+     * @param eraseAsciiFlag when set to true, the written sequence will have ASCII flag set to false;
+     *                       when set to false, the output flag will have the same value as {@code value.isAscii()}.
+     */
+    public static void appendPlainValue(long dataMemAddr, @Nullable Utf8Sequence value, boolean eraseAsciiFlag) {
+        if (value == null) {
+            Unsafe.getUnsafe().putInt(dataMemAddr, TableUtils.NULL_LEN); // NULL
+            return;
+        }
+        final int hi = value.size();
+        value.writeTo(dataMemAddr + Integer.BYTES, 0, hi);
+        if (eraseAsciiFlag) {
+            Unsafe.getUnsafe().putInt(dataMemAddr, hi);
+        } else {
+            final boolean ascii = value.isAscii();
+            // ASCII flag is signaled with the highest bit
+            Unsafe.getUnsafe().putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
+        }
+    }
+
+    /**
      * Appends UTF8 varchar type to the data and aux vectors.
      *
      * @param dataMem data vector, contains UTF8 bytes
@@ -121,32 +147,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         dataMem.putVarchar(value, 0, size);
     }
 
-    /**
-     * Appends UTF8 varchar type to the memory address with a header.
-     * This is unsafe method, and it is assumed that the memory address is valid and has enough space to store the header and UTF8 bytes.
-     * The number of bytes to be written can be obtained from {@link #getSingleMemValueByteCount(Utf8Sequence)}
-     *
-     * @param dataMemAddr    memory address to store header and UTF8 bytes in
-     * @param value          the UTF8 string to be stored
-     * @param eraseAsciiFlag when set to true, the written sequence will have ASCII flag set to false;
-     *                       when set to false, the output flag will have the same value as {@code value.isAscii()}.
-     */
-    public static void appendValue(long dataMemAddr, @Nullable Utf8Sequence value, boolean eraseAsciiFlag) {
-        if (value == null) {
-            Unsafe.getUnsafe().putInt(dataMemAddr, TableUtils.NULL_LEN); // NULL
-            return;
-        }
-        final int hi = value.size();
-        value.writeTo(dataMemAddr + Integer.BYTES, 0, hi);
-        if (eraseAsciiFlag) {
-            Unsafe.getUnsafe().putInt(dataMemAddr, hi);
-        } else {
-            final boolean ascii = value.isAscii();
-            // ASCII flag is signaled with the highest bit
-            Unsafe.getUnsafe().putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
-        }
-    }
-
     public static long getDataOffset(long auxEntry) {
         // the first 4 bytes cannot ever be 0
         // why? the first 4 bytes contains size and flags and there are 3 possibilities:
@@ -171,10 +171,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return dataOffset + size;
     }
 
-    public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
-        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
-    }
-
     /**
      * Reads UTF8 varchar type from the memory with a header.
      *
@@ -182,7 +178,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param offset  in the memory
      * @param ab      1 for A memory
      */
-    public static Utf8Sequence getValue(@NotNull MemoryR dataMem, long offset, int ab) {
+    public static Utf8Sequence getPlainValue(@NotNull MemoryR dataMem, long offset, int ab) {
         long address = dataMem.addressOf(offset);
         int header = Unsafe.getUnsafe().getInt(address);
         assert header != 0;
@@ -201,12 +197,42 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param sequence    to wrap UTF8 bytes with
      * @return the provided UTF8 wrapper or null.
      */
-    public static DirectUtf8Sequence getValue(long dataMemAddr, @NotNull DirectUtf8String sequence) {
+    public static DirectUtf8Sequence getPlainValue(long dataMemAddr, @NotNull DirectUtf8String sequence) {
         int header = Unsafe.getUnsafe().getInt(dataMemAddr);
         if (isNull(header)) {
             return null;
         }
         return sequence.of(dataMemAddr + Integer.BYTES, dataMemAddr + Integer.BYTES + size(header), isAscii(header));
+    }
+
+    /**
+     * Reads UTF8 varchar size from the memory with a header.
+     *
+     * @param dataMem memory with header and UTF8 bytes
+     */
+    public static int getPlainValueSize(MemoryR dataMem, long offset) {
+        int header = dataMem.getInt(offset);
+        if (isNull(header)) {
+            return TableUtils.NULL_LEN;
+        }
+        return size(header);
+    }
+
+    /**
+     * Reads UTF8 varchar size from the memory with a header.
+     *
+     * @param dataMemAddr memory with header and UTF8 bytes
+     */
+    public static int getPlainValueSize(long dataMemAddr) {
+        int header = Unsafe.getUnsafe().getInt(dataMemAddr);
+        if (isNull(header)) {
+            return TableUtils.NULL_LEN;
+        }
+        return size(header);
+    }
+
+    public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
+        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
     }
 
     /**
@@ -289,19 +315,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     /**
-     * Reads UTF8 varchar size from the memory with a header.
-     *
-     * @param dataMemAddr memory with header and UTF8 bytes
-     */
-    public static int getValueSize(long dataMemAddr) {
-        int header = Unsafe.getUnsafe().getInt(dataMemAddr);
-        if (isNull(header)) {
-            return TableUtils.NULL_LEN;
-        }
-        return size(header);
-    }
-
-    /**
      * Reads a UTF-8 value size from a VARCHAR column.
      *
      * @param auxAddr base pointer of the auxiliary vector
@@ -353,7 +366,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void configureAuxMemMA(MemoryMA auxMem) {
-        // noop
+        // no-op
     }
 
     @Override
