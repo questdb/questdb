@@ -113,7 +113,11 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                                     return new AbstractLikeStrFunctionFactory.ConstIContainsStrFunction(value, subPattern.toString());
                                 }
                             } else {
-                                return new ConstContainsVarcharFunction(value, subPattern);
+                                Utf8String u8subPattern = new Utf8String(subPattern);
+                                if (u8subPattern.size() <= ConstContainsSwarVarcharFunction.MAX_SIZE) {
+                                    return new ConstContainsSwarVarcharFunction(value, u8subPattern);
+                                }
+                                return new ConstContainsVarcharFunction(value, u8subPattern);
                             }
                         }
                     }
@@ -144,13 +148,89 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
 
     protected abstract boolean isCaseInsensitive();
 
+    /**
+     * Optimized variant of {@link ConstContainsVarcharFunction} with SWAR contains implementation.
+     * Works only for UTF-8 sequences of <= 8 bytes in size.
+     */
+    private static class ConstContainsSwarVarcharFunction extends BooleanFunction implements UnaryFunction {
+        private static final int MAX_SIZE = Long.BYTES;
+        private final Utf8Sequence pattern; // only used in toPlan
+        private final long patternMask;
+        private final int patternSize;
+        private final long patternWord;
+        private final Function value;
+
+        public ConstContainsSwarVarcharFunction(Function value, Utf8Sequence pattern) {
+            assert pattern.size() > 0 && pattern.size() <= MAX_SIZE;
+            this.value = value;
+            this.patternSize = pattern.size();
+            this.patternMask = patternSize == MAX_SIZE ? -1L : (1L << 8 * pattern.size()) - 1L;
+            long patternWord = 0;
+            for (int i = 0, n = pattern.size(); i < n; i++) {
+                patternWord |= (long) (pattern.byteAt(i) & 0xff) << (8 * i);
+            }
+            this.patternWord = patternWord;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            Utf8Sequence us = value.getVarcharA(rec);
+            if (us == null || us.size() < patternSize) {
+                return false;
+            }
+
+            int size = us.size();
+
+            int i = 0;
+            for (int n = size - MAX_SIZE + 1; i < n; i++) {
+                if ((us.longAt(i) & patternMask) == patternWord) {
+                    return true;
+                }
+            }
+
+            // tail
+            for (int n = size - patternSize + 1; i < n; i++) {
+                // we can't call longAt safely for the tail,
+                // so construct word at the tail from individual bytes
+                long tailWord = 0;
+                for (int j = 0; j < patternSize; j++) {
+                    tailWord |= (long) (us.byteAt(i + j) & 0xff) << (8 * j);
+                }
+                if ((tailWord & patternMask) == patternWord) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" like ");
+            sink.val('%');
+            sink.val(pattern);
+            sink.val('%');
+        }
+    }
+
     private static class ConstContainsVarcharFunction extends BooleanFunction implements UnaryFunction {
         private final Utf8String pattern;
         private final Function value;
 
-        public ConstContainsVarcharFunction(Function value, @Transient CharSequence pattern) {
+        public ConstContainsVarcharFunction(Function value, Utf8String pattern) {
             this.value = value;
-            this.pattern = new Utf8String(pattern);
+            this.pattern = pattern;
         }
 
         @Override
