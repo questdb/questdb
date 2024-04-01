@@ -149,8 +149,8 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
     protected abstract boolean isCaseInsensitive();
 
     /**
-     * Optimized variant of {@link ConstContainsVarcharFunction} with SWAR contains implementation.
-     * Works only for UTF-8 sequences of <= 8 bytes in size.
+     * Optimized variant of {@link ConstContainsVarcharFunction} with SWAR-based contains implementation.
+     * Works only for patterns up to 8 bytes in size.
      */
     private static class ConstContainsSwarVarcharFunction extends BooleanFunction implements UnaryFunction {
         private static final int MAX_SIZE = Long.BYTES;
