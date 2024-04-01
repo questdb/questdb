@@ -89,24 +89,22 @@ namespace questdb::x86 {
                                             int32_t column_idx,
                                             const Gp &varsize_indexes_ptr,
                                             const Gp &input_index) {
+        Gp header = c.newInt32("header");
         Gp varsize_index_address = c.newInt64("varsize_index_address");
         c.mov(varsize_index_address, ptr(varsize_indexes_ptr, 8 * column_idx, 8));
 
-        auto header_shift = type_shift(data_type_t::i128);
+        Gp header_index = c.newInt64("header_index");
+        c.mov(header_index, input_index);
+        // varchar header is 16 bytes while we need the 4 lowest bytes,
+        // so we need to multiple the index by 4.
+        c.sal(header_index, 2);
+
+        auto header_shift = type_shift(data_type_t::i32);
         auto header_size = 1 << header_shift;
-        Gp header_offset = c.newInt64("header_offset");
-        c.mov(header_offset, input_index);
-        c.sal(header_offset, header_shift);
+        c.mov(header, ptr(varsize_index_address, header_index, header_shift, 0, header_size));
 
         Xmm header_data = c.newXmm();
-        c.movdqu(header_data, ptr(varsize_index_address, header_offset, 0));
-
-        Xmm header_mask = c.newXmm("header_masks");
-        // Erase 64 highest bits (LE) in each aux header value.
-        int64_t masks[4] = {-1, 0};
-        Mem masksMem = c.newConst(ConstPool::kScopeLocal, &masks, 16);
-        c.vmovdqu(header_mask, masksMem);
-        c.vpand(header_data, header_data, header_mask);
+        c.movd(header_data, header);
 
         return {header_data, data_type_t::i128, data_kind_t::kMemory};
     }
