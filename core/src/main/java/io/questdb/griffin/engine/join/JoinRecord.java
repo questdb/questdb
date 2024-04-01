@@ -224,20 +224,20 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public CharSequence getStrA(int col) {
-        if (col < split) {
-            return master.getStrA(col);
-        }
-        return slave.getStrA(col - split);
-    }
-
-    @Override
     public void getStr(int col, Utf16Sink utf16Sink) {
         if (col < split) {
             master.getStr(col, utf16Sink);
         } else {
             slave.getStr(col - split, utf16Sink);
         }
+    }
+
+    @Override
+    public CharSequence getStrA(int col) {
+        if (col < split) {
+            return master.getStrA(col);
+        }
+        return slave.getStrA(col - split);
     }
 
     @Override
@@ -308,6 +308,14 @@ public class JoinRecord implements Record {
             return master.getVarcharB(col);
         }
         return slave.getVarcharB(col - split);
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        if (col < split) {
+            return master.getVarcharSize(col);
+        }
+        return slave.getVarcharSize(col - split);
     }
 
     void of(Record master, Record slave) {
