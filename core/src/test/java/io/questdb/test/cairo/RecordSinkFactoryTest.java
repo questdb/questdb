@@ -530,6 +530,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             callCount++;
             return new Utf8String("abc");
         }
+
+        @Override
+        public int getVarcharSize(Record rec) {
+            throw new UnsupportedOperationException();
+        }
     }
 
     private static class TestRecord implements Record {
