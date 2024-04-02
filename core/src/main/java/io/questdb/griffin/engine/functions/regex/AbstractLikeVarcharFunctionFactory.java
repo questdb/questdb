@@ -35,10 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
@@ -171,8 +168,7 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                 patternWord |= (long) (pattern.byteAt(i) & 0xff) << (8 * i);
             }
             this.patternWord = patternWord;
-            // broadcast the first byte of the pattern to be used in search
-            this.searchWord = 0x101010101010101L * pattern.byteAt(0);
+            this.searchWord = SwarUtils.broadcast(pattern.byteAt(0));
             this.pattern = pattern;
         }
 
@@ -192,7 +188,7 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
 
             int i = 0;
             for (int n = size - MAX_SIZE + 1; i < n; i += 8) {
-                if (checkZeroByte(us.longAt(i) ^ searchWord) != 0) {
+                if (SwarUtils.checkZeroByte(us.longAt(i) ^ searchWord) != 0) {
                     // We've found a match for the first byte, slow down and check the full pattern.
                     for (int j = 0; j < 8; j++) {
                         if ((us.longAt(i + j) & patternMask) == patternWord) {
@@ -229,10 +225,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             sink.val('%');
             sink.val(pattern);
             sink.val('%');
-        }
-
-        private static long checkZeroByte(long w) {
-            return ((w - 0x0101010101010101L) & ~(w) & 0x8080808080808080L);
         }
     }
 

@@ -563,6 +563,27 @@ public class LikeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongPatternLikeVarcharNonAscii() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table x ( s varchar )");
+            compile("insert into x values ( 'фубар' ), ( 'фубарбаз' ), ( 'фубарфу' ), ( 'базбарфу фубарбаз' ), ( 'базбарфу фубарбаз базбарфу' ), ( null ) ");
+
+            assertLike("s\nфубар\nфубарбаз\nфубарфу\n", "select * from x where s like 'фубар%'", false);
+            assertLike("s\nфубарбаз\nбазбарфу фубарбаз\n", "select * from x where s like '%барбаз'", false);
+            assertLike("s\nфубар\nфубарбаз\nфубарфу\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%ф%'", false);
+            assertLike("s\nфубар\nфубарбаз\nфубарфу\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%фу%'", false);
+            assertLike("s\nфубар\nфубарбаз\nфубарфу\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%фуб%'", false);
+            assertLike("s\nфубар\nфубарбаз\nфубарфу\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%фуба%'", false);
+            assertLike("s\nфубар\nфубарбаз\nфубарфу\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%фубар%'", false);
+            assertLike("s\nфубарбаз\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%фубарба%'", false);
+            assertLike("s\nфубарбаз\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%фубарбаз%'", false);
+            assertLike("s\n", "select * from x where s like 'фуфуфу%'", false);
+            assertLike("s\n", "select * from x where s like '%фуфуфу'", false);
+            assertLike("s\n", "select * from x where s like '%фуфуфу%'", false);
+        });
+    }
+
+    @Test
     public void testNonConstantExpression() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
