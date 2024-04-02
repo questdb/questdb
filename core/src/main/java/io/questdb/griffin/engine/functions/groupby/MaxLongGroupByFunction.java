@@ -74,6 +74,17 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -93,12 +104,6 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-    }
-
-    @Override
     public void setLong(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
     }
@@ -106,11 +111,6 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

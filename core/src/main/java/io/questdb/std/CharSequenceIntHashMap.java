@@ -38,7 +38,7 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     }
 
     public CharSequenceIntHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5, NO_ENTRY_VALUE);
+        this(initialCapacity, 0.4, NO_ENTRY_VALUE);
     }
 
     public CharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {

@@ -868,7 +868,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         response.putAscii('{')
                 .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query != null ? query : "").putQuote().putAscii(',')
-                .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(message).putQuote().putAscii(',')
                 .putAsciiQuoted("position").putAscii(':').put(position)
                 .putAscii('}');
         response.sendChunk(true);

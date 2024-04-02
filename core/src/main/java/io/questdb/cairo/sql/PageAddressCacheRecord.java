@@ -39,15 +39,15 @@ import java.io.Closeable;
 public class PageAddressCacheRecord implements Record, Closeable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-    private final DirectString csviewA = new DirectString();
-    private final DirectString csviewB = new DirectString();
+    private final StableDirectString csviewA = new StableDirectString();
+    private final StableDirectString csviewB = new StableDirectString();
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
     private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
-    private final DirectUtf8String utf8viewA = new DirectUtf8String();
-    private final DirectUtf8String utf8viewB = new DirectUtf8String();
+    private final InlinedVarchar utf8viewA = new InlinedVarchar();
+    private final InlinedVarchar utf8viewB = new InlinedVarchar();
     private int frameIndex;
     private PageAddressCache pageAddressCache;
     private long rowIndex;
@@ -117,18 +117,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
             return NullMemoryMR.INSTANCE.getChar(0);
         }
         return Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
-    }
-
-    @Override
-    public DirectCharSequence getDirectStr(int columnIndex) {
-        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        if (dataPageAddress == 0) {
-            return NullMemoryMR.INSTANCE.getDirectStr(0);
-        }
-        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
-        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
-        final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
-        return getStrA(dataPageAddress, offset, size, csviewA);
     }
 
     @Override
@@ -423,7 +411,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Nullable
-    private Utf8Sequence getVarchar(int columnIndex, DirectUtf8String utf8view, Utf8SplitString utf8SplitView) {
+    private Utf8Sequence getVarchar(int columnIndex, InlinedVarchar utf8view, Utf8SplitString utf8SplitView) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         final long auxPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         if (auxPageAddress == 0) {

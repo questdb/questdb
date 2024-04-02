@@ -26,9 +26,10 @@ package org.questdb;
 
 import io.questdb.std.Chars;
 import io.questdb.std.Hash;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
+import io.questdb.std.Misc;
 import io.questdb.std.str.DirectString;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -43,11 +44,12 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class StringHashFunctionBenchmark {
 
-    private final DirectString charSequence = new DirectString();
-    private final DirectUtf8String utf8Sequence = new DirectUtf8String();
-    @Param({"7", "15", "31", "63"})
+    private final DirectString utf16String = new DirectString();
+    private final DirectUtf8String utf8String = new DirectUtf8String();
+    @Param({"7", "15", "31", "63", "1024"})
     private int len;
-    private long ptr;
+    private DirectUtf16Sink utf16Sink;
+    private DirectUtf8Sink utf8Sink;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -61,26 +63,29 @@ public class StringHashFunctionBenchmark {
 
     @Setup(Level.Iteration)
     public void setUp() {
-        ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-        charSequence.of(ptr, ptr + len);
-        utf8Sequence.of(ptr, ptr + len);
+        utf8Sink = new DirectUtf8Sink(len);
+        utf16Sink = new DirectUtf16Sink(2 * len);
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(ptr + i, (byte) 'a');
+            utf8Sink.put('a');
+            utf16Sink.put('a');
         }
+        utf8String.of(utf8Sink.ptr(), utf8Sink.ptr() + utf8Sink.size());
+        utf16String.of(utf16Sink.ptr(), utf16Sink.ptr() + utf16Sink.size());
     }
 
     @TearDown(Level.Iteration)
     public void tearDown() {
-        ptr = Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
+        utf8Sink = Misc.free(utf8Sink);
+        utf16Sink = Misc.free(utf16Sink);
     }
 
     @Benchmark
-    public long testHashMemDirectByteCharSequence() {
-        return Hash.hashMem32(utf8Sequence);
+    public long testHashUtf8() {
+        return Hash.hashUtf8(utf8String);
     }
 
     @Benchmark
-    public int testStandardDirectByteCharSequence() {
-        return Chars.hashCode(charSequence);
+    public int testStandardHashCharSequence() {
+        return Chars.hashCode(utf16String);
     }
 }
