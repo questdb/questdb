@@ -131,7 +131,9 @@ public class WriterPool extends AbstractPool {
      * @return cached TableWriter instance.
      */
     public TableWriter get(TableToken tableToken, @NotNull String lockReason) {
-        return getWriterEntry(tableToken, lockReason, null);
+        TableWriter w = getWriterEntry(tableToken, lockReason, null);
+        w.goActive();
+        return w;
     }
 
     /**
@@ -542,6 +544,7 @@ public class WriterPool extends AbstractPool {
             }
             // We can apply structure changes with ALTER TABLE and do UPDATE(s) before the writer returned to the pool
             e.writer.tick(true);
+            e.writer.goPassive();
         } catch (Throwable ex) {
             // We are here because of a systemic issues of some kind
             // one of the known issues is "disk is full" so we could not roll back properly.

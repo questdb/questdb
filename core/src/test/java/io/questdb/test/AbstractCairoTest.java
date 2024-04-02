@@ -1835,5 +1835,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         FACTORY_TAGS[MemoryTag.NATIVE_IMPORT] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_PARALLEL_IMPORT] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_REPL] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_INDEX_READER] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_WAL_WRITER] = false;
     }
 }

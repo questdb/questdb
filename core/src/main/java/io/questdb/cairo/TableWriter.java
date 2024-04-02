@@ -70,6 +70,7 @@ import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.FILES_RENAME_OK;
+import static io.questdb.std.Files.PAGE_SIZE;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
@@ -271,13 +272,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        if (tableToken.isSystem()) {
-            this.o3ColumnMemorySize = configuration.getSystemO3ColumnMemorySize();
-            this.dataAppendPageSize = configuration.getSystemDataAppendPageSize();
-        } else {
-            this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
-            this.dataAppendPageSize = configuration.getDataAppendPageSize();
-        }
         this.path = new Path().of(root).concat(tableToken);
         this.other = new Path().of(root).concat(tableToken);
         this.rootLen = path.size();
@@ -301,6 +295,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(rootLen);
             this.columnVersionWriter = openColumnVersionFile(configuration, path, rootLen, partitionBy != PartitionBy.NONE);
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
+
+            if (metadata.isWalEnabled()) {
+                // O3 columns will be allocated to the size of the transaction, not reason to over allocate.
+                this.o3ColumnMemorySize = (int) PAGE_SIZE;
+                if (tableToken.isSystem()) {
+                    this.dataAppendPageSize = configuration.getSystemDataAppendPageSize();
+                } else {
+                    this.dataAppendPageSize = configuration.getDataAppendPageSize();
+                }
+            } else {
+                if (tableToken.isSystem()) {
+                    this.o3ColumnMemorySize = configuration.getSystemO3ColumnMemorySize();
+                    this.dataAppendPageSize = configuration.getSystemDataAppendPageSize();
+                } else {
+                    this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
+                    this.dataAppendPageSize = configuration.getDataAppendPageSize();
+                }
+            }
+
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
             switch (todo) {
@@ -1478,6 +1491,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public WalTxnDetails getWalTnxDetails() {
         return walTxnDetails;
+    }
+
+    public void goActive() {
+
+    }
+
+    public void goPassive() {
+        Misc.freeObjListAndKeepObjects(o3MemColumns1);
+        Misc.freeObjListAndKeepObjects(o3MemColumns2);
     }
 
     public boolean hasO3() {
@@ -5796,7 +5818,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", append=").$(append)
                             .$(", pCount=").$(pCount)
                             .$(", flattenTimestamp=").$(flattenTimestamp)
-                            .$(", memUsed=").$(Unsafe.getMemUsed())
+                            .$(", memUsed=").$size(Unsafe.getMemUsed())
+                            .$(", rssMemUsed=").$size(Unsafe.getRssMemUsed())
                             .I$();
 
                     if (partitionIsReadOnly) {

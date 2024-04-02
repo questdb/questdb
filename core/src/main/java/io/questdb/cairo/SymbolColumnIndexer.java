@@ -44,7 +44,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     public SymbolColumnIndexer(CairoConfiguration configuration) {
         writer = new BitmapIndexWriter(configuration);
         bufferSize = 4096 * 1024;
-        buffer = Unsafe.malloc(bufferSize, MemoryTag.MMAP_INDEX_READER);
+        buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_INDEX_READER);
     }
 
     @Override
@@ -57,7 +57,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         releaseIndexWriter();
         if (buffer != 0) {
             fd = -1;
-            Unsafe.free(buffer, bufferSize, MemoryTag.MMAP_INDEX_READER);
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_INDEX_READER);
             buffer = 0;
         }
     }
