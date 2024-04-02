@@ -209,7 +209,8 @@ public class CopyWalSegmentUtils {
                     auxMemAddr,
                     startRowNumber,
                     startRowNumber + rowCount - 1, // inclusive
-                    newAuxMemAddr
+                    newAuxMemAddr,
+                    newAuxMemSize
             );
 
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 4, columnTypeDriver.getAuxVectorOffset(startRowNumber + 1));

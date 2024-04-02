@@ -214,10 +214,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     /**
      * Reads a UTF-8 value from a VARCHAR column.
      *
-     * @param rowNum the row number to read
+     * @param rowNum  the row number to read
      * @param dataMem base pointer of the data vector
-     * @param auxMem base pointer of the auxiliary vector
-     * @param ab whether to return the A or B flyweight
+     * @param auxMem  base pointer of the auxiliary vector
+     * @param ab      whether to return the A or B flyweight
      * @return a <code>Utf8Seqence</code> representing the value at <code>rowNum</code>
      */
     public static Utf8Sequence getValue(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
@@ -253,10 +253,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     /**
      * Reads a UTF-8 value from a VARCHAR column.
      *
-     * @param auxAddr base pointer of the auxiliary vector
-     * @param dataAddr base pointer of the data vector
-     * @param rowNum the row number to read
-     * @param utf8view flyweight for the inlined string
+     * @param auxAddr       base pointer of the auxiliary vector
+     * @param dataAddr      base pointer of the data vector
+     * @param rowNum        the row number to read
+     * @param utf8view      flyweight for the inlined string
      * @param utf8SplitView flyweight for the split string
      * @return utf8view or utf8SplitView loaded with the read value
      */
@@ -558,7 +558,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr) {
+    public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstAddrSize) {
+        // +1 since srcHi is inclusive
+        assert (srcHi - srcLo + 1) * VARCHAR_AUX_WIDTH_BYTES <= dstAddrSize;
         O3Utils.shiftCopyVarcharColumnAux(
                 shift,
                 srcAddr,

@@ -3524,7 +3524,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             o3srcAuxMem.addressOf(committedAuxOffset),
                             0,
                             copyRowCount - 1, // inclusive
-                            Math.abs(o3dstAuxAddr)
+                            Math.abs(o3dstAuxAddr),
+                            o3dstAuxSize
                     );
                 } finally {
                     mapAppendColumnBufferRelease(o3dstAuxAddr, o3dstAuxOffset, o3dstAuxSize);
@@ -3812,7 +3813,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long o3auxMemAppendOffset = o3auxMem.getAppendOffset();
 
                     // ensure memory is available
-                    o3auxMem.jumpTo(o3auxMemAppendOffset + columnTypeDriver.getAuxVectorOffset(transientRowsAdded));
+                    long offsetLimit = o3auxMemAppendOffset + columnTypeDriver.getAuxVectorOffset(transientRowsAdded);
+                    o3auxMem.jumpTo(offsetLimit);
                     long colAuxMemAddr = colAuxMem.map(colAuxMemOffset, colAuxMemRequiredSize);
                     boolean locallyMapped = colAuxMemAddr == 0;
 
@@ -3827,13 +3829,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     colDataOffset = columnTypeDriver.getDataVectorOffset(colAuxMemAddr + alignedExtraLen, 0);
+                    long dstAddr = o3auxMem.addressOf(o3auxMemAppendOffset) - columnTypeDriver.getMinAuxVectorSize();
+                    long dstAddrLimit = o3auxMem.addressOf(offsetLimit);
+                    long dstAddrSize = dstAddrLimit - dstAddr;
+
                     columnTypeDriver.shiftCopyAuxVector(
                             colDataOffset - o3dataOffset,
-                            // add one row to where we shift from
-                            colAuxMemAddr + alignedExtraLen + columnTypeDriver.getMinAuxVectorSize(),
+                            colAuxMemAddr + alignedExtraLen,
                             0,
                             transientRowsAdded - 1, // inclusive
-                            o3auxMem.addressOf(o3auxMemAppendOffset)
+                            dstAddr,
+                            dstAddrSize
                     );
 
                     if (locallyMapped) {
@@ -3949,16 +3955,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     // adjust append position of the index column to
                     // maintain n+1 number of entries
-                    dstAuxMem.jumpTo(columnTypeDriver.getAuxVectorSize(existingLagRows + copyToLagRowCount));
+                    long rowLimit = columnTypeDriver.getAuxVectorSize(existingLagRows + copyToLagRowCount);
+                    dstAuxMem.jumpTo(rowLimit);
 
                     // move count + 1 rows, to make sure index column remains n+1
                     // the data is copied back to start of the buffer, no need to set dataSize first
+                    long dstAddr = dstAuxMem.addressOf(columnTypeDriver.getAuxVectorOffset(existingLagRows));
+                    long dstAddrLimit = dstAuxMem.addressOf(rowLimit);
+                    long dstAddrSize = dstAddrLimit - dstAddr;
                     columnTypeDriver.shiftCopyAuxVector(
                             dataOffset - destOffset,
                             srcAuxMem.addressOf(columnTypeDriver.getAuxVectorOffset(columnDataRowOffset)),
                             0,
                             copyToLagRowCount - 1, // inclusive
-                            dstAuxMem.addressOf(columnTypeDriver.getAuxVectorOffset(existingLagRows))
+                            dstAddr,
+                            dstAddrSize
                     );
                     dstDataMem.jumpTo(destOffset + dataSize);
                     assert srcDataMem.size() >= dataSize;
