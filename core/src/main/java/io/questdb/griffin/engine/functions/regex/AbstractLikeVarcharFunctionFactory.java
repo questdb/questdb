@@ -188,15 +188,19 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
 
             int i = 0;
             for (int n = size - 7; i < n; i += 8) {
-                long check = SwarUtils.checkZeroByte(us.longAt(i) ^ searchWord);
-                if (check != 0) {
+                long zeroBytesWord = SwarUtils.checkZeroByte(us.longAt(i) ^ searchWord);
+                if (zeroBytesWord != 0) {
                     // We've found a match for the first byte, slow down and check the full pattern.
-                    for (int j = 0; j < 8; j++) {
+                    int numTrailingZeros = Long.numberOfTrailingZeros(zeroBytesWord);
+                    int foundIndex = numTrailingZeros / 8;
+                    while (foundIndex < 8) {
                         // Check if the pattern matches only for matched first bytes.
-                        if ((check & SwarUtils.ZERO_CHECK_BYTE) != 0 && (us.longAt(i + j) & patternMask) == patternWord) {
+                        if ((us.longAt(i + foundIndex) & patternMask) == patternWord) {
                             return true;
                         }
-                        check >>>= 8;
+                        zeroBytesWord >>= numTrailingZeros + 1;
+                        numTrailingZeros = Long.numberOfTrailingZeros(zeroBytesWord);
+                        foundIndex += 1 + numTrailingZeros / 8;
                     }
                 }
             }
