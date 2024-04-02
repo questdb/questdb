@@ -221,25 +221,29 @@ namespace questdb::avx2 {
         Gp varsize_index_address = c.newInt64("varsize_index_address");
         c.mov(varsize_index_address, ptr(varsize_indexes_ptr, 8 * column_idx, 8));
 
+        Gp header_offset_0 = c.newInt64("header_offset_0");
+        Gp header_offset_2 = c.newInt64("header_offset_2");
+
+        c.mov(header_offset_0, input_index);
         auto header_shift = type_shift(data_type_t::i128);
-        auto header_size = 1 << header_shift;
-        Gp header_offset = c.newInt64("header_offset");
-        c.mov(header_offset, input_index);
-        c.sal(header_offset, header_shift);
+        c.sal(header_offset_0, header_shift);
+        c.mov(header_offset_2, header_offset_0);
+        c.add(header_offset_2, 32);
 
-        Ymm header_data = c.newYmm();
-        c.vmovdqu(header_data, ymmword_ptr(varsize_index_address, header_offset, 0));
+        Ymm headers_0_1 = c.newYmm("headers_0_1");
+        Ymm headers_2_3 = c.newYmm("headers_2_3");
 
-        // Mask higher bits since they store the data vector offset
-        // and we don't need it in null checks.
-        Ymm header_masks = c.newYmm("header_masks");
-        // Erase 64 highest bits (LE) in each aux header value.
-        int64_t masks[4] = {-1, 0, -1, 0};
-        Mem masksMem = c.newConst(ConstPool::kScopeLocal, &masks, 32);
-        c.vmovdqu(header_masks, masksMem);
-        c.vpand(header_data, header_data, header_masks);
+        // Load 4 headers into two YMMs.
+        c.vmovdqu(headers_0_1, ymmword_ptr(varsize_index_address, header_offset_0, 0));
+        c.vmovdqu(headers_2_3, ymmword_ptr(varsize_index_address, header_offset_2, 0));
 
-        return {header_data, data_type_t::i128, data_kind_t::kMemory};
+        // Permute the first i64 of each header to be in the first YMM lane
+        // and combine them into single YMM.
+        c.vpermq(headers_0_1, headers_0_1, 0b00001000);
+        c.vpermq(headers_2_3, headers_2_3, 0b00001000);
+        c.vinserti128(headers_0_1, headers_0_1, headers_2_3.xmm(), 1);
+
+        return {headers_0_1, data_type_t::i64, data_kind_t::kMemory};
     }
 
     jit_value_t

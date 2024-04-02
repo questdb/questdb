@@ -92,19 +92,15 @@ namespace questdb::x86 {
         Gp varsize_index_address = c.newInt64("varsize_index_address");
         c.mov(varsize_index_address, ptr(varsize_indexes_ptr, 8 * column_idx, 8));
 
-        auto header_shift = type_shift(data_type_t::i128);
-        auto header_size = 1 << header_shift;
         Gp header_offset = c.newInt64("header_offset");
         c.mov(header_offset, input_index);
+        auto header_shift = type_shift(data_type_t::i128);
         c.sal(header_offset, header_shift);
 
-        Gp header = c.newInt32("header");
+        Gp header = c.newInt64("header");
         c.mov(header, ptr(varsize_index_address, header_offset, 0));
 
-        Xmm header_data = c.newXmm();
-        c.movd(header_data, header);
-
-        return {header_data, data_type_t::i128, data_kind_t::kMemory};
+        return {header, data_type_t::i64, data_kind_t::kMemory};
     }
 
     jit_value_t read_mem(
@@ -349,9 +345,9 @@ namespace questdb::x86 {
                 return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
             case data_type_t::binary_header:
+            case data_type_t::varchar_header:
                 return {int64_eq(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
             case data_type_t::i128:
-            case data_type_t::varchar_header:
                 return {int128_eq(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
             case data_type_t::f32:
                 return {float_eq_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk};
@@ -373,9 +369,9 @@ namespace questdb::x86 {
                 return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
             case data_type_t::binary_header:
+            case data_type_t::varchar_header:
                 return {int64_ne(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
             case data_type_t::i128:
-            case data_type_t::varchar_header:
                 return {int128_ne(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
             case data_type_t::f32:
                 return {float_ne_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk};
