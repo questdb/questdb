@@ -33,9 +33,9 @@ public class PageAddressCache implements Mutable {
     private final long cacheSizeThreshold;
     // Index remapping for variable size columns.
     private final IntList varSizeColumnIndexes = new IntList();
-    private int columnCount;
     // Index page addresses and page sizes are stored only for variable length columns.
-    private LongList indexPageAddresses = new LongList();
+    private LongList auxPageAddresses = new LongList();
+    private int columnCount;
     private LongList pageAddresses = new LongList();
     private LongList pageRowIdOffsets = new LongList();
     private LongList pageSizes = new LongList();
@@ -53,7 +53,7 @@ public class PageAddressCache implements Mutable {
             pageAddresses.add(frame.getPageAddress(columnIndex));
             int varSizeColumnIndex = varSizeColumnIndexes.getQuick(columnIndex);
             if (varSizeColumnIndex > -1) {
-                indexPageAddresses.add(frame.getIndexPageAddress(columnIndex));
+                auxPageAddresses.add(frame.getIndexPageAddress(columnIndex));
                 pageSizes.add(frame.getPageSize(columnIndex));
             }
         }
@@ -65,26 +65,26 @@ public class PageAddressCache implements Mutable {
         varSizeColumnIndexes.clear();
         if (pageAddresses.size() < cacheSizeThreshold) {
             pageAddresses.clear();
-            indexPageAddresses.clear();
+            auxPageAddresses.clear();
             pageSizes.clear();
             pageRowIdOffsets.clear();
         } else {
             pageAddresses = new LongList();
-            indexPageAddresses = new LongList();
+            auxPageAddresses = new LongList();
             pageSizes = new LongList();
             pageRowIdOffsets = new LongList();
         }
     }
 
-    public int getColumnCount() {
-        return columnCount;
-    }
-
-    public long getIndexPageAddress(int frameIndex, int columnIndex) {
-        assert indexPageAddresses.size() >= varSizeColumnCount * (frameIndex + 1);
+    public long getAuxPageAddress(int frameIndex, int columnIndex) {
+        assert auxPageAddresses.size() >= varSizeColumnCount * (frameIndex + 1);
         int varSizeColumnIndex = varSizeColumnIndexes.getQuick(columnIndex);
         assert varSizeColumnIndex > -1;
-        return indexPageAddresses.getQuick(varSizeColumnCount * frameIndex + varSizeColumnIndex);
+        return auxPageAddresses.getQuick(varSizeColumnCount * frameIndex + varSizeColumnIndex);
+    }
+
+    public int getColumnCount() {
+        return columnCount;
     }
 
     public long getPageAddress(int frameIndex, int columnIndex) {
@@ -106,7 +106,7 @@ public class PageAddressCache implements Mutable {
             if (pageAddresses.getQuick(columnCount * frameIndex + columnIndex) == 0
                     // VARCHAR column that contains short strings will have zero data vector,
                     // so for such columns we also need to check that the aux (index) vector is zero.
-                    && (varSizeColumnIndex == -1 || indexPageAddresses.getQuick(varSizeColumnCount * frameIndex + varSizeColumnIndex) == 0)) {
+                    && (varSizeColumnIndex == -1 || auxPageAddresses.getQuick(varSizeColumnCount * frameIndex + varSizeColumnIndex) == 0)) {
                 return true;
             }
         }

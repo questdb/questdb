@@ -93,7 +93,7 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::x86::emit_code(c, istream, size, values, null_check, cols_ptr, varsize_indexes_ptr, vars_ptr, input_index);
+            questdb::x86::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index);
 
             auto mask = values.pop();
 
@@ -161,7 +161,7 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::avx2::emit_code(c, istream, size, values, null_check, cols_ptr, varsize_indexes_ptr, vars_ptr, input_index);
+            questdb::avx2::emit_code(c, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr, input_index);
 
             auto mask = values.pop();
 
@@ -193,15 +193,15 @@ struct Function {
     void begin_fn() {
         c.addFunc(FuncSignatureT<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
             CallConv::kIdHost));
-        cols_ptr = c.newIntPtr("cols_ptr");
-        cols_size = c.newInt64("cols_size");
+        data_ptr = c.newIntPtr("data_ptr");
+        data_size = c.newInt64("data_size");
 
-        c.setArg(0, cols_ptr);
-        c.setArg(1, cols_size);
+        c.setArg(0, data_ptr);
+        c.setArg(1, data_size);
 
-        varsize_indexes_ptr = c.newIntPtr("varsize_indexes_ptr");
+        varsize_aux_ptr = c.newIntPtr("varsize_aux_ptr");
 
-        c.setArg(2, varsize_indexes_ptr);
+        c.setArg(2, varsize_aux_ptr);
 
         vars_ptr = c.newIntPtr("vars_ptr");
         vars_size = c.newInt64("vars_size");
@@ -235,9 +235,9 @@ struct Function {
     ZoneAllocator allocator;
     ZoneStack<jit_value_t> values;
 
-    x86::Gp cols_ptr;
-    x86::Gp cols_size;
-    x86::Gp varsize_indexes_ptr;
+    x86::Gp data_ptr;
+    x86::Gp data_size;
+    x86::Gp varsize_aux_ptr;
     x86::Gp vars_ptr;
     x86::Gp vars_size;
     x86::Gp rows_ptr;

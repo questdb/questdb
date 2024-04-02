@@ -47,7 +47,7 @@ public class PageFrameReduceTask implements Closeable {
     private final StringSink errorMsg = new StringSink();
     private final DirectLongList filteredRows; // Used for TYPE_FILTER.
     private final long pageFrameQueueCapacity;
-    private final DirectLongList varSizeIndexes;
+    private final DirectLongList varSizeAux;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId;
@@ -57,7 +57,7 @@ public class PageFrameReduceTask implements Closeable {
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
         this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
         this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
-        this.varSizeIndexes = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+        this.varSizeAux = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
         this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
     }
 
@@ -65,10 +65,13 @@ public class PageFrameReduceTask implements Closeable {
     public void close() {
         Misc.free(filteredRows);
         Misc.free(columns);
-        Misc.free(varSizeIndexes);
+        Misc.free(varSizeAux);
     }
 
-    public DirectLongList getColumns() {
+    /**
+     * Returns list of pointers to data vectors.
+     */
+    public DirectLongList getData() {
         return columns;
     }
 
@@ -109,8 +112,11 @@ public class PageFrameReduceTask implements Closeable {
         return type;
     }
 
-    public DirectLongList getVarSizeIndexes() {
-        return varSizeIndexes;
+    /**
+     * Returns list of pointers to aux vectors (var-size columns only).
+     */
+    public DirectLongList getVarSizeAux() {
+        return varSizeAux;
     }
 
     public boolean hasError() {
@@ -144,14 +150,14 @@ public class PageFrameReduceTask implements Closeable {
             columns.add(pageAddressCache.getPageAddress(getFrameIndex(), columnIndex));
         }
 
-        if (varSizeIndexes.getCapacity() < columnCount) {
-            varSizeIndexes.setCapacity(columnCount);
+        if (varSizeAux.getCapacity() < columnCount) {
+            varSizeAux.setCapacity(columnCount);
         }
-        varSizeIndexes.clear();
+        varSizeAux.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            varSizeIndexes.add(
+            varSizeAux.add(
                     pageAddressCache.isVarSizeColumn(columnIndex)
-                            ? pageAddressCache.getIndexPageAddress(getFrameIndex(), columnIndex)
+                            ? pageAddressCache.getAuxPageAddress(getFrameIndex(), columnIndex)
                             : 0
             );
         }
@@ -164,7 +170,7 @@ public class PageFrameReduceTask implements Closeable {
     public void resetCapacities() {
         filteredRows.resetCapacity();
         columns.resetCapacity();
-        varSizeIndexes.resetCapacity();
+        varSizeAux.resetCapacity();
     }
 
     public void setErrorMsg(Throwable th) {

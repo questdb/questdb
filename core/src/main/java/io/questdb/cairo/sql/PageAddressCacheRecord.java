@@ -75,7 +75,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (dataPageAddress == 0) {
             return NullMemoryMR.INSTANCE.getBin(0);
         }
-        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
+        final long indexPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         final long pageLimit = pageAddressCache.getPageSize(frameIndex, columnIndex);
         return getBin(dataPageAddress, offset, pageLimit, bsview);
@@ -87,7 +87,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (dataPageAddress == 0) {
             return NullMemoryMR.INSTANCE.getBinLen(0);
         }
-        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
+        final long indexPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         return Unsafe.getUnsafe().getLong(dataPageAddress + offset);
     }
@@ -260,7 +260,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (dataPageAddress == 0) {
             return NullMemoryMR.INSTANCE.getStrA(0);
         }
-        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
+        final long indexPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
         return getStrA(dataPageAddress, offset, size, csviewA);
@@ -272,7 +272,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (dataPageAddress == 0) {
             return NullMemoryMR.INSTANCE.getStrB(0);
         }
-        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
+        final long indexPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
         return getStrA(dataPageAddress, offset, size, csviewB);
@@ -284,7 +284,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (dataPageAddress == 0) {
             return NullMemoryMR.INSTANCE.getStrLen(0);
         }
-        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
+        final long indexPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
         return Unsafe.getUnsafe().getInt(dataPageAddress + offset);
     }
@@ -323,7 +323,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
 
     @Override
     public int getVarcharSize(int columnIndex) {
-        final long auxPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
+        final long auxPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
         if (auxPageAddress == 0) {
             // Column top.
             return TableUtils.NULL_LEN;
@@ -422,7 +422,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
 
     @Nullable
     private Utf8Sequence getVarchar(int columnIndex, InlinedVarchar utf8view, Utf8SplitString utf8SplitView) {
-        final long auxPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
+        final long auxPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
         if (auxPageAddress == 0) {
             // Column top.
             return null;
