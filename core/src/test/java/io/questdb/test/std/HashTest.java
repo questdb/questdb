@@ -57,7 +57,8 @@ public class HashTest {
                 for (int i = 0; i < bytes.length; i++) {
                     Unsafe.getUnsafe().putByte(address + i, bytes[i]);
                 }
-                hashes.add(Hash.hashMem32(address, bytes.length));
+                // Use only 32 LSBs for the unique value check since that's where we want entropy.
+                hashes.add((int) Hash.hashMem64(address, bytes.length));
             }
             // 466189 is the number of unique values of String#hashCode() on the same corpus.
             Assert.assertTrue("hash function distribution on English words corpus dropped", hashes.size() >= 466189);
@@ -76,7 +77,8 @@ public class HashTest {
         try {
             for (int i = 0; i < 100000; i++) {
                 rnd.nextChars(address, len / 2);
-                hashes.add(Hash.hashMem32(address, len));
+                // Use only 32 LSBs for the unique value check since that's where we want entropy.
+                hashes.add((int) Hash.hashMem64(address, len));
             }
             Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
         } finally {

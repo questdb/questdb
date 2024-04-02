@@ -439,9 +439,9 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public int keyHashCode() {
+    public long keyHashCode() {
         int keySize = Unsafe.getUnsafe().getInt(startAddress);
-        return Hash.hashMem32(startAddress + Integer.BYTES, keySize);
+        return Hash.hashMem64(startAddress + Integer.BYTES, keySize);
     }
 
     @Override

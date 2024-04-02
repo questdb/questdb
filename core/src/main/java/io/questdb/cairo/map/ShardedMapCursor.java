@@ -251,13 +251,13 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public CharSequence getStrA(int columnIndex) {
-            return baseRecord.getStrA(columnIndex);
+        public void getStr(int columnIndex, Utf16Sink utf16Sink) {
+            baseRecord.getStr(columnIndex, utf16Sink);
         }
 
         @Override
-        public void getStr(int columnIndex, Utf16Sink utf16Sink) {
-            baseRecord.getStr(columnIndex, utf16Sink);
+        public CharSequence getStrA(int columnIndex) {
+            return baseRecord.getStrA(columnIndex);
         }
 
         @Override
@@ -301,7 +301,7 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public int keyHashCode() {
+        public long keyHashCode() {
             return baseRecord.keyHashCode();
         }
 
