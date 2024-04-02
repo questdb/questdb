@@ -37,6 +37,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
 
     @Override
+    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
+        auxMem.putLong(dataMem.putNullStr());
+    }
+
+    @Override
     public long auxRowsToBytes(long rowCount) {
         return rowCount << LEGACY_VAR_SIZE_AUX_SHL;
     }
@@ -119,14 +124,12 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
-        long result = Unsafe.getUnsafe().getLong(auxMemAddr + (row << LEGACY_VAR_SIZE_AUX_SHL));
-
-        // It's tempting to assert as the line bellow.
+        // It's tempting to assert the result.
         //        assert (row == 0 && result == 0) || result > 0;
         // However, we can't do that, because the partition attach/detach mechanism has to be able to gracefully
         // recover from attempts to attach damaged partition data. Throwing AssertError makes it impossible,
         // unless we want to catch AssertError in the partition attach code.
-        return result;
+        return Unsafe.getUnsafe().getLong(auxMemAddr + (row << LEGACY_VAR_SIZE_AUX_SHL));
     }
 
     @Override
@@ -287,7 +290,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void setColumnRefs(long address, long initialOffset, long count) {
-        Vect.setVarColumnRefs32Bit(address, initialOffset, count);
+        Vect.setVarColumnRefs32Bit(address, initialOffset, count + 1);
     }
 
     @Override
@@ -304,11 +307,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long dstAddr
     ) {
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi + 1, dstAddr);
-    }
-
-    @Override
-    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
-        auxMem.putLong(dataMem.putNullStr());
     }
 }
 
