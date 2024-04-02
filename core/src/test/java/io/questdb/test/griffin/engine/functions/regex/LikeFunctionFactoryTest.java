@@ -548,9 +548,11 @@ public class LikeFunctionFactoryTest extends AbstractCairoTest {
             compile("create table x ( s varchar )");
             compile("insert into x values ( 'foobar' ), ( 'foobarbaz' ), ( 'foobarfoo' ), ( 'bazbarfoo foobarbaz' ), ( 'bazbarfoo foobarbaz bazbarfoo' ), ( null ) ");
 
+            assertLike("s\n", "select * from x where s like '%yyy%'", false);
             assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\n", "select * from x where s like 'foobar%'", false);
             assertLike("s\nfoobarbaz\nbazbarfoo foobarbaz\n", "select * from x where s like '%barbaz'", false);
             assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%f%'", false);
+            assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%o%'", false);
             assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%foo%'", false);
             assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%foobar%'", false);
             assertLike("s\nfoobarbaz\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%foobarb%'", false);

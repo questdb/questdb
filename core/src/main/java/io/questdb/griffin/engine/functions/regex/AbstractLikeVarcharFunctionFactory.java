@@ -151,6 +151,7 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
      */
     private static class ConstContainsSwarVarcharFunction extends BooleanFunction implements UnaryFunction {
         private static final int MAX_SIZE = Long.BYTES;
+        private static final long ZERO_CHECK_MASK = SwarUtils.checkZeroByte(0);
         private final Utf8Sequence pattern; // only used in toPlan
         private final long patternMask;
         private final int patternSize;
@@ -187,10 +188,15 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             int size = us.size();
 
             int i = 0;
-            for (int n = size - MAX_SIZE + 1; i < n; i += 8) {
-                if (SwarUtils.checkZeroByte(us.longAt(i) ^ searchWord) != 0) {
+            for (int n = size - 7; i < n; i += 8) {
+                long check = SwarUtils.checkZeroByte(us.longAt(i) ^ searchWord);
+                if (check != 0) {
                     // We've found a match for the first byte, slow down and check the full pattern.
-                    for (int j = 0; j < 8; j++) {
+
+                    // Find the lowest 0x80 byte in the check result and calculate its index.
+                    // Such byte stands for a search match, so we start the pattern comparison with it.
+                    int start = (Long.numberOfTrailingZeros(check & ZERO_CHECK_MASK) - 7) / 8;
+                    for (int j = start; j < 8; j++) {
                         if ((us.longAt(i + j) & patternMask) == patternWord) {
                             return true;
                         }
