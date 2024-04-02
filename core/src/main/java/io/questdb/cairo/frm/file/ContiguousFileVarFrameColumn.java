@@ -201,7 +201,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             TableUtils.allocateDiskSpaceToPage(ff, auxFd, srcAuxOffset + srcAuxSize);
             long targetAuxMemAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, srcAuxOffset, srcAuxSize, true, MEMORY_TAG);
             try {
-                columnTypeDriver.setColumnRefs(
+                columnTypeDriver.setPartAuxVectorNull(
                         targetAuxMemAddr,
                         targetDataOffset,
                         sourceColumnTop

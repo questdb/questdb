@@ -336,7 +336,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // null strings we just added
                     // Call to o3setColumnRefs must be after o3shiftCopyAuxVector
                     // because data first have to be shifted before overwritten
-                    columnTypeDriver.setColumnRefs(srcAuxAddr + oldAuxSize, 0, srcDataTop);
+                    columnTypeDriver.setPartAuxVectorNull(srcAuxAddr + oldAuxSize, 0, srcDataTop);
                     srcDataTop = 0;
                     srcDataFixOffset = oldAuxSize;
                 } else {

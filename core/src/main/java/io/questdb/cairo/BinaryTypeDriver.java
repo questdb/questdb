@@ -30,6 +30,11 @@ import io.questdb.std.Vect;
 public class BinaryTypeDriver extends StringTypeDriver {
     public static final BinaryTypeDriver INSTANCE = new BinaryTypeDriver();
 
+    @Override
+    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
+        auxMem.putLong(dataMem.putNullBin());
+    }
+
     public long getDataVectorMinEntrySize() {
         return Long.BYTES;
     }
@@ -60,17 +65,17 @@ public class BinaryTypeDriver extends StringTypeDriver {
     }
 
     @Override
-    public void setColumnRefs(long address, long initialOffset, long count) {
-        Vect.setVarColumnRefs64Bit(address, initialOffset, count);
-    }
-
-    @Override
     public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
         Vect.memset(dataMemAddr, rowCount * Long.BYTES, -1);
     }
 
     @Override
-    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
-        auxMem.putLong(dataMem.putNullBin());
+    public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
+        Vect.setVarColumnRefs64Bit(auxMemAddr, 0, rowCount + 1);
+    }
+
+    @Override
+    public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
+        Vect.setVarColumnRefs64Bit(auxMemAddr, initialOffset, columnTop);
     }
 }

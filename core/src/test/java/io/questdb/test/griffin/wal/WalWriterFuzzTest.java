@@ -153,6 +153,15 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testWalMetadataChangeHeavyCrashRepro() throws Exception {
+        Rnd rnd = fuzzer.generateRandom(LOG, 605244862282L, 1711936717971L);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01, 0.0);
+        setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
+        setFuzzProperties(rnd);
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testWalSmallWalFdReuse() throws Exception {
         Rnd rnd = generateRandom(LOG);
         fuzzer.setFuzzCounts(false, 100_000, 50, 20, 10, 20, 0, 5, 2);
