@@ -10,7 +10,8 @@
     "i18n/README.zh-cn.md",
     "i18n/README.zh-hk.md",
     "i18n/README.tr-tr.md",
-    "i18n/README.hn-in.md"
+    "i18n/README.hn-in.md",
+    "i18n/README.vi-vn.md"
   ],
   "imageSize": 100,
   "commit": false,
@@ -1077,6 +1078,15 @@
       "name": "Sagnik Sahoo",
       "avatar_url": "https://avatars.githubusercontent.com/u/70798495?v=4",
       "profile": "https://github.com/heysagnik",
+      "contributions": [
+        "doc"
+      ]
+    },
+    {
+      "login": "hoangsvit",
+      "name": "David Nguyen",
+      "avatar_url": "https://avatars.githubusercontent.com/u/11882322?v=4",
+      "profile": "https://github.com/hoangsvit",
       "contributions": [
         "doc"
       ]

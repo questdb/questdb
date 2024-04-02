@@ -37,6 +37,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
 
     @Override
+    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
+        auxMem.putLong(dataMem.putNullStr());
+    }
+
+    @Override
     public long auxRowsToBytes(long rowCount) {
         return rowCount << LEGACY_VAR_SIZE_AUX_SHL;
     }
@@ -119,14 +124,12 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
-        long result = Unsafe.getUnsafe().getLong(auxMemAddr + (row << LEGACY_VAR_SIZE_AUX_SHL));
-
-        // It's tempting to assert as the line bellow.
+        // It's tempting to assert the result.
         //        assert (row == 0 && result == 0) || result > 0;
         // However, we can't do that, because the partition attach/detach mechanism has to be able to gracefully
         // recover from attempts to attach damaged partition data. Throwing AssertError makes it impossible,
         // unless we want to catch AssertError in the partition attach code.
-        return result;
+        return Unsafe.getUnsafe().getLong(auxMemAddr + (row << LEGACY_VAR_SIZE_AUX_SHL));
     }
 
     @Override
@@ -286,13 +289,18 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void setColumnRefs(long address, long initialOffset, long count) {
-        Vect.setVarColumnRefs32Bit(address, initialOffset, count);
+    public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
+        Vect.memset(dataMemAddr, rowCount * Integer.BYTES, -1);
     }
 
     @Override
-    public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
-        Vect.memset(dataMemAddr, rowCount * Integer.BYTES, -1);
+    public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
+        Vect.setVarColumnRefs32Bit(auxMemAddr, 0, rowCount + 1);
+    }
+
+    @Override
+    public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
+        Vect.setVarColumnRefs32Bit(auxMemAddr, initialOffset, columnTop);
     }
 
     @Override
@@ -301,14 +309,16 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long src,
             long srcLo,
             long srcHi,
-            long dstAddr
-    ) {
-        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi + 1, dstAddr);
-    }
+            long dstAddr,
+            long dstAddrSize
 
-    @Override
-    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
-        auxMem.putLong(dataMem.putNullStr());
+    ) {
+        assert (srcHi - srcLo + 2) * 8 <= dstAddrSize;
+        // +2 because
+        // 1. srcHi is inclusive
+        // 2. we copy 1 extra entry due to N+1 string aux vector structure
+
+        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi + 1, dstAddr);
     }
 }
 

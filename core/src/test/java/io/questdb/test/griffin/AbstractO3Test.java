@@ -55,6 +55,7 @@ public class AbstractO3Test extends AbstractTest {
     protected static final StringSink sink2 = new StringSink();
     protected static int commitMode = CommitMode.NOSYNC;
     protected static int dataAppendPageSize = -1;
+    protected static int o3ColumnMemorySize = -1;
     protected static boolean mixedIOEnabled;
     protected static boolean mixedIOEnabledFFDefault;
     protected static int o3MemMaxPages = -1;
@@ -93,6 +94,7 @@ public class AbstractO3Test extends AbstractTest {
         commitMode = CommitMode.NOSYNC;
         mixedIOEnabled = mixedIOEnabledFFDefault;
         dataAppendPageSize = -1;
+        o3ColumnMemorySize = -1;
         o3MemMaxPages = -1;
         partitionO3SplitThreshold = -1;
         super.tearDown();
@@ -312,6 +314,9 @@ public class AbstractO3Test extends AbstractTest {
 
                     @Override
                     public int getO3ColumnMemorySize() {
+                        if (o3ColumnMemorySize != -1) {
+                            return o3ColumnMemorySize;
+                        }
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
 
@@ -363,6 +368,9 @@ public class AbstractO3Test extends AbstractTest {
 
                     @Override
                     public int getO3ColumnMemorySize() {
+                        if (o3ColumnMemorySize != -1) {
+                            return o3ColumnMemorySize;
+                        }
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
 
