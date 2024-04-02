@@ -225,7 +225,6 @@ public final class TableUtils {
 
     public static void clearThreadLocals() {
         Path.clearThreadLocals();
-        TableTransactionLogV2.clearThreadLocals();
     }
 
     public static int compressColumnCount(RecordMetadata metadata) {
