@@ -1109,6 +1109,8 @@ public class O3Test extends AbstractO3Test {
 
                         // 1970-01-01 is older than the previous batch -> we switch to O3 and starts writing into O3 mem
                         for (int i = 0; i < half - 1; i++) {
+                            // why 'half - 1'? String uses the n+1 storage model. So 'half' + 'half-1' should fit precisely
+                            // into a single 03 page!
                             TableWriter.Row row = writer.newRow(i);
                             row.putStr(0, "aa");
                             row.append();
@@ -1116,7 +1118,7 @@ public class O3Test extends AbstractO3Test {
 
                         // Let's commit everything at once!
                         // This will trigger O3 commit and copies data from column memory to O3 memory so they can be sorted.
-                        // If it tries to copy beyond the allocated memory O3 then OS will throw SEGFAULT
+                        // If it tries to copy to an area beyond the allocated O3 memory then OS will throw SEGFAULT
                         writer.commit();
                     }
 
