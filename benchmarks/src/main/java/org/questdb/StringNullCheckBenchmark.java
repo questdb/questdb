@@ -94,12 +94,8 @@ public class StringNullCheckBenchmark {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 compiler.compile("drop table if exists x", sqlExecutionContext);
                 compiler.compile("create table x as (select" +
-                        (a_nullFreq != 0
-                                ? " rnd_str(100, 70, 140, " + a_nullFreq + ") string_value,"
-                                : " rnd_str('', 'a', 'aa') string_value,") +
-                        (a_nullFreq != 0
-                                ? " rnd_varchar(70, 140, " + a_nullFreq + ") varchar_value,"
-                                : " rnd_varchar('', 'a', 'aa') varchar_value,") +
+                        " rnd_str(70, 140, " + a_nullFreq + ") string_value," +
+                        " rnd_varchar(70, 140, " + a_nullFreq + ") varchar_value," +
                         " rnd_long(1, 10, 0) long_value1," +
                         " rnd_long(1, 10, 0) long_value2," +
                         " timestamp_sequence(to_timestamp('2024-02-04', 'yyyy-MM-dd'), 100000L) ts" +
