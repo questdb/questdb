@@ -321,12 +321,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // we need to shift copy the original column so that new block points at strings "below" the
                     // nulls we created above
+                    long dstAddr = srcAuxAddr + wouldBeAuxSize;
+                    long dstAddrSize = newAuxSize - wouldBeAuxSize;
                     columnTypeDriver.shiftCopyAuxVector(
                             -reservedBytesForColTopNulls,
                             srcAuxAddr,
                             0,
                             auxRowCount - 1, // inclusive
-                            srcAuxAddr + wouldBeAuxSize
+                            dstAddr,
+                            dstAddrSize
                     );
 
                     // now set the "empty" bit of fixed size column with references to those

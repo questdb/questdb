@@ -599,14 +599,19 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             long srcDataAddr = srcDataMem.addressOf(dataOffsetLo);
             long copyToOffset = dstDataMem.getAppendOffset();
             dstDataMem.putBlockOfBytes(srcDataAddr, srcDataSize);
-            dstFixMem.extend(columnTypeDriver.getAuxVectorSize(rowHi));
+            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(rowHi));
+            long dstAddrLimit = dstFixMem.getAppendAddress();
             dstFixMem.jumpTo(columnTypeDriver.getAuxVectorOffset(rowLo));
+            long dstAddr = dstFixMem.getAppendAddress();
+            long dstAddrSize = dstAddrLimit - dstAddr;
+
             columnTypeDriver.shiftCopyAuxVector(
                     dataOffsetLo - copyToOffset,
                     srcFixMem.addressOf(columnTypeDriver.getAuxVectorOffset(rowLo)),
                     0,
                     rowHi - rowLo - 1, // inclusive
-                    dstFixMem.getAppendAddress()
+                    dstAddr,
+                    dstAddrSize
             );
             dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(rowHi));
         } else {

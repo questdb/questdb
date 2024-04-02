@@ -146,7 +146,8 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                             srcAuxMemAddr,
                             0,
                             sourceHi - 1, // inclusive
-                            dstAuxAddr
+                            dstAuxAddr,
+                            srcAuxMemSize
                     );
 
                     if (commitMode != CommitMode.NOSYNC) {
