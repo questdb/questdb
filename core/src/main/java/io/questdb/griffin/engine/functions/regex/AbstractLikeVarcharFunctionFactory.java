@@ -192,7 +192,7 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                 if (zeroBytesWord != 0) {
                     // We've found a match for the first byte, slow down and check the full pattern.
                     int numTrailingZeros = Long.numberOfTrailingZeros(zeroBytesWord);
-                    int foundIndex = numTrailingZeros / 8;
+                    int foundIndex = numTrailingZeros >>> 3;
                     while (foundIndex < 8) {
                         // Check if the pattern matches only for matched first bytes.
                         if ((us.longAt(i + foundIndex) & patternMask) == patternWord) {
@@ -200,7 +200,7 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                         }
                         zeroBytesWord >>= numTrailingZeros + 1;
                         numTrailingZeros = Long.numberOfTrailingZeros(zeroBytesWord);
-                        foundIndex += 1 + numTrailingZeros / 8;
+                        foundIndex += 1 + (numTrailingZeros >>> 3);
                     }
                 }
             }
