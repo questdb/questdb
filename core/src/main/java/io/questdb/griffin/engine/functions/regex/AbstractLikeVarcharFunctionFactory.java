@@ -158,6 +158,7 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         private final long patternMask;
         private final int patternSize;
         private final long patternWord;
+        private final long searchWord;
         private final Function value;
 
         public ConstContainsSwarVarcharFunction(Function value, Utf8Sequence pattern) {
@@ -170,6 +171,8 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                 patternWord |= (long) (pattern.byteAt(i) & 0xff) << (8 * i);
             }
             this.patternWord = patternWord;
+            // broadcast the first byte of the pattern to be used in search
+            this.searchWord = 0x101010101010101L * pattern.byteAt(0);
             this.pattern = pattern;
         }
 
@@ -188,9 +191,14 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             int size = us.size();
 
             int i = 0;
-            for (int n = size - MAX_SIZE + 1; i < n; i++) {
-                if ((us.longAt(i) & patternMask) == patternWord) {
-                    return true;
+            for (int n = size - MAX_SIZE + 1; i < n; i += 8) {
+                if (checkZeroByte(us.longAt(i) ^ searchWord) != 0) {
+                    // We've found a match for the first byte, slow down and check the full pattern.
+                    for (int j = 0; j < 8; j++) {
+                        if ((us.longAt(i + j) & patternMask) == patternWord) {
+                            return true;
+                        }
+                    }
                 }
             }
 
@@ -221,6 +229,10 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             sink.val('%');
             sink.val(pattern);
             sink.val('%');
+        }
+
+        private static long checkZeroByte(long w) {
+            return ((w - 0x0101010101010101L) & ~(w) & 0x8080808080808080L);
         }
     }
 
