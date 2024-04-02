@@ -289,13 +289,18 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void setColumnRefs(long address, long initialOffset, long count) {
-        Vect.setVarColumnRefs32Bit(address, initialOffset, count + 1);
+    public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
+        Vect.memset(dataMemAddr, rowCount * Integer.BYTES, -1);
     }
 
     @Override
-    public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
-        Vect.memset(dataMemAddr, rowCount * Integer.BYTES, -1);
+    public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
+        Vect.setVarColumnRefs32Bit(auxMemAddr, 0, rowCount + 1);
+    }
+
+    @Override
+    public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
+        Vect.setVarColumnRefs32Bit(auxMemAddr, initialOffset, columnTop);
     }
 
     @Override

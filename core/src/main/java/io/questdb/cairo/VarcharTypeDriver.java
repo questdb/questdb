@@ -530,9 +530,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void setColumnRefs(long address, long initialOffset, long count) {
-        assert address != 0 && count > 0;
-        Vect.setVarcharColumnNullRefs(address, initialOffset, count);
+    public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
+        // varchar vector does not have suffix
+        Vect.setVarcharColumnNullRefs(auxMemAddr, 0, rowCount);
+    }
+
+    @Override
+    public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
+        Vect.setVarcharColumnNullRefs(auxMemAddr, initialOffset, columnTop);
     }
 
     @Override
