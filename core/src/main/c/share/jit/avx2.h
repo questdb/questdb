@@ -209,7 +209,7 @@ namespace questdb::avx2 {
     }
 
     // Reads length part of the varchar header for aux vector.
-    // This part is stored in the lowest 4 bytes of the header
+    // This part is stored in the lowest bytes of the header
     // (see VarcharTypeDriver to understand the format).
     //
     // Note: unlike read_mem_varsize this method doesn't return the length,
