@@ -33,9 +33,9 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.ColumnType.VARCHAR_AUX_SHL;
 
 public class VarcharTypeDriver implements ColumnTypeDriver {
-    public static final int HEADER_FLAG_NULL = 4;
     public static final VarcharTypeDriver INSTANCE = new VarcharTypeDriver();
     public static final int VARCHAR_AUX_WIDTH_BYTES = 2 * Long.BYTES;
+    public static final int VARCHAR_HEADER_FLAG_NULL = 4;
     // We store a prefix of this many bytes in auxiliary memory when the value is too large to inline.
     public static final int VARCHAR_INLINED_PREFIX_BYTES = 6;
     public static final long VARCHAR_INLINED_PREFIX_MASK = (1L << 8 * VARCHAR_INLINED_PREFIX_BYTES) - 1L;
@@ -121,7 +121,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 }
             }
         } else {
-            auxMem.putInt(HEADER_FLAG_NULL);
+            auxMem.putInt(VARCHAR_HEADER_FLAG_NULL);
             auxMem.skip(VARCHAR_INLINED_PREFIX_BYTES);
             offset = dataMem.getAppendOffset();
         }
@@ -642,11 +642,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     private static boolean hasNullFlag(int auxHeader) {
-        return (auxHeader & HEADER_FLAG_NULL) == HEADER_FLAG_NULL;
+        return (auxHeader & VARCHAR_HEADER_FLAG_NULL) == VARCHAR_HEADER_FLAG_NULL;
     }
 
     private static boolean hasNullOrInlinedFlag(int auxHeader) {
-        return (auxHeader & (HEADER_FLAG_NULL | HEADER_FLAG_INLINED)) != 0;
+        return (auxHeader & (VARCHAR_HEADER_FLAG_NULL | HEADER_FLAG_INLINED)) != 0;
     }
 
     private static boolean isAscii(int header) {

@@ -799,7 +799,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 putOperand(offset, IMM, I8_TYPE, TableUtils.NULL_LEN);
                 break;
             case VARCHAR_HEADER_TYPE: // varchar headers are stored in aux vector
-                putOperand(offset, IMM, I8_TYPE, VarcharTypeDriver.HEADER_FLAG_NULL);
+                putOperand(offset, IMM, I8_TYPE, VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL);
                 break;
             default:
                 throw SqlException.position(position).put("unexpected null type: ").put(typeCode);
