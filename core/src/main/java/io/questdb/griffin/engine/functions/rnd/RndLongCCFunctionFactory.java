@@ -48,14 +48,14 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final long lo = args.getQuick(0).getLong(null);
         final long hi = args.getQuick(1).getLong(null);
-        final int nanRate = args.getQuick(2).getInt(null);
+        final int nullRate = args.getQuick(2).getInt(null);
 
-        if (nanRate < 0) {
-            throw SqlException.$(argPositions.getQuick(2), "invalid NaN rate");
+        if (nullRate < 0) {
+            throw SqlException.$(argPositions.getQuick(2), "invalid NULL rate");
         }
 
         if (lo < hi) {
-            return new Func(lo, hi, nanRate);
+            return new Func(lo, hi, nullRate);
         }
 
         throw SqlException.$(position, "invalid range");

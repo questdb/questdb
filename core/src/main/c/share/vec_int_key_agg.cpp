@@ -444,11 +444,9 @@ static jboolean kIntSumLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong p
                 *reinterpret_cast<T *>(dest + value_offset) = val;
                 *reinterpret_cast<jlong *>(dest + count_offset) = 1;
             }
-        } else {
-            if (PREDICT_TRUE(val > L_MIN)) {
-                *reinterpret_cast<T *>(dest + value_offset) += val;
-                *reinterpret_cast<jlong *>(dest + count_offset) += 1;
-            }
+        } else if (PREDICT_TRUE(val > L_MIN)) {
+            *reinterpret_cast<T *>(dest + value_offset) += val;
+            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
         }
     }
     return JNI_TRUE;
@@ -1710,10 +1708,12 @@ Java_io_questdb_std_Rosti_keyedIntMinIntMerge(JNIEnv *env, jclass cl, jlong pRos
                 }
                 *reinterpret_cast<int32_t *>(dest) = key;
                 *reinterpret_cast<jint *>(pVal) = val;
-            } else {
-                if (val != I_MIN) {
-                    const jint old = *reinterpret_cast<jint *>(pVal);
+            } else if (PREDICT_TRUE(val > I_MIN)) {
+                const jint old = *reinterpret_cast<jint *>(pVal);
+                if (PREDICT_TRUE(old > I_MIN)) {
                     *reinterpret_cast<jint *>(pVal) = MIN(val, old);
+                } else {
+                    *reinterpret_cast<jint *>(pVal) = val;
                 }
             }
         }
@@ -1889,11 +1889,6 @@ Java_io_questdb_std_Rosti_keyedIntSumLongWrapUp(JNIEnv *env, jclass cl, jlong pR
     return kIntSumLongWrapUp<jlong>(pRosti, valueOffset, valueAtNull, valueAtNullCount);
 }
 
-JNIEXPORT jboolean JNICALL
-Java_io_questdb_std_Rosti_keyedIntSumLongLongWrapUp(JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset,
-                                                    jlong valueAtNull, jlong valueAtNullCount) {
-    return kIntSumLongWrapUp<accumulator_t>(pRosti, valueOffset, valueAtNull, valueAtNullCount);
-}
 // sum long256
 JNIEXPORT jboolean JNICALL
 Java_io_questdb_std_Rosti_keyedHourSumLong256(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
@@ -1988,10 +1983,12 @@ Java_io_questdb_std_Rosti_keyedIntMinLongMerge(JNIEnv *env, jclass cl, jlong pRo
                 }
                 *reinterpret_cast<int32_t *>(dest) = key;
                 *reinterpret_cast<jlong *>(pVal) = val;
-            } else {
-                if (val != L_MIN) {
-                    const jlong old = *reinterpret_cast<jlong *>(pVal);
+            } else if (PREDICT_TRUE(val > L_MIN)) {
+                const jlong old = *reinterpret_cast<jlong *>(pVal);
+                if (PREDICT_TRUE(old > L_MIN)) {
                     *reinterpret_cast<jlong *>(pVal) = MIN(val, old);
+                } else {
+                    *reinterpret_cast<jlong *>(pVal) = val;
                 }
             }
         }

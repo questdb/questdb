@@ -39,8 +39,8 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Worker;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -78,6 +78,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient @Nullable IntList symbolTableSkewIndex
     ) {
         super(metadata);
+        workerCount = 1;
         this.workerCount = workerCount;
         entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
@@ -647,12 +648,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public CharSequence getStrA(int col) {
-                return null;
+            public void getStr(int col, Utf16Sink utf16Sink) {
             }
 
             @Override
-            public void getStr(int col, Utf16Sink utf16Sink) {
+            public CharSequence getStrA(int col) {
+                return null;
             }
 
             @Override

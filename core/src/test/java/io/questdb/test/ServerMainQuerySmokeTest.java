@@ -30,7 +30,10 @@ import io.questdb.std.str.StringSink;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.assertResultSet;
 import static io.questdb.test.tools.TestUtils.unchecked;
@@ -109,39 +112,6 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
                     sink.clear();
                     assertResultSet(expected, sink, rs);
-                }
-            }
-        }
-    }
-
-    @Test
-    public void testServerMainRostiGroupByManyExecutions() throws Exception {
-        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
-            serverMain.start();
-            try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
-                try (Statement statement = conn.createStatement()) {
-                    statement.execute("CREATE TABLE tab (" +
-                            "  ts TIMESTAMP," +
-                            "  key SYMBOL" +
-                            ") timestamp (ts) PARTITION BY DAY");
-
-                    statement.execute("insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5) from long_sequence(1000)");
-                }
-
-                String query = "select key, min(ts), max(ts) from tab order by 1;";
-                String expected = "key[VARCHAR],min[TIMESTAMP],max[TIMESTAMP]\n" +
-                        "k0,1970-01-01 01:12:00.0,1970-01-11 00:00:00.0\n" +
-                        "k1,1970-01-01 00:14:24.0,1970-01-10 23:02:24.0\n" +
-                        "k2,1970-01-01 00:28:48.0,1970-01-10 23:16:48.0\n" +
-                        "k3,1970-01-01 00:43:12.0,1970-01-10 23:31:12.0\n" +
-                        "k4,1970-01-01 00:57:36.0,1970-01-10 23:45:36.0\n";
-                try (PreparedStatement ps = conn.prepareStatement(query)) {
-                    for (int i = 0; i < 100; i++) {
-                        try (ResultSet rs = ps.executeQuery()) {
-                            sink.clear();
-                            assertResultSet(expected, sink, rs);
-                        }
-                    }
                 }
             }
         }

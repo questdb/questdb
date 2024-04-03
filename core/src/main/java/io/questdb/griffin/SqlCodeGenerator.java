@@ -3503,8 +3503,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             RecordMetadata metadata = factory.getMetadata();
 
+            final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
             // Inspect model for possibility of vector aggregate intrinsics.
-            if (pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, !specialCaseKeys)) {
+            if (enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, !specialCaseKeys)) {
                 // Create metadata from everything we've gathered.
                 GenericRecordMetadata meta = new GenericRecordMetadata();
 
@@ -3672,7 +3673,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
 
-            final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
             if (enableParallelGroupBy
                     && SqlUtil.isParallelismSupported(keyFunctions)
                     && GroupByUtils.isParallelismSupported(groupByFunctions)) {

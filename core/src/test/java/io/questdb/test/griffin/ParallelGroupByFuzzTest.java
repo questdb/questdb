@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
@@ -1458,6 +1459,51 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelRostiCount() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, count(i) count_i, count(l) count_l, count(d) count_d, count(t) count_t " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tcount_i\tcount_l\tcount_d\tcount_t\n" +
+                        "k0\t83\t85\t86\t85\n" +
+                        "k1\t86\t88\t83\t76\n" +
+                        "k2\t86\t90\t85\t75\n" +
+                        "k3\t79\t79\t79\t82\n" +
+                        "k4\t82\t75\t88\t78\n"
+        );
+    }
+
+    @Test
+    public void testParallelRostiMinMax() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, min(i) min_i, max(i) max_i, min(l) min_l, max(l) max_l, min(d) min_d, max(d) max_d, min(t) min_t, max(t) max_t " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tmin_i\tmax_i\tmin_l\tmax_l\tmin_d\tmax_d\tmin_t\tmax_t\n" +
+                        "k0\t5\t256\t30\t1019\t0.031344089130341035\t0.9426813690523937\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.001024Z\n" +
+                        "k1\t2\t247\t13\t1002\t0.028168102791202188\t0.9856290845874263\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.001011Z\n" +
+                        "k2\t6\t256\t27\t1011\t0.008794360396374379\t0.9972606838093587\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.001015Z\n" +
+                        "k3\t2\t254\t10\t995\t0.028814588598028656\t0.9704165079505506\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.001015Z\n" +
+                        "k4\t0\t256\t4\t1006\t0.0011075361080621349\t0.9686605608804477\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.001020Z\n"
+        );
+    }
+
+    @Test
+    public void testParallelRostiSum() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, sum(i) sum_i, sum(l) sum_l, sum(l256) sum_l256, round(sum(d)) sum_d, sum(t)::long sum_t " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tsum_i\tsum_l\tsum_l256\tsum_d\tsum_t\n" +
+                        "k0\t11113\t44503\t0xa914b3d66e12185a5d76310378e831be316071aaa2436b2c66e948497c8929ba\t43.0\t46065\n" +
+                        "k1\t11710\t46722\t0xbf2ba83ebcc89d548852441a6ba75907ad1cec9b56efb093d97ab4dac560407f\t46.0\t38071\n" +
+                        "k2\t10901\t46995\t0x59cc5718e3c6402bb456c9bb0ee16c0a0f44493047a59667fb74acd3c341dfe2\t44.0\t36071\n" +
+                        "k3\t8189\t34651\t0x66cfd69d81ee896bdce1f7bea0aabbe1be2b00d8843e9af60f350295a203e56b\t40.0\t40385\n" +
+                        "k4\t11179\t39880\t0xa914b3d66e12185a5d76310378e831be316071aaa2436b2c66e948497c8929ba\t42.0\t39884\n"
+        );
+    }
+
+    @Test
     public void testParallelShortKeyGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -2650,6 +2696,57 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 sqlExecutionContext
                         );
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelRostiGroupBy(String query, String expected) throws Exception {
+        // Rosti doesn't support filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        // We want each row to be in its own partition
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab AS (SELECT " +
+                                        "cast('k' || (x%5) as symbol) key, " +
+                                        "rnd_int(0, 256, 2) i, " +
+                                        "rnd_long(0, 1024, 2) l, " +
+                                        "rnd_long256(2) l256, " +
+                                        "rnd_double(2) d, " +
+                                        "rnd_long(0, 1024, 2)::timestamp t, " +
+                                        "(x * 864000000)::timestamp ts " +
+                                        "from long_sequence(500)) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                query,
+                                sink,
+                                expected
+                        );
+
+                        if (enableParallelGroupBy) {
+                            // Make sure that we're testing Rosti here.
+                            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                                RecordCursorFactory nestedFactory = factory.getBaseFactory();
+                                while (nestedFactory != null) {
+                                    if (nestedFactory.getClass() == GroupByRecordCursorFactory.class) {
+                                        break;
+                                    }
+                                    nestedFactory = nestedFactory.getBaseFactory();
+                                }
+                                Assert.assertNotNull("parallel GROUP BY doesn't use vect.GroupByRecordCursorFactory", nestedFactory);
+                            }
+                        }
                     },
                     configuration,
                     LOG
