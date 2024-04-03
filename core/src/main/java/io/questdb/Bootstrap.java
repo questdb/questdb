@@ -372,23 +372,14 @@ public class Bootstrap {
 
     @NotNull
     public Properties loadProperties() throws IOException {
-        return loadProperties(rootDirectory, log);
-    }
-
-    public static Properties loadProperties(String rootDirectory, Log log) throws IOException{
-
         final Properties properties = new Properties();
-        java.nio.file.Path configFile = getPropertiesPath(rootDirectory);
+        java.nio.file.Path configFile = Paths.get(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
         log.advisoryW().$("Server config: ").$(configFile).$();
 
         try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
             properties.load(is);
         }
         return properties;
-    }
-
-    public static java.nio.file.Path getPropertiesPath(String rootDirectory) {
-        return Paths.get(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
     }
 
     public CairoEngine newCairoEngine() {

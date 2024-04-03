@@ -318,6 +318,11 @@ public class ServerMain implements Closeable {
                     sharedPool.assign(new GroupByVectorAggregateJob(messageBus));
                     sharedPool.assign(new GroupByMergeShardJob(messageBus));
                     sharedPool.assign(new LatestByAllIndexedJob(messageBus));
+                    if (config instanceof DynamicServerConfiguration) {
+                        sharedPool.assign(new ServerConfigurationChangeWatcherJob((DynamicServerConfiguration) config));
+                    }
+
+
 
                     if (!isReadOnly) {
                         O3Utils.setupWorkerPool(

@@ -11,6 +11,7 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -20,7 +21,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Map;
 import java.util.Properties;
 
-public class SteveServerConfiguration implements ServerConfiguration {
+public class SteveServerConfiguration implements DynamicServerConfiguration {
     private PropServerConfiguration delegate;
 
     String root;
@@ -130,6 +131,11 @@ public class SteveServerConfiguration implements ServerConfiguration {
         }
 
         delegate = newConfig;
+    }
+
+    @Override
+    public CharSequence getConfRoot() {
+        return this.delegate.getCairoConfiguration().getConfRoot();
     }
 
 

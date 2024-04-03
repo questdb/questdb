@@ -31,24 +31,29 @@ import io.questdb.std.str.Path;
 import io.questdb.mp.SynchronizedJob;
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Paths;
 import java.util.Properties;
 
 public class ServerConfigurationChangeWatcherJob extends SynchronizedJob implements Closeable {
     private final long watcherAddress;
-    private final SteveServerConfiguration serverConfiguration;
+    private final DynamicServerConfiguration serverConfiguration;
     private final static Log LOG = LogFactory.getLog(ServerConfigurationChangeWatcherJob.class);
     private Properties properties;
-    private final String rootDirectory;
+    private final java.nio.file.Path confPath;
 
-    public ServerConfigurationChangeWatcherJob(String rootDirectory, SteveServerConfiguration serverConfiguration) throws IOException {
-        this.properties = Bootstrap.loadProperties(rootDirectory, LOG);
+    public ServerConfigurationChangeWatcherJob(DynamicServerConfiguration serverConfiguration) throws IOException {
+
         this.serverConfiguration = serverConfiguration;
-        this.rootDirectory = rootDirectory;
+        this.confPath = Paths.get(serverConfiguration.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
 
-        final String configFilePath = Bootstrap.getPropertiesPath(rootDirectory).toString();
+        this.properties = new Properties();
+        try (InputStream is = java.nio.file.Files.newInputStream(this.confPath)) {
+            this.properties.load(is);
+        }
 
         try (Path path = new Path()) {
-            path.of(configFilePath).$();
+            path.of(confPath.toString()).$();
             this.watcherAddress = Filewatcher.setup(path.ptr());
         }
     }
@@ -61,18 +66,23 @@ public class ServerConfigurationChangeWatcherJob extends SynchronizedJob impleme
     protected boolean runSerially() {
 
         if (Filewatcher.changed(this.watcherAddress)) {
-            Properties newProperties;
-            try {
-                newProperties = Bootstrap.loadProperties(this.rootDirectory, LOG);
-            } catch (IOException exc) {
+            LOG.info().$("config file changed").$();
+            Properties newProperties = new Properties();
+
+            try (InputStream is = java.nio.file.Files.newInputStream(this.confPath)) {
+                newProperties.load(is);
+            }
+            catch (IOException exc) {
                 LOG.error().$("error loading properties").$();
                 return false;
             }
 
             if (!newProperties.equals(this.properties)) {
-                LOG.info().$("config successfully reloaded").$();
                 serverConfiguration.reload(newProperties);
                 this.properties = newProperties;
+                LOG.info().$("config successfully reloaded").$();
+            } else {
+                LOG.info().$("skipping config reload").$();
             }
         }
         return true;
