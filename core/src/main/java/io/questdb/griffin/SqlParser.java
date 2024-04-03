@@ -549,10 +549,8 @@ public class SqlParser {
                 int pos = lexer.getPosition();
                 model.setBatchO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
                 expectTok(lexer, "table");
-                tok = tok(lexer, "table name or 'if'");
-            } else {
-                tok = tok(lexer, "table name or 'if'");
             }
+            tok = tok(lexer, "table name or 'if'");
         } else if (SqlKeywords.isTableKeyword(tok)) {
             tok = tok(lexer, "table name or 'if'");
         } else {
@@ -2580,6 +2578,11 @@ public class SqlParser {
                 int n = tempExprNodes.size();
                 node.token = "switch";
                 node.args.clear();
+                // else expression may not have been provided,
+                // in which case it needs to be synthesized
+                if (elseExpr == null) {
+                    elseExpr = SqlUtil.nextConstant(expressionNodePool, "null", node.position);
+                }
                 node.args.add(elseExpr);
                 for (int i = n - 1; i > -1; i--) {
                     node.args.add(tempExprNodes.getQuick(i));
