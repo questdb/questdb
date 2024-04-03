@@ -85,14 +85,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         rootPath = new Path();
     }
 
-    public static void clearThreadLocals() {
-        TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
-        if (cursor != null) {
-            cursor.closePath();
-            tlTransactionLogCursor.remove();
-        }
-    }
-
     public static long readMaxStructureVersion(Path path, int logFileFd, FilesFacade ff) {
         long lastTxn = ff.readNonNegativeLong(logFileFd, TableTransactionLogFile.MAX_TXN_OFFSET_64);
         if (lastTxn < 0) {
@@ -347,13 +339,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 address = 0;
             }
             closePart();
-        }
-
-        public void closePath() {
-            if (rootPath != null) {
-                rootPath.close();
-                rootPath = null;
-            }
+            rootPath.close();
         }
 
         @Override
