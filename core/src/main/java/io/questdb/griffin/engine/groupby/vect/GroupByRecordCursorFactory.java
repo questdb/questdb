@@ -78,7 +78,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient @Nullable IntList symbolTableSkewIndex
     ) {
         super(metadata);
-        workerCount = 1;
         this.workerCount = workerCount;
         entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
@@ -632,7 +631,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 final long l0 = Unsafe.getUnsafe().getLong(offset);
                 final long l1 = Unsafe.getUnsafe().getLong(offset + Long.BYTES);
                 final long l2 = Unsafe.getUnsafe().getLong(offset + 2 * Long.BYTES);
-                final long l3 = Unsafe.getUnsafe().getLong(offset + 3 + Long.BYTES);
+                final long l3 = Unsafe.getUnsafe().getLong(offset + 3 * Long.BYTES);
                 dst.setAll(l0, l1, l2, l3);
                 return dst;
             }

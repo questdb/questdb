@@ -500,18 +500,16 @@ kIntSumLong256(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong c
             *reinterpret_cast<int32_t *>(dest) = key;
             long256_t &dst = *reinterpret_cast<long256_t *>(dest + value_offset);
             if (PREDICT_FALSE(val.is_null())) {
-                *reinterpret_cast<jlong *>(dest + count_offset) = 0;
                 dst = long256_t(0, 0, 0, 0);
+                *reinterpret_cast<jlong *>(dest + count_offset) = 0;
             } else {
                 dst = val;
                 *reinterpret_cast<jlong *>(dest + count_offset) = 1;
             }
-        } else {
-            if (PREDICT_TRUE(!val.is_null())) {
-                long256_t &dst = *reinterpret_cast<long256_t *>(dest + value_offset);
-                dst += val;
-                *reinterpret_cast<jlong *>(dest + count_offset) += 1;
-            }
+        } else if (PREDICT_TRUE(!val.is_null())) {
+            long256_t &dst = *reinterpret_cast<long256_t *>(dest + value_offset);
+            dst += val;
+            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
         }
     }
     return JNI_TRUE;
@@ -552,8 +550,8 @@ static jboolean kIntSumLong256Merge(jlong pRostiA, jlong pRostiB, jint valueOffs
             if (old_count > 0 && count > 0) {
                 dst += val;
                 *reinterpret_cast<jlong *>(dest + count_offset) += count;
-            } else {
-                *reinterpret_cast<long256_t *>(dest + value_offset) = val;
+            } else if (count > 0) {
+                dst = val;
                 *reinterpret_cast<jlong *>(dest + count_offset) = count;
             }
         }
@@ -861,9 +859,9 @@ static jboolean kIntSumLongMerge(jlong pRostiA, jlong pRostiB, jint valueOffset)
             // on other hand
             const jlong old_count = *reinterpret_cast<jlong *>(dest + count_offset);
             if (old_count > 0 && count > 0) {
-                *reinterpret_cast<accumulator_t *>(dest + value_offset) += val;
+                *reinterpret_cast<T *>(dest + value_offset) += val;
                 *reinterpret_cast<jlong *>(dest + count_offset) += count;
-            } else {
+            } else if (count > 0) {
                 *reinterpret_cast<T *>(dest + value_offset) = val;
                 *reinterpret_cast<jlong *>(dest + count_offset) = count;
             }
@@ -1658,7 +1656,7 @@ Java_io_questdb_std_Rosti_keyedIntSumIntMerge(JNIEnv *env, jclass cl, jlong pRos
             if (old_count > 0 && count > 0) {
                 *reinterpret_cast<jlong *>(dest + value_offset) += val;
                 *reinterpret_cast<jlong *>(dest + count_offset) += count;
-            } else {
+            } else if (count > 0) {
                 *reinterpret_cast<jlong *>(dest + value_offset) = val;
                 *reinterpret_cast<jlong *>(dest + count_offset) = count;
             }

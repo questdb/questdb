@@ -1459,47 +1459,79 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelRostiCount() throws Exception {
+    public void testParallelRostiAvg() throws Exception {
         testParallelRostiGroupBy(
-                "SELECT key, count(i) count_i, count(l) count_l, count(d) count_d, count(t) count_t " +
+                "SELECT key, avg(s) avg_s, avg(i) avg_i, avg(l) avg_l, round(avg(d)) avg_d " +
                         "FROM tab " +
                         "ORDER BY key",
-                "key\tcount_i\tcount_l\tcount_d\tcount_t\n" +
-                        "k0\t83\t85\t86\t85\n" +
-                        "k1\t86\t88\t83\t76\n" +
-                        "k2\t86\t90\t85\t75\n" +
-                        "k3\t79\t79\t79\t82\n" +
-                        "k4\t82\t75\t88\t78\n"
+                "key\tavg_s\tavg_i\tavg_l\tavg_d\n" +
+                        "k0\t-859.98\t128.27631578947367\t469.4625\t1.0\n" +
+                        "k1\t-2783.67\t113.6375\t548.2073170731708\t0.0\n" +
+                        "k2\t1722.65\t133.21686746987953\t557.6623376623377\t0.0\n" +
+                        "k3\t-376.12\t134.25301204819277\t512.6117647058824\t0.0\n" +
+                        "k4\t844.42\t124.53333333333333\t478.9146341463415\t1.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelRostiCount() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, count(i) count_i, count(l) count_l, count(d) count_d " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tcount_i\tcount_l\tcount_d\n" +
+                        "k0\t76\t80\t88\n" +
+                        "k1\t80\t82\t86\n" +
+                        "k2\t83\t77\t87\n" +
+                        "k3\t83\t85\t75\n" +
+                        "k4\t75\t82\t84\n"
+        );
+    }
+
+    @Test
+    public void testParallelRostiKSumNSum() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, round(ksum(d)) ksum_d, round(nsum(d)) nsum_d " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tksum_d\tnsum_d\n" +
+                        "k0\t48.0\t48.0\n" +
+                        "k1\t43.0\t43.0\n" +
+                        "k2\t39.0\t39.0\n" +
+                        "k3\t33.0\t33.0\n" +
+                        "k4\t46.0\t46.0\n"
         );
     }
 
     @Test
     public void testParallelRostiMinMax() throws Exception {
         testParallelRostiGroupBy(
-                "SELECT key, min(i) min_i, max(i) max_i, min(l) min_l, max(l) max_l, min(d) min_d, max(d) max_d, min(t) min_t, max(t) max_t " +
+                "SELECT key, min(s) min_s, max(s) max_s, min(i) min_i, max(i) max_i, min(l) min_l, max(l) max_l, " +
+                        "  min(d) min_d, max(d) max_d, min(dd) min_dd, max(dd) max_dd, min(t) min_t, max(t) max_t " +
                         "FROM tab " +
                         "ORDER BY key",
-                "key\tmin_i\tmax_i\tmin_l\tmax_l\tmin_d\tmax_d\tmin_t\tmax_t\n" +
-                        "k0\t5\t256\t30\t1019\t0.031344089130341035\t0.9426813690523937\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.001024Z\n" +
-                        "k1\t2\t247\t13\t1002\t0.028168102791202188\t0.9856290845874263\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.001011Z\n" +
-                        "k2\t6\t256\t27\t1011\t0.008794360396374379\t0.9972606838093587\t1970-01-01T00:00:00.000014Z\t1970-01-01T00:00:00.001015Z\n" +
-                        "k3\t2\t254\t10\t995\t0.028814588598028656\t0.9704165079505506\t1970-01-01T00:00:00.000007Z\t1970-01-01T00:00:00.001015Z\n" +
-                        "k4\t0\t256\t4\t1006\t0.0011075361080621349\t0.9686605608804477\t1970-01-01T00:00:00.000013Z\t1970-01-01T00:00:00.001020Z\n"
+                "key\tmin_s\tmax_s\tmin_i\tmax_i\tmin_l\tmax_l\tmin_d\tmax_d\tmin_dd\tmax_dd\tmin_t\tmax_t\n" +
+                        "k0\t-32314\t32650\t5\t255\t1\t982\t0.023600615130049185\t0.9924997596095891\t1980-01-13T19:56:55.619Z\t1989-12-11T15:05:57.581Z\t1980-05-16T15:35:09.991442Z\t1989-12-01T00:45:38.931160Z\n" +
+                        "k1\t-31947\t32139\t0\t251\t12\t1022\t0.030997441190531494\t0.9869813021229126\t1980-01-27T20:04:53.149Z\t1989-11-09T23:54:33.595Z\t1980-01-20T15:13:30.780056Z\t1989-12-25T11:06:35.080985Z\n" +
+                        "k2\t-32474\t32378\t3\t256\t18\t1020\t0.0031075670450616544\t0.9887681426881507\t1980-02-06T21:12:31.508Z\t1989-10-14T12:01:28.825Z\t1980-01-09T11:42:16.059075Z\t1989-12-02T07:02:03.165501Z\n" +
+                        "k3\t-32129\t32752\t0\t254\t4\t1024\t0.017595931321539804\t0.9958686315610356\t1980-02-04T19:47:05.743Z\t1989-12-28T03:38:43.787Z\t1980-01-09T21:18:50.462647Z\t1989-12-13T15:24:44.892613Z\n" +
+                        "k4\t-32677\t32259\t5\t255\t4\t1017\t0.06790969300705241\t0.9923530546137099\t1980-01-25T07:20:26.116Z\t1989-11-11T09:29:53.477Z\t1980-01-25T11:45:16.361674Z\t1989-11-07T17:55:20.285921Z\n"
         );
     }
 
     @Test
     public void testParallelRostiSum() throws Exception {
         testParallelRostiGroupBy(
-                "SELECT key, sum(i) sum_i, sum(l) sum_l, sum(l256) sum_l256, round(sum(d)) sum_d, sum(t)::long sum_t " +
+                "SELECT key, sum(s) sum_s, sum(i) sum_i, sum(l) sum_l, sum(l256) sum_l256, " +
+                        "  round(sum(d)) sum_d, sum(dd)::long sum_dd, sum(t)::long sum_t " +
                         "FROM tab " +
                         "ORDER BY key",
-                "key\tsum_i\tsum_l\tsum_l256\tsum_d\tsum_t\n" +
-                        "k0\t11113\t44503\t0xa914b3d66e12185a5d76310378e831be316071aaa2436b2c66e948497c8929ba\t43.0\t46065\n" +
-                        "k1\t11710\t46722\t0xbf2ba83ebcc89d548852441a6ba75907ad1cec9b56efb093d97ab4dac560407f\t46.0\t38071\n" +
-                        "k2\t10901\t46995\t0x59cc5718e3c6402bb456c9bb0ee16c0a0f44493047a59667fb74acd3c341dfe2\t44.0\t36071\n" +
-                        "k3\t8189\t34651\t0x66cfd69d81ee896bdce1f7bea0aabbe1be2b00d8843e9af60f350295a203e56b\t40.0\t40385\n" +
-                        "k4\t11179\t39880\t0xa914b3d66e12185a5d76310378e831be316071aaa2436b2c66e948497c8929ba\t42.0\t39884\n"
+                "key\tsum_s\tsum_i\tsum_l\tsum_l256\tsum_d\tsum_dd\tsum_t\n" +
+                        "k0\t-85998\t9749\t37557\t0x248af96495cafa7d5c4dbe79c86d46054af590066639cabfb780bce1c77ea11c\t48.0\t37610295537814\t39445049420148835\n" +
+                        "k1\t-278367\t9091\t44953\t0x50b8e23533380471b205e4a7adeb9498426e85e7cf92558e9ca39604592ccea6\t43.0\t41938755326289\t38092137614142107\n" +
+                        "k2\t172265\t11057\t42940\t0xa914b3d66e12185a5d76310378e831be316071aaa2436b2c66e948497c8929ba\t39.0\t39727391650474\t41767824232883835\n" +
+                        "k3\t-37612\t11143\t43572\t0x92fdbf6e1f5b9360329a1dec86290a74b5a3f6b9ed9725c4f457dbb833b212f5\t33.0\t34444796339959\t35993570442554123\n" +
+                        "k4\t84442\t9340\t39271\t0x01708577a8ec2c4308e67d5f43e4cee420525d6d74f480ca312efa8e9fe584ce\t46.0\t37814262770623\t37904214212735424\n"
         );
     }
 
@@ -2716,11 +2748,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 compiler,
                                 "CREATE TABLE tab AS (SELECT " +
                                         "cast('k' || (x%5) as symbol) key, " +
+                                        "rnd_short() s, " +
                                         "rnd_int(0, 256, 2) i, " +
                                         "rnd_long(0, 1024, 2) l, " +
                                         "rnd_long256(2) l256, " +
                                         "rnd_double(2) d, " +
-                                        "rnd_long(0, 1024, 2)::timestamp t, " +
+                                        "rnd_timestamp(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) t, " +
+                                        "rnd_date(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) dd, " +
                                         "(x * 864000000)::timestamp ts " +
                                         "from long_sequence(500)) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
