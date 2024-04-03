@@ -878,7 +878,15 @@ public class SqlUtil {
     }
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
-        return pool.next().of(ExpressionNode.LITERAL, token, 0, position);
+        return nextExpr(pool, ExpressionNode.LITERAL, token, position);
+    }
+
+    static ExpressionNode nextConstant(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
+        return nextExpr(pool, ExpressionNode.CONSTANT, token, position);
+    }
+
+    private static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
+        return pool.next().of(exprNodeType, token, 0, position);
     }
 
     private static class Long256ConstantFactory implements Long256Acceptor {
