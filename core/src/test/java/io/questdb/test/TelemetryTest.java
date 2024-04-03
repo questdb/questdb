@@ -36,7 +36,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -200,7 +199,7 @@ public class TelemetryTest extends AbstractCairoTest {
             }
 
             @Override
-            public CharSequence getSwVersion() {
+            public String getSwVersion() {
                 return refVersion.get();
             }
         };

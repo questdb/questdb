@@ -37,7 +37,7 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     private final CharSequence commitHash;
     private final CharSequence jdkVersion;
     private final CharSequence swName;
-    private final CharSequence swVersion;
+    private final String swVersion;
 
     public BuildInformationHolder() {
         this(BuildInformationHolder.class);
@@ -60,7 +60,7 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
             commitHash = UNKNOWN;
             jdkVersion = UNKNOWN;
         }
-        this.swVersion = swVersion;
+        this.swVersion = swVersion.toString();
         this.swName = swName;
         this.commitHash = commitHash;
         this.jdkVersion = jdkVersion;
@@ -68,7 +68,7 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     }
 
     public BuildInformationHolder(CharSequence swVersion, CharSequence commitHash, CharSequence jdkVersion, CharSequence swName) {
-        this.swVersion = swVersion;
+        this.swVersion = swVersion.toString();
         this.commitHash = commitHash;
         this.jdkVersion = jdkVersion;
         this.swName = swName;
@@ -96,7 +96,7 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     }
 
     @Override
-    public CharSequence getSwVersion() {
+    public String getSwVersion() {
         return swVersion;
     }
 

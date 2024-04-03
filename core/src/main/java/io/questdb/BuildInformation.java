@@ -31,5 +31,5 @@ public interface BuildInformation {
 
     CharSequence getSwName();
 
-    CharSequence getSwVersion();
+    String getSwVersion();
 }

@@ -892,6 +892,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public String getType() {
+        return "OSS";
+    }
+
+    @Override
     public int getVectorAggregateQueueCapacity() {
         return 1024;
     }

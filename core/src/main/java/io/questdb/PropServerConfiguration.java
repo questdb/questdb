@@ -64,6 +64,8 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
+import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
+
 public class PropServerConfiguration implements ServerConfiguration {
 
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
@@ -71,6 +73,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String DB_DIRECTORY = "db";
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
+    private static final String QUESTDB_TYPE = "questdb.type";
+    private static final String QUESTDB_VERSION = "questdb.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
@@ -1886,7 +1890,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         };
 
-
         @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
@@ -2725,6 +2728,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public String getType() {
+            return "OSS";
+        }
+
+        @Override
         public int getVectorAggregateQueueCapacity() {
             return vectorAggregateQueueCapacity;
         }
@@ -2936,6 +2944,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean mangleTableDirNames() {
             return false;
+        }
+
+        @Override
+        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+            settings.put(QUESTDB_TYPE, str(getType()));
+            settings.put(QUESTDB_VERSION, str(getBuildInformation().getSwVersion()));
         }
     }
 

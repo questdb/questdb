@@ -39,7 +39,10 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertSettingsRequest(httpClient, "{}");
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"questdb.type\":\"OSS\"," +
+                            "\"questdb.version\":\"[DEVELOPMENT]\"" +
+                            "}");
                 }
             }
         });
