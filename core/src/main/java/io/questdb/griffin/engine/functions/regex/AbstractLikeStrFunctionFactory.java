@@ -96,7 +96,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         final Function pattern = args.getQuick(1);
 
         if (pattern.isConstant()) {
-            final CharSequence likeSeq = pattern.getStr(null);
+            final CharSequence likeSeq = pattern.getStrA(null);
             int len;
             if (likeSeq != null && (len = likeSeq.length()) > 0) {
                 int oneCount = countChar(likeSeq, '_');
@@ -146,6 +146,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                 int flags = Pattern.DOTALL;
                 if (isCaseInsensitive()) {
                     flags |= Pattern.CASE_INSENSITIVE;
+                    p = p.toLowerCase();
                 }
                 return new ConstLikeStrFunction(
                         value,
@@ -163,7 +164,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
     }
 
-    private static int countChar(@NotNull CharSequence seq, char c) {
+    static int countChar(@NotNull CharSequence seq, char c) {
         int count = 0;
         for (int i = 0, n = seq.length(); i < n; i++) {
             if (seq.charAt(i) == c) {
@@ -175,7 +176,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
     protected abstract boolean isCaseInsensitive();
 
-    private static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
+    static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
         private final boolean caseInsensitive;
         private final Function pattern;
         private final Function value;
@@ -196,7 +197,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         @Override
         public boolean getBool(Record rec) {
             if (matcher != null) {
-                CharSequence cs = getArg().getStr(rec);
+                CharSequence cs = value.getStrA(rec);
                 return cs != null && matcher.reset(cs).matches();
             }
             return false;
@@ -207,13 +208,14 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             value.init(symbolTableSource, executionContext);
             pattern.init(symbolTableSource, executionContext);
             // this is bind variable, we can use it as constant
-            final CharSequence patternValue = pattern.getStr(null);
+            final CharSequence patternValue = pattern.getStrA(null);
             if (patternValue != null && patternValue.length() > 0) {
-                final String p = escapeSpecialChars(patternValue, lastPattern);
+                String p = escapeSpecialChars(patternValue, lastPattern);
                 if (p != null) {
                     int flags = Pattern.DOTALL;
                     if (caseInsensitive) {
                         flags |= Pattern.CASE_INSENSITIVE;
+                        p = p.toLowerCase();
                     }
                     this.matcher = Pattern.compile(p, flags).matcher("");
                     this.lastPattern = p;
@@ -257,7 +259,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             if (cs == null) {
                 return false;
             }
@@ -295,7 +297,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             return Chars.endsWith(cs, pattern);
         }
 
@@ -313,7 +315,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
     }
 
-    private static class ConstIContainsStrFunction extends BooleanFunction implements UnaryFunction {
+    static class ConstIContainsStrFunction extends BooleanFunction implements UnaryFunction {
         private final String pattern;
         private final Function value;
 
@@ -329,7 +331,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             if (cs == null) {
                 return false;
             }
@@ -351,7 +353,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
     }
 
-    private static class ConstIEndsWithStrFunction extends BooleanFunction implements UnaryFunction {
+    static class ConstIEndsWithStrFunction extends BooleanFunction implements UnaryFunction {
         private final String pattern;
         private final Function value;
 
@@ -367,7 +369,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             return Chars.endsWithLowerCase(cs, pattern);
         }
 
@@ -385,7 +387,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
     }
 
-    private static class ConstIStartsWithStrFunction extends BooleanFunction implements UnaryFunction {
+    static class ConstIStartsWithStrFunction extends BooleanFunction implements UnaryFunction {
         private final String pattern;
         private final Function value;
 
@@ -401,7 +403,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             return Chars.startsWithLowerCase(cs, pattern);
         }
 
@@ -419,7 +421,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
     }
 
-    private static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
+    static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
         private final Matcher matcher;
         private final Function value;
 
@@ -435,7 +437,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             return cs != null && matcher.reset(cs).matches();
         }
 
@@ -472,7 +474,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             return Chars.startsWith(cs, pattern);
         }
 

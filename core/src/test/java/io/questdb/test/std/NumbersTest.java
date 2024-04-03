@@ -182,9 +182,9 @@ public class NumbersTest {
         String validInputZero = "0x00";
         String validInputMax = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
         Long256Impl sink = new Long256Impl();
-        Assert.assertFalse(Numbers.extractLong256(invalidInput, invalidInput.length(), sink));
-        Assert.assertTrue(Numbers.extractLong256(validInputZero, validInputZero.length(), sink));
-        Assert.assertTrue(Numbers.extractLong256(validInputMax, validInputMax.length(), sink));
+        Assert.assertFalse(Numbers.extractLong256(invalidInput, sink));
+        Assert.assertTrue(Numbers.extractLong256(validInputZero, sink));
+        Assert.assertTrue(Numbers.extractLong256(validInputMax, sink));
     }
 
     @Test
@@ -561,7 +561,7 @@ public class NumbersTest {
         Assert.assertEquals(tok, tokLong256);
 
         Long256Impl long256a = new Long256Impl();
-        Numbers.parseLong256(tok, tok.length(), long256a);
+        Numbers.parseLong256(tok, long256a);
         sink.clear();
         long256a.toSink(sink);
         CharSequence tokLong256a = sink.toString();

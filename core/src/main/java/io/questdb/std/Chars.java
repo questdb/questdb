@@ -58,9 +58,9 @@ public final class Chars {
      * @param ascii ascii string to convert to byte array
      * @return byte array representation of the input string
      */
-    public static byte[] asciiToByteArray(CharSequence ascii) {
+    public static byte[] asciiToByteArray(@NotNull CharSequence ascii) {
         byte[] dst = new byte[ascii.length()];
-        for (int i = 0; i < ascii.length(); i++) {
+        for (int i = 0, n = ascii.length(); i < n; i++) {
             assert ascii.charAt(i) < 128;
             dst[i] = (byte) ascii.charAt(i);
         }
@@ -228,8 +228,8 @@ public final class Chars {
             return true;
         }
 
-        int ll;
-        if ((ll = l.length()) != rHi - rLo) {
+        int ll = l.length();
+        if (ll != rHi - rLo) {
             return false;
         }
 
@@ -275,8 +275,8 @@ public final class Chars {
             return true;
         }
 
-        int ll;
-        if ((ll = l.length()) != r.length()) {
+        int ll = l.length();
+        if (ll != r.length()) {
             return false;
         }
 
@@ -286,8 +286,8 @@ public final class Chars {
     /**
      * Case-insensitive comparison of two char sequences, with subsequence over second.
      *
-     * @param l left sequence
-     * @param r right sequence
+     * @param l   left sequence
+     * @param r   right sequence
      * @param rLo right sequence lower bound
      * @param rHi right sequence upper bound
      * @return true if sequences match exactly (ignoring char case)
@@ -297,8 +297,8 @@ public final class Chars {
             return true;
         }
 
-        int ll;
-        if ((ll = l.length()) != rHi - rLo) {
+        int ll = l.length();
+        if (ll != rHi - rLo) {
             return false;
         }
 
@@ -315,8 +315,8 @@ public final class Chars {
             return true;
         }
 
-        int ll;
-        if ((ll = lLC.length()) != rHi - rLo) {
+        int ll = lLC.length();
+        if (ll != rHi - rLo) {
             return false;
         }
 
@@ -365,8 +365,8 @@ public final class Chars {
     }
 
     public static boolean equalsLowerCaseAscii(@NotNull CharSequence l, @NotNull CharSequence r) {
-        int ll;
-        if ((ll = l.length()) != r.length()) {
+        int ll = l.length();
+        if (ll != r.length()) {
             return false;
         }
 
@@ -615,6 +615,15 @@ public final class Chars {
         return -1;
     }
 
+    public static boolean isAscii(@NotNull CharSequence cs) {
+        for (int i = 0, n = cs.length(); i < n; i++) {
+            if (cs.charAt(i) > 127) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean isBlank(CharSequence s) {
         if (s == null) {
             return true;
@@ -630,10 +639,12 @@ public final class Chars {
         return true;
     }
 
+    // todo: add tests (used in Ent)
     public static boolean isDoubleQuote(char c) {
         return c == '"';
     }
 
+    // todo: add tests (used in Ent)
     public static boolean isDoubleQuoted(CharSequence s) {
         if (s == null || s.length() < 2) {
             return false;
@@ -672,15 +683,6 @@ public final class Chars {
 
         char open = s.charAt(0);
         return isQuote(open) && open == s.charAt(s.length() - 1);
-    }
-
-    public static int lastIndexOf(CharSequence sequence, char term) {
-        for (int i = sequence.length() - 1; i > -1; i--) {
-            if (sequence.charAt(i) == term) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     public static int lastIndexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
@@ -876,7 +878,6 @@ public final class Chars {
         }
     }
 
-
     public static String toLowerCaseAscii(@Nullable CharSequence value) {
         if (value == null) {
             return null;
@@ -950,7 +951,7 @@ public final class Chars {
         return b.toString();
     }
 
-    public static String toString(CharSequence cs, int start, int end, char unescape) {
+    public static String toString(@NotNull CharSequence cs, int start, int end, char unescape) {
         final Utf16Sink b = Misc.getThreadLocalSink();
         final int lastChar = end - 1;
         for (int i = start; i < end; i++) {
@@ -1175,7 +1176,7 @@ public final class Chars {
     }
 
     private static boolean equalsCharsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int len, int rLo, int rHi) {
-        assert len == (rHi-rLo);
+        assert len == (rHi - rLo);
         for (int i = 0; i < len; i++) {
             if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i + rLo))) {
                 return false;

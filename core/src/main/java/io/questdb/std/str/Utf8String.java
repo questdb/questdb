@@ -29,25 +29,36 @@ import org.jetbrains.annotations.NotNull;
 
 import java.nio.charset.StandardCharsets;
 
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED;
+
 /**
  * An immutable on-heap sequence of UTF-8 bytes.
  */
 public class Utf8String implements Utf8Sequence {
     public static final Utf8String EMPTY = new Utf8String("");
-
+    private final boolean ascii;
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final byte[] bytes;
 
-    public Utf8String(byte @NotNull [] bytes) {
+    public Utf8String(byte @NotNull [] bytes, boolean ascii) {
         this.bytes = bytes;
+        this.ascii = ascii;
     }
 
     public Utf8String(@NotNull String str) {
         this.bytes = str.getBytes(StandardCharsets.UTF_8);
+        this.ascii = (str.length() == bytes.length);
+    }
+
+    public Utf8String(char ch) {
+        this.bytes = String.valueOf(ch).getBytes(StandardCharsets.UTF_8);
+        this.ascii = (bytes.length == 1);
     }
 
     public Utf8String(@NotNull CharSequence seq) {
         this.bytes = seq.toString().getBytes(StandardCharsets.UTF_8);
+        this.ascii = (seq.length() == bytes.length);
     }
 
     public static Utf8String newInstance(@NotNull Utf8Sequence src) {
@@ -55,7 +66,7 @@ public class Utf8String implements Utf8Sequence {
         for (int i = 0, n = src.size(); i < n; i++) {
             bytes[i] = src.byteAt(i);
         }
-        return new Utf8String(bytes);
+        return new Utf8String(bytes, src.isAscii());
     }
 
     @Override
@@ -72,8 +83,21 @@ public class Utf8String implements Utf8Sequence {
         return Unsafe.byteArrayGetInt(bytes, index);
     }
 
-    public long longAt(int index) {
-        return Unsafe.byteArrayGetLong(bytes, index);
+    @Override
+    public long longAt(int offset) {
+        return Unsafe.byteArrayGetLong(bytes, offset);
+    }
+
+    @Override
+    public boolean isAscii() {
+        return ascii;
+    }
+
+    @Override
+    public long zeroPaddedSixPrefix() {
+        assert size() > VARCHAR_MAX_BYTES_FULLY_INLINED
+                : String.format("size %,d <= %d", size(), VARCHAR_MAX_BYTES_FULLY_INLINED);
+        return longAt(0) & VARCHAR_INLINED_PREFIX_MASK;
     }
 
     @Override

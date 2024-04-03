@@ -89,7 +89,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
         int shiftLeft = 0, existingIndex = 0;
         for (int metaIndex = 0; metaIndex < columnCount; metaIndex++) {
-            CharSequence name = metaMem.getStr(offset);
+            CharSequence name = metaMem.getStrA(offset);
             offset += Vm.getStorageLength(name);
             assert name != null;
             int columnType = TableUtils.getColumnType(metaMem, metaIndex);
@@ -252,7 +252,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
             // don't create strings in this loop, we already have them in columnNameIndexMap
             for (int i = 0; i < columnCount; i++) {
-                CharSequence name = metaMem.getStr(offset);
+                CharSequence name = metaMem.getStrA(offset);
                 assert name != null;
                 int columnType = TableUtils.getColumnType(metaMem, i);
                 if (columnType > -1) {

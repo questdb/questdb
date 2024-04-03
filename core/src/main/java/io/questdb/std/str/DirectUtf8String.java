@@ -34,6 +34,7 @@ import org.jetbrains.annotations.NotNull;
 public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
     public static final Factory FACTORY = new Factory();
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    private boolean ascii;
     private long hi;
     private long lo;
 
@@ -52,9 +53,19 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
         return this;
     }
 
+    @Override
+    public boolean isAscii() {
+        return ascii;
+    }
+
     public DirectUtf8String of(long lo, long hi) {
+        return of(lo, hi, false);
+    }
+
+    public DirectUtf8String of(long lo, long hi, boolean ascii) {
         this.lo = lo;
         this.hi = hi;
+        this.ascii = ascii;
         return this;
     }
 

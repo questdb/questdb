@@ -67,6 +67,7 @@ public class InStrFunctionFactory implements FunctionFactory {
             switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.NULL:
                 case ColumnType.STRING:
+                case ColumnType.VARCHAR:
                 case ColumnType.SYMBOL:
                     if (func.isRuntimeConstant()) { // bind variables
                         if (deferredValues == null) {
@@ -75,7 +76,7 @@ public class InStrFunctionFactory implements FunctionFactory {
                         deferredValues.add(func);
                         continue;
                     }
-                    CharSequence value = func.getStr(null);
+                    CharSequence value = func.getStrA(null);
                     if (value == null) {
                         set.addNull();
                     }
@@ -90,7 +91,7 @@ public class InStrFunctionFactory implements FunctionFactory {
         }
         final Function var = args.getQuick(0);
         if (var.isConstant() && deferredValues == null) {
-            return BooleanConstant.of(set.contains(var.getStr(null)));
+            return BooleanConstant.of(set.contains(var.getStrA(null)));
         }
         return new Func(var, set, deferredValues);
     }
@@ -115,9 +116,9 @@ public class InStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence val = arg.getStr(rec);
-            return set.contains(val) ||
-                    (deferredSet != null && deferredSet.contains(val));
+            CharSequence val = arg.getStrA(rec);
+            return set.contains(val)
+                    || (deferredSet != null && deferredSet.contains(val));
         }
 
         @Override
@@ -128,7 +129,7 @@ public class InStrFunctionFactory implements FunctionFactory {
                 for (int i = 0, n = deferredValues.size(); i < n; i++) {
                     Function func = deferredValues.getQuick(i);
                     func.init(symbolTableSource, executionContext);
-                    deferredSet.add(func.getStr(null));
+                    deferredSet.add(func.getStrA(null));
                 }
             }
         }

@@ -220,9 +220,11 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlWindowRowIdMaxPages());
         Assert.assertEquals(128, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
-        Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertPoolCapacity());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertModelPoolCapacity());
+        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getInsertModelBatchSize());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
+        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getCreateTableModelBatchSize());
         Assert.assertEquals(1, configuration.getCairoConfiguration().getPartitionPurgeListCapacity());
         Assert.assertEquals(ff.allowMixedIO(root), configuration.getCairoConfiguration().isWriterMixedIOEnabled());
         Assert.assertEquals(CairoConfiguration.O_NONE, configuration.getCairoConfiguration().getWriterFileOpenOpts());
@@ -333,6 +335,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1023, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+        Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isUseLegacyStringDefault());
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getDisconnectOnError());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
@@ -402,7 +405,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getWalApplyPoolConfiguration().getWorkerCount() > 0);
         Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
-        Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(1000, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(20, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
         Assert.assertEquals(200_000, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
@@ -1345,7 +1348,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1030, configuration.getSqlWindowRowIdMaxPages());
         Assert.assertEquals(1024, configuration.getWithClauseModelPoolCapacity());
         Assert.assertEquals(512, configuration.getRenameTableModelPoolCapacity());
-        Assert.assertEquals(128, configuration.getInsertPoolCapacity());
+        Assert.assertEquals(128, configuration.getInsertModelPoolCapacity());
         Assert.assertEquals(256, configuration.getColumnCastModelPoolCapacity());
         Assert.assertEquals(64, configuration.getCreateTableModelPoolCapacity());
         Assert.assertEquals(2001, configuration.getSampleByIndexSearchPageSize());

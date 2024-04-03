@@ -58,7 +58,7 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
         private ObjObjHashMap.Entry<ConfigPropertyKey, ConfigPropertyValue> entry;
         private final Record record = new Record() {
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 switch (col) {
                     case 0:
                         return entry.key.getPropertyPath();
@@ -97,12 +97,12 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override
             public int getStrLen(int col) {
-                CharSequence s = getStr(col);
+                CharSequence s = getStrA(col);
                 return s != null ? s.length() : -1;
             }
         };

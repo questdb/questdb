@@ -112,5 +112,4 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
     protected FunctionFactory getFunctionFactory() {
         return new SubStringFunctionFactory();
     }
-
 }

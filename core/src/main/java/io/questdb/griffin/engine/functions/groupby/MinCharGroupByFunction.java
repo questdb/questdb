@@ -77,6 +77,17 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.CHAR);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -96,19 +107,8 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.CHAR);
-    }
-
-    @Override
     public void setNull(MapValue mapValue) {
         mapValue.putChar(valueIndex, (char) 0);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

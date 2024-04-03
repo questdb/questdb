@@ -24,10 +24,7 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -50,7 +47,7 @@ public class CopyWalSegmentUtils {
             int newSegment,
             CharSequence columnName,
             int columnType,
-            long rowOffset,
+            long startRowNumber,
             long rowCount,
             LongList newColumnFiles,
             int columnIndex,
@@ -63,7 +60,7 @@ public class CopyWalSegmentUtils {
         newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);
 
         int secondaryFd;
-        if (ColumnType.isVariableLength(columnType)) {
+        if (ColumnType.isVarSize(columnType)) {
             iFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE);
             secondaryFd = openRW(ff, newSegPath, LOG, options);
             newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 3, secondaryFd);
@@ -72,19 +69,50 @@ public class CopyWalSegmentUtils {
         }
 
         boolean success;
-        if (ColumnType.isVariableLength(columnType)) {
-            success = copyVarLenFile(ff, primaryColumn, secondaryColumn, primaryFd, secondaryFd, rowOffset, rowCount, newColumnFiles, columnIndex, commitMode);
+        if (ColumnType.isVarSize(columnType)) {
+            success = copyVarSizeFiles(
+                    ff,
+                    columnType,
+                    primaryColumn,
+                    secondaryColumn,
+                    primaryFd,
+                    secondaryFd,
+                    startRowNumber,
+                    rowCount,
+                    newColumnFiles,
+                    columnIndex,
+                    commitMode
+            );
         } else if (columnType > 0) {
-            success = copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, columnType, newColumnFiles, columnIndex, commitMode);
+            success = copyFixLenFile(
+                    ff,
+                    primaryColumn,
+                    primaryFd,
+                    startRowNumber,
+                    rowCount,
+                    columnType,
+                    newColumnFiles,
+                    columnIndex,
+                    commitMode
+            );
         } else {
-            success = copyTimestampFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, newColumnFiles, columnIndex, commitMode);
+            success = copyTimestampFile(
+                    ff,
+                    primaryColumn,
+                    primaryFd,
+                    startRowNumber,
+                    rowCount,
+                    newColumnFiles,
+                    columnIndex,
+                    commitMode
+            );
         }
 
         if (!success) {
             throw CairoException.critical(ff.errno()).put("failed to copy column file to new segment" +
                             " [path=").put(newSegPath)
                     .put(", column=").put(columnName)
-                    .put(", rowOffset=").put(rowOffset)
+                    .put(", startRowNumber=").put(startRowNumber)
                     .put(", rowCount=").put(rowCount)
                     .put(", columnType=").put(columnType).put("]");
         }
@@ -140,25 +168,27 @@ public class CopyWalSegmentUtils {
         return true;
     }
 
-    private static boolean copyVarLenFile(
+    private static boolean copyVarSizeFiles(
             FilesFacade ff,
-            MemoryMA primaryColumn,
-            MemoryMA secondaryColumn,
+            int columnType,
+            MemoryMA dataMem,
+            MemoryMA auxMem,
             int primaryFd,
             int secondaryFd,
-            long rowOffset,
+            long startRowNumber,
             long rowCount,
             LongList newOffsets,
             int columnIndex,
             int commitMode
     ) {
-        long indexMapSize = (rowOffset + rowCount + 1) * Long.BYTES;
-        long srcIndexAddr = TableUtils.mapRW(ff, secondaryColumn.getFd(), indexMapSize, MEMORY_TAG);
+        ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+        final long auxMemSize = columnTypeDriver.getAuxVectorSize(startRowNumber + rowCount);
+        final long auxMemAddr = TableUtils.mapRW(ff, auxMem.getFd(), auxMemSize, MEMORY_TAG);
         try {
-            long varStart = Unsafe.getUnsafe().getLong(srcIndexAddr + rowOffset * Long.BYTES);
-            long varEnd = Unsafe.getUnsafe().getLong(srcIndexAddr + (rowOffset + rowCount) * Long.BYTES);
-            long varCopyLen = varEnd - varStart;
-            boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, varStart, varCopyLen) == varCopyLen;
+            final long dataStartOffset = columnTypeDriver.getDataVectorOffset(auxMemAddr, startRowNumber);
+            final long dataSize = columnTypeDriver.getDataVectorSize(auxMemAddr, startRowNumber, startRowNumber + rowCount - 1);
+
+            boolean success = dataSize == 0 || ff.copyData(dataMem.getFd(), primaryFd, dataStartOffset, dataSize) == dataSize;
             if (!success) {
                 return false;
             }
@@ -167,25 +197,33 @@ public class CopyWalSegmentUtils {
                 ff.fsync(primaryFd);
             }
 
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, varStart);
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, varCopyLen);
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, dataStartOffset);
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, dataSize);
 
-            long indexLen = (rowCount + 1) * Long.BYTES;
-            long dstIndexAddr = TableUtils.mapRW(ff, secondaryFd, indexLen, MEMORY_TAG);
-            ff.madvise(dstIndexAddr, indexLen, Files.POSIX_MADV_RANDOM);
+            final long newAuxMemSize = columnTypeDriver.getAuxVectorSize(rowCount);
+            final long newAuxMemAddr = TableUtils.mapRW(ff, secondaryFd, newAuxMemSize, MEMORY_TAG);
+            ff.madvise(newAuxMemAddr, newAuxMemSize, Files.POSIX_MADV_RANDOM);
 
-            Vect.shiftCopyFixedSizeColumnData(varStart, srcIndexAddr, rowOffset, rowOffset + rowCount, dstIndexAddr);
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 4, (rowOffset + 1) * Long.BYTES);
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 5, indexLen);
+            columnTypeDriver.shiftCopyAuxVector(
+                    dataStartOffset,
+                    auxMemAddr,
+                    startRowNumber,
+                    startRowNumber + rowCount - 1, // inclusive
+                    newAuxMemAddr,
+                    newAuxMemSize
+            );
+
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 4, columnTypeDriver.getAuxVectorOffset(startRowNumber + 1));
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 5, newAuxMemSize);
 
             if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(dstIndexAddr, indexLen, commitMode == CommitMode.ASYNC);
+                ff.msync(newAuxMemAddr, newAuxMemSize, commitMode == CommitMode.ASYNC);
             }
             // All in memory calls, no need to unmap in finally
-            ff.munmap(dstIndexAddr, indexLen, MEMORY_TAG);
+            ff.munmap(newAuxMemAddr, newAuxMemSize, MEMORY_TAG);
             return true;
         } finally {
-            ff.munmap(srcIndexAddr, indexMapSize, MEMORY_TAG);
+            ff.munmap(auxMemAddr, auxMemSize, MEMORY_TAG);
         }
     }
 }

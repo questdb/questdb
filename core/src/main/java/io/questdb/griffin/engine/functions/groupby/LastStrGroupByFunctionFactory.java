@@ -50,10 +50,6 @@ public class LastStrGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function arg = args.getQuick(0);
-        if (arg.supportsDirectStr()) {
-            return new LastDirectStrGroupByFunction(arg);
-        }
-        return new LastStrGroupByFunction(arg);
+        return new LastStrGroupByFunction(args.getQuick(0));
     }
 }

@@ -16,7 +16,7 @@
 </p>
 
 [English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) |
-Italiano | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](./README.ja-ja.md) | [Türkçe](./README.tr-tr.md) | [हिंदी](./README.hn-in.md)
+Italiano | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) | [Türkçe](README.tr-tr.md) | [हिंदी](README.hn-in.md) | [Tiếng Việt](README.vi-vn.md)
 
 # QuestDB
 

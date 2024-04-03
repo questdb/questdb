@@ -400,6 +400,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        drop(dropSql, sqlExecutionContext, null);
+    }
+
     public void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         try (SqlCompiler compiler = getSqlCompiler()) {
             final CompiledQuery cq = compiler.compile(dropSql, sqlExecutionContext);
@@ -800,7 +804,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean isTableDropped(TableToken tableToken) {
-        return tableNameRegistry.isTableDropped(tableToken);
+        return isTableDropped(tableToken.getDirName());
+    }
+
+    public boolean isTableDropped(CharSequence dirName) {
+        return tableNameRegistry.isTableDropped(dirName);
     }
 
     public boolean isWalTable(TableToken tableToken) {

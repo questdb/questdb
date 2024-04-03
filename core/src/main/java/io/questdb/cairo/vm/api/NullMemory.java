@@ -30,6 +30,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public class NullMemory implements MemoryMAR, MemoryCARW {
@@ -114,12 +115,22 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public CharSequence getStr(long offset) {
+    public CharSequence getStrA(long offset) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStr2(long offset) {
+    public CharSequence getStrB(long offset) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
         throw new UnsupportedOperationException();
     }
 
@@ -324,6 +335,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public long putStrUnsafe(CharSequence value, int pos, int len) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
         throw new UnsupportedOperationException();
     }
 

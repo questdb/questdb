@@ -37,12 +37,11 @@ public class LastNotNullStrGroupByFunction extends FirstStrGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final CharSequence val = arg.getStr(record);
+        final CharSequence val = arg.getStrA(record);
         if (val != null) {
             mapValue.putLong(valueIndex, rowId);
             long ptr = mapValue.getLong(valueIndex + 1);
-            sink.of(ptr).clear();
-            sink.put(val);
+            sink.of(ptr).clearAndSet(val);
             mapValue.putLong(valueIndex + 1, sink.ptr());
             mapValue.putBool(valueIndex + 2, false);
         }

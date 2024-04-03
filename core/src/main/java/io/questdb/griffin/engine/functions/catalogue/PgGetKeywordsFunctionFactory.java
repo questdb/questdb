@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -102,7 +99,7 @@ public class PgGetKeywordsFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 if (col == 0) {
                     return Constants.KEYWORDS[row];
                 }
@@ -111,15 +108,12 @@ public class PgGetKeywordsFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override
             public int getStrLen(int col) {
-                if (col == 0) {
-                    return getStr(col).length();
-                }
-                return -1;
+                return TableUtils.lengthOf(getStrA(col));
             }
         }
     }

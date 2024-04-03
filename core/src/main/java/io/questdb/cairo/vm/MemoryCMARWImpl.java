@@ -43,15 +43,18 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
     private long extendSegmentMsb;
+    private int fd = -1;
     private int madviseOpts = -1;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
     private long minMappedMemorySize = -1;
 
     public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        super(false);
         of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);
     }
 
     public MemoryCMARWImpl() {
+        super(false);
     }
 
     @Override
@@ -142,6 +145,16 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public long getExtendSegmentSize() {
         return extendSegmentMsb;
+    }
+
+    @Override
+    public int getFd() {
+        return fd;
+    }
+
+    @Override
+    public boolean isFileBased() {
+        return true;
     }
 
     @Override

@@ -54,7 +54,7 @@ public class CountStrGroupByFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            CharSequence val = arg.getStr(null);
+            CharSequence val = arg.getStrA(null);
             // NULL expression would lead to zero matched rows, so it makes
             // no sense to support it until we support count(expression).
             if (val == null) {

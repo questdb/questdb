@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public class ShardedMapCursor implements MapRecordCursor {
     private final ShardedMapRecord recordA = new ShardedMapRecord(true);
@@ -249,13 +251,13 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public CharSequence getStr(int columnIndex) {
-            return baseRecord.getStr(columnIndex);
+        public void getStr(int columnIndex, Utf16Sink utf16Sink) {
+            baseRecord.getStr(columnIndex, utf16Sink);
         }
 
         @Override
-        public void getStr(int columnIndex, Utf16Sink sink) {
-            baseRecord.getStr(columnIndex, sink);
+        public CharSequence getStrA(int columnIndex) {
+            return baseRecord.getStrA(columnIndex);
         }
 
         @Override
@@ -269,8 +271,8 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public CharSequence getSym(int columnIndex) {
-            return baseRecord.getSym(columnIndex);
+        public CharSequence getSymA(int columnIndex) {
+            return baseRecord.getSymA(columnIndex);
         }
 
         @Override
@@ -284,7 +286,22 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public int keyHashCode() {
+        public void getVarchar(int col, Utf8Sink utf8Sink) {
+            baseRecord.getVarchar(col, utf8Sink);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            return baseRecord.getVarcharA(col);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(int col) {
+            return baseRecord.getVarcharB(col);
+        }
+
+        @Override
+        public long keyHashCode() {
             return baseRecord.keyHashCode();
         }
 

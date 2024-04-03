@@ -106,7 +106,7 @@ public final class LongLongHashSet implements Mutable, Sinkable {
         if (key1 == noEntryKeyValue && key2 == noEntryKeyValue) {
             throw new IllegalArgumentException("keys cannot be NO_ENTRY_KEY (" + noEntryKeyValue + ")");
         }
-        int slot = keySlot(key1, key2);
+        int slot = keyIndex(key1, key2);
         if (slot < 0) {
             return false;
         }
@@ -143,7 +143,7 @@ public final class LongLongHashSet implements Mutable, Sinkable {
      * @return true if the set contains the tuple, false otherwise
      */
     public boolean contains(long key1, long key2) {
-        return keySlot(key1, key2) < 0;
+        return keyIndex(key1, key2) < 0;
     }
 
     /**
@@ -156,10 +156,10 @@ public final class LongLongHashSet implements Mutable, Sinkable {
      * @param key2 second key
      * @return slot index
      */
-    public int keySlot(long key1, long key2) {
-        int hash = Hash.hashLong128(key1, key2);
-        int slot = (hash & mask);
-        return probe(key1, key2, slot);
+    public int keyIndex(long key1, long key2) {
+        int hash = Hash.hashLong128_32(key1, key2);
+        int index = hash & mask;
+        return probe(key1, key2, index);
     }
 
     /**
@@ -225,7 +225,7 @@ public final class LongLongHashSet implements Mutable, Sinkable {
             long key1 = firstValue(oldKeys, i);
             long key2 = secondValue(oldKeys, i);
             if (key1 != noEntryKeyValue || key2 != noEntryKeyValue) {
-                int slot = keySlot(key1, key2);
+                int slot = keyIndex(key1, key2);
                 set(slot, key1, key2);
             }
         }

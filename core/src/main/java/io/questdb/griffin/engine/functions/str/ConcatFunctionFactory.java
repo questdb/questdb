@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
@@ -90,6 +91,10 @@ public class ConcatFunctionFactory implements FunctionFactory {
         sink.put(function.getFloat(record), 3);
     }
 
+    private static void sinkIPv4(Utf16Sink utf16Sink, Function function, Record record) {
+        Numbers.intToIPv4Sink(utf16Sink, function.getIPv4(record));
+    }
+
     private static void sinkInt(Utf16Sink sink, Function function, Record record) {
         sink.put(function.getInt(record));
     }
@@ -128,6 +133,10 @@ public class ConcatFunctionFactory implements FunctionFactory {
         SqlUtil.implicitCastUuidAsStr(lo, hi, sink);
     }
 
+    private static void sinkVarchar(Utf16Sink utf16Sink, Function function, Record record) {
+        function.getStr(record, utf16Sink);
+    }
+
     @FunctionalInterface
     private interface TypeAdapter {
         void sink(Utf16Sink sink, Function function, Record record);
@@ -155,14 +164,14 @@ public class ConcatFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             for (int i = 0; i < functionCount; i++) {
-                adapters.getQuick(i).sink(sink, functions.getQuick(i), rec);
+                adapters.getQuick(i).sink(utf16Sink, functions.getQuick(i), rec);
             }
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             sinkA.clear();
             getStr(rec, sinkA);
             return sinkA;
@@ -173,6 +182,11 @@ public class ConcatFunctionFactory implements FunctionFactory {
             sinkB.clear();
             getStr(rec, sinkB);
             return sinkB;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
@@ -188,10 +202,12 @@ public class ConcatFunctionFactory implements FunctionFactory {
         adapterReferences.extendAndSet(ColumnType.SHORT, ConcatFunctionFactory::sinkShort);
         adapterReferences.extendAndSet(ColumnType.CHAR, ConcatFunctionFactory::sinkChar);
         adapterReferences.extendAndSet(ColumnType.INT, ConcatFunctionFactory::sinkInt);
+        adapterReferences.extendAndSet(ColumnType.IPv4, ConcatFunctionFactory::sinkIPv4);
         adapterReferences.extendAndSet(ColumnType.LONG, ConcatFunctionFactory::sinkLong);
         adapterReferences.extendAndSet(ColumnType.FLOAT, ConcatFunctionFactory::sinkFloat);
         adapterReferences.extendAndSet(ColumnType.DOUBLE, ConcatFunctionFactory::sinkDouble);
         adapterReferences.extendAndSet(ColumnType.STRING, ConcatFunctionFactory::sinkStr);
+        adapterReferences.extendAndSet(ColumnType.VARCHAR, ConcatFunctionFactory::sinkVarchar);
         adapterReferences.extendAndSet(ColumnType.SYMBOL, ConcatFunctionFactory::sinkSymbol);
         adapterReferences.extendAndSet(ColumnType.BINARY, ConcatFunctionFactory::sinkBin);
         adapterReferences.extendAndSet(ColumnType.DATE, ConcatFunctionFactory::sinkDate);

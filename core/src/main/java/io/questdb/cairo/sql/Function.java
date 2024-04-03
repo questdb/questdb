@@ -33,8 +33,10 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -88,18 +90,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     long getDate(Record rec);
 
-    /**
-     * Returns UTF-16 encoded off-heap string.
-     * <p>
-     * Must be called only if {@link #supportsDirectStr()} method returned true.
-     * The method is guaranteed to return off-heap strings with stable pointers,
-     * i.e. once a string is returned, its pointer remains actual until the end
-     * of query execution.
-     */
-    default DirectCharSequence getDirectStr(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
     double getDouble(Record rec);
 
     float getFloat(Record rec);
@@ -148,11 +138,11 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     short getShort(Record rec);
 
-    CharSequence getStr(Record rec);
+    CharSequence getStrA(Record rec);
 
-    CharSequence getStr(Record rec, int arrayIndex);
+    CharSequence getStrA(Record rec, int arrayIndex);
 
-    void getStr(Record rec, Utf16Sink sink);
+    void getStr(Record rec, Utf16Sink utf16Sink);
 
     void getStr(Record rec, Utf16Sink sink, int arrayIndex);
 
@@ -163,6 +153,12 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     int getStrLen(Record rec);
 
     int getStrLen(Record rec, int arrayIndex);
+
+    @Nullable Utf8Sequence getVarcharA(Record rec);
+
+    void getVarchar(Record rec, Utf8Sink utf8Sink);
+
+    @Nullable Utf8Sequence getVarcharB(Record rec);
 
     CharSequence getSymbol(Record rec);
 
@@ -207,16 +203,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default boolean isUndefined() {
         return getType() == ColumnType.UNDEFINED;
-    }
-
-    /**
-     * Returns true if {@link #getDirectStr(Record)} method can be safely called.
-     * The method is guaranteed to return off-heap strings with stable pointers,
-     * i.e. once a string is returned, its pointer remains actual until the end
-     * of query execution.
-     */
-    default boolean supportsDirectStr() {
-        return false;
     }
 
     /**

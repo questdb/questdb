@@ -31,6 +31,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TestRecord;
 
 public class FuzzInsertOperation implements FuzzTransactionOperation {
@@ -43,6 +44,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.FLOAT,
             ColumnType.DOUBLE,
             ColumnType.STRING,
+            ColumnType.VARCHAR,
             ColumnType.BINARY,
             ColumnType.SHORT,
             ColumnType.BYTE,
@@ -58,6 +60,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     };
     private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
     private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
+    private static final ThreadLocal<Utf8StringSink> tlUtf8 = new ThreadLocal<>(Utf8StringSink::new);
     private final double cancelRows;
     private final double notSet;
     private final double nullSet;
@@ -96,6 +99,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
 
         final IntList tempList = tlIntList.get();
         final TestRecord.ArrayBinarySequence binarySequence = tlBinSeq.get();
+        final Utf8StringSink utf8StringSink = tlUtf8.get();
 
         TableWriter.Row row = tableWriter.newRow(timestamp);
         // this is hack for populating a table without designated timestamp
@@ -189,6 +193,12 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
 
                             case ColumnType.DOUBLE:
                                 row.putDouble(index, isNull ? Double.NaN : rnd.nextDouble());
+                                break;
+
+                            case ColumnType.VARCHAR:
+                                utf8StringSink.clear();
+                                rnd.nextUtf8Str(strLen, utf8StringSink);
+                                row.putVarchar(index, isNull ? null : utf8StringSink);
                                 break;
 
                             case ColumnType.STRING:

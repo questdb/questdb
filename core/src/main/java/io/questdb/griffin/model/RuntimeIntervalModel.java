@@ -189,7 +189,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     }
                 } else {
                     // This is subtract or intersect with a string interval (not a single timestamp)
-                    CharSequence strValue = dynamicFunction.getStr(null);
+                    CharSequence strValue = dynamicFunction.getStrA(null);
                     if (operation == IntervalOperation.INTERSECT_INTERVALS) {
                         // This is intersect
                         if (parseIntervalFails(outIntervals, strValue)) {
@@ -251,7 +251,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
     private long getTimestamp(Function dynamicFunction) {
         if (ColumnType.isString(dynamicFunction.getType())) {
-            CharSequence value = dynamicFunction.getStr(null);
+            CharSequence value = dynamicFunction.getStrA(null);
             try {
                 return IntervalUtils.parseFloorPartialTimestamp(value);
             } catch (NumericException e) {

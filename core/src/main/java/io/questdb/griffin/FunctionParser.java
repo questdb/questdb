@@ -106,7 +106,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.DOUBLE:
                 return DoubleColumn.newInstance(index);
             case ColumnType.STRING:
-                return StrColumn.newInstance(index);
+                // we cannot use a pooled StrColumn instance, because it is not thread-safe
+                return new StrColumn(index);
+            case ColumnType.VARCHAR:
+                // we cannot use a pooled VarcharColumn instance, because it is not thread-safe
+                return new VarcharColumn(index);
             case ColumnType.SYMBOL:
                 return new SymbolColumn(index, metadata.isSymbolTableStatic(index));
             case ColumnType.BINARY:
@@ -476,7 +480,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // type constant for 'CAST' operation
 
         final short columnType = ColumnType.tagOf(tok);
-
         if (
                 (columnType >= ColumnType.BOOLEAN && columnType <= ColumnType.BINARY)
                         || columnType == ColumnType.REGCLASS
@@ -484,6 +487,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         || columnType == ColumnType.ARRAY_STRING
                         || columnType == ColumnType.UUID
                         || columnType == ColumnType.IPv4
+                        || columnType == ColumnType.VARCHAR
         ) {
             return Constants.getTypeConstant(columnType);
         }
@@ -503,7 +507,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         // long256
-        if (Numbers.extractLong256(tok, len, long256Sink)) {
+        if (Numbers.extractLong256(tok, long256Sink)) {
             return new Long256Constant(long256Sink); // values are copied from this sink
         }
 
@@ -546,8 +550,41 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         int bestMatch = MATCH_NO_MATCH;
         boolean isWindowContext = !sqlExecutionContext.getWindowContext().isEmpty();
 
-        undefinedVariables.clear();
+        // If a bind variable of unknown type appears inside a cast expression, we should
+        // assign a default type to it. Otherwise, since casting is a heavily overloaded
+        // operation (can cast lots of things to a string/number), we'll end up picking
+        // whatever happens to be the first cast function in the traversal order, and force
+        // the bind variable to that type. This will then fail when an actual value is bound
+        // to the variable, and it's most likely not that arbitrary type.
+        if (Chars.equals("cast", node.token)
+                && argCount == 2
+                && args.getQuick(0).isUndefined()
+                && args.getQuick(1).isConstant()
+        ) skipAssigningType: {
+            final Function undefinedArg = args.getQuick(0);
+            final int castToType = args.getQuick(1).getType();
+            final int assignType;
+            switch (castToType) {
+                case ColumnType.VARCHAR:
+                case ColumnType.STRING:
+                case ColumnType.CHAR:
+                    assignType = ColumnType.STRING;
+                    break;
+                case ColumnType.BYTE:
+                case ColumnType.SHORT:
+                case ColumnType.INT:
+                case ColumnType.LONG:
+                case ColumnType.FLOAT:
+                case ColumnType.DOUBLE:
+                    assignType = ColumnType.DOUBLE;
+                    break;
+                default:
+                    break skipAssigningType;
+            }
+            undefinedArg.assignType(assignType, sqlExecutionContext.getBindVariableService());
+        }
 
+        undefinedVariables.clear();
         // find all undefined args for the purpose of setting
         // their types when we find suitable candidate function
         for (int i = 0; i < argCount; i++) {
@@ -667,6 +704,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         overloadPossible |= argTypeTag == ColumnType.CHAR &&
                                 sigArgTypeTag == ColumnType.STRING;
 
+                        // Implicit cast from CHAR to VARCHAR
+                        overloadPossible |= argTypeTag == ColumnType.CHAR &&
+                                sigArgTypeTag == ColumnType.VARCHAR;
+
                         // Implicit cast from STRING to TIMESTAMP
                         overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
                                 sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
@@ -682,6 +723,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         // Implicit cast from SYMBOL to TIMESTAMP
                         overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
                                 sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
+
+                        // Implicit cast from VARCHAR to TIMESTAMP
+                        overloadPossible |= argTypeTag == ColumnType.VARCHAR && arg.isConstant() && sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
+
+                        // Implicit cast from VARCHAR to STRING
+                        overloadPossible |= argTypeTag == ColumnType.VARCHAR && arg.isConstant() && sigArgTypeTag == ColumnType.STRING && !factory.isGroupBy();
+
+                        // Implicit cast from VARCHAR to CHAR
+                        overloadPossible |= argTypeTag == ColumnType.VARCHAR &&
+                                sigArgTypeTag == ColumnType.CHAR;
 
                         overloadPossible |= arg.isUndefined();
                     }
@@ -800,11 +851,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && arg.isConstant()) {
                 if (sigArgTypeTag == ColumnType.TIMESTAMP) {
                     int position = argPositions.getQuick(k);
-                    long timestamp = parseTimestamp(arg.getStr(null), position);
+                    long timestamp = parseTimestamp(arg.getStrA(null), position);
                     args.set(k, TimestampConstant.newInstance(timestamp));
                 } else if (sigArgTypeTag == ColumnType.DATE) {
                     int position = argPositions.getQuick(k);
-                    long millis = parseDate(arg.getStr(null), position);
+                    long millis = parseDate(arg.getStrA(null), position);
                     args.set(k, DateConstant.newInstance(millis));
                 }
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
@@ -830,9 +881,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
                 }
                 break;
+            case ColumnType.VARCHAR:
+                if (toType == ColumnType.UUID) {
+                    return new CastVarcharToUuidFunctionFactory.Func(function);
+                }
+                if (toType == ColumnType.TIMESTAMP) {
+                    return new CastVarcharToTimestampFunctionFactory.Func(function);
+                }
+                if (ColumnType.isGeoHash(toType)) {
+                    return CastVarcharToGeoHashFunctionFactory.newInstance(position, toType, function);
+                }
+                break;
             case ColumnType.UUID:
                 if (toType == ColumnType.STRING) {
                     return new CastUuidToStrFunctionFactory.Func(function);
+                }
+                if (toType == ColumnType.VARCHAR) {
+                    return new CastUuidToVarcharFunctionFactory.Func(function);
                 }
                 break;
             case ColumnType.CHAR:
@@ -971,7 +1036,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof StrConstant) {
                     return function;
                 } else {
-                    return StrConstant.newInstance(function.getStr(null));
+                    return StrConstant.newInstance(function.getStrA(null));
+                }
+            case ColumnType.VARCHAR:
+                if (function instanceof VarcharConstant) {
+                    return function;
+                } else {
+                    return VarcharConstant.newInstance(function.getVarcharA(null));
                 }
             case ColumnType.SYMBOL:
                 if (function instanceof SymbolConstant) {

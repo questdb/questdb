@@ -110,7 +110,7 @@ public class SymbolMapUtil {
                     throw new CairoException().put("corrupted symbol map [name=").put(path).put(']');
                 }
                 // read symbol value
-                CharSequence symbol = charMem.getStr(strOffset);
+                CharSequence symbol = charMem.getStrA(strOffset);
                 strOffset += Vm.getStorageLength(symbol);
                 if (symbol.length() == 0) {
                     LOG.info().$("symbol is empty [index=").$(i).$(']').$();

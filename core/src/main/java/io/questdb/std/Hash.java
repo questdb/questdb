@@ -50,35 +50,71 @@ public final class Hash {
         return seq == null ? -1 : (Chars.hashCode(seq) & 0xFFFFFFF) & max;
     }
 
-    public static int hashInt(int k) {
-        long h = Integer.toUnsignedLong(k) * M2;
-        return (int) (h ^ h >>> 32);
+    public static long hashInt64(int k) {
+        return fmix64(Integer.toUnsignedLong(k));
     }
 
-    public static int hashLong(long k) {
-        long h = k * M2;
-        return (int) (h ^ h >>> 32);
+    public static int hashLong128_32(long key1, long key2) {
+        return (int) hashLong128_64(key1, key2);
     }
 
-    public static int hashLong128(long key1, long key2) {
-        long h = key1 * M2 + key2;
-        h *= M2;
-        return (int) (h ^ h >>> 32);
+    public static long hashLong128_64(long key1, long key2) {
+        return fmix64(key1 * M2 + key2);
     }
 
-    public static int hashLong256(long key1, long key2, long key3, long key4) {
-        long h = key1 * M2 + key2;
-        h = (h * M2) + key3;
-        h = (h * M2) + key4;
-        h *= M2;
-        return (int) (h ^ h >>> 32);
+    public static long hashLong256_64(long key1, long key2, long key3, long key4) {
+        return fmix64(key1 * M2 * M2 * M2 + key2 * M2 * M2 + key3 * M2 + key4);
+    }
+
+    public static int hashLong32(long k) {
+        return (int) hashLong64(k);
+    }
+
+    public static long hashLong64(long k) {
+        return fmix64(k);
     }
 
     /**
-     * Same as {@link #hashMem32(long, long)}, but with on-heap char sequence
+     * Calculates integer hash for the given chunk of native memory using a polynomial hash function.
+     * Suitable for potentially large sequences of bytes.
+     * <p>
+     * The function is a modified version of the function from
+     * <a href="https://vanilla-java.github.io/2018/08/15/Looking-at-randomness-and-performance-for-hash-codes.html">this article</a>
+     * by Peter Lawrey.
+     *
+     * @param p   memory pointer
+     * @param len memory length in bytes
+     * @return hash code
+     */
+    public static long hashMem64(long p, long len) {
+        long h = 0;
+        long i = 0;
+        for (; i + 7 < len; i += 8) {
+            h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
+        }
+        if (i + 3 < len) {
+            h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
+            i += 4;
+        }
+        for (; i < len; i++) {
+            h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
+        }
+        return fmix64(h);
+    }
+
+    /**
+     * Same as {@link #hashMem64(long, long)}, but with direct UTF8 string
      * instead of direct unsafe access.
      */
-    public static int hashMem32(Utf8String us) {
+    public static int hashUtf8(DirectUtf8Sequence seq) {
+        return (int) hashMem64(seq.lo(), seq.size());
+    }
+
+    /**
+     * Same as {@link #hashMem64(long, long)}, but with on-heap char sequence
+     * instead of direct unsafe access.
+     */
+    public static int hashUtf8(Utf8String us) {
         final int len = us.size();
         long h = 0;
         int i = 0;
@@ -92,45 +128,7 @@ public final class Hash {
         for (; i < len; i++) {
             h = h * M2 + us.byteAt(i);
         }
-        h *= M2;
-        return (int) (h ^ h >>> 32);
-    }
-
-    /**
-     * Calculates positive integer hash of memory pointer using a polynomial
-     * hash function.
-     * <p>
-     * The function is a modified version of the function from
-     * <a href="https://vanilla-java.github.io/2018/08/15/Looking-at-randomness-and-performance-for-hash-codes.html">this article</a>
-     * by Peter Lawrey.
-     *
-     * @param p   memory pointer
-     * @param len memory length in bytes
-     * @return hash code
-     */
-    public static int hashMem32(long p, long len) {
-        long h = 0;
-        long i = 0;
-        for (; i + 7 < len; i += 8) {
-            h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
-        }
-        if (i + 3 < len) {
-            h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
-            i += 4;
-        }
-        for (; i < len; i++) {
-            h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
-        }
-        h *= M2;
-        return (int) (h ^ h >>> 32);
-    }
-
-    /**
-     * Same as {@link #hashMem32(long, long)}, but with direct UTF8 string
-     * instead of direct unsafe access.
-     */
-    public static int hashMem32(DirectUtf8Sequence seq) {
-        return hashMem32(seq.lo(), seq.size());
+        return (int) fmix64(h);
     }
 
     /**
@@ -171,13 +169,13 @@ public final class Hash {
         return (h ^ (h >>> 16)) & SPREAD_HASH_BITS;
     }
 
+    /**
+     * Murmur finalizer.
+     */
     private static long fmix64(long h) {
-        h ^= (h >>> 33);
-        h *= 0xff51afd7ed558ccdL;
-        h ^= (h >>> 33);
-        h *= 0xc4ceb9fe1a85ec53L;
-        h ^= (h >>> 33);
-        return h;
+        h = (h ^ (h >>> 33)) * 0xff51afd7ed558ccdL;
+        h = (h ^ (h >>> 33)) * 0xc4ceb9fe1a85ec53L;
+        return h ^ (h >>> 33);
     }
 
     /**

@@ -46,20 +46,13 @@ public class CastStrToFloatFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToFloatFunction {
-        private final Function arg;
-
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
         public float getFloat(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             try {
                 return value == null ? Float.NaN : Numbers.parseFloat(value);
             } catch (NumericException e) {

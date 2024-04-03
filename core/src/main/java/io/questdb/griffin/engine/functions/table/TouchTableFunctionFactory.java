@@ -99,9 +99,9 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             touchTable();
-            sink.put("{\"data_pages\": ")
+            utf16Sink.put("{\"data_pages\": ")
                     .put(dataPages)
                     .put(", \"index_key_pages\":")
                     .put(indexKeyPages)
@@ -110,7 +110,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             sinkA.clear();
             getStr(rec, sinkA);
             return sinkA;

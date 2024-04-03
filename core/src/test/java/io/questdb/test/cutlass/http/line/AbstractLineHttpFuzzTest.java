@@ -422,9 +422,8 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
             final String username = "root";
             final String password = "root";
             try (
-                    Sender sender = Sender.builder()
+                    Sender sender = Sender.builder(Sender.Transport.HTTP)
                             .address("localhost:" + port)
-                            .http()
                             .httpUsernamePassword(username, password)
                             .build()
             ) {

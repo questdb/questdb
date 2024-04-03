@@ -279,7 +279,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
                     return tableName;
@@ -349,7 +349,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
                     return relNames[fixedRelPos];
@@ -359,7 +359,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override

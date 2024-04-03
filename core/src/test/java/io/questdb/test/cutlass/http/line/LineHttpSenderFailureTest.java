@@ -114,9 +114,8 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
 
         public Sender newSender() {
             String address = "localhost:" + HTTP_PORT;
-            return Sender.builder()
+            return Sender.builder(Sender.Transport.HTTP)
                     .address(address)
-                    .http()
                     .autoFlushRows(5000)
                     .retryTimeoutMillis(15_000)
                     .build();

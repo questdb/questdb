@@ -58,6 +58,7 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_TAG = 1;
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
     public static final byte ENTITY_TYPE_UUID = 20;
+    public static final byte ENTITY_TYPE_VARCHAR = 21;
     public static final byte ENTITY_UNIT_NONE = 0;
     public static final byte ENTITY_UNIT_NANO = ENTITY_UNIT_NONE + 1;
     public static final byte ENTITY_UNIT_MICRO = ENTITY_UNIT_NANO + 1;
@@ -67,7 +68,7 @@ public class LineTcpParser {
     public static final byte ENTITY_UNIT_HOUR = ENTITY_UNIT_MINUTE + 1;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
-    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_UUID + 1;
+    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_VARCHAR + 1;
     private static final byte ENTITY_HANDLER_NAME = 1;
     private static final byte ENTITY_HANDLER_NEW_LINE = 4;
     private static final byte ENTITY_HANDLER_TABLE = 0;
@@ -473,7 +474,7 @@ public class LineTcpParser {
         tagsComplete = endOfEntityByte == (byte) ' ';
         if (endOfEntityByte == (byte) ',' || tagsComplete) {
             long hi = bufAt - nEscapedChars;
-            measurementName.of(entityLo, hi);
+            measurementName.of(entityLo, hi, !hasNonAscii);
             entityHandler = ENTITY_HANDLER_NAME;
             return true;
         }
@@ -491,7 +492,7 @@ public class LineTcpParser {
             if (endOfEntityByte == '\n') {
                 final long entityHi = bufAt - nEscapedChars;
                 if (entityLo < entityHi) {
-                    charSeq.of(entityLo, entityHi);
+                    charSeq.of(entityLo, entityHi, !hasNonAscii);
                     final int charSeqLen = charSeq.size();
                     final byte last = charSeq.byteAt(charSeqLen - 1);
                     switch (last) {
@@ -726,7 +727,7 @@ public class LineTcpParser {
                             type = ENTITY_TYPE_SYMBOL;
                         }
                     } else {
-                        charSeq.of(value.lo(), value.hi());
+                        charSeq.of(value.lo(), value.hi(), !hasNonAscii);
                         if (SqlKeywords.isTrueKeyword(charSeq)) {
                             booleanValue = true;
                             type = ENTITY_TYPE_BOOLEAN;
@@ -762,7 +763,7 @@ public class LineTcpParser {
 
         private boolean parseLong(byte entityType) {
             try {
-                charSeq.of(value.lo(), value.hi() - 1);
+                charSeq.of(value.lo(), value.hi() - 1, true);
                 longValue = Numbers.parseLong(charSeq);
                 value.decHi(); // remove the suffix ('i', 'n', 't', 'm')
                 type = entityType;
@@ -774,18 +775,18 @@ public class LineTcpParser {
         }
 
         private void setName() {
-            name.of(entityLo, bufAt - nEscapedChars);
+            name.of(entityLo, bufAt - nEscapedChars, !hasNonAscii);
         }
 
         private void setName(long hi) {
-            name.of(entityLo, hi - nEscapedChars);
+            name.of(entityLo, hi - nEscapedChars, !hasNonAscii);
         }
 
         private boolean setValueAndUnit() {
             assert type == ENTITY_TYPE_NONE;
             long bufHi = bufAt - nEscapedChars;
             int valueLen = (int) (bufHi - entityLo);
-            value.of(entityLo, bufHi);
+            value.of(entityLo, bufHi, !hasNonAscii);
             if (tagsComplete) {
                 if (valueLen > 0) {
                     byte lastByte = value.byteAt(valueLen - 1);

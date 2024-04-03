@@ -165,7 +165,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
                 }
 
                 @Override
-                public CharSequence getStr(int col) {
+                public CharSequence getStrA(int col) {
                     if (col == COLUMN_NAME) {
                         return tableToken.getTableName();
                     }
@@ -183,13 +183,12 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrB(int col) {
-                    return getStr(col);
+                    return getStrA(col);
                 }
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence str = getStr(col);
-                    return str != null ? str.length() : TableUtils.NULL_LEN;
+                    return TableUtils.lengthOf(getStrA(col));
                 }
             }
         }

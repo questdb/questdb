@@ -280,7 +280,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public CharSequence getSym(int columnIndex) {
+    public CharSequence getSymA(int columnIndex) {
         return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(columnIndex)).valueOf(getInt(columnIndex));
     }
 
@@ -295,8 +295,8 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public int keyHashCode() {
-        return Hash.hashMem32(keyAddress, keySize);
+    public long keyHashCode() {
+        return Hash.hashMem64(keyAddress, keySize);
     }
 
     @Override

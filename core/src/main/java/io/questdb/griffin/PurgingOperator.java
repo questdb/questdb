@@ -96,7 +96,7 @@ public final class PurgingOperator {
                                 TableUtils.dFile(path, columnName, columnVersion);
                                 columnPurged = ff.removeQuiet(path.$());
 
-                                if (ColumnType.isVariableLength(columnType)) {
+                                if (ColumnType.isVarSize(columnType)) {
                                     TableUtils.iFile(path.trimTo(pathPartitionLen), columnName, columnVersion);
                                     columnPurged &= ff.removeQuiet(path.$());
                                 }

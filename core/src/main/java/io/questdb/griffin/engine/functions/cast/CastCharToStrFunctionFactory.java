@@ -30,12 +30,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class CastCharToStrFunctionFactory implements FunctionFactory {
     @Override
@@ -46,18 +44,12 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
-        return newInstance(func);
-    }
-
-    public Function newInstance(Function func) {
         if (func.isConstant()) {
             final char value = func.getChar(null);
             if (value == 0) {
-                return new StrConstant(null);
+                return StrConstant.NULL;
             }
-            final StringSink sink = Misc.getThreadLocalSink();
-            sink.put(value);
-            return new StrConstant(Chars.toString(sink));
+            return new StrConstant(String.valueOf(value));
         }
         return new Func(func);
     }
@@ -71,7 +63,7 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             final char value = arg.getChar(rec);
             if (value == 0) {
                 return null;
@@ -82,10 +74,10 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             final char value = arg.getChar(rec);
             if (value != 0) {
-                sink.put(value);
+                utf16Sink.put(value);
             }
         }
 

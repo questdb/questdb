@@ -108,6 +108,26 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     }
 
     @Test
+    public void testGroupByOverUnion() throws Exception {
+        assertQuery(
+                "first\tlast\tfirst_nn\tlast_nn\n" +
+                        "TJWCPSWHYR\t10\tTJWCPSWHYR\t10\n",
+                "select first(s) first, last(s) last, first_not_null(s) first_nn, last_not_null(s) last_nn " +
+                        "from (x union select x::string s, x::timestamp ts from long_sequence(10))",
+                "create table x as (" +
+                        "select * from (" +
+                        "   select " +
+                        "       rnd_str(10, 10, 0) s, " +
+                        "       timestamp_sequence(0, 100000) ts " +
+                        "   from long_sequence(10)" +
+                        ") timestamp(ts))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testGroupKeyedFirstLastAllNulls() throws Exception {
         assertQuery(
                 "a\tfirst\tlast\tfirst_not_null\tlast_not_null\n" +

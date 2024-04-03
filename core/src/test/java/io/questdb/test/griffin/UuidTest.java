@@ -351,7 +351,7 @@ public class UuidTest extends AbstractCairoTest {
                 "u\tsum\n" +
                         "11111111-1111-1111-1111-111111111111\t1\n" +
                         "22222222-2222-2222-2222-222222222222\t5\n",
-                "select u, sum(i) from x group by u"
+                "select u, sum(i) from x group by u order by u"
         );
     }
 
@@ -1133,6 +1133,18 @@ public class UuidTest extends AbstractCairoTest {
         assertSql(
                 "i\tu\n" +
                         "0\ta0eebc11-4242-11f8-116d-11b9bd380a11\n",
+                "select * from x"
+        );
+    }
+
+    @Test
+    public void testUpdateUuidWithVarchar() throws Exception {
+        ddl("create table x (i INT, v VARCHAR, u UUID)");
+        insert("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11', null)");
+        update("update x set u = v where i = 0");
+        assertSql(
+                "i\tv\tu\n" +
+                        "0\ta0eebc11-110b-11f8-116d-11b9bd380a11\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
                 "select * from x"
         );
     }

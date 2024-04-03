@@ -67,7 +67,7 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            final CharSequence value = arg.getStr(rec);
+            final CharSequence value = arg.getStrA(rec);
             try {
                 return Numbers.parseLong(value);
             } catch (NumericException ignore) {

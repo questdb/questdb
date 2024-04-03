@@ -37,7 +37,7 @@ public abstract class AbstractLowerCaseUtf8SequenceHashSet implements Mutable {
     protected int capacity;
     protected int free;
     protected int[] hashCodes;
-    protected Utf8String[] keys;
+    protected Utf8Sequence[] keys;
     protected int mask;
 
     public AbstractLowerCaseUtf8SequenceHashSet(int initialCapacity, double loadFactor) {
@@ -67,7 +67,7 @@ public abstract class AbstractLowerCaseUtf8SequenceHashSet implements Mutable {
         return keyIndex(key) > -1;
     }
 
-    public Utf8String keyAt(int index) {
+    public Utf8Sequence keyAt(int index) {
         return keys[-index - 1];
     }
 

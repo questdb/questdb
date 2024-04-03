@@ -202,8 +202,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             LOG.info().$("[fd=").$(context.getFd()).$("] data is in cold storage, will retry").$();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (CairoException e) {
+            int code = 400;
+            if (e.isAuthorizationError()) {
+                code = 403;
+            } else if (e.isInterruption()) {
+                code = 408;
+            }
             internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
-                    e.isAuthorizationError() ? 403 : 400, e, state, context.getMetrics()
+                    code, e, state, context.getMetrics()
             );
             readyForNextRequest(context);
             if (e.isEntityDisabled()) {
@@ -395,8 +401,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpChunkedResponse response = context.getChunkedResponse();
         header(response, context, keepAliveHeader, 200);
         response.put('{')
-                .putQuoted("ddl").put(':').putQuoted("OK")
-                .put('}');
+                .putAsciiQuoted("ddl").putAscii(':').putAsciiQuoted("OK")
+                .putAscii('}');
         response.sendChunk(true);
         readyForNextRequest(context);
     }
@@ -410,8 +416,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpChunkedResponse response = context.getChunkedResponse();
         header(response, context, keepAliveHeader, 200);
         response.put('{')
-                .putQuoted("ddl").put(':').putQuoted("OK").put(',')
-                .putQuoted("updated").put(':').put(updateRecords)
+                .putAsciiQuoted("ddl").putAscii(':').putAsciiQuoted("OK").putAscii(',')
+                .putAsciiQuoted("updated").putAscii(':').put(updateRecords)
                 .put('}');
         response.sendChunk(true);
         readyForNextRequest(context);

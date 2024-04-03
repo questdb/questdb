@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -64,7 +65,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         this.columnOffsets = new long[count];
         for (int i = 0; i < count; i++) {
             int type = columnTypes.getColumnType(i);
-            if (ColumnType.isVariableLength(type)) {
+            if (ColumnType.isVarSize(type)) {
                 columnOffsets[i] = varOffset;
                 varOffset += 8;
             } else {
@@ -277,6 +278,21 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
+    public void putVarchar(Utf8Sequence value) {
+        if (value != null) {
+            mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
+            recordOffset += 8;
+            // appendAddressFor grows the memory if necessary
+            int byteCount = VarcharTypeDriver.getSingleMemValueByteCount(value);
+            final long appendAddress = mem.appendAddressFor(varAppendOffset, byteCount);
+            VarcharTypeDriver.appendValue(appendAddress, value, false);
+            varAppendOffset += byteCount;
+        } else {
+            putNull();
+        }
+    }
+
+    @Override
     public void recordAt(Record record, long row) {
         ((RecordChainRecord) record).of(rowToDataOffset(row));
     }
@@ -439,17 +455,17 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             long offset = varWidthColumnOffset(col);
             assert offset > -2;
-            return offset == -1 ? null : mem.getStr(offset);
+            return offset == -1 ? null : mem.getStrA(offset);
         }
 
         @Override
         public CharSequence getStrB(int col) {
             long offset = varWidthColumnOffset(col);
             assert offset > -2;
-            return offset == -1 ? null : mem.getStr2(offset);
+            return offset == -1 ? null : mem.getStrB(offset);
         }
 
         @Override
@@ -462,13 +478,31 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
-        public CharSequence getSym(int col) {
+        public CharSequence getSymA(int col) {
             return symbolTableResolver.getSymbolTable(col).valueOf(getInt(col));
         }
 
         @Override
         public CharSequence getSymB(int col) {
             return symbolTableResolver.getSymbolTable(col).valueBOf(getInt(col));
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            long offset = varWidthColumnOffset(col);
+            if (offset == -1) {
+                return null;
+            }
+            return VarcharTypeDriver.getValue(mem, offset, 1); // VarcharA
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(int col) {
+            long offset = varWidthColumnOffset(col);
+            if (offset == -1) {
+                return null;
+            }
+            return VarcharTypeDriver.getValue(mem, offset, 2); // VarcharB
         }
 
         private long fixedWithColumnOffset(int index) {

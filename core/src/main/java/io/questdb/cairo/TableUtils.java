@@ -225,7 +225,6 @@ public final class TableUtils {
 
     public static void clearThreadLocals() {
         Path.clearThreadLocals();
-        TableTransactionLogV2.clearThreadLocals();
     }
 
     public static int compressColumnCount(RecordMetadata metadata) {
@@ -542,7 +541,7 @@ public final class TableUtils {
         int slaveIndex = 0;
         int shiftLeft = 0;
         for (int masterIndex = 0; masterIndex < masterColumnCount; masterIndex++) {
-            CharSequence name = masterMeta.getStr(offset);
+            CharSequence name = masterMeta.getStrA(offset);
             offset += Vm.getStorageLength(name);
             int masterColumnType = getColumnType(masterMeta, masterIndex);
 
@@ -636,7 +635,7 @@ public final class TableUtils {
         long recSize = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             int columnType = metadata.getColumnType(i);
-            if (ColumnType.isVariableLength(columnType)) {
+            if (ColumnType.isVarSize(columnType)) {
                 // Estimate size of variable length column as 28 bytes
                 recSize += ESTIMATED_VAR_COL_SIZE;
             } else if (columnType > 0) {
@@ -964,6 +963,10 @@ public final class TableUtils {
             }
         }
         return length > 0 && tableName.charAt(0) != ' ' && tableName.charAt(length - 1) != ' ';
+    }
+
+    public static int lengthOf(@Nullable CharSequence columnValue) {
+        return columnValue != null ? columnValue.length() : NULL_LEN;
     }
 
     public static int lock(FilesFacade ff, Path path, boolean verbose) {
@@ -1320,7 +1323,7 @@ public final class TableUtils {
                 }
 
                 mem.of(ff, path, fileLen, fileLen, MemoryTag.MMAP_DEFAULT);
-                return Chars.toString(mem.getStr(0));
+                return Chars.toString(mem.getStrA(0));
             } else {
                 LOG.error().$("invalid table name file [path=").$(path).$(", fileLen=").$(fileLen).I$();
                 return null;
@@ -1643,7 +1646,7 @@ public final class TableUtils {
                 }
 
                 if (isColumnDedupKey(metaMem, i)) {
-                    if (ColumnType.isVariableLength(type)) {
+                    if (ColumnType.isVarSize(type)) {
                         throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for fixed size column types").put(" at [").put(i).put(']');
                     }
                 }
@@ -1798,7 +1801,7 @@ public final class TableUtils {
         if (offset + storageLength > memSize) {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
         }
-        return metaMem.getStr(offset);
+        return metaMem.getStrA(offset);
     }
 
     private static int getInt(MemoryMR metaMem, long memSize, long offset) {

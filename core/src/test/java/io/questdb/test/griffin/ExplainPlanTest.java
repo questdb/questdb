@@ -2134,6 +2134,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         constFuncs.put(ColumnType.FLOAT, list(new FloatConstant(5f)));
         constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(1))); // has to be [0.0, 1.0] for approx_percentile
         constFuncs.put(ColumnType.STRING, list(new StrConstant("bbb"), new StrConstant("1"), new StrConstant("1.1.1.1"), new StrConstant("1.1.1.1/24")));
+        constFuncs.put(ColumnType.VARCHAR, list(new VarcharConstant("bbb"), new VarcharConstant("1"), new VarcharConstant("1.1.1.1"), new VarcharConstant("1.1.1.1/24")));
         constFuncs.put(ColumnType.SYMBOL, list(new SymbolConstant("symbol", 0)));
         constFuncs.put(ColumnType.LONG256, list(new Long256Constant(0, 1, 2, 3)));
         constFuncs.put(ColumnType.GEOBYTE, list(new GeoByteConstant((byte) 1, ColumnType.getGeoHashTypeWithBits(5))));
@@ -2171,6 +2172,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         colFuncs.put(ColumnType.FLOAT, new FloatColumn(1));
         colFuncs.put(ColumnType.DOUBLE, new DoubleColumn(1));
         colFuncs.put(ColumnType.STRING, new StrColumn(1));
+        colFuncs.put(ColumnType.VARCHAR, new VarcharColumn(1));
         colFuncs.put(ColumnType.SYMBOL, new SymbolColumn(1, true));
         colFuncs.put(ColumnType.LONG256, new Long256Column(1));
         colFuncs.put(ColumnType.GEOBYTE, new GeoByteColumn(1, ColumnType.getGeoHashTypeWithBits(5)));
@@ -3362,7 +3364,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (u uuid, ts timestamp) timestamp(ts);",
                 "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')",
                 "Async Filter workers: 1\n" +
-                        "  filter: u in ['33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111']\n" +
+                        "  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -8898,7 +8900,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = $1::string ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=$0::double::string\n" +
+                        "  filter: l=$0::string\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"

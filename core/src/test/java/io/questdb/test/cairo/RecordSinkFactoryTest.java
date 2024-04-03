@@ -29,8 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import org.jetbrains.annotations.NotNull;
@@ -126,6 +125,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         columnTypes.add(ColumnType.FLOAT);
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.STRING);
+        columnTypes.add(ColumnType.VARCHAR);
         columnTypes.add(ColumnType.BINARY);
         columnTypes.add(ColumnType.LONG256);
         columnTypes.add(ColumnType.GEOBYTE);
@@ -153,6 +153,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         keyFunctions.add(new TestFunction(ColumnType.FLOAT));
         keyFunctions.add(new TestFunction(ColumnType.DOUBLE));
         keyFunctions.add(new TestFunction(ColumnType.STRING));
+        keyFunctions.add(new TestFunction(ColumnType.VARCHAR));
         keyFunctions.add(new TestFunction(ColumnType.BINARY));
         keyFunctions.add(new TestFunction(ColumnType.LONG256));
         keyFunctions.add(new TestFunction(ColumnType.GEOBYTE));
@@ -444,24 +445,25 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            Assert.assertEquals(ColumnType.STRING, type);
+            callCount++;
+        }
+
+        @Override
+        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
             Assert.assertEquals(ColumnType.STRING, type);
             callCount++;
             return "abc";
         }
 
         @Override
-        public CharSequence getStr(Record rec, int arrayIndex) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
+        public CharSequence getStrA(Record rec, int arrayIndex) {
             throw new UnsupportedOperationException();
         }
 
@@ -507,6 +509,26 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            Assert.assertEquals(ColumnType.VARCHAR, type);
+            callCount++;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            Assert.assertEquals(ColumnType.VARCHAR, type);
+            callCount++;
+            return new Utf8String("abc");
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            Assert.assertEquals(ColumnType.VARCHAR, type);
+            callCount++;
+            return new Utf8String("abc");
         }
     }
 
@@ -643,14 +665,14 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.STRING);
             return "abc";
         }
 
         @Override
-        public CharSequence getSym(int col) {
+        public CharSequence getSymA(int col) {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.SYMBOL);
             return "abc";
@@ -661,6 +683,13 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.TIMESTAMP);
             return 1;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.VARCHAR);
+            return new Utf8String("abc");
         }
     }
 
@@ -755,6 +784,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         @Override
         public void putTimestamp(long value) {
             recordedTypes.add(ColumnType.TIMESTAMP);
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
+            recordedTypes.add(ColumnType.VARCHAR);
         }
 
         @Override

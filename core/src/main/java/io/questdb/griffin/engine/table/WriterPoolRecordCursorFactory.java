@@ -123,7 +123,7 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 switch (col) {
                     case TABLE_NAME_COLUMN_INDEX:
                         return tableToken.getTableName();
@@ -136,7 +136,7 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override

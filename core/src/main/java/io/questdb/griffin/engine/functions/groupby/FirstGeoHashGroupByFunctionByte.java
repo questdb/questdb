@@ -76,6 +76,18 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.BYTE); // value
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return UnaryFunction.super.isReadThreadSafe();
     }
@@ -91,13 +103,6 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // row id
-        columnTypes.add(ColumnType.BYTE); // value
-    }
-
-    @Override
     public void setByte(MapValue mapValue, byte value) {
         // This method is used to define interpolated points and to init
         // an empty value, so it's ok to reset the row id field here.
@@ -108,11 +113,6 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
     @Override
     public void setNull(MapValue mapValue) {
         setByte(mapValue, GeoHashes.BYTE_NULL);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

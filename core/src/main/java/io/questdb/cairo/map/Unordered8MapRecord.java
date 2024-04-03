@@ -275,7 +275,7 @@ final class Unordered8MapRecord implements MapRecord {
     }
 
     @Override
-    public CharSequence getSym(int columnIndex) {
+    public CharSequence getSymA(int columnIndex) {
         return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(columnIndex)).valueOf(getInt(columnIndex));
     }
 
@@ -290,8 +290,8 @@ final class Unordered8MapRecord implements MapRecord {
     }
 
     @Override
-    public int keyHashCode() {
-        return Hash.hashLong(Unsafe.getUnsafe().getLong(startAddress));
+    public long keyHashCode() {
+        return Hash.hashLong64(Unsafe.getUnsafe().getLong(startAddress));
     }
 
     public void of(long address) {

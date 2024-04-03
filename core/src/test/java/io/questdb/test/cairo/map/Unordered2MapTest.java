@@ -35,6 +35,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -42,6 +43,7 @@ import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 
 public class Unordered2MapTest extends AbstractCairoTest {
 
@@ -561,6 +563,71 @@ public class Unordered2MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutBinUnsupported() throws Exception {
+        assertUnsupported(key -> key.putBin(null));
+    }
+
+    @Test
+    public void testPutDateUnsupported() throws Exception {
+        assertUnsupported(key -> key.putDate(0));
+    }
+
+    @Test
+    public void testPutDoubleUnsupported() throws Exception {
+        assertUnsupported(key -> key.putDouble(0.0));
+    }
+
+    @Test
+    public void testPutFloatUnsupported() throws Exception {
+        assertUnsupported(key -> key.putFloat(0.0f));
+    }
+
+    @Test
+    public void testPutIntUnsupported() throws Exception {
+        assertUnsupported(key -> key.putInt(0));
+    }
+
+    @Test
+    public void testPutLong128Unsupported() throws Exception {
+        assertUnsupported(key -> key.putLong128(0, 0));
+    }
+
+    @Test
+    public void testPutLong256ObjectUnsupported() throws Exception {
+        assertUnsupported(key -> key.putLong256(null));
+    }
+
+    @Test
+    public void testPutLong256ValuesUnsupported() throws Exception {
+        assertUnsupported(key -> key.putLong256(0, 0, 0, 0));
+    }
+
+    @Test
+    public void testPutLongUnsupported() throws Exception {
+        assertUnsupported(key -> key.putLong(0));
+    }
+
+    @Test
+    public void testPutStrRangeUnsupported() throws Exception {
+        assertUnsupported(key -> key.putStr(null, 0, 0));
+    }
+
+    @Test
+    public void testPutStrUnsupported() throws Exception {
+        assertUnsupported(key -> key.putStr(null));
+    }
+
+    @Test
+    public void testPutTimestampUnsupported() throws Exception {
+        assertUnsupported(key -> key.putTimestamp(0));
+    }
+
+    @Test
+    public void testPutVarcharUnsupported() throws Exception {
+        assertUnsupported(key -> key.putVarchar((Utf8Sequence) null));
+    }
+
+    @Test
     public void testReopen() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
@@ -586,6 +653,7 @@ public class Unordered2MapTest extends AbstractCairoTest {
                 Assert.assertEquals(N, map.size());
 
                 map.close();
+                map.close(); // Close must be idempotent
                 map.reopen();
 
                 Assert.assertEquals(0, map.size());
@@ -731,6 +799,7 @@ public class Unordered2MapTest extends AbstractCairoTest {
         short[] columnTypes = new short[]{
                 ColumnType.BINARY,
                 ColumnType.STRING,
+                ColumnType.VARCHAR,
                 ColumnType.LONG128,
                 ColumnType.UUID,
                 ColumnType.LONG256,
@@ -752,6 +821,20 @@ public class Unordered2MapTest extends AbstractCairoTest {
                 }
             });
         }
+    }
+
+    private static void assertUnsupported(Consumer<? super MapKey> putKeyFn) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Unordered2Map map = new Unordered2Map(new SingleColumnType(ColumnType.BOOLEAN), new SingleColumnType(ColumnType.LONG))) {
+                MapKey key = map.withKey();
+                try {
+                    putKeyFn.accept(key);
+                    Assert.fail();
+                } catch (UnsupportedOperationException e) {
+                    Assert.assertTrue(true);
+                }
+            }
+        });
     }
 
     private static class TestMapValueMergeFunction implements MapValueMergeFunction {

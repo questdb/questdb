@@ -91,16 +91,21 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public boolean isConstant() {
-        return false;
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE); // sum
         columnTypes.add(ColumnType.DOUBLE); // c
         columnTypes.add(ColumnType.LONG); // finite value count
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
     }
 
     @Override
@@ -113,11 +118,6 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
         mapValue.putLong(valueIndex + 2, 0);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

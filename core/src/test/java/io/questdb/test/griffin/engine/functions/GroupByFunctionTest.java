@@ -33,6 +33,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import org.junit.Test;
 
 public class GroupByFunctionTest {
@@ -165,21 +167,21 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return null;
-        }
-
-        @Override
-        public CharSequence getStr(Record rec, int arrayIndex) {
-            return null;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
         }
 
         @Override
         public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            return null;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec, int arrayIndex) {
+            return null;
         }
 
         @Override
@@ -228,15 +230,30 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            return null;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            return null;
+        }
+
+        @Override
+        public void initValueIndex(int valueIndex) {
+        }
+
+        @Override
+        public void initValueTypes(ArrayColumnTypes columnTypes) {
         }
 
         @Override
         public void setNull(MapValue mapValue) {
-        }
-
-        @Override
-        public void setValueIndex(int valueIndex) {
         }
     };
 

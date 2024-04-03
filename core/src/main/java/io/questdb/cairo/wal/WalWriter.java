@@ -64,7 +64,7 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<MemoryMA> columns;
     private final CairoConfiguration configuration;
     private final DdlListener ddlListener;
-    private final WalWriterEvents events;
+    private final WalEventWriter events;
     private final FilesFacade ff;
     private final AtomicIntList initialSymbolCounts;
     private final IntList localSymbolIds;
@@ -149,7 +149,7 @@ public class WalWriter implements TableWriterAPI {
             initialSymbolCounts = new AtomicIntList(columnCount);
             localSymbolIds = new IntList(columnCount);
 
-            events = new WalWriterEvents(configuration);
+            events = new WalEventWriter(configuration);
             events.of(symbolMaps, initialSymbolCounts, symbolMapNullFlags);
 
             configureColumns();
@@ -503,8 +503,8 @@ public class WalWriter implements TableWriterAPI {
                     for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                         final int columnType = metadata.getColumnType(columnIndex);
                         if (columnType > 0) {
-                            final MemoryMA primaryColumn = getPrimaryColumn(columnIndex);
-                            final MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
+                            final MemoryMA primaryColumn = getDataColumn(columnIndex);
+                            final MemoryMA secondaryColumn = getAuxColumn(columnIndex);
                             final String columnName = metadata.getColumnName(columnIndex);
 
                             CopyWalSegmentUtils.rollColumnToSegment(
@@ -593,66 +593,66 @@ public class WalWriter implements TableWriterAPI {
         // goActive will update table token
     }
 
-    private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryMA mem1, MemoryMA mem2) {
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-                nullers.add(() -> mem1.putByte((byte) 0));
-                break;
-            case ColumnType.DOUBLE:
-                nullers.add(() -> mem1.putDouble(Double.NaN));
-                break;
-            case ColumnType.FLOAT:
-                nullers.add(() -> mem1.putFloat(Float.NaN));
-                break;
-            case ColumnType.INT:
-                nullers.add(() -> mem1.putInt(Numbers.INT_NaN));
-                break;
-            case ColumnType.IPv4:
-                nullers.add(() -> mem1.putInt(Numbers.IPv4_NULL));
-                break;
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                nullers.add(() -> mem1.putLong(Numbers.LONG_NaN));
-                break;
-            case ColumnType.LONG256:
-                nullers.add(() -> mem1.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
-                break;
-            case ColumnType.SHORT:
-                nullers.add(() -> mem1.putShort((short) 0));
-                break;
-            case ColumnType.CHAR:
-                nullers.add(() -> mem1.putChar((char) 0));
-                break;
-            case ColumnType.STRING:
-                nullers.add(() -> mem2.putLong(mem1.putNullStr()));
-                break;
-            case ColumnType.SYMBOL:
-                nullers.add(() -> mem1.putInt(SymbolTable.VALUE_IS_NULL));
-                break;
-            case ColumnType.BINARY:
-                nullers.add(() -> mem2.putLong(mem1.putNullBin()));
-                break;
-            case ColumnType.GEOBYTE:
-                nullers.add(() -> mem1.putByte(GeoHashes.BYTE_NULL));
-                break;
-            case ColumnType.GEOSHORT:
-                nullers.add(() -> mem1.putShort(GeoHashes.SHORT_NULL));
-                break;
-            case ColumnType.GEOINT:
-                nullers.add(() -> mem1.putInt(GeoHashes.INT_NULL));
-                break;
-            case ColumnType.GEOLONG:
-                nullers.add(() -> mem1.putLong(GeoHashes.NULL));
-                break;
-            case ColumnType.LONG128:
-                // fall through
-            case ColumnType.UUID:
-                nullers.add(() -> mem1.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
-                break;
-            default:
-                throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
+    private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryMA dataMem, MemoryMA auxMem) {
+        int columnTag = ColumnType.tagOf(type);
+        if (ColumnType.isVarSize(columnTag)) {
+            final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);
+            nullers.add(() -> typeDriver.appendNull(dataMem, auxMem));
+        } else {
+            switch (columnTag) {
+                case ColumnType.BOOLEAN:
+                case ColumnType.BYTE:
+                    nullers.add(() -> dataMem.putByte((byte) 0));
+                    break;
+                case ColumnType.DOUBLE:
+                    nullers.add(() -> dataMem.putDouble(Double.NaN));
+                    break;
+                case ColumnType.FLOAT:
+                    nullers.add(() -> dataMem.putFloat(Float.NaN));
+                    break;
+                case ColumnType.INT:
+                    nullers.add(() -> dataMem.putInt(Numbers.INT_NaN));
+                    break;
+                case ColumnType.IPv4:
+                    nullers.add(() -> dataMem.putInt(Numbers.IPv4_NULL));
+                    break;
+                case ColumnType.LONG:
+                case ColumnType.DATE:
+                case ColumnType.TIMESTAMP:
+                    nullers.add(() -> dataMem.putLong(Numbers.LONG_NaN));
+                    break;
+                case ColumnType.LONG256:
+                    nullers.add(() -> dataMem.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
+                    break;
+                case ColumnType.SHORT:
+                    nullers.add(() -> dataMem.putShort((short) 0));
+                    break;
+                case ColumnType.CHAR:
+                    nullers.add(() -> dataMem.putChar((char) 0));
+                    break;
+                case ColumnType.SYMBOL:
+                    nullers.add(() -> dataMem.putInt(SymbolTable.VALUE_IS_NULL));
+                    break;
+                case ColumnType.GEOBYTE:
+                    nullers.add(() -> dataMem.putByte(GeoHashes.BYTE_NULL));
+                    break;
+                case ColumnType.GEOSHORT:
+                    nullers.add(() -> dataMem.putShort(GeoHashes.SHORT_NULL));
+                    break;
+                case ColumnType.GEOINT:
+                    nullers.add(() -> dataMem.putInt(GeoHashes.INT_NULL));
+                    break;
+                case ColumnType.GEOLONG:
+                    nullers.add(() -> dataMem.putLong(GeoHashes.NULL));
+                    break;
+                case ColumnType.LONG128:
+                    // fall through
+                case ColumnType.UUID:
+                    nullers.add(() -> dataMem.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                    break;
+                default:
+                    throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
+            }
         }
     }
 
@@ -660,12 +660,12 @@ public class WalWriter implements TableWriterAPI {
         nullSetters.setQuick(columnIndex, NOOP);
     }
 
-    private static int getPrimaryColumnIndex(int index) {
-        return index * 2;
+    private static int getAuxColumnOffset(int index) {
+        return getDataColumnOffset(index) + 1;
     }
 
-    private static int getSecondaryColumnIndex(int index) {
-        return getPrimaryColumnIndex(index) + 1;
+    private static int getDataColumnOffset(int columnIndex) {
+        return columnIndex * 2;
     }
 
     private int acquireSegmentLock() {
@@ -845,18 +845,18 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void configureColumn(int index, int columnType) {
-        final int baseIndex = getPrimaryColumnIndex(index);
+    private void configureColumn(int columnIndex, int columnType) {
+        final int dataColumnOffset = getDataColumnOffset(columnIndex);
         if (columnType > 0) {
-            final MemoryMA primary = Vm.getMAInstance(configuration.getCommitMode());
-            final MemoryMA secondary = createSecondaryMem(columnType);
-            columns.extendAndSet(baseIndex, primary);
-            columns.extendAndSet(baseIndex + 1, secondary);
-            configureNullSetters(nullSetters, columnType, primary, secondary);
+            final MemoryMA dataMem = Vm.getMAInstance(configuration.getCommitMode());
+            final MemoryMA auxMem = createAuxColumnMem(columnType);
+            columns.extendAndSet(dataColumnOffset, dataMem);
+            columns.extendAndSet(dataColumnOffset + 1, auxMem);
+            configureNullSetters(nullSetters, columnType, dataMem, auxMem);
             rowValueIsNotNull.add(-1);
         } else {
-            columns.extendAndSet(baseIndex, NullMemory.INSTANCE);
-            columns.extendAndSet(baseIndex + 1, NullMemory.INSTANCE);
+            columns.extendAndSet(dataColumnOffset, NullMemory.INSTANCE);
+            columns.extendAndSet(dataColumnOffset + 1, NullMemory.INSTANCE);
             nullSetters.add(NOOP);
             rowValueIsNotNull.add(COLUMN_DELETED_NULL_FLAG);
         }
@@ -1040,14 +1040,8 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private MemoryMA createSecondaryMem(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BINARY:
-            case ColumnType.STRING:
-                return Vm.getMAInstance(configuration.getCommitMode());
-            default:
-                return null;
-        }
+    private MemoryMA createAuxColumnMem(int columnType) {
+        return ColumnType.isVarSize(columnType) ? Vm.getMAInstance(configuration.getCommitMode()) : null;
     }
 
     private int createSegmentDir(int segmentId) {
@@ -1088,6 +1082,11 @@ public class WalWriter implements TableWriterAPI {
         Misc.freeObjListIfCloseable(symbolMapReaders);
     }
 
+    private MemoryMA getAuxColumn(int column) {
+        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
+        return columns.getQuick(getAuxColumnOffset(column));
+    }
+
     private long getColumnStructureVersion() {
         // Sequencer metadata version is the same as column structure version of the table.
         return metadata.getMetadataVersion();
@@ -1097,14 +1096,9 @@ public class WalWriter implements TableWriterAPI {
         return tableToken.isSystem() ? configuration.getSystemWalDataAppendPageSize() : configuration.getWalDataAppendPageSize();
     }
 
-    private MemoryMA getPrimaryColumn(int column) {
+    private MemoryMA getDataColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
-        return columns.getQuick(getPrimaryColumnIndex(column));
-    }
-
-    private MemoryMA getSecondaryColumn(int column) {
-        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
-        return columns.getQuick(getSecondaryColumnIndex(column));
+        return columns.getQuick(getDataColumnOffset(column));
     }
 
     private long getSequencerTxn() {
@@ -1146,8 +1140,8 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void markColumnRemoved(int columnIndex) {
-        final int pi = getPrimaryColumnIndex(columnIndex);
-        final int si = getSecondaryColumnIndex(columnIndex);
+        final int pi = getDataColumnOffset(columnIndex);
+        final int si = getAuxColumnOffset(columnIndex);
         freeNullSetter(nullSetters, columnIndex);
         freeAndRemoveColumnPair(columns, pi, si);
         rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
@@ -1170,13 +1164,13 @@ public class WalWriter implements TableWriterAPI {
         path.trimTo(walDirLength);
     }
 
-    private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
+    private void openColumnFiles(CharSequence columnName, int columnType, int columnIndex, int pathTrimToLen) {
         try {
-            final MemoryMA mem1 = getPrimaryColumn(columnIndex);
-            mem1.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
-            mem1.of(
+            final MemoryMA dataMem = getDataColumn(columnIndex);
+            dataMem.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
+            dataMem.of(
                     ff,
-                    dFile(path.trimTo(pathTrimToLen), name),
+                    dFile(path.trimTo(pathTrimToLen), columnName),
                     getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
@@ -1184,19 +1178,19 @@ public class WalWriter implements TableWriterAPI {
                     Files.POSIX_MADV_RANDOM
             );
 
-            final MemoryMA mem2 = getSecondaryColumn(columnIndex);
-            if (mem2 != null) {
-                mem2.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
-                mem2.of(
+            final MemoryMA auxMem = getAuxColumn(columnIndex);
+            if (auxMem != null) {
+                auxMem.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
+                ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                columnTypeDriver.configureAuxMemMA(
                         ff,
-                        iFile(path.trimTo(pathTrimToLen), name),
+                        auxMem,
+                        iFile(path.trimTo(pathTrimToLen), columnName),
                         getDataAppendPageSize(),
-                        -1,
                         MemoryTag.MMAP_TABLE_WRITER,
                         configuration.getWriterFileOpenOpts(),
                         Files.POSIX_MADV_RANDOM
                 );
-                mem2.putLong(0L);
             }
         } finally {
             path.trimTo(pathTrimToLen);
@@ -1223,12 +1217,12 @@ public class WalWriter implements TableWriterAPI {
             }
 
             for (int i = 0; i < columnCount; i++) {
-                int type = metadata.getColumnType(i);
-                if (type > 0) {
-                    final CharSequence name = metadata.getColumnName(i);
-                    openColumnFiles(name, i, segmentPathLen);
+                int columnType = metadata.getColumnType(i);
+                if (columnType > 0) {
+                    final CharSequence columnName = metadata.getColumnName(i);
+                    openColumnFiles(columnName, columnType, i, segmentPathLen);
 
-                    if (type == ColumnType.SYMBOL && symbolMapReaders.size() > 0) {
+                    if (columnType == ColumnType.SYMBOL && symbolMapReaders.size() > 0) {
                         final SymbolMapReader reader = symbolMapReaders.getQuick(i);
                         initialSymbolCounts.set(i, reader.getSymbolCount());
                         localSymbolIds.set(i, 0);
@@ -1335,12 +1329,15 @@ public class WalWriter implements TableWriterAPI {
         path.trimTo(rootLen).slash().put(segmentId);
         final Path tempPath = Path.PATH.get().of(path);
 
-        if (ColumnType.isVariableLength(columnType)) {
+        if (ColumnType.isVarSize(columnType)) {
             final int trimTo = path.size();
             iFile(path, columnName);
             iFile(tempPath, newName);
             if (ff.rename(path.$(), tempPath.$()) != Files.FILES_RENAME_OK) {
-                throw CairoException.critical(ff.errno()).put("could not rename WAL column file [from=").put(path).put(", to=").put(tempPath).put(']');
+                throw CairoException.critical(ff.errno())
+                        .put("could not rename WAL column file [from=").put(path)
+                        .put(", to=").put(tempPath)
+                        .put(']');
             }
             path.trimTo(trimTo);
             tempPath.trimTo(trimTo);
@@ -1422,7 +1419,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void setAppendPosition(final long segmentRowCount) {
         for (int i = 0; i < columnCount; i++) {
-            setColumnSize(i, segmentRowCount);
+            setAppendPosition0(i, segmentRowCount);
             int type = metadata.getColumnType(i);
             if (type > 0) {
                 rowValueIsNotNull.setQuick(i, segmentRowCount - 1);
@@ -1430,54 +1427,35 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
+    private void setAppendPosition0(int columnIndex, long segmentRowCount) {
+        MemoryMA dataMem = getDataColumn(columnIndex);
+        MemoryMA auxMem = getAuxColumn(columnIndex);
+        int columnType = metadata.getColumnType(columnIndex);
+        if (columnType > 0) { // Not deleted
+            final long rowCount = Math.max(0, segmentRowCount);
+            final long dataMemOffset;
+            if (ColumnType.isVarSize(columnType)) {
+                assert auxMem != null;
+                dataMemOffset = ColumnType.getDriver(columnType).setAppendAuxMemAppendPosition(auxMem, rowCount);
+            } else {
+                dataMemOffset = rowCount << ColumnType.getWalDataColumnShl(columnType, columnIndex == metadata.getTimestampIndex());
+            }
+            dataMem.jumpTo(dataMemOffset);
+        }
+    }
+
     private void setColumnNull(int columnType, int columnIndex, long rowCount, int commitMode) {
-        if (ColumnType.isVariableLength(columnType)) {
-            setVarColumnVarFileNull(columnType, columnIndex, rowCount, commitMode);
-            setVarColumnFixedFileNull(columnType, columnIndex, rowCount, commitMode);
+        if (ColumnType.isVarSize(columnType)) {
+            final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+            setVarColumnDataFileNull(columnTypeDriver, columnIndex, rowCount, commitMode);
+            setVarColumnAuxFileNull(columnTypeDriver, columnIndex, rowCount, commitMode);
         } else {
             setFixColumnNulls(columnType, columnIndex, rowCount);
         }
     }
 
-    private void setColumnSize(int columnIndex, long size) {
-        MemoryMA mem1 = getPrimaryColumn(columnIndex);
-        MemoryMA mem2 = getSecondaryColumn(columnIndex);
-        int type = metadata.getColumnType(columnIndex);
-        if (type > 0) { // Not deleted
-            if (size > 0) {
-                // subtract column top
-                final long m1pos;
-                switch (ColumnType.tagOf(type)) {
-                    case ColumnType.BINARY:
-                    case ColumnType.STRING:
-                        assert mem2 != null;
-                        // Jump to the number of records written to read length of var column correctly
-                        mem2.jumpTo(size * Long.BYTES);
-                        m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress());
-                        // Jump to the end of file to correctly trim the file
-                        mem2.jumpTo((size + 1) * Long.BYTES);
-                        break;
-                    default:
-                        if (columnIndex == metadata.getTimestampIndex()) {
-                            m1pos = size << 4;
-                        } else {
-                            m1pos = size << ColumnType.pow2SizeOf(type);
-                        }
-                        break;
-                }
-                mem1.jumpTo(m1pos);
-            } else {
-                mem1.jumpTo(0);
-                if (mem2 != null) {
-                    mem2.jumpTo(0);
-                    mem2.putLong(0);
-                }
-            }
-        }
-    }
-
     private void setFixColumnNulls(int type, int columnIndex, long rowCount) {
-        MemoryMA fixedSizeColumn = getPrimaryColumn(columnIndex);
+        MemoryMA fixedSizeColumn = getDataColumn(columnIndex);
         long columnFileSize = rowCount * ColumnType.sizeOf(type);
         fixedSizeColumn.jumpTo(columnFileSize);
         if (columnFileSize > 0) {
@@ -1496,35 +1474,39 @@ public class WalWriter implements TableWriterAPI {
         rowValueIsNotNull.setQuick(columnIndex, segmentRowCount);
     }
 
-    private void setVarColumnFixedFileNull(int columnType, int columnIndex, long rowCount, int commitMode) {
-        MemoryMA fixedSizeColumn = getSecondaryColumn(columnIndex);
-        long fixedSizeColSize = (rowCount + 1) * Long.BYTES;
-        fixedSizeColumn.jumpTo(fixedSizeColSize);
+    private void setVarColumnAuxFileNull(
+            ColumnTypeDriver columnTypeDriver,
+            int columnIndex,
+            long rowCount,
+            int commitMode
+    ) {
+        MemoryMA auxMem = getAuxColumn(columnIndex);
+        final long auxMemSize = columnTypeDriver.getAuxVectorSize(rowCount);
+        auxMem.jumpTo(auxMemSize);
         if (rowCount > 0) {
-            long addressFixed = TableUtils.mapRW(ff, fixedSizeColumn.getFd(), fixedSizeColSize, MEM_TAG);
-            if (columnType == ColumnType.STRING) {
-                Vect.setVarColumnRefs32Bit(addressFixed, 0, rowCount + 1);
-            } else {
-                Vect.setVarColumnRefs64Bit(addressFixed, 0, rowCount + 1);
-            }
+            final long auxMemAddr = TableUtils.mapRW(ff, auxMem.getFd(), auxMemSize, MEM_TAG);
+            columnTypeDriver.setFullAuxVectorNull(auxMemAddr,  rowCount);
             if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(addressFixed, fixedSizeColSize, commitMode == CommitMode.ASYNC);
+                ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
             }
-            ff.munmap(addressFixed, fixedSizeColSize, MEM_TAG);
+            ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
         }
     }
 
-    private void setVarColumnVarFileNull(int columnType, int columnIndex, long rowCount, int commitMode) {
-        MemoryMA varColumn = getPrimaryColumn(columnIndex);
-        long varColSize = rowCount * ColumnType.variableColumnLengthBytes(columnType);
-        varColumn.jumpTo(varColSize);
-        if (rowCount > 0) {
-            long address = TableUtils.mapRW(ff, varColumn.getFd(), varColSize, MEM_TAG);
-            Vect.memset(address, varColSize, -1);
+    private void setVarColumnDataFileNull(ColumnTypeDriver columnTypeDriver, int columnIndex, long rowCount, int commitMode) {
+        MemoryMA dataMem = getDataColumn(columnIndex);
+        final long varColSize = rowCount * columnTypeDriver.getDataVectorMinEntrySize();
+        dataMem.jumpTo(varColSize);
+        if (rowCount > 0 && varColSize > 0) {
+            final long dataMemAddr = TableUtils.mapRW(ff, dataMem.getFd(), varColSize, MEM_TAG);
+            columnTypeDriver.setDataVectorEntriesToNull(
+                    dataMemAddr,
+                    rowCount
+            );
             if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(address, varColSize, commitMode == CommitMode.ASYNC);
+                ff.msync(dataMemAddr, varColSize, commitMode == CommitMode.ASYNC);
             }
-            ff.munmap(address, varColSize, MEM_TAG);
+            ff.munmap(dataMemAddr, varColSize, MEM_TAG);
         }
     }
 
@@ -1532,7 +1514,7 @@ public class WalWriter implements TableWriterAPI {
         for (int i = 0; i < columnCount; i++) {
             int newPrimaryFd = (int) newColumnFiles.get(i * NEW_COL_RECORD_SIZE);
             if (newPrimaryFd > -1) {
-                MemoryMA primaryColumnFile = getPrimaryColumn(i);
+                MemoryMA primaryColumnFile = getDataColumn(i);
                 long currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 1);
                 long newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 2);
                 primaryColumnFile.jumpTo(currentOffset);
@@ -1540,7 +1522,7 @@ public class WalWriter implements TableWriterAPI {
                 primaryColumnFile.switchTo(newPrimaryFd, newOffset, isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
                 int newSecondaryFd = (int) newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 3);
                 if (newSecondaryFd > -1) {
-                    MemoryMA secondaryColumnFile = getSecondaryColumn(i);
+                    MemoryMA secondaryColumnFile = getAuxColumn(i);
                     currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 4);
                     newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 5);
                     secondaryColumnFile.jumpTo(currentOffset);
@@ -1600,7 +1582,7 @@ public class WalWriter implements TableWriterAPI {
                 if (columnType < 0) {
                     throw CairoException.nonCritical().put("cannot use dropped column for deduplication [column=").put(metadata.getColumnName(columnIndex)).put(']');
                 }
-                if (ColumnType.isVariableLength(columnType)) {
+                if (ColumnType.isVarSize(columnType)) {
                     throw CairoException.nonCritical().put("cannot use variable length column for deduplication [column=").put(metadata.getColumnName(columnIndex))
                             .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
                 }
@@ -1714,7 +1696,7 @@ public class WalWriter implements TableWriterAPI {
                         path.trimTo(rootLen).slash().put(segmentId);
                         // this will close old _meta file and create the new one
                         metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
-                        openColumnFiles(columnName, columnIndex, path.size());
+                        openColumnFiles(columnName, columnType, columnIndex, path.size());
                         path.trimTo(rootLen);
                     }
                     // if we did not have to roll uncommitted rows to a new segment
@@ -1865,6 +1847,7 @@ public class WalWriter implements TableWriterAPI {
 
     private class RowImpl implements TableWriter.Row {
         private final StringSink tempSink = new StringSink();
+        private final Utf8StringSink tempUtf8Sink = new Utf8StringSink();
         private long timestamp;
 
         @Override
@@ -2088,17 +2071,39 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putUuidUtf8(int columnIndex, DirectUtf8Sequence uuidStr) {
+        public void putUuidUtf8(int columnIndex, Utf8Sequence uuidStr) {
             SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
             putLong128(columnIndex, uuid.getLo(), uuid.getHi());
         }
 
+        @Override
+        public void putVarchar(int columnIndex, char value) {
+            tempUtf8Sink.clear();
+            tempUtf8Sink.put(value);
+            VarcharTypeDriver.appendValue(
+                    getPrimaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex),
+                    tempUtf8Sink
+            );
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putVarchar(int columnIndex, Utf8Sequence value) {
+            VarcharTypeDriver.appendValue(
+                    getPrimaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex),
+                    value
+            );
+            setRowValueNotNull(columnIndex);
+        }
+
         private MemoryMA getPrimaryColumn(int columnIndex) {
-            return columns.getQuick(getPrimaryColumnIndex(columnIndex));
+            return columns.getQuick(getDataColumnOffset(columnIndex));
         }
 
         private MemoryMA getSecondaryColumn(int columnIndex) {
-            return columns.getQuick(getSecondaryColumnIndex(columnIndex));
+            return columns.getQuick(getAuxColumnOffset(columnIndex));
         }
 
         private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {

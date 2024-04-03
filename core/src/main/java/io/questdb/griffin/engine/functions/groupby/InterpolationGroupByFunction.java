@@ -35,6 +35,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 
 public class InterpolationGroupByFunction implements GroupByFunction {
     private final GroupByFunction wrappedFunction;
@@ -212,23 +214,23 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return wrappedFunction.getStr(rec);
-    }
-
-    @Override
-    public CharSequence getStr(Record rec, int arrayIndex) {
-        return wrappedFunction.getStr(rec, arrayIndex);
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink sink) {
-        wrappedFunction.getStr(rec, sink);
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
+        wrappedFunction.getStr(rec, utf16Sink);
     }
 
     @Override
     public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
         wrappedFunction.getStr(rec, sink, arrayIndex);
+    }
+
+    @Override
+    public CharSequence getStrA(Record rec) {
+        return wrappedFunction.getStrA(rec);
+    }
+
+    @Override
+    public CharSequence getStrA(Record rec, int arrayIndex) {
+        return wrappedFunction.getStrA(rec, arrayIndex);
     }
 
     @Override
@@ -277,8 +279,28 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        wrappedFunction.pushValueTypes(columnTypes);
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        wrappedFunction.getVarchar(rec, utf8Sink);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        return wrappedFunction.getVarcharA(rec);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        return wrappedFunction.getVarcharB(rec);
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        wrappedFunction.initValueIndex(valueIndex);
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        wrappedFunction.initValueTypes(columnTypes);
     }
 
     @Override
@@ -288,11 +310,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     public void setTarget(Record target) {
         this.target = target;
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        wrappedFunction.setValueIndex(valueIndex);
     }
 
     public void startInterpolating(long startTime, long currentTime, long endTime) {

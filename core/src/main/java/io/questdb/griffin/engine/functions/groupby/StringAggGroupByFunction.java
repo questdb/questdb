@@ -86,7 +86,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
             sink.clear();
         }
 
-        final CharSequence str = arg.getStr(record);
+        final CharSequence str = arg.getStrA(record);
         if (str != null) {
             sink.put(str);
             mapValue.putBool(valueIndex + 1, false);
@@ -99,7 +99,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final DirectUtf16Sink sink = sinks.getQuick(mapValue.getInt(valueIndex));
-        final CharSequence str = arg.getStr(record);
+        final CharSequence str = arg.getStrA(record);
         if (str != null) {
             final boolean nullValue = mapValue.getBool(valueIndex + 1);
             if (!nullValue) {
@@ -116,7 +116,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         final boolean nullValue = rec.getBool(valueIndex + 1);
         if (nullValue) {
             return null;
@@ -126,12 +126,24 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getStr(rec);
+        return getStrA(rec);
     }
 
     @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.INT); // sink index
+        columnTypes.add(ColumnType.BOOLEAN); // null flag
     }
 
     @Override
@@ -145,20 +157,8 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT); // sink index
-        columnTypes.add(ColumnType.BOOLEAN); // null flag
-    }
-
-    @Override
     public void setNull(MapValue mapValue) {
         mapValue.putBool(valueIndex + 1, true);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

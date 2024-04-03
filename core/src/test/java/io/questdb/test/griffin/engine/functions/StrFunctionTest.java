@@ -32,6 +32,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -41,7 +45,7 @@ public class StrFunctionTest {
 
     private static final StrFunction function = new StrFunction() {
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return "a";
         }
 
@@ -412,22 +416,22 @@ public class StrFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
+    public void testGetGeoByte() {
         function.getGeoByte(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
+    public void testGetGeoInt() {
         function.getGeoInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
+    public void testGetGeoLong() {
         function.getGeoLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
+    public void testGetGeoShort() {
         function.getGeoShort(null);
     }
 
@@ -457,7 +461,7 @@ public class StrFunctionTest {
     }
 
     @Test
-    public void testGetSym() {
+    public void testGetSymbol() {
         TestUtils.assertEquals("a", function.getSymbol(null));
     }
 
@@ -467,18 +471,48 @@ public class StrFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256() {
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
         function.getLong256(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256A() {
+    public void testGetLong256A() {
         function.getLong256A(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256B() {
+    public void testGetLong256B() {
         function.getLong256B(null);
     }
 
+    @Test
+    public void testGetVarcharToSink() {
+        Utf8Sink sink = new Utf8StringSink();
+        function.getVarchar(null, sink);
+        TestUtils.assertEquals("a", sink.toString());
+    }
+
+    @Test
+    public void testGetVarcharA() {
+        Utf8Sequence value = function.getVarcharA(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("a", value.toString());
+    }
+
+    @Test
+    public void testGetVarcharB() {
+        Utf8Sequence value = function.getVarcharB(null);
+        Assert.assertNotNull(value);
+        TestUtils.assertEquals("a", value.toString());
+    }
 }

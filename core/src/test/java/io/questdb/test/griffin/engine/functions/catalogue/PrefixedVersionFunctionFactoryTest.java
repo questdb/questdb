@@ -33,7 +33,7 @@ public class PrefixedVersionFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testPrefixedCurrentSchemaFunc() throws Exception {
         assertQuery("version\n" +
-                        Constants.PG_CATALOG_VERSION_CONSTANT.getStr(null) + '\n',
+                        Constants.PG_CATALOG_VERSION_CONSTANT.getStrA(null) + '\n',
                 "select pg_catalog.version();",
                 true);
     }

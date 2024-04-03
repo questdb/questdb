@@ -94,10 +94,6 @@ public class TxReader implements Closeable, Mutable {
         return findAttachedPartitionRawIndexByLoTimestamp(ts) > -1L;
     }
 
-    public long ceilPartitionTimestamp(long timestamp) {
-        return partitionCeilMethod.ceil(timestamp);
-    }
-
     @Override
     public void clear() {
         clearData();
@@ -290,7 +286,7 @@ public class TxReader implements Closeable, Mutable {
         return getPartitionSizeByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
-    public long getPartitionSizeByPartitionTimestamp(long ts) {
+    public long getPartitionRowCountByTimestamp(long ts) {
         final int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
         if (indexRaw > -1) {
             return attachedPartitions.getQuick(indexRaw + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;

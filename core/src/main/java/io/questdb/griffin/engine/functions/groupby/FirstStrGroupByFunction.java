@@ -33,13 +33,13 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByCharSink;
+import io.questdb.griffin.engine.groupby.StableAwareStringHolder;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
-    protected final GroupByCharSink sink = new GroupByCharSink();
+    protected final StableAwareStringHolder sink = new StableAwareStringHolder();
     protected int valueIndex;
 
     public FirstStrGroupByFunction(@NotNull Function arg) {
@@ -54,12 +54,12 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
-        final CharSequence val = arg.getStr(record);
+        final CharSequence val = arg.getStrA(record);
         if (val == null) {
             mapValue.putLong(valueIndex + 1, 0);
             mapValue.putBool(valueIndex + 2, true);
         } else {
-            sink.of(0).put(val);
+            sink.of(0).clearAndSet(val);
             mapValue.putLong(valueIndex + 1, sink.ptr());
             mapValue.putBool(valueIndex + 2, false);
         }
@@ -81,7 +81,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         final boolean nullValue = rec.getBool(valueIndex + 2);
         if (nullValue) {
             return null;
@@ -92,12 +92,25 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getStr(rec);
+        return getStrA(rec);
     }
 
     @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);    // row id
+        columnTypes.add(ColumnType.LONG);    // sink pointer
+        columnTypes.add(ColumnType.BOOLEAN); // null flag
     }
 
     @Override
@@ -127,14 +140,6 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);    // row id
-        columnTypes.add(ColumnType.LONG);    // sink pointer
-        columnTypes.add(ColumnType.BOOLEAN); // null flag
-    }
-
-    @Override
     public void setAllocator(GroupByAllocator allocator) {
         sink.setAllocator(allocator);
     }
@@ -144,11 +149,6 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putLong(valueIndex + 1, 0);
         mapValue.putBool(valueIndex + 2, true);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

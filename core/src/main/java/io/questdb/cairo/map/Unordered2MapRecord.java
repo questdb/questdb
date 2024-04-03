@@ -275,7 +275,7 @@ final class Unordered2MapRecord implements MapRecord {
     }
 
     @Override
-    public CharSequence getSym(int columnIndex) {
+    public CharSequence getSymA(int columnIndex) {
         return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(columnIndex)).valueOf(getInt(columnIndex));
     }
 
@@ -290,7 +290,7 @@ final class Unordered2MapRecord implements MapRecord {
     }
 
     @Override
-    public int keyHashCode() {
+    public long keyHashCode() {
         return 0; // no-op
     }
 

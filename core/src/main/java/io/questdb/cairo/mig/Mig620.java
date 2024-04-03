@@ -149,7 +149,7 @@ public class Mig620 {
         final int columnCount = metaMem.getInt(META_OFFSET_COUNT_MIG);
         long offset = getColumnNameOffset(columnCount);
         for (int metaIndex = 0; metaIndex < columnCount; metaIndex++) {
-            String name = Chars.toString(metaMem.getStr(offset));
+            String name = Chars.toString(metaMem.getStrA(offset));
             columnNames.add(name);
             offset += Vm.getStorageLength(name);
         }

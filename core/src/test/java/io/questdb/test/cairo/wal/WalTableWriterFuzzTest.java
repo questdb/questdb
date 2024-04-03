@@ -34,6 +34,9 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.tasks.WalTxnNotificationTask;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.AbstractMultiNodeTest;
@@ -178,7 +181,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     SqlCompiler compiler = engine.getSqlCompiler();
                     WalWriter walWriter = engine.getWalWriter(tt)
             ) {
-
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -208,7 +210,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     WalWriter walWriter2 = engine.getWalWriter(tt);
                     WalWriter walWriter3 = engine.getWalWriter(tt)
             ) {
-
                 long start = now;
                 WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3};
 
@@ -473,7 +474,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final long pointer = Unsafe.getUnsafe().allocateMemory(binarySize);
             final DirectBinarySequence binSeq = new DirectBinarySequence();
             WalWriterTest.prepareBinPayload(pointer, binarySize);
-
+            final Utf8String varChar = new Utf8String("₴ п'ять доллярів");
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
                     WalWriter walWriter = engine.getWalWriter(tableToken)
@@ -498,6 +499,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 sqlExecutionContext.getBindVariableService().setGeoHash(14, rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
                 sqlExecutionContext.getBindVariableService().setGeoHash(15, rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
                 sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
+                sqlExecutionContext.getBindVariableService().setVarchar(17, varChar);
 
                 update(
                         "UPDATE " + tableName + " SET " +
@@ -517,7 +519,8 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                                 "GEOBYTE=$14, " +
                                 "GEOSHORT=$15, " +
                                 "GEOINT=$16, " +
-                                "GEOLONG=$17 " +
+                                "GEOLONG=$17, " +
+                                "VARCHAR=$18 " +
                                 "WHERE INT > 5"
                 );
 
@@ -541,7 +544,8 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                                 "GEOBYTE=$14, " +
                                 "GEOSHORT=$15, " +
                                 "GEOINT=$16, " +
-                                "GEOLONG=$17 " +
+                                "GEOLONG=$17, " +
+                                "VARCHAR=$18 " +
                                 "WHERE INT > 5"
                 );
 
@@ -598,6 +602,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final DirectBinarySequence binSeq = new DirectBinarySequence();
             WalWriterTest.prepareBinPayload(pointer, binarySize);
 
+            final Utf8String varChar = new Utf8String("₴ п'ять доллярів");
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
                     WalWriter walWriter = engine.getWalWriter(tableToken)
@@ -623,6 +628,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 sqlExecutionContext.getBindVariableService().setGeoHash("GEOINTVAL", rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
                 sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
                 sqlExecutionContext.getBindVariableService().setUuid("UUIDVAL", rnd.nextLong(), rnd.nextLong());
+                sqlExecutionContext.getBindVariableService().setVarchar("VARCHARVAL", varChar);
 
                 update(
                         "UPDATE " + tableName + " SET " +
@@ -643,7 +649,8 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                                 "GEOSHORT=:GEOSHORTVAL, " +
                                 "GEOINT=:GEOINTVAL, " +
                                 "GEOLONG=:GEOLONGVAL, " +
-                                "UUID=:UUIDVAL " +
+                                "UUID=:UUIDVAL," +
+                                "VARCHAR=:VARCHARVAL " +
                                 "WHERE INT > 5"
                 );
                 drainWalQueue();
@@ -667,7 +674,8 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                                 "GEOSHORT=:GEOSHORTVAL, " +
                                 "GEOINT=:GEOINTVAL, " +
                                 "GEOLONG=:GEOLONGVAL, " +
-                                "UUID=:UUIDVAL " +
+                                "UUID=:UUIDVAL, " +
+                                "VARCHAR=:VARCHARVAL " +
                                 "WHERE INT > 5"
                 );
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -881,7 +889,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         });
     }
 
-    private void addRowRwAllTypes(int iteration, TableWriter.Row row, int i, CharSequence symbol, String rndStr) {
+    private void addRowRwAllTypes(int iteration, TableWriter.Row row, int i, CharSequence symbol, String rndStr, Utf8Sequence rndVarchar) {
         int col = 0;
         row.putInt(col++, i);
         row.putByte(col++, (byte) i);
@@ -901,7 +909,9 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         row.putGeoHash(col++, i); // geo long
         row.putStr(col++, (char) (65 + i % 26));
         row.putSym(col++, symbol);
-        row.putLong128(col, Hash.hashLong(i), Hash.hashLong(i + 1)); // UUID
+        row.putLong128(col++, Hash.hashLong64(i), Hash.hashLong64(i + 1)); // UUID
+        col++; // binary ('bin') column is not set
+        row.putVarchar(col, rndVarchar);
         row.append();
     }
 
@@ -918,9 +928,16 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 tsIncrement = -tsIncrement;
             }
 
+            Utf8StringSink utf8Sink = new Utf8StringSink();
             for (int i = 0; i < rowsToInsertTotal; i++) {
                 String symbol = rnd.nextInt(10) == 5 ? null : rnd.nextString(rnd.nextInt(9) + 1);
                 String rndStr = rnd.nextInt(10) == 5 ? null : rnd.nextString(20);
+                Utf8Sequence rndUtf8Seq = null;
+                if (rnd.nextInt(10) != 5) {
+                    utf8Sink.clear();
+                    rnd.nextUtf8Str(20, utf8Sink);
+                    rndUtf8Seq = utf8Sink;
+                }
 
                 long rowTs = startTs;
                 if (!inOrder && i > 3 && i < rowsToInsertTotal - 3) {
@@ -928,8 +945,8 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     rowTs += rnd.nextLong(2 * tsIncrement);
                 }
 
-                addRowRwAllTypes(iteration, walWriter.newRow(rowTs), i, symbol, rndStr);
-                addRowRwAllTypes(iteration, copyWriter.newRow(rowTs), i, symbol, rndStr);
+                addRowRwAllTypes(iteration, walWriter.newRow(rowTs), i, symbol, rndStr, rndUtf8Seq);
+                addRowRwAllTypes(iteration, copyWriter.newRow(rowTs), i, symbol, rndStr, rndUtf8Seq);
                 startTs += tsIncrement;
             }
 
@@ -989,6 +1006,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 .col("label", ColumnType.SYMBOL)
                 .col("uuid", ColumnType.UUID)
                 .col("bin", ColumnType.BINARY)
+                .col("varchar", ColumnType.VARCHAR)
                 .timestamp("ts");
     }
 

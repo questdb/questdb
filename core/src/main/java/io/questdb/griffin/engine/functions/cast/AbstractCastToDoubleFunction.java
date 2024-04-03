@@ -24,11 +24,22 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
 public abstract class AbstractCastToDoubleFunction extends DoubleFunction implements UnaryFunction {
+    protected final Function arg;
+
+    public AbstractCastToDoubleFunction(Function arg) {
+        this.arg = arg;
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
+    }
 
     @Override
     public void toPlan(PlanSink sink) {

@@ -24,11 +24,12 @@
 
 package org.questdb;
 
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
 import io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLog;
 import io.questdb.std.Hash;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -42,14 +43,8 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class HyperLogLogBenchmark {
-
     private static final long N = 1_000_000;
-    private static final GroupByAllocator allocator = new GroupByAllocator(new DefaultCairoConfiguration(null) {
-        @Override
-        public long getGroupByAllocatorDefaultChunkSize() {
-            return 128 * 1024;
-        }
-    });
+    private static final GroupByAllocator allocator = new GroupByAllocatorArena(128 * 1024, Numbers.SIZE_1GB);
     private static final HyperLogLog hll = new HyperLogLog(14);
     private static final Rnd rnd = new Rnd();
     private static final GroupByLongHashSet set = new GroupByLongHashSet(16, 0.7, 0);
@@ -85,7 +80,7 @@ public class HyperLogLogBenchmark {
     @Benchmark
     public void testGroupByLongHashSet() {
         long value = rnd.nextLong(N);
-        int index = set.of(setPtr).keyIndex(value);
+        long index = set.of(setPtr).keyIndex(value);
         if (index >= 0) {
             set.addAt(index, value);
             setPtr = set.ptr();

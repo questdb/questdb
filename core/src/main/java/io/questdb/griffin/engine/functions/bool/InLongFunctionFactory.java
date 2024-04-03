@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf8Sequence;
 
 public class InLongFunctionFactory implements FunctionFactory {
 
@@ -66,6 +67,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                 case ColumnType.BYTE:
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
+                case ColumnType.VARCHAR:
                     break;
                 default:
                     throw SqlException.position(argPositions.get(i)).put("cannot compare LONG with type ").put(ColumnType.nameOf(func.getType()));
@@ -107,8 +109,12 @@ public class InLongFunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
-                    CharSequence tsValue = func.getStr(null);
+                    CharSequence tsValue = func.getStrA(null);
                     val = (tsValue != null) ? tryParseLong(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;
+                    break;
+                case ColumnType.VARCHAR:
+                    Utf8Sequence seq = func.getVarcharA(null);
+                    val = (seq != null) ? tryParseLong(seq.asAsciiCharSequence(), argPositions.getQuick(i)) : Numbers.LONG_NaN;
                     break;
             }
             res.setQuick(i - 1, val);
@@ -239,8 +245,13 @@ public class InLongFunctionFactory implements FunctionFactory {
                         break;
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
-                        CharSequence str = func.getStr(rec);
+                        CharSequence str = func.getStrA(rec);
                         inVal = Numbers.parseLongQuiet(str);
+                        break;
+                    case ColumnType.VARCHAR:
+                        Utf8Sequence seq = func.getVarcharA(rec);
+                        CharSequence cs = seq == null ? null : seq.asAsciiCharSequence();
+                        inVal = Numbers.parseLongQuiet(cs);
                         break;
                 }
                 if (inVal == val) {

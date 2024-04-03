@@ -636,6 +636,42 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateAsSelectCastVarcharToIPv4() throws Exception {
+        ddl("create table x as (select x::varchar col from long_sequence(0))");
+        insert("insert into x values('0.0.0.1')");
+        insert("insert into x values('0.0.0.2')");
+        insert("insert into x values('0.0.0.3')");
+        insert("insert into x values('0.0.0.4')");
+        insert("insert into x values('0.0.0.5')");
+        insert("insert into x values('0.0.0.6')");
+        insert("insert into x values('0.0.0.7')");
+        insert("insert into x values('0.0.0.8')");
+        insert("insert into x values('0.0.0.9')");
+        insert("insert into x values('0.0.0.10')");
+
+        engine.releaseInactive();
+
+        assertQuery(
+                "col\n" +
+                        "0.0.0.1" + '\n' +
+                        "0.0.0.2" + '\n' +
+                        "0.0.0.3" + '\n' +
+                        "0.0.0.4" + '\n' +
+                        "0.0.0.5" + '\n' +
+                        "0.0.0.6" + '\n' +
+                        "0.0.0.7" + '\n' +
+                        "0.0.0.8" + '\n' +
+                        "0.0.0.9" + '\n' +
+                        "0.0.0.10" + '\n',
+                "select * from y",
+                "create table y as (x), cast(col as ipv4)",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testExplicitCastIPv4ToStr() throws Exception {
         assertSql("cast\n" +
                 "1.1.1.1\n", "select ipv4 '1.1.1.1'::string");
@@ -687,16 +723,16 @@ public class IPv4Test extends AbstractCairoTest {
     public void testExplicitCastStrToIPv4() throws Exception {
         assertSql(
                 "cast\n" +
+                        "187.139.150.80\n" +
                         "18.206.96.238\n" +
+                        "92.80.211.65\n" +
                         "212.159.205.29\n" +
+                        "4.98.173.21\n" +
                         "199.122.166.85\n" +
+                        "79.15.250.138\n" +
                         "35.86.82.23\n" +
-                        "205.123.179.216\n" +
-                        "134.75.235.20\n" +
-                        "162.25.160.241\n" +
-                        "92.26.178.136\n" +
-                        "93.204.45.145\n" +
-                        "20.62.93.114\n",
+                        "111.98.117.250\n" +
+                        "205.123.179.216\n",
                 "select rnd_ipv4()::string::ipv4 from long_sequence(10)"
         );
     }

@@ -167,7 +167,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
-                    header(context.getChunkedResponse(), state, 200);
                     doResumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
@@ -275,7 +274,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private static void putStringOrNull(HttpChunkedResponse r, CharSequence str) {
         if (str != null) {
-            r.putQuoted(str);
+            r.putQuote().escapeJsonStr(str).putQuote();
         }
     }
 
@@ -323,15 +322,19 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             try {
                 SWITCH:
                 switch (state.queryState) {
-                    case JsonQueryProcessorState.QUERY_PREFIX:
+                    case JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD:
+                        state.hasNext = state.cursor.hasNext();
+                        header(response, state, 200);
+                        state.queryState = JsonQueryProcessorState.QUERY_METADATA;
+                        // fall through
+
                     case JsonQueryProcessorState.QUERY_METADATA:
                         state.columnIndex = 0;
-                        state.queryState = JsonQueryProcessorState.QUERY_METADATA;
                         while (state.columnIndex < columnCount) {
                             if (state.columnIndex > 0) {
                                 response.putAscii(state.delimiter);
                             }
-                            response.putQuoted(state.metadata.getColumnName(state.columnIndex));
+                            response.putQuote().escapeJsonStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
                             state.columnIndex++;
                             response.bookmark();
                         }
@@ -344,7 +347,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             // check if cursor has any records
                             Record record = state.cursor.getRecord();
                             while (true) {
-                                if (state.cursor.hasNext()) {
+                                if (state.hasNext || state.cursor.hasNext()) {
+                                    state.hasNext = false;
                                     state.count++;
 
                                     if (state.countRows && state.count > state.stop) {
@@ -437,7 +441,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             // Give up and close the connection.
             throw ServerDisconnectException.INSTANCE;
         }
-        sendException(response, 0, e.getMessage(), state);
+        int code = e instanceof CairoException && ((CairoException) e).isInterruption() ? 408 : 400;
+        sendException(response, 0, e.getMessage(), code, state);
     }
 
     private void logInternalError(Throwable e, TextQueryProcessorState state) {
@@ -480,7 +485,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         final DirectUtf8Sequence query = request.getUrlParam(URL_PARAM_QUERY);
         if (query == null || query.size() == 0) {
             info(state).$("Empty query request received. Sending empty reply.").$();
-            sendException(response, 0, "No query text", state);
+            sendException(response, 0, "No query text", 400, state);
             return false;
         }
 
@@ -519,7 +524,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         state.query.clear();
         if (!Utf8s.utf8ToUtf16(query.lo(), query.hi(), state.query)) {
             info(state).$("Bad UTF8 encoding").$();
-            sendException(response, 0, "Bad UTF8 encoding in query text", state);
+            sendException(response, 0, "Bad UTF8 encoding in query text", 400, state);
             return false;
         }
         DirectUtf8Sequence fileName = request.getUrlParam(URL_PARAM_FILENAME);
@@ -602,10 +607,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.RECORD:
                 break;
             case ColumnType.STRING:
-                putStringOrNull(response, rec.getStr(col));
+                putStringOrNull(response, rec.getStrA(col));
                 break;
             case ColumnType.SYMBOL:
-                putStringOrNull(response, rec.getSym(col));
+                putStringOrNull(response, rec.getSymA(col));
                 break;
             case ColumnType.LONG256:
                 rec.getLong256(col, response);
@@ -629,6 +634,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 throw new UnsupportedOperationException();
             case ColumnType.IPv4:
                 putIPv4Value(response, rec, col);
+                break;
+            case ColumnType.VARCHAR:
+                rec.getVarchar(col, response);
                 break;
             default:
                 assert false;
@@ -656,9 +664,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpChunkedResponse response,
             int position,
             CharSequence message,
+            int responseCode,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        headerJsonError(response);
+        headerJsonError(response, responseCode);
         JsonQueryProcessorState.prepareExceptionJson(response, position, message, state.query);
     }
 
@@ -670,7 +679,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         info(state).$("syntax-error [q=`").utf8(state.query)
                 .$("`, at=").$(container.getPosition())
                 .$(", message=`").$(container.getFlyweightMessage()).$('`').I$();
-        sendException(response, container.getPosition(), container.getFlyweightMessage(), state);
+        sendException(response, container.getPosition(), container.getFlyweightMessage(), 400, state);
     }
 
     protected void header(
@@ -688,8 +697,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         response.sendHeader();
     }
 
-    protected void headerJsonError(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.status(400, CONTENT_TYPE_JSON);
+    protected void headerJsonError(HttpChunkedResponse response, int responseCode) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        response.status(responseCode, CONTENT_TYPE_JSON);
         response.headers().setKeepAlive(configuration.getKeepAliveHeader());
         response.sendHeader();
     }

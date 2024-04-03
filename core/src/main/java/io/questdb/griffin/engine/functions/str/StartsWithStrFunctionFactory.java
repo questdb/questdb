@@ -60,8 +60,8 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence str = strFunc.getStr(rec);
-            CharSequence prefix = prefixFunc.getStr(rec);
+            CharSequence str = strFunc.getStrA(rec);
+            CharSequence prefix = prefixFunc.getStrA(rec);
             if (str == null || prefix == null) {
                 return false;
             }

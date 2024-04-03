@@ -37,7 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.ColumnType.isVariableLength;
+import static io.questdb.cairo.ColumnType.isVarSize;
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 
@@ -78,7 +78,6 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     }
 
     public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws TableReferenceOutOfDateException {
-
         TableToken tableToken = tableWriter.getTableToken();
         LOG.info().$("updating [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();
         QueryRegistry queryRegistry = sqlExecutionContext.getCairoEngine().getQueryRegistry();
@@ -135,7 +134,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     Record masterRecord = recordCursor.getRecord();
 
                     long prevRow = 0;
-                    long minRow = -1L;
+                    long minRow = -1;
                     long lastRowId = Long.MIN_VALUE;
                     while (recordCursor.hasNext()) {
                         long rowId = masterRecord.getUpdateRowId();
@@ -298,38 +297,24 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             int columnType,
             long fromRow, // inclusive
             long toRow, // exclusive
-            MemoryCMARW dstFixMem,
-            MemoryCMARW dstVarMem,
+            MemoryCMARW dstAuxMem,
+            MemoryCMARW dstDataMem,
             int shl
     ) {
         final short columnTag = ColumnType.tagOf(columnType);
-        switch (columnTag) {
-            case ColumnType.STRING:
-                for (long row = fromRow; row < toRow; row++) {
-                    dstFixMem.putLong(dstVarMem.putNullStr());
-                }
-                break;
-            case ColumnType.BINARY:
-                for (long row = fromRow; row < toRow; row++) {
-                    dstFixMem.putLong(dstVarMem.putNullBin());
-                }
-                break;
-            default:
-                final long rowCount = toRow - fromRow;
-                TableUtils.setNull(
-                        columnType,
-                        dstFixMem.appendAddressFor(rowCount << shl),
-                        rowCount
-                );
-                break;
+        if (ColumnType.isVarSize(columnTag)) {
+            final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnTag);
+            for (long row = fromRow; row < toRow; row++) {
+                columnTypeDriver.appendNull(dstDataMem, dstAuxMem);
+            }
+        } else {
+            final long rowCount = toRow - fromRow;
+            TableUtils.setNull(
+                    columnType,
+                    dstAuxMem.appendAddressFor(rowCount << shl),
+                    rowCount
+            );
         }
-    }
-
-    private static int getFixedColumnSize(int columnType) {
-        if (isVariableLength(columnType)) {
-            return 3;
-        }
-        return ColumnType.pow2SizeOf(columnType);
     }
 
     private static void updateEffectiveColumnTops(
@@ -437,11 +422,14 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     // so that if update fails and rolled back ILP will not use "dirty" symbol indexes
                     // pre-looked up during update run to insert rows
                     dstFixMem.putInt(
-                            tableWriter.getSymbolIndexNoTransientCountUpdate(updateColumnIndexes.get(i), masterRecord.getSym(i))
+                            tableWriter.getSymbolIndexNoTransientCountUpdate(updateColumnIndexes.get(i), masterRecord.getSymA(i))
                     );
                     break;
                 case ColumnType.STRING:
-                    dstFixMem.putLong(dstVarMem.putStr(masterRecord.getStr(i)));
+                    dstFixMem.putLong(dstVarMem.putStr(masterRecord.getStrA(i)));
+                    break;
+                case ColumnType.VARCHAR:
+                    VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, masterRecord.getVarcharA(i));
                     break;
                 case ColumnType.BINARY:
                     dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));
@@ -463,21 +451,17 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private void configureColumns(RecordMetadata metadata, int columnCount) {
         for (int i = dstColumns.size(); i < columnCount; i++) {
             int columnType = metadata.getColumnType(updateColumnIndexes.get(i));
-            switch (columnType) {
-                default:
-                    srcColumns.add(Vm.getCMRInstance());
-                    srcColumns.add(null);
-                    dstColumns.add(Vm.getCMARWInstance());
-                    dstColumns.add(null);
-                    break;
-                case ColumnType.STRING:
-                case ColumnType.BINARY:
-                    // Primary and secondary
-                    srcColumns.add(Vm.getCMRInstance());
-                    srcColumns.add(Vm.getCMRInstance());
-                    dstColumns.add(Vm.getCMARWInstance());
-                    dstColumns.add(Vm.getCMARWInstance());
-                    break;
+            if (ColumnType.isVarSize(columnType)) {
+                // Primary and secondary
+                srcColumns.add(Vm.getCMRInstance());
+                srcColumns.add(Vm.getCMRInstance());
+                dstColumns.add(Vm.getCMARWInstance());
+                dstColumns.add(Vm.getCMARWInstance());
+            } else {
+                srcColumns.add(Vm.getCMRInstance());
+                srcColumns.add(null);
+                dstColumns.add(Vm.getCMARWInstance());
+                dstColumns.add(null);
             }
         }
     }
@@ -495,7 +479,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     ) {
         assert newColumnTop <= oldColumnTop || oldColumnTop < 0;
 
-        final int shl = getFixedColumnSize(columnType);
+        final int shl = ColumnType.pow2SizeOf(columnType);
 
         if (oldColumnTop == -1 && prevRow > 0) {
             // Column did not exist at the partition
@@ -599,37 +583,42 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     }
 
     private void copyValues(
-            long fromRowId,
-            long toRowId,
+            long rowLo,
+            long rowHi, // exclusive
             MemoryCMR srcFixMem,
-            MemoryCMR srcVarMem,
+            MemoryCMR srcDataMem,
             MemoryCMARW dstFixMem,
-            MemoryCMARW dstVarMem,
+            MemoryCMARW dstDataMem,
             int columnType,
             int shl
     ) {
-        long address = srcFixMem.addressOf(fromRowId << shl);
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.STRING:
-            case ColumnType.BINARY:
-                long varStartOffset = srcFixMem.getLong(fromRowId * Long.BYTES);
-                long varEndOffset = srcFixMem.getLong((toRowId) * Long.BYTES);
-                long varAddress = srcVarMem.addressOf(varStartOffset);
-                long copyToOffset = dstVarMem.getAppendOffset();
-                dstVarMem.putBlockOfBytes(varAddress, varEndOffset - varStartOffset);
-                dstFixMem.extend((toRowId + 1) << shl);
-                Vect.shiftCopyFixedSizeColumnData(
-                        varStartOffset - copyToOffset,
-                        address + Long.BYTES,
-                        0,
-                        toRowId - fromRowId - 1,
-                        dstFixMem.getAppendAddress()
-                );
-                dstFixMem.jumpTo((toRowId + 1) << shl);
-                break;
-            default:
-                dstFixMem.putBlockOfBytes(address, (toRowId - fromRowId) << shl);
-                break;
+        if (ColumnType.isVarSize(columnType)) {
+            final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+            long dataOffsetLo = columnTypeDriver.getDataVectorOffset(srcFixMem.addressOf(0), rowLo);
+            long srcDataSize = columnTypeDriver.getDataVectorSize(srcFixMem.addressOf(0), rowLo, rowHi - 1);
+            long srcDataAddr = srcDataMem.addressOf(dataOffsetLo);
+            long copyToOffset = dstDataMem.getAppendOffset();
+            dstDataMem.putBlockOfBytes(srcDataAddr, srcDataSize);
+            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(rowHi));
+            long dstAddrLimit = dstFixMem.getAppendAddress();
+            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorOffset(rowLo));
+            long dstAddr = dstFixMem.getAppendAddress();
+            long dstAddrSize = dstAddrLimit - dstAddr;
+
+            columnTypeDriver.shiftCopyAuxVector(
+                    dataOffsetLo - copyToOffset,
+                    srcFixMem.addressOf(columnTypeDriver.getAuxVectorOffset(rowLo)),
+                    0,
+                    rowHi - rowLo - 1, // inclusive
+                    dstAddr,
+                    dstAddrSize
+            );
+            dstFixMem.jumpTo(columnTypeDriver.getAuxVectorSize(rowHi));
+        } else {
+            dstFixMem.putBlockOfBytes(
+                    srcFixMem.addressOf(rowLo << shl),
+                    (rowHi - rowLo) << shl
+            );
         }
     }
 
@@ -658,7 +647,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 }
 
                 long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                if (isVariableLength(columnType)) {
+                if (isVarSize(columnType)) {
                     MemoryCMR colMemIndex = (MemoryCMR) columns.get(2 * i);
                     colMemIndex.close();
                     assert !colMemIndex.isOpen();
@@ -701,8 +690,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     }
                 }
                 if (forWrite) {
-                    if (isVariableLength(columnType)) {
-                        ((MemoryCMARW) columns.get(2 * i)).putLong(0);
+                    if (isVarSize(columnType)) {
+                        ColumnType.getDriver(columnType).configureAuxMemMA((MemoryCMARW) columns.get(2 * i));
                     }
                 }
             }

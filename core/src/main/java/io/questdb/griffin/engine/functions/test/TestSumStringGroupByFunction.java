@@ -76,7 +76,7 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         return null;
     }
 
@@ -91,7 +91,12 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
     }
@@ -104,11 +109,6 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

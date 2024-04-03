@@ -74,7 +74,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
         runWalPurgeJob();
 
-        int expectedTxnCount = 334;
+        int expectedTxnCount = 500;
         assertSql("count\n" +
                 expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
 
@@ -146,6 +146,15 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
         Rnd rnd = generateRandom(LOG);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01, 0.0);
+        setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
+        setFuzzProperties(rnd);
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testWalMetadataChangeHeavyCrashRepro() throws Exception {
+        Rnd rnd = fuzzer.generateRandom(LOG, 605244862282L, 1711936717971L);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01, 0.0);
         setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
         setFuzzProperties(rnd);

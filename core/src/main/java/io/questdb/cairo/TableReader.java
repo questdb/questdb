@@ -35,8 +35,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -500,14 +500,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
     }
 
-    private static void growColumn(MemoryR mem1, MemoryR mem2, int type, long rowCount) {
+    private static void growColumn(MemoryR mem1, MemoryR mem2, int columnType, long rowCount) {
         if (rowCount > 0) {
-            if (ColumnType.isVariableLength(type)) {
+            if (ColumnType.isVarSize(columnType)) {
                 assert mem2 != null;
-                mem2.extend((rowCount + 1) * 8);
-                mem1.extend(mem2.getLong(rowCount * 8));
+                ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                mem2.extend(columnTypeDriver.getAuxVectorSize(rowCount));
+                if (mem1 != null) {
+                    mem1.extend(columnTypeDriver.getDataVectorSizeAt(mem2.addressOf(0), rowCount - 1));
+                }
             } else {
-                mem1.extend(rowCount << ColumnType.pow2SizeOf(type));
+                mem1.extend(rowCount << ColumnType.pow2SizeOf(columnType));
             }
         }
     }
@@ -613,7 +616,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         long partitionTs = openPartitionInfo.getQuick(offset);
         long existingPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
-        long newSize = txFile.getPartitionSizeByPartitionTimestamp(partitionTs);
+        long newSize = txFile.getPartitionRowCountByTimestamp(partitionTs);
         if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
             LOG.debug().$("close outdated partition files [table=").utf8(tableToken.getTableName()).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
@@ -833,13 +836,13 @@ public class TableReader implements Closeable, SymbolTableSource {
             Path path,
             ObjList<MemoryMR> columns,
             int primaryIndex,
-            MemoryMR mem,
+            @Nullable MemoryMR mem,
             long columnSize
     ) {
         if (mem != null && mem != NullMemoryMR.INSTANCE) {
             mem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_READER);
         } else {
-            mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER);
+            mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER, true);
             columns.setQuick(primaryIndex, mem);
         }
         return mem;
@@ -1057,10 +1060,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             final CharSequence name = metadata.getColumnName(columnIndex);
             final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);
             final int secondaryIndex = primaryIndex + 1;
-
-            MemoryMR mem1 = columns.getQuick(primaryIndex);
-            MemoryMR mem2 = columns.getQuick(secondaryIndex);
-
             final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
             int writerIndex = metadata.getWriterIndex(columnIndex);
             final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
@@ -1080,21 +1079,31 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (columnRowCount > 0 && (versionRecordIndex > -1L || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
                 final int columnType = metadata.getColumnType(columnIndex);
 
-                if (ColumnType.isVariableLength(columnType)) {
-                    long columnSize = columnRowCount * 8L + 8L;
+                final MemoryMR dataMem = columns.getQuick(primaryIndex);
+                if (ColumnType.isVarSize(columnType)) {
+                    final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                    long auxSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
                     TableUtils.iFile(path.trimTo(plen), name, columnTxn);
-                    mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize);
-                    long column2Size = mem2.getLong(columnRowCount * 8L);
-                    if (column2Size <= 0 || column2Size >= (1L << 40)) {
-                        LOG.critical().$("Invalid var len column size [column=").$(name).$(", size=").$(column2Size).$(", path=").$(path).I$();
-                        throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(column2Size).put(']');
+                    MemoryMR auxMem = columns.getQuick(secondaryIndex);
+                    auxMem = openOrCreateMemory(path, columns, secondaryIndex, auxMem, auxSize);
+                    long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
+                    if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
+                        LOG.critical().$("Invalid var len column size [column=").$(name).$(", size=").$(dataSize).$(", path=").$(path).I$();
+                        throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(dataSize).put(']');
                     }
-                    TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(path, columns, primaryIndex, mem1, column2Size);
+                    if (dataSize > 0) {
+                        TableUtils.dFile(path.trimTo(plen), name, columnTxn);
+                        openOrCreateMemory(path, columns, primaryIndex, dataMem, dataSize);
+                    }
                 } else {
-                    long columnSize = columnRowCount << ColumnType.pow2SizeOf(columnType);
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
+                    openOrCreateMemory(
+                            path,
+                            columns,
+                            primaryIndex,
+                            dataMem,
+                            columnRowCount << ColumnType.pow2SizeOf(columnType)
+                    );
                     Misc.free(columns.getAndSetQuick(secondaryIndex, null));
                 }
 

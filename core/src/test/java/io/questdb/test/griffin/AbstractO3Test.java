@@ -44,13 +44,10 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Rule;
+import org.jetbrains.annotations.Nullable;
+import org.junit.*;
 import org.junit.rules.Timeout;
 
-import java.io.File;
 import java.util.concurrent.TimeUnit;
 
 public class AbstractO3Test extends AbstractTest {
@@ -58,6 +55,7 @@ public class AbstractO3Test extends AbstractTest {
     protected static final StringSink sink2 = new StringSink();
     protected static int commitMode = CommitMode.NOSYNC;
     protected static int dataAppendPageSize = -1;
+    protected static int o3ColumnMemorySize = -1;
     protected static boolean mixedIOEnabled;
     protected static boolean mixedIOEnabledFFDefault;
     protected static int o3MemMaxPages = -1;
@@ -69,6 +67,11 @@ public class AbstractO3Test extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private RecordToRowCopier copier;
+
+    @BeforeClass
+    public static void setUpClass() {
+        ColumnType.makeUtf8DefaultString();
+    }
 
     @Before
     public void clearRecordToRowCopier() {
@@ -91,6 +94,7 @@ public class AbstractO3Test extends AbstractTest {
         commitMode = CommitMode.NOSYNC;
         mixedIOEnabled = mixedIOEnabledFFDefault;
         dataAppendPageSize = -1;
+        o3ColumnMemorySize = -1;
         o3MemMaxPages = -1;
         partitionO3SplitThreshold = -1;
         super.tearDown();
@@ -201,15 +205,15 @@ public class AbstractO3Test extends AbstractTest {
             final CairoEngine engine,
             final SqlCompiler compiler,
             final SqlExecutionContext sqlExecutionContext,
-            final String referenceTableDDL,
-            final String o3InsertSQL
+            final @Nullable String referenceTableDDL,
+            final @Nullable String o3InsertSQL
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         if (referenceTableDDL != null) {
-            compiler.compile(referenceTableDDL, sqlExecutionContext);
+            engine.ddl(referenceTableDDL, sqlExecutionContext);
         }
         if (o3InsertSQL != null) {
-            compiler.compile(o3InsertSQL, sqlExecutionContext);
+            engine.ddl(o3InsertSQL, sqlExecutionContext);
         }
 
         TestUtils.assertEqualsExactOrder(
@@ -227,17 +231,6 @@ public class AbstractO3Test extends AbstractTest {
                 "y order by ts, commit",
                 "x"
         );
-    }
-
-
-    protected static void assertSqlResultAgainstFile(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String sql,
-            String resourceName
-    ) throws SqlException {
-        AbstractO3Test.printSqlResult(compiler, sqlExecutionContext, sql);
-        TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
     }
 
     static void assertXCount(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -321,6 +314,9 @@ public class AbstractO3Test extends AbstractTest {
 
                     @Override
                     public int getO3ColumnMemorySize() {
+                        if (o3ColumnMemorySize != -1) {
+                            return o3ColumnMemorySize;
+                        }
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
 
@@ -372,6 +368,9 @@ public class AbstractO3Test extends AbstractTest {
 
                     @Override
                     public int getO3ColumnMemorySize() {
+                        if (o3ColumnMemorySize != -1) {
+                            return o3ColumnMemorySize;
+                        }
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
 
@@ -455,7 +454,7 @@ public class AbstractO3Test extends AbstractTest {
         }
     }
 
-    protected enum ParallelMode {
+    public enum ParallelMode {
         CONTENDED, PARALLEL
     }
 }

@@ -85,7 +85,7 @@ public class GroupByUtils {
                     // some functions may need more than one column in values,
                     // so we have them do all the work
                     GroupByFunction func = (GroupByFunction) function;
-                    func.pushValueTypes(valueTypes);
+                    func.initValueTypes(valueTypes);
                     groupByFunctions.add(func);
                     groupByFunctionPositions.add(node.position);
                 } else {
@@ -290,7 +290,7 @@ public class GroupByUtils {
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             final GroupByFunction workerGroupByFunction = workerGroupByFunctions.getQuick(i);
             final GroupByFunction groupByFunction = groupByFunctions.getQuick(i);
-            workerGroupByFunction.setValueIndex(groupByFunction.getValueIndex());
+            workerGroupByFunction.initValueIndex(groupByFunction.getValueIndex());
         }
     }
 
@@ -495,6 +495,9 @@ public class GroupByUtils {
                 break;
             case ColumnType.STRING:
                 func = StrColumn.newInstance(keyColumnIndex - 1);
+                break;
+            case ColumnType.VARCHAR:
+                func = VarcharColumn.newInstance(keyColumnIndex - 1);
                 break;
             case ColumnType.SYMBOL:
                 if (metadata != null) {

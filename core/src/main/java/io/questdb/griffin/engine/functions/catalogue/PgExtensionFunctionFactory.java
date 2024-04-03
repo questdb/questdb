@@ -131,7 +131,7 @@ public class PgExtensionFunctionFactory implements FunctionFactory {
                 }
 
                 @Override
-                public CharSequence getStr(int col) {
+                public CharSequence getStrA(int col) {
                     if (col == COLUMN_EXTVERSION) {
                         return version;
                     } else {
@@ -141,17 +141,12 @@ public class PgExtensionFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrB(int col) {
-                    return getStr(col);
+                    return getStrA(col);
                 }
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence str = getStr(col);
-                    if (str != null) {
-                        return str.length();
-                    }
-
-                    return TableUtils.NULL_LEN;
+                    return TableUtils.lengthOf(getStrA(col));
                 }
             }
         }

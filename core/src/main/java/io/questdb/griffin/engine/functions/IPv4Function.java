@@ -31,9 +31,7 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.Numbers.IPv4_NULL;
@@ -41,6 +39,8 @@ import static io.questdb.std.Numbers.IPv4_NULL;
 public abstract class IPv4Function implements ScalarFunction {
     private final StringSink sinkA = new StringSink();
     private final StringSink sinkB = new StringSink();
+    private final Utf8StringSink utf8SinkA = new Utf8StringSink();
+    private final Utf8StringSink utf8SinkB = new Utf8StringSink();
 
     @Override
     public final BinarySequence getBin(Record rec) {
@@ -148,15 +148,15 @@ public abstract class IPv4Function implements ScalarFunction {
     }
 
     @Override
-    public final CharSequence getStr(Record rec) {
+    public final CharSequence getStrA(Record rec) {
         return getStringSink(rec, sinkA);
     }
 
     @Override
-    public final void getStr(Record rec, Utf16Sink sink) {
-        int value = getIPv4(rec);
+    public final void getStr(Record rec, Utf16Sink utf16Sink) {
+        final int value = getIPv4(rec);
         if (value != IPv4_NULL) {
-            Numbers.intToIPv4Sink(sink, value);
+            Numbers.intToIPv4Sink(utf16Sink, value);
         }
     }
 
@@ -188,6 +188,36 @@ public abstract class IPv4Function implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.IPv4;
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        final int value = getIPv4(rec);
+        if (value != Numbers.IPv4_NULL) {
+            Numbers.intToIPv4Sink(utf8Sink, value);
+        }
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        final int value = getIPv4(rec);
+        if (value == Numbers.IPv4_NULL) {
+            return null;
+        }
+        utf8SinkA.clear();
+        Numbers.intToIPv4Sink(utf8SinkA, value);
+        return utf8SinkA;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        final int value = getIPv4(rec);
+        if (value == Numbers.IPv4_NULL) {
+            return null;
+        }
+        utf8SinkB.clear();
+        Numbers.intToIPv4Sink(utf8SinkB, value);
+        return utf8SinkB;
     }
 
     @Nullable

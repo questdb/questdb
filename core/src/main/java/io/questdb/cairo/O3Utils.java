@@ -39,6 +39,18 @@ public class O3Utils {
 
     private static final Log LOG = LogFactory.getLog(O3Utils.class);
 
+    public static void copyFixedSizeCol(FilesFacade ff, long srcAddr, long srcLo, long dstAddr, long dstFixFileOffset, int dstFd, boolean mixedIOFlag, long len, int shl) {
+        final long fromAddress = srcAddr + (srcLo << shl);
+        if (mixedIOFlag) {
+            if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
+                throw CairoException.critical(ff.errno()).put("cannot copy fixed column prefix [fd=")
+                        .put(dstFd).put(", len=").put(len).put(", offset=").put(fromAddress).put(']');
+            }
+        } else {
+            Vect.memcpy(dstAddr, fromAddress, len);
+        }
+    }
+
     public static void setupWorkerPool(
             WorkerPool workerPool,
             CairoEngine cairoEngine,
@@ -63,7 +75,7 @@ public class O3Utils {
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
-        workerPool.assign(new O3CallbackJob(messageBus));
+        workerPool.assign(new ColumnTaskJob(messageBus));
         workerPool.freeOnExit(purgeDiscoveryJob);
 
         final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
@@ -98,24 +110,14 @@ public class O3Utils {
         Vect.copyFromTimestampIndex(src, srcLo, srcHi, dstAddr);
     }
 
-    static long findVarOffset(long srcFixAddr, long srcLo) {
-        long result = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
-        assert (srcLo == 0 && result == 0) || result > 0;
-        return result;
-    }
-
-    static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {
-        return findVarOffset(srcFixAddr, srcHi + 1) - findVarOffset(srcFixAddr, srcLo);
-    }
-
-    static void shiftCopyFixedSizeColumnData(
+    static void shiftCopyVarcharColumnAux(
             long shift,
-            long src,
+            long srcAddr,
             long srcLo,
             long srcHi,
             long dstAddr
     ) {
-        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
+        Vect.shiftCopyVarcharColumnAux(shift, srcAddr, srcLo, srcHi, dstAddr);
     }
 
     static void unmap(FilesFacade ff, long addr, long size) {

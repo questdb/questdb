@@ -51,6 +51,8 @@ public interface CharSink<T extends CharSink<?>> {
         }
     }
 
+    int getEncoding();
+
     default T put(@NotNull CharSequence cs, int lo, int hi) {
         for (int i = lo; i < hi; i++) {
             put(cs.charAt(i));
@@ -169,6 +171,4 @@ public interface CharSink<T extends CharSink<?>> {
     }
 
     T putUtf8(long lo, long hi);
-
-    int getEncoding();
 }

@@ -39,6 +39,9 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -89,7 +92,7 @@ public class SqlUtilTest {
 
     @Test
     public void testImplicitCastStrAsIPv4() {
-        Assert.assertEquals(0, SqlUtil.implicitCastStrAsIPv4(null));
+        Assert.assertEquals(0, SqlUtil.implicitCastStrAsIPv4((CharSequence) null));
         Assert.assertEquals(201741578, SqlUtil.implicitCastStrAsIPv4("12.6.85.10"));
         Assert.assertEquals(4738954, SqlUtil.implicitCastStrAsIPv4("0.72.79.138"));
 
@@ -134,6 +137,27 @@ public class SqlUtilTest {
             }).start();
         }
         Assert.assertTrue(completed.await(TimeUnit.SECONDS.toNanos(2L)));
+    }
+
+    @Test
+    public void testImplicitCastUtf8StrAsIPv4() {
+        Assert.assertEquals(0, SqlUtil.implicitCastStrAsIPv4((Utf8Sequence) null));
+        Assert.assertEquals(201741578, SqlUtil.implicitCastStrAsIPv4(new Utf8String("12.6.85.10")));
+        Assert.assertEquals(4738954, SqlUtil.implicitCastStrAsIPv4(new Utf8String("0.72.79.138")));
+
+        try {
+            SqlUtil.implicitCastStrAsIPv4(new Utf8String("77823.23232.23232.33"));
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("invalid ipv4 format: 77823.23232.23232.33", e.getFlyweightMessage());
+        }
+
+        try {
+            SqlUtil.implicitCastStrAsIPv4(new Utf8String("hello"));
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("invalid ipv4 format: hello", e.getFlyweightMessage());
+        }
     }
 
     @Test
@@ -227,6 +251,81 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testParseVarcharByte() {
+        Utf8StringSink sink = new Utf8StringSink();
+        Assert.assertEquals(0, SqlUtil.implicitCastVarcharAsByte(null));
+
+        sink.put("89");
+        Assert.assertEquals(89, SqlUtil.implicitCastVarcharAsByte(sink));
+
+        sink.clear();
+        sink.put("-89");
+        Assert.assertEquals(-89, SqlUtil.implicitCastVarcharAsByte(sink));
+
+        // overflow
+        try {
+            sink.clear();
+            sink.put("778");
+            SqlUtil.implicitCastVarcharAsByte(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `778` [VARCHAR -> BYTE]", e.getFlyweightMessage());
+        }
+
+        // not a number
+        try {
+            sink.clear();
+            sink.put("hello");
+            SqlUtil.implicitCastVarcharAsByte(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> BYTE]", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testParseStrChar() {
+        Assert.assertEquals(0, SqlUtil.implicitCastStrAsChar(null));
+        Assert.assertEquals(0, SqlUtil.implicitCastStrAsChar(""));
+        Assert.assertEquals('a', SqlUtil.implicitCastStrAsChar("a"));
+        // arabic
+        Assert.assertEquals('ع', SqlUtil.implicitCastStrAsChar("ع"));
+
+        try {
+            SqlUtil.implicitCastStrAsChar("hello");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> CHAR]", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testParseVarcharChar() {
+        Utf8StringSink sink = new Utf8StringSink();
+        Assert.assertEquals(0, SqlUtil.implicitCastVarcharAsChar(null));
+
+        Assert.assertEquals(0, SqlUtil.implicitCastVarcharAsChar(sink));
+
+        sink.clear();
+        sink.put("a");
+        Assert.assertEquals('a', SqlUtil.implicitCastVarcharAsChar(sink));
+        // arabic
+        sink.clear();
+        sink.put("ع");
+        Assert.assertEquals('ع', SqlUtil.implicitCastVarcharAsChar(sink));
+
+        try {
+            sink.clear();
+            sink.put("hello");
+            SqlUtil.implicitCastVarcharAsChar(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> CHAR]", e.getFlyweightMessage());
+        }
+    }
+
+
+    @Test
     public void testParseStrDate() {
         Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsDate(null));
         Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20T10:30:55.123Z")));
@@ -243,6 +342,26 @@ public class SqlUtilTest {
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: `hello` [STRING -> DATE]", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testParseVarcharDate() {
+        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastVarcharAsDate(null));
+        Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20T10:30:55.123Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.000Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20 10:30:55Z")));
+        Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20 Z")));
+        Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20")));
+        Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20 10:30:55.123Z")));
+        Assert.assertEquals("1970-01-01T00:00:00.200Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("200")));
+        Assert.assertEquals("1969-12-31T23:59:59.100Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("-900")));
+
+        // not a number
+        try {
+            SqlUtil.implicitCastVarcharAsDate("hello");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> DATE]", e.getFlyweightMessage());
         }
     }
 
@@ -268,6 +387,70 @@ public class SqlUtilTest {
             TestUtils.assertEquals("inconvertible value: `hello` [STRING -> DOUBLE]", e.getFlyweightMessage());
         }
     }
+
+    @Test
+    public void testParseVarcharDouble() {
+        Utf8StringSink sink = new Utf8StringSink();
+        //noinspection SimplifiableAssertion
+        Assert.assertFalse(SqlUtil.implicitCastVarcharAsDouble(null) == SqlUtil.implicitCastStrAsDouble(null));
+        sink.put("990.1e60");
+        Assert.assertEquals(9.901E62, SqlUtil.implicitCastVarcharAsDouble(sink), 0.001);
+
+        // overflow
+        try {
+            sink.clear();
+            sink.put("1e450");
+            SqlUtil.implicitCastVarcharAsDouble(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `1e450` [VARCHAR -> DOUBLE]", e.getFlyweightMessage());
+        }
+
+        // not a number
+        try {
+            sink.clear();
+            sink.put("hello");
+            SqlUtil.implicitCastVarcharAsDouble(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> DOUBLE]", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testParseVarcharFloat() {
+        Utf8StringSink sink = new Utf8StringSink();
+        //noinspection SimplifiableAssertion
+        Assert.assertFalse(SqlUtil.implicitCastVarcharAsFloat(null) == SqlUtil.implicitCastStrAsFloat(null));
+
+        sink.put("990.1");
+        Assert.assertEquals(990.1, SqlUtil.implicitCastVarcharAsFloat(sink), 0.001);
+
+        sink.clear();
+        sink.put("-899.23");
+        Assert.assertEquals(-899.23, SqlUtil.implicitCastVarcharAsFloat(sink), 0.001);
+
+        // overflow
+        try {
+            sink.clear();
+            sink.put("1e210");
+            SqlUtil.implicitCastVarcharAsFloat(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `1e210` [VARCHAR -> FLOAT]", e.getFlyweightMessage());
+        }
+
+        // not a number
+        try {
+            sink.clear();
+            sink.put("hello");
+            SqlUtil.implicitCastVarcharAsFloat(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> FLOAT]", e.getFlyweightMessage());
+        }
+    }
+
 
     @Test
     public void testParseStrFloat() {
@@ -317,6 +500,39 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testParseVarcharInt() {
+        Utf8StringSink sink = new Utf8StringSink();
+        Assert.assertEquals(Numbers.INT_NaN, SqlUtil.implicitCastVarcharAsInt(null));
+
+        sink.put("22222123");
+        Assert.assertEquals(22222123, SqlUtil.implicitCastVarcharAsInt(sink));
+
+        sink.clear();
+        sink.put("-2222232");
+        Assert.assertEquals(-2222232, SqlUtil.implicitCastVarcharAsInt(sink));
+
+        // overflow
+        try {
+            sink.clear();
+            sink.put("77823232322323233");
+            SqlUtil.implicitCastVarcharAsInt(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `77823232322323233` [VARCHAR -> INT]", e.getFlyweightMessage());
+        }
+
+        // not a number
+        try {
+            sink.clear();
+            sink.put("hello");
+            SqlUtil.implicitCastVarcharAsInt(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> INT]", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
     public void testParseStrLong() {
         Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsLong(null));
         Assert.assertEquals(222221211212123L, SqlUtil.implicitCastStrAsLong("222221211212123"));
@@ -338,6 +554,46 @@ public class SqlUtilTest {
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: `hello` [STRING -> LONG]", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testParseVarcharLong() {
+        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsLong(null));
+        Utf8StringSink sink = new Utf8StringSink();
+        sink.put("222221211212123");
+        Assert.assertEquals(222221211212123L, SqlUtil.implicitCastVarcharAsLong(sink));
+
+        sink.clear();
+        sink.put("222221211212123L");
+        Assert.assertEquals(222221211212123L, SqlUtil.implicitCastVarcharAsLong(sink));
+
+        sink.clear();
+        sink.put("-222221211212123");
+        Assert.assertEquals(-222221211212123L, SqlUtil.implicitCastVarcharAsLong(sink));
+
+        sink.clear();
+        sink.put("-222221211212123L");
+        Assert.assertEquals(-222221211212123L, SqlUtil.implicitCastVarcharAsLong(sink));
+
+        // overflow
+        try {
+            sink.clear();
+            sink.put("778232323223232389080898083");
+            SqlUtil.implicitCastVarcharAsLong(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `778232323223232389080898083` [VARCHAR -> LONG]", e.getFlyweightMessage());
+        }
+
+        // not a number
+        try {
+            sink.clear();
+            sink.put("hello");
+            SqlUtil.implicitCastVarcharAsLong(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> LONG]", e.getFlyweightMessage());
         }
     }
 
@@ -365,6 +621,37 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testParseVarcharShort() {
+        Assert.assertEquals(0, SqlUtil.implicitCastVarcharAsShort(null));
+        Utf8StringSink sink = new Utf8StringSink();
+        sink.put("22222");
+        Assert.assertEquals(22222, SqlUtil.implicitCastVarcharAsShort(sink));
+        sink.clear();
+        sink.put("-22222");
+        Assert.assertEquals(-22222, SqlUtil.implicitCastVarcharAsShort(sink));
+
+        // overflow
+        try {
+            sink.clear();
+            sink.put("77823232323");
+            SqlUtil.implicitCastVarcharAsShort(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `77823232323` [VARCHAR -> SHORT]", e.getFlyweightMessage());
+        }
+
+        // not a number
+        try {
+            sink.clear();
+            sink.put("hello");
+            SqlUtil.implicitCastVarcharAsShort(sink);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> SHORT]", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
     public void testParseStrTimestamp() {
         Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsTimestamp(null));
         Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20T10:30:55.123999Z")));
@@ -376,10 +663,29 @@ public class SqlUtilTest {
 
         // not a number
         try {
-            SqlUtil.implicitCastStrAsDate("hello");
+            SqlUtil.implicitCastStrAsTimestamp("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> DATE]", e.getFlyweightMessage());
+            TestUtils.assertEquals("inconvertible value: `hello` [STRING -> TIMESTAMP]", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testParseStrVarcharAsTimestamp0() {
+        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastVarcharAsTimestamp(null));
+        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20T10:30:55.123999Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 10:30:55Z")));
+        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 10:30:55.123Z")));
+        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("200")));
+        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("-900")));
+
+        // not a number
+        try {
+            SqlUtil.implicitCastVarcharAsTimestamp("hello");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> TIMESTAMP]", e.getFlyweightMessage());
         }
     }
 

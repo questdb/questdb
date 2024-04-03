@@ -69,14 +69,14 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractCairoTest {
         cursor.hasNext();
         Record record = cursor.getRecord();
 
-        assertEquals("TOTAL_USED", record.getStr(0));
+        assertEquals("TOTAL_USED", record.getStrA(0));
         assertEquals(Unsafe.getMemUsed(), record.getLong(1));
         cursor.hasNext();
-        assertEquals("RSS", record.getStr(0));
+        assertEquals("RSS", record.getStrA(0));
         assertTrue(record.getLong(1) > 0);
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             assertTrue(cursor.hasNext());
-            assertEquals(MemoryTag.nameOf(i), record.getStr(0));
+            assertEquals(MemoryTag.nameOf(i), record.getStrA(0));
             assertEquals(Unsafe.getMemUsedByTag(i), record.getLong(1));
         }
         assertFalse(cursor.hasNext());

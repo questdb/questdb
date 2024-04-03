@@ -33,6 +33,10 @@ import io.questdb.cairo.vm.api.MemoryFR;
  */
 public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR, MemoryCR {
 
+    public MemoryFCRImpl() {
+        super(false);
+    }
+
     @Override
     public void close() {
         // nothing to do, we do not own the memory
@@ -42,6 +46,11 @@ public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR, MemoryC
     @Override
     public void extend(long size) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getFd() {
+        return -1;
     }
 
     @Override

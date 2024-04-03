@@ -1107,7 +1107,7 @@ public class SnapshotTest extends AbstractCairoTest {
                     mem.smallFile(ff, path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
 
                     CharSequence expectedId = configuration.getSnapshotInstanceId();
-                    CharSequence actualId = mem.getStr(0);
+                    CharSequence actualId = mem.getStrA(0);
                     Assert.assertTrue(Chars.equals(actualId, expectedId));
                 }
 

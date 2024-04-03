@@ -30,13 +30,23 @@ import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 
 import java.io.Closeable;
 
-//readable 
+// readable
 public interface MemoryR extends Closeable {
 
     long addressOf(long offset);
+
+    default Utf8SplitString borrowUtf8SplitStringA() {
+        throw new UnsupportedOperationException();
+    }
+
+    default Utf8SplitString borrowUtf8SplitStringB() {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     void close();
@@ -95,11 +105,15 @@ public interface MemoryR extends Closeable {
 
     short getShort(long offset);
 
-    CharSequence getStr(long offset);
+    CharSequence getStrA(long offset);
 
-    CharSequence getStr2(long offset);
+    CharSequence getStrB(long offset);
 
     int getStrLen(long offset);
+
+    Utf8Sequence getVarcharA(long offset, int size, boolean ascii);
+
+    Utf8Sequence getVarcharB(long offset, int size, boolean ascii);
 
     long offsetInPage(long offset);
 

@@ -418,7 +418,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             memFile.smallFile(ff, srcPath, MemoryTag.MMAP_DEFAULT);
 
             final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
-            CharSequence snapshotInstanceId = memFile.getStr(0);
+            CharSequence snapshotInstanceId = memFile.getStrA(0);
             if (Chars.empty(snapshotInstanceId)) {
                 // Check _snapshot.txt file too reading it as a text file.
                 srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT).$();
