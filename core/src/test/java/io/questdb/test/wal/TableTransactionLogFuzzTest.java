@@ -123,8 +123,6 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
 
                 v1.close();
                 v2.close();
-
-                TableTransactionLogV2.clearThreadLocals();
             }
         });
     }
