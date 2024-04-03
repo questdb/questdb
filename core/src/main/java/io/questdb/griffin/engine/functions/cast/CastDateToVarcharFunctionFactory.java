@@ -31,7 +31,10 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 
 public class CastDateToVarcharFunctionFactory implements FunctionFactory {
 
@@ -77,23 +80,23 @@ public class CastDateToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NaN) {
-                return null;
+            if (value != Numbers.LONG_NaN) {
+                sinkA.clear();
+                sinkA.putISODateMillis(value);
+                return sinkA;
             }
-            sinkA.clear();
-            sinkA.putISODateMillis(value);
-            return sinkA;
+            return null;
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             final long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NaN) {
-                return null;
+            if (value != Numbers.LONG_NaN) {
+                sinkB.clear();
+                sinkB.putISODateMillis(value);
+                return sinkB;
             }
-            sinkB.clear();
-            sinkB.putISODateMillis(value);
-            return sinkB;
+            return null;
         }
     }
 }

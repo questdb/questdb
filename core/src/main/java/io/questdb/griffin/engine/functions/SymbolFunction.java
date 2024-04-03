@@ -191,23 +191,23 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
         final CharSequence cs = getStrA(rec);
-        if (cs == null) {
-            return null;
+        if (cs != null) {
+            utf8SinkA.clear();
+            utf8SinkA.put(cs);
+            return utf8SinkA;
         }
-        utf8SinkA.clear();
-        utf8SinkA.put(cs);
-        return utf8SinkA;
+        return null;
     }
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         final CharSequence cs = getStrB(rec);
-        if (cs == null) {
-            return null;
+        if (cs != null) {
+            utf8SinkB.clear();
+            utf8SinkB.put(cs);
+            return utf8SinkB;
         }
-        utf8SinkB.clear();
-        utf8SinkB.put(cs);
-        return utf8SinkB;
+        return null;
     }
 
     public abstract boolean isSymbolTableStatic();
