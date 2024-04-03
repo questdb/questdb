@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-hello_file=$1/log/hello.txt
 
+HELLO_FILE=$1
 for a in {1..80}; do
- if [ -f $hello_file ]; then
-   cat $hello_file
-   rm $hello_file
+ if [ -f $HELLO_FILE ]; then
+   cat $HELLO_FILE
+   rm $HELLO_FILE
    break
  fi
  sleep 0.25
