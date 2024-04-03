@@ -86,7 +86,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
                 lo = Numbers.LONG_NaN;
                 hi = Numbers.LONG_NaN;
             }
-            final int index = setA.of(ptr).keyIndex(lo, hi);
+            final long index = setA.of(ptr).keyIndex(lo, hi);
             if (index >= 0) {
                 setA.addAt(index, lo, hi);
                 mapValue.addLong(valueIndex, 1);

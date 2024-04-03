@@ -129,7 +129,7 @@ public class GroupByLong256HashSetTest extends AbstractCairoTest {
                     long l1 = rnd.nextPositiveLong() + 1;
                     long l2 = rnd.nextPositiveLong() + 1;
                     long l3 = rnd.nextPositiveLong() + 1;
-                    int index = set.keyIndex(l0, l1, l2, l3);
+                    long index = set.keyIndex(l0, l1, l2, l3);
                     Assert.assertTrue(index >= 0);
                     set.addAt(index, l0, l1, l2, l3);
                 }

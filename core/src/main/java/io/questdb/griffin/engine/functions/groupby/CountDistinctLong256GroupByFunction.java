@@ -100,7 +100,7 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
                 l2 = Numbers.LONG_NaN;
                 l3 = Numbers.LONG_NaN;
             }
-            final int index = setA.of(ptr).keyIndex(l0, l1, l2, l3);
+            final long index = setA.of(ptr).keyIndex(l0, l1, l2, l3);
             if (index >= 0) {
                 setA.addAt(index, l0, l1, l2, l3);
                 mapValue.addLong(valueIndex, 1);

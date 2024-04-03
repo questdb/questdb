@@ -1448,7 +1448,7 @@ public class WalWriter implements TableWriterAPI {
         if (ColumnType.isVarSize(columnType)) {
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
             setVarColumnDataFileNull(columnTypeDriver, columnIndex, rowCount, commitMode);
-            setVarColumnFixedFileNull(columnTypeDriver, columnIndex, rowCount, commitMode);
+            setVarColumnAuxFileNull(columnTypeDriver, columnIndex, rowCount, commitMode);
         } else {
             setFixColumnNulls(columnType, columnIndex, rowCount);
         }
@@ -1474,6 +1474,25 @@ public class WalWriter implements TableWriterAPI {
         rowValueIsNotNull.setQuick(columnIndex, segmentRowCount);
     }
 
+    private void setVarColumnAuxFileNull(
+            ColumnTypeDriver columnTypeDriver,
+            int columnIndex,
+            long rowCount,
+            int commitMode
+    ) {
+        MemoryMA auxMem = getAuxColumn(columnIndex);
+        final long auxMemSize = columnTypeDriver.getAuxVectorSize(rowCount);
+        auxMem.jumpTo(auxMemSize);
+        if (rowCount > 0) {
+            final long auxMemAddr = TableUtils.mapRW(ff, auxMem.getFd(), auxMemSize, MEM_TAG);
+            columnTypeDriver.setFullAuxVectorNull(auxMemAddr,  rowCount);
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
+            }
+            ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
+        }
+    }
+
     private void setVarColumnDataFileNull(ColumnTypeDriver columnTypeDriver, int columnIndex, long rowCount, int commitMode) {
         MemoryMA dataMem = getDataColumn(columnIndex);
         final long varColSize = rowCount * columnTypeDriver.getDataVectorMinEntrySize();
@@ -1488,23 +1507,6 @@ public class WalWriter implements TableWriterAPI {
                 ff.msync(dataMemAddr, varColSize, commitMode == CommitMode.ASYNC);
             }
             ff.munmap(dataMemAddr, varColSize, MEM_TAG);
-        }
-    }
-
-    private void setVarColumnFixedFileNull(
-            ColumnTypeDriver columnTypeDriver, int columnIndex, long rowCount, int commitMode
-    ) {
-        MemoryMA auxMem = getAuxColumn(columnIndex);
-        final long auxMemSize = columnTypeDriver.getAuxVectorSize(rowCount);
-        auxMem.jumpTo(auxMemSize);
-        if (rowCount > 0) {
-            final long auxMemAddr = TableUtils.mapRW(ff, auxMem.getFd(), auxMemSize, MEM_TAG);
-            // todo: why + 1?
-            columnTypeDriver.setColumnRefs(auxMemAddr, 0, rowCount + 1);
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
-            }
-            ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
         }
     }
 

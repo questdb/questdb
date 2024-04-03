@@ -69,7 +69,7 @@ public class EqVarcharStrFunctionFactory implements FunctionFactory {
         if (constValue == null) {
             return new EqVarcharFunctionFactory.NullCheckFunc(b);
         }
-        Utf8String utf8ConstValue = constValue == null ? null : new Utf8String(constValue);
+        Utf8String utf8ConstValue = new Utf8String(constValue);
         return new EqVarcharFunctionFactory.ConstCheckFunc(b, utf8ConstValue);
     }
 
