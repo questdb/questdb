@@ -563,6 +563,71 @@ public class Unordered2MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutBinUnsupported() throws Exception {
+        assertUnsupported(key -> key.putBin(null));
+    }
+
+    @Test
+    public void testPutDateUnsupported() throws Exception {
+        assertUnsupported(key -> key.putDate(0));
+    }
+
+    @Test
+    public void testPutDoubleUnsupported() throws Exception {
+        assertUnsupported(key -> key.putDouble(0.0));
+    }
+
+    @Test
+    public void testPutFloatUnsupported() throws Exception {
+        assertUnsupported(key -> key.putFloat(0.0f));
+    }
+
+    @Test
+    public void testPutIntUnsupported() throws Exception {
+        assertUnsupported(key -> key.putInt(0));
+    }
+
+    @Test
+    public void testPutLong128Unsupported() throws Exception {
+        assertUnsupported(key -> key.putLong128(0, 0));
+    }
+
+    @Test
+    public void testPutLong256ObjectUnsupported() throws Exception {
+        assertUnsupported(key -> key.putLong256(null));
+    }
+
+    @Test
+    public void testPutLong256ValuesUnsupported() throws Exception {
+        assertUnsupported(key -> key.putLong256(0, 0, 0, 0));
+    }
+
+    @Test
+    public void testPutLongUnsupported() throws Exception {
+        assertUnsupported(key -> key.putLong(0));
+    }
+
+    @Test
+    public void testPutStrRangeUnsupported() throws Exception {
+        assertUnsupported(key -> key.putStr(null, 0, 0));
+    }
+
+    @Test
+    public void testPutStrUnsupported() throws Exception {
+        assertUnsupported(key -> key.putStr(null));
+    }
+
+    @Test
+    public void testPutTimestampUnsupported() throws Exception {
+        assertUnsupported(key -> key.putTimestamp(0));
+    }
+
+    @Test
+    public void testPutVarcharUnsupported() throws Exception {
+        assertUnsupported(key -> key.putVarchar((Utf8Sequence) null));
+    }
+
+    @Test
     public void testReopen() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
@@ -588,6 +653,7 @@ public class Unordered2MapTest extends AbstractCairoTest {
                 Assert.assertEquals(N, map.size());
 
                 map.close();
+                map.close(); // Close must be idempotent
                 map.reopen();
 
                 Assert.assertEquals(0, map.size());
@@ -755,71 +821,6 @@ public class Unordered2MapTest extends AbstractCairoTest {
                 }
             });
         }
-    }
-
-    @Test
-    public void testPutBinUnsupported() throws Exception {
-        assertUnsupported(key -> key.putBin(null));
-    }
-
-    @Test
-    public void testPutDateUnsupported() throws Exception {
-        assertUnsupported(key -> key.putDate(0));
-    }
-
-    @Test
-    public void testPutDoubleUnsupported() throws Exception {
-        assertUnsupported(key -> key.putDouble(0.0));
-    }
-
-    @Test
-    public void testPutFloatUnsupported() throws Exception {
-        assertUnsupported(key -> key.putFloat(0.0f));
-    }
-
-    @Test
-    public void testPutIntUnsupported() throws Exception {
-        assertUnsupported(key -> key.putInt(0));
-    }
-
-    @Test
-    public void testPutLongUnsupported() throws Exception {
-        assertUnsupported(key -> key.putLong(0));
-    }
-
-    @Test
-    public void testPutLong128Unsupported() throws Exception {
-        assertUnsupported(key -> key.putLong128(0, 0));
-    }
-
-    @Test
-    public void testPutLong256ObjectUnsupported() throws Exception {
-        assertUnsupported(key -> key.putLong256(null));
-    }
-
-    @Test
-    public void testPutLong256ValuesUnsupported() throws Exception {
-        assertUnsupported(key -> key.putLong256(0, 0, 0, 0));
-    }
-
-    @Test
-    public void testPutStrUnsupported() throws Exception {
-        assertUnsupported(key -> key.putStr(null));
-    }
-
-    @Test
-    public void testPutStrRangeUnsupported() throws Exception {
-        assertUnsupported(key -> key.putStr(null, 0, 0));
-    }
-
-    @Test
-    public void testPutTimestampUnsupported() throws Exception {
-        assertUnsupported(key -> key.putTimestamp(0));
-    }
-
-    @Test
-    public void testPutVarcharUnsupported() throws Exception {
-        assertUnsupported(key -> key.putVarchar((Utf8Sequence) null));
     }
 
     private static void assertUnsupported(Consumer<? super MapKey> putKeyFn) throws Exception {

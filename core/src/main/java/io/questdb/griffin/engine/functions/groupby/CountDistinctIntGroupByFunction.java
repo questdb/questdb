@@ -77,7 +77,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
             long ptr = mapValue.getLong(valueIndex + 1);
             // Remap zero since it's used as the no entry key.
             val = (val == 0) ? Numbers.INT_NaN : val;
-            final int index = setA.of(ptr).keyIndex(val);
+            final long index = setA.of(ptr).keyIndex(val);
             if (index >= 0) {
                 setA.addAt(index, val);
                 mapValue.addLong(valueIndex, 1);

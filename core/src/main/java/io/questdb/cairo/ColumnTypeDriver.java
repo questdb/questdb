@@ -170,16 +170,35 @@ public interface ColumnTypeDriver {
 
     long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem);
 
-    void setColumnRefs(long address, long initialOffset, long count);
+    /**
+     * Materializes nulls in the entire column, typically happens after
+     * new column is added to WAL file. This is because WAL does not have
+     * column tops yet.
+     *
+     * @param auxMemAddr aux vector address
+     * @param rowCount the number of rows
+     */
+    void setFullAuxVectorNull(long auxMemAddr, long rowCount);
+
+    /**
+     * Materializes column top in the aux vector. This is typically required if there
+     * is some data to be written after the nulls.
+     *
+     * @param auxMemAddr the aux memory address
+     * @param initialOffset the offset we begin writing nulls with, e.g. the offset that would begin locating our nulls
+     * @param columnTop the column top
+     */
+    void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop);
 
     void setDataVectorEntriesToNull(long dataMemAddr, long rowCount);
 
-    void shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr);
+    void shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr, long dstAddrSize);
 
     /**
      * Appends null encoding to the memory.
+     *
      * @param dataMem the data memory
-     * @param auxMem the aux memory (fixed part)
+     * @param auxMem  the aux memory (fixed part)
      */
     void appendNull(MemoryA dataMem, MemoryA auxMem);
 }

@@ -351,7 +351,7 @@ public class UuidTest extends AbstractCairoTest {
                 "u\tsum\n" +
                         "11111111-1111-1111-1111-111111111111\t1\n" +
                         "22222222-2222-2222-2222-222222222222\t5\n",
-                "select u, sum(i) from x group by u"
+                "select u, sum(i) from x group by u order by u"
         );
     }
 

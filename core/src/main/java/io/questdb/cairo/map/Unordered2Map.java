@@ -140,7 +140,7 @@ public class Unordered2Map implements Map, Reopenable {
     }
 
     @Override
-    public final void close() {
+    public void close() {
         if (memStart != 0) {
             memStart = memLimit = Unsafe.free(memStart, entrySize * TABLE_SIZE, memoryTag);
             keyMemStart = Unsafe.free(keyMemStart, KEY_SIZE, memoryTag);
@@ -312,7 +312,7 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
-        public MapValue createValue(int hashCode) {
+        public MapValue createValue(long hashCode) {
             return createValue();
         }
 
@@ -332,7 +332,7 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
-        public int hash() {
+        public long hash() {
             return 0; // no-op
         }
 
