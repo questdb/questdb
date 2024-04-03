@@ -161,8 +161,9 @@ public class Bootstrap {
                 // /server.conf properties
                 final Properties properties = loadProperties();
                 final FilesFacade ffOverride = bootstrapConfiguration.getFilesFacade();
+                /*
                 if (ffOverride == null) {
-                    config = new PropServerConfiguration(
+                    config = new SteveServerConfiguration(
                             rootDirectory,
                             properties,
                             bootstrapConfiguration.getEnv(),
@@ -170,7 +171,7 @@ public class Bootstrap {
                             buildInformation
                     );
                 } else {
-                    config = new PropServerConfiguration(
+                    config = new SteveServerConfiguration(
                             rootDirectory,
                             properties,
                             bootstrapConfiguration.getEnv(),
@@ -193,6 +194,14 @@ public class Bootstrap {
                         }
                     };
                 }
+                 */
+                config = new SteveServerConfiguration(
+                        rootDirectory,
+                        properties,
+                        bootstrapConfiguration.getEnv(),
+                        log,
+                        buildInformation
+                );
             } else {
                 config = configuration;
             }
@@ -363,14 +372,23 @@ public class Bootstrap {
 
     @NotNull
     public Properties loadProperties() throws IOException {
+        return loadProperties(rootDirectory, log);
+    }
+
+    public static Properties loadProperties(String rootDirectory, Log log) throws IOException{
+
         final Properties properties = new Properties();
-        java.nio.file.Path configFile = Paths.get(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
+        java.nio.file.Path configFile = getPropertiesPath(rootDirectory);
         log.advisoryW().$("Server config: ").$(configFile).$();
 
         try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
             properties.load(is);
         }
         return properties;
+    }
+
+    public static java.nio.file.Path getPropertiesPath(String rootDirectory) {
+        return Paths.get(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
     }
 
     public CairoEngine newCairoEngine() {

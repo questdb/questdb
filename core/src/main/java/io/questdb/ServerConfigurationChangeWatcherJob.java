@@ -24,8 +24,6 @@
 
 package io.questdb;
 
-import io.questdb.cairo.O3OpenColumnJob;
-import io.questdb.cutlass.json.JsonException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Filewatcher;
@@ -33,25 +31,21 @@ import io.questdb.std.str.Path;
 import io.questdb.mp.SynchronizedJob;
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Paths;
 import java.util.Properties;
 
 public class ServerConfigurationChangeWatcherJob extends SynchronizedJob implements Closeable {
     private final long watcherAddress;
-    private Bootstrap bootstrap;
-    private ServerMain serverMain;
+    private final SteveServerConfiguration serverConfiguration;
     private final static Log LOG = LogFactory.getLog(ServerConfigurationChangeWatcherJob.class);
-    private final boolean addShutdownhook;
     private Properties properties;
+    private final String rootDirectory;
 
-    public ServerConfigurationChangeWatcherJob(Bootstrap bootstrap, ServerMain serverMain, boolean addShutdownHook) throws IOException {
-        this.bootstrap = bootstrap;
-        this.properties = bootstrap.loadProperties();
-        this.serverMain = serverMain;
-        this.addShutdownhook = addShutdownHook;
+    public ServerConfigurationChangeWatcherJob(String rootDirectory, SteveServerConfiguration serverConfiguration) throws IOException {
+        this.properties = Bootstrap.loadProperties(rootDirectory, LOG);
+        this.serverConfiguration = serverConfiguration;
+        this.rootDirectory = rootDirectory;
 
-        final String configFilePath = this.bootstrap.getConfiguration().getCairoConfiguration().getConfRoot() + Bootstrap.CONFIG_FILE;
+        final String configFilePath = Bootstrap.getPropertiesPath(rootDirectory).toString();
 
         try (Path path = new Path()) {
             path.of(configFilePath).$();
@@ -65,14 +59,11 @@ public class ServerConfigurationChangeWatcherJob extends SynchronizedJob impleme
 
     @Override
     protected boolean runSerially() {
-        if (serverMain == null) {
-            return true;
-        }
 
         if (Filewatcher.changed(this.watcherAddress)) {
             Properties newProperties;
             try {
-                newProperties = this.bootstrap.loadProperties();
+                newProperties = Bootstrap.loadProperties(this.rootDirectory, LOG);
             } catch (IOException exc) {
                 LOG.error().$("error loading properties").$();
                 return false;
@@ -80,14 +71,10 @@ public class ServerConfigurationChangeWatcherJob extends SynchronizedJob impleme
 
             if (!newProperties.equals(this.properties)) {
                 LOG.info().$("config successfully reloaded").$();
-                serverMain.close();
-                this.bootstrap = new Bootstrap(this.bootstrap.args);
-                serverMain = new ServerMain(this.bootstrap);
-                serverMain.start(this.addShutdownhook);
+                serverConfiguration.reload(newProperties);
                 this.properties = newProperties;
             }
         }
         return true;
     }
-
 }
