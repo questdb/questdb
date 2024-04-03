@@ -96,6 +96,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     public void toPlan(PlanSink sink) {
         sink.type("GroupBy");
         sink.meta("vectorized").val(true);
+        sink.meta("workers").val(workerCount);
         sink.optAttr("values", vafList, true);
         sink.child(base);
     }

@@ -1522,16 +1522,15 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelRostiSum() throws Exception {
         testParallelRostiGroupBy(
-                "SELECT key, sum(s) sum_s, sum(i) sum_i, sum(l) sum_l, sum(l256) sum_l256, " +
-                        "  round(sum(d)) sum_d, sum(dd)::long sum_dd, sum(t)::long sum_t " +
+                "SELECT key, sum(s) sum_s, sum(i) sum_i, sum(l) sum_l, sum(l256) sum_l256, round(sum(d)) sum_d " +
                         "FROM tab " +
                         "ORDER BY key",
-                "key\tsum_s\tsum_i\tsum_l\tsum_l256\tsum_d\tsum_dd\tsum_t\n" +
-                        "k0\t-85998\t9749\t37557\t0x248af96495cafa7d5c4dbe79c86d46054af590066639cabfb780bce1c77ea11c\t48.0\t37610295537814\t39445049420148835\n" +
-                        "k1\t-278367\t9091\t44953\t0x50b8e23533380471b205e4a7adeb9498426e85e7cf92558e9ca39604592ccea6\t43.0\t41938755326289\t38092137614142107\n" +
-                        "k2\t172265\t11057\t42940\t0xa914b3d66e12185a5d76310378e831be316071aaa2436b2c66e948497c8929ba\t39.0\t39727391650474\t41767824232883835\n" +
-                        "k3\t-37612\t11143\t43572\t0x92fdbf6e1f5b9360329a1dec86290a74b5a3f6b9ed9725c4f457dbb833b212f5\t33.0\t34444796339959\t35993570442554123\n" +
-                        "k4\t84442\t9340\t39271\t0x01708577a8ec2c4308e67d5f43e4cee420525d6d74f480ca312efa8e9fe584ce\t46.0\t37814262770623\t37904214212735424\n"
+                "key\tsum_s\tsum_i\tsum_l\tsum_l256\tsum_d\n" +
+                        "k0\t-85998\t9749\t37557\t0x248af96495cafa7d5c4dbe79c86d46054af590066639cabfb780bce1c77ea11c\t48.0\n" +
+                        "k1\t-278367\t9091\t44953\t0x50b8e23533380471b205e4a7adeb9498426e85e7cf92558e9ca39604592ccea6\t43.0\n" +
+                        "k2\t172265\t11057\t42940\t0xa914b3d66e12185a5d76310378e831be316071aaa2436b2c66e948497c8929ba\t39.0\n" +
+                        "k3\t-37612\t11143\t43572\t0x92fdbf6e1f5b9360329a1dec86290a74b5a3f6b9ed9725c4f457dbb833b212f5\t33.0\n" +
+                        "k4\t84442\t9340\t39271\t0x01708577a8ec2c4308e67d5f43e4cee420525d6d74f480ca312efa8e9fe584ce\t46.0\n"
         );
     }
 

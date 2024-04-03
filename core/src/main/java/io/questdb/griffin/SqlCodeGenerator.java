@@ -5753,8 +5753,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         sumConstructors.put(ColumnType.INT, SumIntVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.LONG, SumLongVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.LONG256, SumLong256VectorAggregateFunction::new);
-        sumConstructors.put(ColumnType.DATE, SumDateVectorAggregateFunction::new);
-        sumConstructors.put(ColumnType.TIMESTAMP, SumTimestampVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.SHORT, SumShortVectorAggregateFunction::new);
 
         ksumConstructors.put(ColumnType.DOUBLE, KSumDoubleVectorAggregateFunction::new);
@@ -5762,8 +5760,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         avgConstructors.put(ColumnType.DOUBLE, AvgDoubleVectorAggregateFunction::new);
         avgConstructors.put(ColumnType.LONG, AvgLongVectorAggregateFunction::new);
-        avgConstructors.put(ColumnType.TIMESTAMP, AvgLongVectorAggregateFunction::new);
-        avgConstructors.put(ColumnType.DATE, AvgLongVectorAggregateFunction::new);
         avgConstructors.put(ColumnType.INT, AvgIntVectorAggregateFunction::new);
         avgConstructors.put(ColumnType.SHORT, AvgShortVectorAggregateFunction::new);
 

@@ -2788,7 +2788,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (i int, d double)",
                 "select min(d) from a",
-                "GroupBy vectorized: true\n" +
+                "GroupBy vectorized: true workers: 1\n" +
                         "  values: [min(d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -2851,7 +2851,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select max(i) - min(i) from a",
                 "VirtualRecord\n" +
                         "  functions: [max-min]\n" +
-                        "    GroupBy vectorized: true\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
                         "      values: [min(i),max(i)]\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
@@ -2892,7 +2892,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (i int, d double)",
                 "select count(*), max(i), min(d) from a",
-                "GroupBy vectorized: true\n" +
+                "GroupBy vectorized: true workers: 1\n" +
                         "  values: [count(*),max(i),min(d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -2933,7 +2933,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (i int, d double)",
                 "select max(i) from (select * from a order by d)",
-                "GroupBy vectorized: true\n" +
+                "GroupBy vectorized: true workers: 1\n" +
                         "  values: [max(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -5663,7 +5663,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x+10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum+COUNT*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5674,7 +5674,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10+x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10+sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5692,7 +5692,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x*10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5703,7 +5703,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10*x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,10*sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5721,7 +5721,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x-10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum-COUNT*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5732,7 +5732,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10-x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10-sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5750,7 +5750,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x+2) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum+COUNT*2]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5761,7 +5761,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(2+x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*2+sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5779,7 +5779,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x*10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5790,7 +5790,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10*x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,10*sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5808,7 +5808,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x-10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum-COUNT*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5819,7 +5819,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10-x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10-sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5939,7 +5939,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x+42) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum+COUNT*42]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5950,7 +5950,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(42+x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*42+sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5968,7 +5968,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x*10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5979,7 +5979,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10*x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,10*sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5997,7 +5997,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x-10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum-COUNT*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -6008,7 +6008,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10-x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10-sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -6108,7 +6108,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "FROM hits",
                     "VirtualRecord\n" +
                             "  functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(resolutIONWidth),count(resolutIONWidth),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
