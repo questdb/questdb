@@ -71,6 +71,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCaseToSwitchRewriteNoElse() throws Exception {
+        assertQuery(
+                "select-virtual switch(a,10,'2',20,'3',null) k from (select [a] from x)",
+                "select case when a = 10 then '2' when a = 20 then '3' end k from x",
+                modelOf("x").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testACBetweenOrClause() throws Exception {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 12 preceding or 23 following) from xyz",
