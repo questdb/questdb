@@ -978,7 +978,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     } catch (Throwable th) {
                         errors.put(walId, th);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                         if (!countedDown) {
                             alterFinished.countDown();
                         }
@@ -1125,7 +1125,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     } catch (Throwable th) {
                         errors.put(walId, th);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                         writeFinished.countDown();
                     }
                 }).start();

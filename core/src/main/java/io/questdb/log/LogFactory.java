@@ -956,6 +956,11 @@ public class LogFactory implements Closeable {
         }
 
         @Override
+        public LogRecord $size(long memoryBytes) {
+            return this;
+        }
+
+        @Override
         public LogRecord $ts(long x) {
             return this;
         }
