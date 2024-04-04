@@ -109,6 +109,12 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $size(long memoryBytes) {
+        sink().putSize(memoryBytes);
+        return this;
+    }
+
+    @Override
     public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
         if (sequence == null) {
             sink().putAscii("null");
