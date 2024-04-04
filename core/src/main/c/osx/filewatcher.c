@@ -28,7 +28,7 @@
 
 struct file_watcher_context
 {
-    char *filePath;
+    char *filePathPtr;
     time_t lastChangedSec;
     long lastChangedNsec;
 };
@@ -46,8 +46,8 @@ void myCallback(
     printf("Callback called\n");
 
     struct file_watcher_context *ctx = (struct file_watcher_context *)context;
-
-    printf("filePath %s\n", ctx->filePath);
+    char *filePath = (char *)ctx->filePathPtr;
+    printf("filePath %s\n", filePath);
     for (i = 0; i < numEvents; i++)
     {
         int count;
@@ -55,7 +55,7 @@ void myCallback(
         printf("Change %llu in %s, flags %lu\n", eventIds[i], paths[i], eventFlags[i]);
 
         struct stat confStat;
-        printf("stat %d\n", stat(ctx->filePath, &confStat));
+        printf("stat %d\n", stat(filePath, &confStat));
         printf("%ld\n", confStat.st_mtimespec.tv_sec);
 
         if (confStat.st_mtimespec.tv_sec > ctx->lastChangedSec)
@@ -84,18 +84,23 @@ int main(int argc, char *argv[])
     CFStringRef confDir = CFStringCreateWithCString(NULL, dirname(confPath), kCFStringEncodingUTF8);
     CFArrayRef pathsToWatch = CFArrayCreate(NULL, (const void **)&confDir, 1, NULL);
 
-    /* Init context and data */
-    uintptr_t ctxPtr = malloc(sizeof(struct file_watcher_context));
-    struct file_watcher_context *ctx = (struct file_watcher_context *)ctxPtr;
-    ctx->filePath = confPath;
-    printf("confPath %s\n", ctx->filePath);
+    /* Init context */
+    struct file_watcher_context *ctx = malloc(sizeof(struct file_watcher_context));
+
+    /* Set the filename of the watched file in the context */
+    char *confPathPtr = malloc(sizeof(char) * strlen(confPath) + 1);
+    strcpy(confPathPtr, confPath);
+    ctx->filePathPtr = confPathPtr;
+    printf("ctx->filePathPtr %p\n", ctx->filePathPtr);
+
+    /* Set the last modified time of the watched file in the context */
     struct stat confStat;
-    printf("stat %d\n", stat(ctx->filePath, &confStat));
+    printf("stat %s %d\n", confPath, stat(confPath, &confStat));
     ctx->lastChangedSec = confStat.st_mtimespec.tv_sec;
     ctx->lastChangedNsec = confStat.st_mtimespec.tv_nsec;
 
     struct FSEventStreamContext context;
-    context.info = &ctx;
+    context.info = ctx;
 
     FSEventStreamRef stream;
     CFAbsoluteTime latency = 3.0; // latency in seconds
