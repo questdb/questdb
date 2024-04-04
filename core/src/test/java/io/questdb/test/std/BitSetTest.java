@@ -32,6 +32,34 @@ import org.junit.Test;
 public class BitSetTest {
 
     @Test
+    public void testGetAndSet() {
+        final int N = 1000;
+        BitSet set = new BitSet();
+        Rnd rnd = new Rnd();
+
+        Assert.assertTrue(set.capacity() > 0);
+
+        for (int i = 0; i < N; i++) {
+            Assert.assertFalse(set.get(i));
+        }
+        Assert.assertTrue(set.capacity() >= N);
+
+        rnd.reset();
+
+        for (int i = 0; i < N; i++) {
+            Assert.assertFalse(set.getAndSet(i));
+            Assert.assertTrue(set.get(i));
+        }
+
+        rnd.reset();
+
+        for (int i = 0; i < N; i++) {
+            Assert.assertTrue(set.getAndSet(i));
+            Assert.assertTrue(set.get(i));
+        }
+    }
+
+    @Test
     public void testSmoke() {
         final int N = 1000;
         final int max = 1_000_000;
