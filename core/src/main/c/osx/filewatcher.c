@@ -26,6 +26,7 @@
 #include <libgen.h>
 #include <sys/stat.h>
 #include <pthread.h>
+#include <jni.h>
 
 struct file_watcher_context
 {
@@ -47,20 +48,13 @@ void myCallback(
 {
     int i;
     char **paths = eventPaths;
-    printf("Callback called\n");
 
     struct file_watcher_context *ctx = (struct file_watcher_context *)context;
     char *filePath = (char *)ctx->filePathPtr;
-    printf("filePath %s\n", filePath);
     for (i = 0; i < numEvents; i++)
     {
-        int count;
-        /* flags are unsigned long, IDs are uint64_t */
-        printf("Change %llu in %s, flags %lu\n", eventIds[i], paths[i], eventFlags[i]);
-
         struct stat confStat;
-        printf("stat %d\n", stat(filePath, &confStat));
-        printf("%ld\n", confStat.st_mtimespec.tv_sec);
+        stat(filePath, &confStat);
 
         if (confStat.st_mtimespec.tv_sec > ctx->lastChangedSec)
         {
@@ -89,7 +83,7 @@ void *runLoop(void *vargp)
     FSEventStreamRef stream = (FSEventStreamRef)vargp;
     FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
     /* Start the loop */
-    printf("FSEventStreamStart %d\n", FSEventStreamStart(stream));
+    FSEventStreamStart(stream);
     CFRunLoopRun();
     return NULL;
 }
@@ -104,9 +98,6 @@ static uintptr_t setup(const char *filepath)
     /* Set the filename of the watched file in the context */
     ctx->filePathPtr = filepathPtr;
     strcpy(filepathPtr, filepath);
-    printf("filepath %p\n", filepath);
-    printf("filepathPtr %p\n", filepathPtr);
-    printf("ctx->filePathPtr %p %s\n", ctx->filePathPtr, ctx->filePathPtr);
 
     /* Add the file's directory to the watch array */
     CFStringRef confDir = CFStringCreateWithCString(NULL, dirname(filepathPtr), kCFStringEncodingUTF8);
@@ -114,7 +105,7 @@ static uintptr_t setup(const char *filepath)
 
     /* Set the last modified time of the watched file in the context */
     struct stat fileStat;
-    printf("stat %s %d\n", filepath, stat(filepath, &fileStat));
+    stat(filepath, &fileStat);
     ctx->lastChangedSec = fileStat.st_mtimespec.tv_sec;
     ctx->lastChangedNsec = fileStat.st_mtimespec.tv_nsec;
 
@@ -141,6 +132,11 @@ static uintptr_t setup(const char *filepath)
     return (uintptr_t)ctx;
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Filewatcher_setup(JNIEnv *e, jclass cl, jlong lpszName)
+{
+    return setup((const char *)lpszName);
+}
+
 static int changed(uintptr_t ctxPtr)
 {
     struct file_watcher_context *ctx = (struct file_watcher_context *)ctxPtr;
@@ -152,6 +148,11 @@ static int changed(uintptr_t ctxPtr)
     return 0;
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Filewatcher_changed(JNIEnv *e, jclass cl, jlong address)
+{
+    return changed(address);
+}
+
 static void teardown(uintptr_t ctxPtr)
 {
     struct file_watcher_context *ctx = (struct file_watcher_context *)ctxPtr;
@@ -161,6 +162,11 @@ static void teardown(uintptr_t ctxPtr)
 
     free(ctx->filePathPtr);
     free(ctx);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_std_Filewatcher_teardown(JNIEnv *e, jclass cl, jlong address)
+{
+    teardown(address);
 }
 
 int main(int argc, char *argv[])
