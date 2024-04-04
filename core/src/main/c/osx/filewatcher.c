@@ -25,12 +25,16 @@
 #include <CoreServices/CoreServices.h>
 #include <libgen.h>
 #include <sys/stat.h>
+#include <pthread.h>
 
 struct file_watcher_context
 {
     char *filePathPtr;
     time_t lastChangedSec;
     long lastChangedNsec;
+    FSEventStreamRef stream;
+    CFRunLoopRef runLoop;
+    bool changed;
 };
 
 void myCallback(
@@ -60,47 +64,61 @@ void myCallback(
 
         if (confStat.st_mtimespec.tv_sec > ctx->lastChangedSec)
         {
-            printf("changed!\n");
+            ctx->changed = true;
             ctx->lastChangedSec = confStat.st_mtimespec.tv_sec;
             ctx->lastChangedNsec = confStat.st_mtimespec.tv_nsec;
+            return;
         }
 
         if (confStat.st_mtimespec.tv_sec == ctx->lastChangedSec &&
             confStat.st_mtimespec.tv_nsec > ctx->lastChangedNsec)
         {
-            printf("changed!\n");
+            ctx->changed = true;
             ctx->lastChangedSec = confStat.st_mtimespec.tv_sec;
             ctx->lastChangedNsec = confStat.st_mtimespec.tv_nsec;
+            return;
         }
     }
 }
 
-int main(int argc, char *argv[])
+void *runLoop(void *vargp)
 {
-    /* Define variables and create a CFArray object containing
-       CFString objects containing paths to watch.
+    /* Set up a run loop to schedule FSEventStream. This snippet schedules the stream
+       on the current thread's run loop (not yet running)
     */
-    char *confPath = "/Users/steven/tmp/qdbdev/conf/server.conf";
-    CFStringRef confDir = CFStringCreateWithCString(NULL, dirname(confPath), kCFStringEncodingUTF8);
-    CFArrayRef pathsToWatch = CFArrayCreate(NULL, (const void **)&confDir, 1, NULL);
+    FSEventStreamRef stream = (FSEventStreamRef)vargp;
+    FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+    /* Start the loop */
+    printf("FSEventStreamStart %d\n", FSEventStreamStart(stream));
+    CFRunLoopRun();
+    return NULL;
+}
 
+static uintptr_t setup(const char *filepath)
+{
     /* Init context */
+    FSEventStreamContext *context = malloc(sizeof(struct FSEventStreamContext));
     struct file_watcher_context *ctx = malloc(sizeof(struct file_watcher_context));
+    char *filepathPtr = malloc(sizeof(char) * strlen(filepath) + 1);
 
     /* Set the filename of the watched file in the context */
-    char *confPathPtr = malloc(sizeof(char) * strlen(confPath) + 1);
-    strcpy(confPathPtr, confPath);
-    ctx->filePathPtr = confPathPtr;
-    printf("ctx->filePathPtr %p\n", ctx->filePathPtr);
+    ctx->filePathPtr = filepathPtr;
+    strcpy(filepathPtr, filepath);
+    printf("filepath %p\n", filepath);
+    printf("filepathPtr %p\n", filepathPtr);
+    printf("ctx->filePathPtr %p %s\n", ctx->filePathPtr, ctx->filePathPtr);
+
+    /* Add the file's directory to the watch array */
+    CFStringRef confDir = CFStringCreateWithCString(NULL, dirname(filepathPtr), kCFStringEncodingUTF8);
+    CFArrayRef pathsToWatch = CFArrayCreate(NULL, (const void **)&confDir, 1, NULL);
 
     /* Set the last modified time of the watched file in the context */
-    struct stat confStat;
-    printf("stat %s %d\n", confPath, stat(confPath, &confStat));
-    ctx->lastChangedSec = confStat.st_mtimespec.tv_sec;
-    ctx->lastChangedNsec = confStat.st_mtimespec.tv_nsec;
+    struct stat fileStat;
+    printf("stat %s %d\n", filepath, stat(filepath, &fileStat));
+    ctx->lastChangedSec = fileStat.st_mtimespec.tv_sec;
+    ctx->lastChangedNsec = fileStat.st_mtimespec.tv_nsec;
 
-    struct FSEventStreamContext context;
-    context.info = ctx;
+    context->info = ctx;
 
     FSEventStreamRef stream;
     CFAbsoluteTime latency = 3.0; // latency in seconds
@@ -108,20 +126,57 @@ int main(int argc, char *argv[])
     /* Create the stream, passing in a callback */
     stream = FSEventStreamCreate(NULL,
                                  &myCallback,
-                                 &context,
+                                 context,
                                  pathsToWatch,
                                  kFSEventStreamEventIdSinceNow, /* Or a previous event ID */
                                  latency,
                                  kFSEventStreamCreateFlagNone /* Flags explained in reference */
     );
 
-    /* Set up a run loop to schedule FSEventStream. This snippet schedules the stream
-       on the current thread's run loop (not yet running)
-    */
-    FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+    ctx->stream = stream;
 
-    /* Start the loop */
-    printf("FSEventStreamStart %d\n", FSEventStreamStart(stream));
+    pthread_t tid;
+    pthread_create(&tid, NULL, runLoop, stream);
 
-    CFRunLoopRun();
+    return (uintptr_t)ctx;
+}
+
+static int changed(uintptr_t ctxPtr)
+{
+    struct file_watcher_context *ctx = (struct file_watcher_context *)ctxPtr;
+    if (ctx->changed)
+    {
+        ctx->changed = false;
+        return 1;
+    }
+    return 0;
+}
+
+static void teardown(uintptr_t ctxPtr)
+{
+    struct file_watcher_context *ctx = (struct file_watcher_context *)ctxPtr;
+
+    FSEventStreamStop(ctx->stream);
+    CFRunLoopStop(CFRunLoopGetCurrent());
+
+    free(ctx->filePathPtr);
+    free(ctx);
+}
+
+int main(int argc, char *argv[])
+{
+    struct file_watcher_context *ctx = (struct file_watcher_context *)setup("/Users/steven/tmp/qdbdev/conf/server.conf");
+    uintptr_t *ctxPtr = (uintptr_t)ctx;
+    int i;
+    // Run for 60 seconds then cleanup
+    for (i = 0; i < 60; i++)
+    {
+        sleep(1);
+        if (changed(ctxPtr))
+        {
+            printf("changed!\n");
+        }
+    }
+
+    teardown(ctxPtr);
 }
