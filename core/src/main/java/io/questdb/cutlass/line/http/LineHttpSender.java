@@ -461,13 +461,13 @@ public final class LineHttpSender implements Sender {
      * @return true if flush is required
      */
     private boolean rowAdded() {
+        pendingRows++;
         long nowNanos = System.nanoTime();
         if (flushAfterNanos == Long.MAX_VALUE) {
             flushAfterNanos = nowNanos + flushIntervalNanos;
         } else if (flushAfterNanos - nowNanos < 0) {
             return true;
         }
-        pendingRows++;
         return pendingRows == autoFlushRows;
     }
 

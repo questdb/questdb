@@ -32,6 +32,7 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.http.LineHttpSender;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -109,6 +110,53 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: str; cast error from protocol type: FLOAT to column type: STRING"
                     );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFlushAfterTimeout() throws Exception {
+        // this is a regression test
+        // there was a bug that flushes due to interval did not increase row count
+        // bug scenario:
+        // 1. flush to empty the local buffer
+        // 2. period of inactivity
+        // 3. insert a new row. this should trigger a flush due to interval flush. but it did not increase the row count so it stayed 0
+        // 4. the flush() saw rowCount = 0 so it acted as noop
+        // 5. every subsequent insert would trigger a flush due to interval (since the previous flush() was a noop and did not reset the timer)  but rowCount would stay 0
+        // 6. nothing would be flushed and rows would keep accumulating in the buffer
+        // 6. eventually the HTTP buffer would grow up to the limit and throw an exception
+
+        // this test is to make sure that the scenario above does not happen
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            int fragmentation = 1 + rnd.nextInt(5);
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation)
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                String confString = "http::addr=localhost:" + httpPort + ";auto_flush_rows=1;auto_flush_interval=1;";
+                try (Sender sender = Sender.fromConfig(confString)) {
+                    sender.table("table")
+                            .symbol("tag1", "value")
+                            .timestampColumn("tcol4", 10, ChronoUnit.HOURS)
+                            .atNow();
+
+                    for (int i = 0; i < 9; i++) {
+                        Os.sleep(100);
+                        sender.table("table")
+                                .symbol("tag1", "value")
+                                .timestampColumn("tcol4", 10, ChronoUnit.HOURS)
+                                .atNow();
+                    }
+
+                    sender.flush();
+
+                    serverMain.awaitTable("table");
+                    serverMain.assertSql("select count() from 'table'", "count\n" +
+                            10 + "\n");
                 }
             }
         });
