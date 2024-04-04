@@ -36,7 +36,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.str.*;
 
 public abstract class StrFunction implements ScalarFunction {
-
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
     private final Utf8StringSink utf8SinkB = new Utf8StringSink();
 
@@ -187,15 +186,23 @@ public abstract class StrFunction implements ScalarFunction {
 
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
-        utf8SinkA.clear();
-        utf8SinkA.put(getStrA(rec));
-        return utf8SinkA;
+        final CharSequence cs = getStrA(rec);
+        if (cs != null) {
+            utf8SinkA.clear();
+            utf8SinkA.put(cs);
+            return utf8SinkA;
+        }
+        return null;
     }
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
-        utf8SinkB.clear();
-        utf8SinkB.put(getStrB(rec));
-        return utf8SinkB;
+        final CharSequence cs = getStrB(rec);
+        if (cs != null) {
+            utf8SinkB.clear();
+            utf8SinkB.put(cs);
+            return utf8SinkB;
+        }
+        return null;
     }
 }

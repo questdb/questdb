@@ -1076,6 +1076,59 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testStringColumnPageBoundaries() throws Exception {
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+
+        // 03 memory size >> append page size. Why? It increases the probability of having an unallocated address
+        // right after the end of o3 memory. If there is an access beyond the allocated O3 memory then OS detects this
+        // and throws SEGFAULT.
+        o3ColumnMemorySize = (int) Files.PAGE_SIZE * 1024 * 4;
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
+                    int longsPerO3Page = o3ColumnMemorySize / 8;
+                    int half = longsPerO3Page / 2;
+                    engine.ddl(
+                            "create table x (str string, ts timestamp) timestamp(ts) partition by day;",
+                            sqlExecutionContext
+                    );
+
+                    try (TableWriterAPI writer = engine.getTableWriterAPI("x", "testing")) {
+
+                        // 1970-01-02: all in order -> it goes into column memory. note that we are not committing yet.
+                        long offsetMicros = Timestamps.toMicros(1970, 1, 2);
+                        for (int i = 0; i < half; i++) {
+                            TableWriter.Row row = writer.newRow(offsetMicros + i);
+                            row.putStr(0, "aa");
+                            row.append();
+                        }
+
+                        // 1970-01-01 is older than the previous batch -> we switch to O3 and starts writing into O3 mem
+                        for (int i = 0; i < half - 1; i++) {
+                            // why 'half - 1'? String uses the n+1 storage model. So 'half' + 'half-1' should fit precisely
+                            // into a single 03 page!
+                            TableWriter.Row row = writer.newRow(i);
+                            row.putStr(0, "aa");
+                            row.append();
+                        }
+
+                        // Let's commit everything at once!
+                        // This will trigger O3 commit and copies data from column memory to O3 memory so they can be sorted.
+                        // If it tries to copy to an area beyond the allocated O3 memory then OS will throw SEGFAULT
+                        writer.commit();
+                    }
+
+                    // Q: No assert? Where is an assert?!
+                    // A: We are testing that we didn't crash during O3 commit. 'Not crashing' is our definition of success here!
+                }
+        );
+    }
+
+    @Test
     public void testVarColumnPageBoundariesAppend() throws Exception {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithPool(
@@ -8115,7 +8168,6 @@ public class O3Test extends AbstractO3Test {
                 "2021-10-09",
                 0
         );
-
 
 
         int idBatchSize = 3 * 1024 * 1024 + 1;

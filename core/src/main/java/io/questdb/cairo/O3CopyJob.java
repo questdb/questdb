@@ -151,6 +151,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             srcOooHi,
                             dstFixFd,
                             dstAuxAddr + dstFixOffset,
+                            Math.abs(dstFixSize) - dstFixOffset,
                             dstFixFileOffset,
                             dstVarAddr,
                             dstVarFd,
@@ -170,6 +171,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                                 srcDataLo,
                                 srcDataHi,
                                 dstAuxAddr + dstFixOffset,
+                                Math.abs(dstFixSize) - dstFixOffset,
                                 dstFixFd,
                                 dstFixFileOffset,
                                 dstVarAddr,
@@ -365,6 +367,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcLo,
             long srcHi,
             long dstAuxAddr,
+            long dstAuxAddrSize,
             int dstAuxFd,
             long dstAuxFileOffset,
             long dstDataAddr,
@@ -409,7 +412,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     mixedIOFlag
             );
         } else {
-            columnTypeDriver.shiftCopyAuxVector(srcDataOffset - offset, srcAuxAddr, srcLo, srcHi, dstAuxAddr);
+            columnTypeDriver.shiftCopyAuxVector(srcDataOffset - offset, srcAuxAddr, srcLo, srcHi, dstAuxAddr, dstAuxAddrSize);
         }
     }
 
@@ -422,6 +425,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcLo,
             long srcHi,
             long dstFixAddr,
+            long dstFixAddrSize,
             int dstFixFd,
             long dstFixFileOffset,
             long dstVarAddr,
@@ -440,6 +444,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     srcLo,
                     srcHi,
                     dstFixAddr,
+                    dstFixAddrSize,
                     dstFixFd,
                     dstFixFileOffset,
                     dstVarAddr,
@@ -1003,6 +1008,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcOooHi,
             int dstFixFd,
             long dstFixAddr,
+            long dstFixAddrSize,
             long dstFixFileOffset,
             long dstVarAddr,
             int dstVarFd,
@@ -1020,6 +1026,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     srcOooLo,
                     srcOooHi,
                     dstFixAddr,
+                    dstFixAddrSize,
                     dstFixFd,
                     dstFixFileOffset,
                     dstVarAddr,
