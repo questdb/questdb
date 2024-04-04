@@ -39,6 +39,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -139,7 +140,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     // a few rows may have made it into the active partition,
                     // as dropping it is concurrent with inserting
                     keepSending.set(false);
-                    TableUtils.clearThreadLocals();
+                    Path.clearThreadLocals();
                     partitionDropperHalted.countDown();
                 }
             }, "partition-dropper");

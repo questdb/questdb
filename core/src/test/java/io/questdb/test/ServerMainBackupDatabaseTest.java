@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -41,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -338,7 +338,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             } catch (Throwable err) {
                 errors.get().add(err);
             } finally {
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
                 completedLatch.countDown();
             }
         }).start();

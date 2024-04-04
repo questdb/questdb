@@ -146,7 +146,7 @@ public class O3Test extends AbstractO3Test {
                         e.printStackTrace();
                         errorCount.incrementAndGet();
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                         LOG.info().$("write is done").$();
                     }
                 });

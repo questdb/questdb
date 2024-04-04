@@ -32,6 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -297,7 +298,7 @@ public class CreateTableTest extends AbstractCairoTest {
                         LOG.error().$("Error in thread").$(e).$();
                         ref.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }));
                 threads.get(i).start();
@@ -334,7 +335,7 @@ public class CreateTableTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }));
                 threads.get(i).start();
@@ -510,7 +511,7 @@ public class CreateTableTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }));
                 threads.get(i).start();
@@ -551,7 +552,7 @@ public class CreateTableTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }));
                 threads.get(i).start();
@@ -616,7 +617,7 @@ public class CreateTableTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }));
                 threads.get(2 * i).start();
@@ -638,7 +639,7 @@ public class CreateTableTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }));
                 threads.get(2 * i + 1).start();

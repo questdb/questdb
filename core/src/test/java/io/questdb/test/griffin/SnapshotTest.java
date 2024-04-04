@@ -844,7 +844,7 @@ public class SnapshotTest extends AbstractCairoTest {
             Thread controlThread1 = new Thread(() -> {
                 currentMicros = interval;
                 job.drain(0);
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
             });
 
             controlThread1.start();
@@ -859,7 +859,7 @@ public class SnapshotTest extends AbstractCairoTest {
             Thread controlThread2 = new Thread(() -> {
                 currentMicros = 2 * interval;
                 job.drain(0);
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
             });
 
             controlThread2.start();
