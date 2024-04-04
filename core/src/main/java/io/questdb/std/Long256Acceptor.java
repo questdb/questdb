@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 public interface Long256Acceptor {
+
     default void fromAddress(long address) {
         setAll(
                 Unsafe.getUnsafe().getLong(address),
@@ -32,7 +33,6 @@ public interface Long256Acceptor {
                 Unsafe.getUnsafe().getLong(address + Long.BYTES * 2),
                 Unsafe.getUnsafe().getLong(address + Long.BYTES * 3)
         );
-
     }
 
     void setAll(long l0, long l1, long l2, long l3);
