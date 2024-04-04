@@ -808,7 +808,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     exception.set(e);
                 } finally {
-                    TableUtils.clearThreadLocals();
+                    Path.clearThreadLocals();
                 }
             });
             applyThread.start();

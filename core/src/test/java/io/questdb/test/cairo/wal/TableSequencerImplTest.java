@@ -52,12 +52,12 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCanReadStructureVersionV1() throws Exception {
+    public void testCanReadStructureVersionV1() {
         testTableTransactionLogCanReadStructureVersion();
     }
 
     @Test
-    public void testCanReadStructureVersionV2() throws Exception {
+    public void testCanReadStructureVersionV2() {
         Rnd rnd = TestUtils.generateRandom(LOG);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, rnd.nextInt(20) + 10);
         testTableTransactionLogCanReadStructureVersion();
@@ -85,7 +85,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }
         );
@@ -130,7 +130,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }
         );
@@ -155,7 +155,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }
         );
@@ -186,7 +186,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }
         );
