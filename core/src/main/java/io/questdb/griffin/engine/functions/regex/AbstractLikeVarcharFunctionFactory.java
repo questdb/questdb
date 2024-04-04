@@ -152,6 +152,7 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
     private static class ConstContainsSwarVarcharFunction extends BooleanFunction implements UnaryFunction {
         private static final int MAX_SIZE = Long.BYTES;
         private final Utf8Sequence pattern; // only used in toPlan
+        private final byte patternFirstByte;
         private final long patternMask;
         private final int patternSize;
         private final long patternWord;
@@ -168,6 +169,7 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                 patternWord |= (long) (pattern.byteAt(i) & 0xff) << (8 * i);
             }
             this.patternWord = patternWord;
+            this.patternFirstByte = pattern.byteAt(0);
             this.searchWord = SwarUtils.broadcast(pattern.byteAt(0));
             this.pattern = pattern;
         }
@@ -207,14 +209,16 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
 
             // tail
             for (int n = size - patternSize + 1; i < n; i++) {
-                // we can't call longAt safely for the tail,
-                // so construct word at the tail from individual bytes
-                long tailWord = 0;
-                for (int j = 0; j < patternSize; j++) {
-                    tailWord |= (long) (us.byteAt(i + j) & 0xff) << (8 * j);
-                }
-                if ((tailWord & patternMask) == patternWord) {
-                    return true;
+                if (us.byteAt(i) == patternFirstByte) {
+                    // we can't call longAt safely for the tail,
+                    // so construct word at the tail from individual bytes
+                    long tailWord = 0;
+                    for (int j = 0; j < patternSize; j++) {
+                        tailWord |= (us.byteAt(i + j) & 0xffL) << (8 * j);
+                    }
+                    if ((tailWord & patternMask) == patternWord) {
+                        return true;
+                    }
                 }
             }
             return false;

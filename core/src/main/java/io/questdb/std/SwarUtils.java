@@ -26,8 +26,6 @@ package io.questdb.std;
 
 public final class SwarUtils {
 
-    public static final long ZERO_CHECK_BYTE = 0x80;
-
     private SwarUtils() {
     }
 
@@ -41,7 +39,7 @@ public final class SwarUtils {
     /**
      * Returns non-zero result in case if the input contains a zero byte.
      * <p>
-     * Each zero byte of the input is replaced with {@link #ZERO_CHECK_BYTE} in the output.
+     * Each zero byte of the input is replaced with 0x80 in the output.
      * Each non-zero byte is replaced with zero byte.
      */
     public static long checkZeroByte(long w) {
