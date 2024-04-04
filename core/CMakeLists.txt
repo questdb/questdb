@@ -330,6 +330,10 @@ else ()
     )
 endif (AARCH64)
 
+if(APPLE)
+    target_link_libraries(questdb "-framework CoreServices")
+endif (APPLE)
+
 if (WIN32)
     target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc)
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics)
