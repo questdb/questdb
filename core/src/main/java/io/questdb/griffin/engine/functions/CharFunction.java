@@ -146,6 +146,14 @@ public abstract class CharFunction implements ScalarFunction {
     }
 
     @Override
+    public final void getStr(Record rec, Utf16Sink utf16Sink) {
+        final char value = getChar(rec);
+        if (value != 0) {
+            utf16Sink.put(value);
+        }
+    }
+
+    @Override
     public final CharSequence getStrA(Record rec) {
         final char value = getChar(rec);
         if (value == 0) {
@@ -154,14 +162,6 @@ public abstract class CharFunction implements ScalarFunction {
         utf16SinkA.clear();
         utf16SinkA.put(value);
         return utf16SinkA;
-    }
-
-    @Override
-    public final void getStr(Record rec, Utf16Sink utf16Sink) {
-        final char value = getChar(rec);
-        if (value != 0) {
-            utf16Sink.put(value);
-        }
     }
 
     @Override
@@ -215,22 +215,22 @@ public abstract class CharFunction implements ScalarFunction {
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
         final char value = getChar(rec);
-        if (value == 0) {
-            return null;
+        if (value != 0) {
+            utf8SinkA.clear();
+            utf8SinkA.put(getChar(rec));
+            return utf8SinkA;
         }
-        utf8SinkA.clear();
-        utf8SinkA.put(getChar(rec));
-        return utf8SinkA;
+        return null;
     }
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         final char value = getChar(rec);
-        if (value == 0) {
-            return null;
+        if (value != 0) {
+            utf8SinkB.clear();
+            utf8SinkB.put(getChar(rec));
+            return utf8SinkB;
         }
-        utf8SinkB.clear();
-        utf8SinkB.put(getChar(rec));
-        return utf8SinkB;
+        return null;
     }
 }
