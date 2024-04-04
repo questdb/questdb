@@ -129,30 +129,29 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         // 6. eventually the HTTP buffer would grow up to the limit and throw an exception
 
         // this test is to make sure that the scenario above does not happen
-        Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            int fragmentation = 1 + rnd.nextInt(5);
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation)
-            )) {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
                 int httpPort = serverMain.getHttpServerPort();
 
                 String confString = "http::addr=localhost:" + httpPort + ";auto_flush_rows=1;auto_flush_interval=1;";
                 try (Sender sender = Sender.fromConfig(confString)) {
+
+                    // insert a row to trigger row-based flush and reset the interval timer
                     sender.table("table")
                             .symbol("tag1", "value")
                             .timestampColumn("tcol4", 10, ChronoUnit.HOURS)
                             .atNow();
 
+                    // wait a bit so the next insert triggers interval flush
+                    Os.sleep(100);
+
+                    // insert more rows
                     for (int i = 0; i < 9; i++) {
-                        Os.sleep(100);
                         sender.table("table")
                                 .symbol("tag1", "value")
                                 .timestampColumn("tcol4", 10, ChronoUnit.HOURS)
                                 .atNow();
                     }
-
-                    sender.flush();
 
                     serverMain.awaitTable("table");
                     serverMain.assertSql("select count() from 'table'", "count\n" +
