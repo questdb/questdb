@@ -618,7 +618,7 @@ public final class TestUtils {
     }
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
-        clearThreadLocals();
+        Path.clearThreadLocals();
         long mem = Unsafe.getMemUsed();
         long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
@@ -637,7 +637,7 @@ public final class TestUtils {
         Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
 
         runnable.run();
-        clearThreadLocals();
+        Path.clearThreadLocals();
         if (fileCount != Files.getOpenFileCount()) {
             Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
         }
