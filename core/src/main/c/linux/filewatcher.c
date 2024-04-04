@@ -23,7 +23,6 @@
  ******************************************************************************/
 
 #include <jni.h>
-#include <asm-generic/errno-base.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdbool.h>
