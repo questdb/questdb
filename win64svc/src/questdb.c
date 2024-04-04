@@ -82,8 +82,7 @@ void buildJavaArgs(CONFIG *config) {
     // put together static java opts
     LPCSTR javaOpts = "-XX:+UnlockExperimentalVMOptions"
                       " -XX:+AlwaysPreTouch"
-                      " -XX:+UseParallelGC"
-                      " ";
+                      " -XX:+UseParallelGC";
 
     // put together classpath
 
@@ -104,11 +103,11 @@ void buildJavaArgs(CONFIG *config) {
     strcat(args, " -XX:ErrorFile=\"");
     strcat(args, config->dir);
     strcat(args, "\\db\\");
-    strcat(args, "hs_err_pid+%p.log\" "); // crash file name
+    strcat(args, "hs_err_pid+%p.log\""); // crash file name
     if (!config->localRuntime) {
         strcat(args, " -p \"");
         strcat(args, classpath);
-        strcat(args, "\" ");
+        strcat(args, "\"");
     }
     strcat(args, " -m ");
     strcat(args, mainClass);
