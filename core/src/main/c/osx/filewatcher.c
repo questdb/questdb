@@ -25,15 +25,9 @@
 #include <CoreServices/CoreServices.h>
 #include <libgen.h>
 
-struct file_watcher
-{
-    FSEventStreamRef stream;
-    char *name;
-};
-
 void myCallback(
     ConstFSEventStreamRef streamRef,
-    void *clientCallBackInfo,
+    void *context,
     size_t numEvents,
     void *eventPaths,
     const FSEventStreamEventFlags eventFlags[],
@@ -41,8 +35,10 @@ void myCallback(
 {
     int i;
     char **paths = eventPaths;
-
     printf("Callback called\n");
+
+    char *fileName = (char *)context;
+    printf("fileName %s", fileName);
     for (i = 0; i < numEvents; i++)
     {
         int count;
@@ -51,52 +47,25 @@ void myCallback(
     }
 }
 
-static uintptr_t setup(const char *filepath)
-{
-    struct file_watcher *fw;
-
-    /* make copy of filepath for dirname/basename usage, otherwise they segfault */
-    char filepath_copy[strlen(filepath) + 1];
-    strcpy(filepath_copy, filepath);
-
-    /* Create the FSEventStream */
-    CFStringRef *d = dirname(filepath_copy);
-    CFArrayRef pathsToWatch = CFArrayCreate(NULL, (const void **)&d, 1, NULL);
-    void *callbackInfo = NULL; // could put stream-specific data here
-    FSEventStreamRef stream;
-    CFAbsoluteTime latency = 3.0; // latency in seconds
-
-    /* Create the stream, passing in a callback */
-    stream = FSEventStreamCreate(NULL,
-                                 &myCallback,
-                                 callbackInfo,
-                                 pathsToWatch,
-                                 kFSEventStreamEventIdSinceNow, /* Or a previous event ID */
-                                 latency,
-                                 kFSEventStreamCreateFlagNone /* Flags explained in reference */
-    );
-
-    fw->stream = stream;
-    fw->name = basename(filepath_copy);
-
-    return (uintptr_t)fw;
-}
-
 int main(int argc, char *argv[])
 {
     /* Define variables and create a CFArray object containing
        CFString objects containing paths to watch.
     */
-    CFStringRef mypath = CFSTR("/home/steven/tmp/qdbdev/conf/server.conf");
-    CFArrayRef pathsToWatch = CFArrayCreate(NULL, (const void **)&mypath, 1, NULL);
-    void *callbackInfo = NULL; // could put stream-specific data here
+    char *confPath = "/Users/steven/tmp/qdbdev/conf/server.conf";
+    CFStringRef confDir = CFStringCreateWithCString(NULL, dirname(confPath), kCFStringEncodingUTF8);
+    CFArrayRef pathsToWatch = CFArrayCreate(NULL, (const void **)&confDir, 1, NULL);
+
+    struct FSEventStreamContext context;
+    context.info = basename(confPath);
+
     FSEventStreamRef stream;
     CFAbsoluteTime latency = 3.0; // latency in seconds
 
     /* Create the stream, passing in a callback */
     stream = FSEventStreamCreate(NULL,
                                  &myCallback,
-                                 callbackInfo,
+                                 &context,
                                  pathsToWatch,
                                  kFSEventStreamEventIdSinceNow, /* Or a previous event ID */
                                  latency,
@@ -109,7 +78,7 @@ int main(int argc, char *argv[])
     FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
 
     /* Start the loop */
-    printf("%d\n", FSEventStreamStart(stream));
+    printf("FSEventStreamStart %d\n", FSEventStreamStart(stream));
 
     CFRunLoopRun();
 }
