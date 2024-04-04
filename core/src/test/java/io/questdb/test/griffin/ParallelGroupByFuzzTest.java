@@ -64,7 +64,7 @@ import java.util.concurrent.CyclicBarrier;
 
 import static org.junit.Assert.fail;
 
-// This is not a fuzz test in traditional sense, but it's multi-threaded and we want to run it
+// This is not a fuzz test in traditional sense, but it's multithreaded, and we want to run it
 // in CI frequently along with other fuzz tests.
 @RunWith(Parameterized.class)
 public class ParallelGroupByFuzzTest extends AbstractCairoTest {

@@ -58,13 +58,13 @@ public class CastBooleanToLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public Long256 getLong256A(Record rec) {
-            long256a.setAll(arg.getLong(rec), 0, 0, 0);
+            long256a.setLow(arg.getLong(rec));
             return long256a;
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
-            long256b.setAll(arg.getLong(rec), 0, 0, 0);
+            long256b.setLow(arg.getLong(rec));
             return long256b;
         }
     }

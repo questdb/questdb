@@ -33,10 +33,12 @@ public class Long256Util {
                 v3 == Numbers.LONG_NaN;
 
         if (isNull) {
-            dst.setAll(Numbers.LONG_NaN,
+            dst.setAll(
                     Numbers.LONG_NaN,
                     Numbers.LONG_NaN,
-                    Numbers.LONG_NaN);
+                    Numbers.LONG_NaN,
+                    Numbers.LONG_NaN)
+            ;
         } else {
             // The sum will overflow if both top bits are set (x & y) or if one of them
             // is (x | y), and a carry from the lower place happened. If such a carry

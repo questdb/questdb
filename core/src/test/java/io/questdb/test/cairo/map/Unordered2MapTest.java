@@ -93,12 +93,7 @@ public class Unordered2MapTest extends AbstractCairoTest {
                     value.putTimestamp(9, rnd.nextLong());
                     value.putInt(10, rnd.nextInt());
                     Long256Impl long256 = new Long256Impl();
-                    long256.setAll(
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong()
-                    );
+                    long256.fromRnd(rnd);
                     value.putLong256(11, long256);
                     value.putLong128(12, rnd.nextLong(), rnd.nextLong());
                 }
@@ -126,12 +121,7 @@ public class Unordered2MapTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
                     Assert.assertEquals(rnd.nextInt(), value.getInt(10));
                     Long256Impl long256 = new Long256Impl();
-                    long256.setAll(
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong()
-                    );
+                    long256.fromRnd(rnd);
                     Assert.assertEquals(long256, value.getLong256A(11));
                     Assert.assertEquals(rnd.nextLong(), value.getLong128Lo(12));
                     Assert.assertEquals(rnd.nextLong(), value.getLong128Hi(12));
@@ -186,12 +176,7 @@ public class Unordered2MapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd.nextLong(), record.getTimestamp(col++));
                         Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
                         Long256Impl long256 = new Long256Impl();
-                        long256.setAll(
-                                rnd.nextLong(),
-                                rnd.nextLong(),
-                                rnd.nextLong(),
-                                rnd.nextLong()
-                        );
+                        long256.fromRnd(rnd);
                         Assert.assertEquals(long256, record.getLong256A(col++));
                         Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
                         Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));

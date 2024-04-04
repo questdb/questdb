@@ -66,7 +66,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select x1, sum(x1) from (select x x1 from y)";
             final QueryModel model = compileModel(query, ExecutionModel.QUERY);
             TestUtils.assertEquals("select-group-by x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
-            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
+            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlan(
                     query,
@@ -112,7 +112,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select concat(lpad(cast(x1 as string), 5)), x1 from (select x x1 from y) group by x1";
             final QueryModel model = compileModel(query, ExecutionModel.QUERY);
             TestUtils.assertEquals("select-virtual concat(lpad(cast(x1,string),5)) concat, x1 from (select-group-by [x1] x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString0());
-            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
+            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlan(
                     query,
@@ -136,7 +136,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select x1, sum(x1), max(X1) from (select x X1 from y)";
             final QueryModel model = compileModel(query, ExecutionModel.QUERY);
             TestUtils.assertEquals("select-group-by x1, sum(x1) sum, max(x1) max from (select-choose [x X1] x X1 from (select [x] from y))", model.toString0());
-            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
+            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlan(
                     query,
@@ -179,7 +179,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select x1 from (select x x1 from y)";
             final QueryModel model = compileModel(query, ExecutionModel.QUERY);
             TestUtils.assertEquals("select-choose x1 from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
-            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<ExpressionNode>();
+            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert !aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
             assertPlan(
                     query,

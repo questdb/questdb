@@ -373,13 +373,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
             NullMemoryMR.INSTANCE.getLong256(0, sink);
             return;
         }
-        final long addr = columnAddress + (rowIndex << 5) + (Long.BYTES << 2);
-        sink.setAll(
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4),
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3),
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2),
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES)
-        );
+        sink.fromAddress(columnAddress + (rowIndex << 5));
     }
 
     private DirectString getStrA(long base, long offset, long size, DirectString view) {
