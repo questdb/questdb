@@ -427,7 +427,7 @@ public class TableUpdateDetails implements Closeable {
         private final IntList columnTypes = new IntList();
         private final Path path = new Path();
         // tracking of processed columns by their index, duplicates will be ignored
-        private final BoolList processedCols = new BoolList();
+        private final BitSet processedCols = new BitSet();
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
         private final Pool<SymbolCache> symbolCachePool;
         private final StringSink tempSink = new StringSink();
@@ -517,7 +517,7 @@ public class TableUpdateDetails implements Closeable {
                     // column names with non-ASCII chars are handled properly
                     columnIndexByNameUtf8.put(onHeapColNameUtf8, colWriterIndex);
 
-                    if (processedCols.extendAndReplace(colWriterIndex, true)) {
+                    if (processedCols.getAndSet(colWriterIndex)) {
                         // column has been passed by index earlier on this event, duplicate should be skipped
                         return DUPLICATED_COLUMN;
                     }
@@ -605,8 +605,10 @@ public class TableUpdateDetails implements Closeable {
         }
 
         void clearProcessedColumns() {
-            processedCols.setAll(columnCount, false);
-            addedColsUtf16.clear();
+            processedCols.clear();
+            if (addedColsUtf16.size() > 0) {
+                addedColsUtf16.clear();
+            }
         }
 
         String getColNameUtf16() {
@@ -671,7 +673,7 @@ public class TableUpdateDetails implements Closeable {
                 }
             }
 
-            if (processedCols.extendAndReplace(colWriterIndex, true)) {
+            if (processedCols.getAndSet(colWriterIndex)) {
                 // column has been passed by index earlier on this event, duplicate should be skipped
                 return DUPLICATED_COLUMN;
             }
@@ -686,7 +688,7 @@ public class TableUpdateDetails implements Closeable {
                 return getColumnIndex0(colNameUtf8, hasNonAsciiChars, metadata);
             }
 
-            if (processedCols.extendAndReplace(colWriterIndex, true)) {
+            if (processedCols.getAndSet(colWriterIndex)) {
                 // column has been passed by index earlier on this event, duplicate should be skipped
                 return DUPLICATED_COLUMN;
             }

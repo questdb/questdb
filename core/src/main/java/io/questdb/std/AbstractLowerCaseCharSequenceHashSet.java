@@ -49,7 +49,7 @@ abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
     @Override
     public void clear() {
         Arrays.fill(keys, noEntryKey);
-        free = this.capacity;
+        free = capacity;
     }
 
     public boolean excludes(CharSequence key) {
