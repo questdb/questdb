@@ -14,9 +14,3 @@ else()
     target_compile_definitions(questdb PRIVATE QUESTDB_MAIN_CLASS="io.questdb/io.questdb.ServerMain")
 endif()
 
-if (QUESTDB_BANNER)
-    target_compile_definitions(questdb PRIVATE QUESTDB_BANNER="${QUESTDB_BANNER}")
-else()
-    target_compile_definitions(questdb PRIVATE QUESTDB_BANNER="                        www.questdb.io\\n\\n")
-endif()
-

@@ -421,14 +421,6 @@ void logConfigError(CONFIG *config) {
 
 int qdbRun(int argc, char **argv) {
 
-    eprintf("\n");
-    eprintf("  ___                  _   ____  ____\n");
-    eprintf(" / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n");
-    eprintf("| | | | | | |/ _ \\/ __| __| | | |  _ \\\n");
-    eprintf("| |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n");
-    eprintf(" \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n");
-    eprintf(QUESTDB_BANNER);
-
     CONFIG config;
     initAndParseConfig(argc, argv, &config);
 
