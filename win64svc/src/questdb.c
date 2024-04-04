@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <direct.h>
 #include <string.h>
 #include <time.h>
 #include "common.h"
@@ -16,7 +17,7 @@
 #include <errhandlingapi.h>
 #include <getopt.h>
 
-#endif // __MSVC__
+#endif // _MSC_VER
 
 #define CMD_START   1
 #define CMD_STOP    2
@@ -24,7 +25,7 @@
 #define CMD_REMOVE  4
 #define CMD_STATUS  5
 #define CMD_SERVICE 6
-#define CMD_CONSOLE -1
+#define CMD_CONSOLE (-1)
 
 void buildJavaExec(CONFIG *config, const char *javaExecOpt);
 
@@ -57,7 +58,7 @@ void pathCopy(char *dest, const char *file) {
 int makeDir(const char *dir) {
     struct stat st = {0};
     if (stat(dir, &st) == -1) {
-        if (mkdir(dir) == -1) {
+        if (_mkdir(dir) == -1) {
             eprintf("Cannot create directory: %s\n", dir);
             return 0;
         }
