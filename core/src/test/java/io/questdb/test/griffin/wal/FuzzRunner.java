@@ -42,6 +42,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
@@ -586,7 +587,7 @@ public class FuzzRunner {
             } catch (Throwable e) {
                 errors.add(e);
             } finally {
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
             }
         });
     }
@@ -664,7 +665,7 @@ public class FuzzRunner {
         } catch (Throwable e) {
             errors.add(e);
         } finally {
-            TableUtils.clearThreadLocals();
+            Path.clearThreadLocals();
         }
     }
 
@@ -697,7 +698,7 @@ public class FuzzRunner {
             errors.add(e);
         } finally {
             Misc.freeObjList(readers);
-            TableUtils.clearThreadLocals();
+            Path.clearThreadLocals();
         }
     }
 
@@ -712,7 +713,7 @@ public class FuzzRunner {
         } catch (Throwable e) {
             errors.add(e);
         } finally {
-            TableUtils.clearThreadLocals();
+            Path.clearThreadLocals();
         }
     }
 

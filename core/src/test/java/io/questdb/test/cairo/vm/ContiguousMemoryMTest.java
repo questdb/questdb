@@ -992,7 +992,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             ) {
                 code.run(rwMem, roMem);
             } finally {
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
             }
         });
 

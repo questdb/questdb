@@ -1610,7 +1610,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         }
                     }
                 }
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
                 doneLatch.countDown();
             }).start();
 
@@ -1920,7 +1920,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             //expected
         } finally {
             finished.await();
-            TableUtils.clearThreadLocals();
+            Path.clearThreadLocals();
         }
     }
 

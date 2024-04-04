@@ -33,6 +33,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -194,7 +195,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             // check that we can't create standalone writer either
             try {
-                newOffPoolWriter(configuration, "z", metrics);
+                newOffPoolWriter(configuration, "z", metrics).close();
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -500,7 +501,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         exceptionCount.incrementAndGet();
                         e.printStackTrace();
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                         stopLatch.countDown();
                     }
                 }).start();
@@ -552,7 +553,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                             e.printStackTrace();
                             errors.incrementAndGet();
                         } finally {
-                            TableUtils.clearThreadLocals();
+                            Path.clearThreadLocals();
                             halt.countDown();
                         }
                     }).start();
@@ -764,7 +765,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                             e.printStackTrace();
                             errors.incrementAndGet();
                         } finally {
-                            TableUtils.clearThreadLocals();
+                            Path.clearThreadLocals();
                             halt.countDown();
                         }
                     }).start();
