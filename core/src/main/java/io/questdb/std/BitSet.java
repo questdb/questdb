@@ -51,15 +51,25 @@ public class BitSet implements Mutable {
     }
 
     public boolean get(int bitIndex) {
-        assert bitIndex >= 0;
-
         int wordIndex = wordIndex(bitIndex);
         return wordIndex < words.length && (words[wordIndex] & 1L << bitIndex) != 0L;
     }
 
-    public void set(int bitIndex) {
-        assert bitIndex >= 0;
+    /**
+     * Sets the given bit to 1 and returns its old value.
+     */
+    public boolean getAndSet(int bitIndex) {
+        int wordIndex = wordIndex(bitIndex);
+        checkCapactiy(wordIndex + 1);
+        boolean old = (words[wordIndex] & 1L << bitIndex) != 0L;
+        words[wordIndex] |= 1L << bitIndex;
+        return old;
+    }
 
+    /**
+     * Sets the given bit to 1.
+     */
+    public void set(int bitIndex) {
         int wordIndex = wordIndex(bitIndex);
         checkCapactiy(wordIndex + 1);
         words[wordIndex] |= 1L << bitIndex;
