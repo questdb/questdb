@@ -34,7 +34,10 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.*;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 
 public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
 
@@ -82,23 +85,23 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final float value = arg.getFloat(rec);
-            if (Float.isNaN(value)) {
-                return null;
+            if (!Float.isNaN(value)) {
+                sinkA.clear();
+                sinkA.put(value, 4);
+                return sinkA;
             }
-            sinkA.clear();
-            sinkA.put(value, 4);
-            return sinkA;
+            return null;
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             final float value = arg.getFloat(rec);
-            if (Float.isNaN(value)) {
-                return null;
+            if (!Float.isNaN(value)) {
+                sinkB.clear();
+                sinkB.put(value, 4);
+                return sinkB;
             }
-            sinkB.clear();
-            sinkB.put(value, 4);
-            return sinkB;
+            return null;
         }
     }
 }

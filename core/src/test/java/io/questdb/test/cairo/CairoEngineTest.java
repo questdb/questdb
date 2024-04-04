@@ -156,7 +156,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 } finally {
                     ff = null;
                 }
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
             }
         });
     }
@@ -247,7 +247,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     LOG.error().$("Error in thread").$(th).$();
                     ref.set(th);
                 } finally {
-                    TableUtils.clearThreadLocals();
+                    Path.clearThreadLocals();
                 }
             });
             createTableThread.start();

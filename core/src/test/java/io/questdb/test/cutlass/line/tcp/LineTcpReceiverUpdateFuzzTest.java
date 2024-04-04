@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.line.tcp;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -37,6 +36,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
@@ -204,7 +204,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 Assert.fail("Update failed [e=" + e + ", updateSql=" + updateSql + "]");
                 failureCounter.incrementAndGet();
             } finally {
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
                 updatesDone.countDown();
             }
         }).start();

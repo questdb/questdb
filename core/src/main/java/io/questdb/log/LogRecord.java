@@ -71,6 +71,8 @@ public interface LogRecord extends Utf8Sink {
 
     LogRecord $ip(long ip);
 
+    LogRecord $size(long memoryBytes);
+
     LogRecord $ts(long x);
 
     LogRecord $utf8(long lo, long hi);
