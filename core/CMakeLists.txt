@@ -80,6 +80,7 @@ if (APPLE)
             src/main/c/osx/affinity.c
             src/main/c/osx/accept.c
             src/main/c/freebsd/files.c
+            src/main/c/osx/filewatcher.c
     )
 elseif (UNIX)
     if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
