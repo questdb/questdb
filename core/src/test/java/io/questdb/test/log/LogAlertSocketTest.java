@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -644,6 +644,12 @@ public class LogAlertSocketTest {
         @Override
         public LogRecord $ip(long ip) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $size(long memoryBytes) {
+            sink.putSize(memoryBytes);
+            return this;
         }
 
         @Override

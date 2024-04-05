@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -201,23 +201,23 @@ public abstract class IPv4Function implements ScalarFunction {
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
         final int value = getIPv4(rec);
-        if (value == Numbers.IPv4_NULL) {
-            return null;
+        if (value != Numbers.IPv4_NULL) {
+            utf8SinkA.clear();
+            Numbers.intToIPv4Sink(utf8SinkA, value);
+            return utf8SinkA;
         }
-        utf8SinkA.clear();
-        Numbers.intToIPv4Sink(utf8SinkA, value);
-        return utf8SinkA;
+        return null;
     }
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         final int value = getIPv4(rec);
-        if (value == Numbers.IPv4_NULL) {
-            return null;
+        if (value != Numbers.IPv4_NULL) {
+            utf8SinkB.clear();
+            Numbers.intToIPv4Sink(utf8SinkB, value);
+            return utf8SinkB;
         }
-        utf8SinkB.clear();
-        Numbers.intToIPv4Sink(utf8SinkB, value);
-        return utf8SinkB;
+        return null;
     }
 
     @Override

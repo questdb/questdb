@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -242,7 +242,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param dataMem base pointer of the data vector
      * @param auxMem  base pointer of the auxiliary vector
      * @param ab      whether to return the A or B flyweight
+     *                <<<<<<< HEAD
      * @return a Utf8Sequence representing the value at rowNum
+     * =======
+     * @return a <code>Utf8Seqence</code> representing the value at <code>rowNum</code>
+     * >>>>>>> upstream/master
      */
     public static Utf8Sequence getValue(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
         final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
@@ -594,17 +598,25 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void setColumnRefs(long address, long initialOffset, long count) {
-        Vect.setVarcharColumnNullRefs(address, initialOffset, count);
-    }
-
-    @Override
     public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
         // this is a no-op, NULLs do not occupy space in the data vector
     }
 
     @Override
-    public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr) {
+    public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
+        // varchar vector does not have suffix
+        Vect.setVarcharColumnNullRefs(auxMemAddr, 0, rowCount);
+    }
+
+    @Override
+    public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
+        Vect.setVarcharColumnNullRefs(auxMemAddr, initialOffset, columnTop);
+    }
+
+    @Override
+    public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstAddrSize) {
+        // +1 since srcHi is inclusive
+        assert (srcHi - srcLo + 1) * VARCHAR_AUX_WIDTH_BYTES <= dstAddrSize;
         O3Utils.shiftCopyVarcharColumnAux(
                 shift,
                 srcAddr,

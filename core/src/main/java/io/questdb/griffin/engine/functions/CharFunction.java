@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -215,23 +215,23 @@ public abstract class CharFunction implements ScalarFunction {
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
         final char value = getChar(rec);
-        if (value == 0) {
-            return null;
+        if (value != 0) {
+            utf8SinkA.clear();
+            utf8SinkA.put(getChar(rec));
+            return utf8SinkA;
         }
-        utf8SinkA.clear();
-        utf8SinkA.put(getChar(rec));
-        return utf8SinkA;
+        return null;
     }
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         final char value = getChar(rec);
-        if (value == 0) {
-            return null;
+        if (value != 0) {
+            utf8SinkB.clear();
+            utf8SinkB.put(getChar(rec));
+            return utf8SinkB;
         }
-        utf8SinkB.clear();
-        utf8SinkB.put(getChar(rec));
-        return utf8SinkB;
+        return null;
     }
 
     @Override
