@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -351,7 +351,7 @@ public class UuidTest extends AbstractCairoTest {
                 "u\tsum\n" +
                         "11111111-1111-1111-1111-111111111111\t1\n" +
                         "22222222-2222-2222-2222-222222222222\t5\n",
-                "select u, sum(i) from x group by u"
+                "select u, sum(i) from x group by u order by u"
         );
     }
 

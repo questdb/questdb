@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
-import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -166,7 +165,6 @@ public final class TableUtils {
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
     static final int META_FLAG_BIT_INDEXED = 1;
-    static final int META_FLAG_BIT_NOT_INDEXED = 0;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
     static final int META_FLAG_BIT_SYMBOL_CACHE = META_FLAG_BIT_SEQUENTIAL << 1;
     static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
@@ -223,11 +221,6 @@ public final class TableUtils {
         return memSize;
     }
 
-    public static void clearThreadLocals() {
-        Path.clearThreadLocals();
-        TableTransactionLogV2.clearThreadLocals();
-    }
-
     public static int compressColumnCount(RecordMetadata metadata) {
         int count = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -272,7 +265,7 @@ public final class TableUtils {
             if (fd < 1) {
                 throw CairoException.critical(ff.errno()).put("Could not open file [path=").put(path).put(']');
             }
-            addr = Unsafe.malloc(Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
+            addr = Unsafe.malloc(Byte.BYTES, MemoryTag.NATIVE_TABLE_WAL_WRITER);
             if (addr < 1) {
                 throw CairoException.critical(ff.errno()).put("Could not allocate 1 byte");
             }
@@ -280,7 +273,7 @@ public final class TableUtils {
             ff.write(fd, addr, Byte.BYTES, 0);
         } finally {
             if (addr > 0) {
-                Unsafe.free(addr, Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
+                Unsafe.free(addr, Byte.BYTES, MemoryTag.NATIVE_TABLE_WAL_WRITER);
             }
             ff.close(fd);
         }

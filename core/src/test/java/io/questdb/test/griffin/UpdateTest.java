@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1876,6 +1876,31 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateStringToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " timestamp_sequence(0, 1000000) ts1," +
+                    " rnd_str(10,30,3) s" +
+                    " from long_sequence(1000))" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+            ddl("alter table up add column v varchar");
+
+            update("UPDATE up SET v = s");
+
+            final String expected = "count\n879\n";
+            assertSql(
+                    expected,
+                    "select count() from up where s is not null"
+            );
+            assertSql(
+                    expected,
+                    "select count() from up where v is not null"
+            );
+        });
+    }
+
+    @Test
     public void testUpdateSymbolToChar() throws Exception {
         assertMemoryLeak(() -> {
             ddl(
@@ -1911,6 +1936,31 @@ public class UpdateTest extends AbstractCairoTest {
                             "1970-01-01T00:00:03.000000Z\tn\t\n" +
                             "1970-01-01T00:00:04.000000Z\tn\t\n",
                     "up"
+            );
+        });
+    }
+
+    @Test
+    public void testUpdateSymbolToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " timestamp_sequence(0, 1000000) ts1," +
+                    " rnd_symbol(10,10,10,3) s" +
+                    " from long_sequence(1000))" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+            ddl("alter table up add column v varchar");
+
+            update("UPDATE up SET v = s");
+
+            final String expected = "count\n735\n";
+            assertSql(
+                    expected,
+                    "select count() from up where s is not null"
+            );
+            assertSql(
+                    expected,
+                    "select count() from up where v is not null"
             );
         });
     }
@@ -2415,6 +2465,31 @@ public class UpdateTest extends AbstractCairoTest {
                             "1970-01-03T00:00:00.000000Z\tquestdb15\t-1\n" +
                             "1970-01-03T06:00:00.000000Z\t\t10\n",
                     "up"
+            );
+        });
+    }
+
+    @Test
+    public void testUpdateVarcharToString() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " timestamp_sequence(0, 1000000) ts1," +
+                    " rnd_varchar(10,30,3) v" +
+                    " from long_sequence(1000))" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+            ddl("alter table up add column s string");
+
+            update("UPDATE up SET s = v");
+
+            final String expected = "count\n868\n";
+            assertSql(
+                    expected,
+                    "select count() from up where s is not null"
+            );
+            assertSql(
+                    expected,
+                    "select count() from up where v is not null"
             );
         });
     }

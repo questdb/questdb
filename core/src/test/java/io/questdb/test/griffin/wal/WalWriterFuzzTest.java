@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -146,6 +146,15 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
         Rnd rnd = generateRandom(LOG);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01, 0.0);
+        setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
+        setFuzzProperties(rnd);
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testWalMetadataChangeHeavyCrashRepro() throws Exception {
+        Rnd rnd = fuzzer.generateRandom(LOG, 605244862282L, 1711936717971L);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01, 0.0);
         setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
         setFuzzProperties(rnd);
