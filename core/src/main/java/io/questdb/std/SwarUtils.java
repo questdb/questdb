@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,39 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.text;
+package io.questdb.std;
 
-import io.questdb.std.SwarUtils;
+public final class SwarUtils {
 
-public class CsvTextLexer extends AbstractTextLexer {
-    private static final long MASK_COMMA = SwarUtils.broadcast((byte) ',');
-
-    public CsvTextLexer(TextConfiguration textConfiguration) {
-        super(textConfiguration);
+    private SwarUtils() {
     }
 
-    @Override
-    protected void doSwitch(long lo, long hi, byte b) throws LineLimitException {
-        switch (b) {
-            case ',':
-                onColumnDelimiter(lo);
-                break;
-            case '"':
-                onQuote();
-                break;
-            case '\n':
-            case '\r':
-                onLineEnd(hi);
-                break;
-            default:
-                checkEol(lo);
-                break;
-        }
+    /**
+     * Broadcasts the given byte to a long.
+     */
+    public static long broadcast(byte b) {
+        return 0x101010101010101L * (b & 0xffL);
     }
 
-    @Override
-    protected long getDelimiterMask() {
-        return MASK_COMMA;
+    /**
+     * Returns non-zero result in case if the input contains a zero byte.
+     * <p>
+     * Each zero byte of the input is replaced with 0x80 in the output.
+     * Each non-zero byte is replaced with zero byte.
+     */
+    public static long checkZeroByte(long w) {
+        return ((w - 0x0101010101010101L) & ~(w) & 0x8080808080808080L);
+    }
+
+    /**
+     * Returns index of lowest (LE) non-zero byte in the input number
+     * or 7 in case if the number is zero.
+     */
+    public static long indexOfFirstNonZeroByte(long w) {
+        return ((((w - 1) & 0x101010101010101L) * 0x101010101010101L) >> 56) - 1;
     }
 }
-

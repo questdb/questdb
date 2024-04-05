@@ -34,6 +34,10 @@ import java.io.Closeable;
 
 public abstract class AbstractTextLexer implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(AbstractTextLexer.class);
+    private static final long MASK_CR = SwarUtils.broadcast((byte) '\r');
+    private static final long MASK_NEW_LINE = SwarUtils.broadcast((byte) '\n');
+    private static final long MASK_QUOTE = SwarUtils.broadcast((byte) '"');
+
     private final ObjectPool<DirectUtf8String> csPool;
     private final ObjList<DirectUtf8String> fields = new ObjList<>();
     private final int lineRollBufLimit;
@@ -108,6 +112,27 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
         try {
             while (ptr < hi) {
+                if (!eol && !delayedOutQuote && ptr < hi - 7) {
+                    long word = Unsafe.getUnsafe().getLong(ptr);
+                    long xor1 = word ^ MASK_NEW_LINE;
+                    long xor2 = word ^ MASK_CR;
+                    long xor3 = word ^ MASK_QUOTE;
+                    long xor4 = word ^ getDelimiterMask();
+                    long zeroBytesWord = SwarUtils.checkZeroByte(xor1)
+                            | SwarUtils.checkZeroByte(xor2)
+                            | SwarUtils.checkZeroByte(xor3)
+                            | SwarUtils.checkZeroByte(xor4);
+                    if (zeroBytesWord == 0) {
+                        ptr += 7;
+                        this.fieldHi += 7;
+                        continue;
+                    } else {
+                        long idx = SwarUtils.indexOfFirstNonZeroByte(zeroBytesWord);
+                        ptr += idx;
+                        this.fieldHi += idx;
+                    }
+                }
+
                 final byte c = Unsafe.getUnsafe().getByte(ptr++);
                 this.fieldHi++;
                 if (delayedOutQuote && c != '"') {
@@ -297,6 +322,27 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
         try {
             while (ptr < hi) {
+                if (!eol && !rollBufferUnusable && !useLineRollBuf && !delayedOutQuote && ptr < hi - 7) {
+                    long word = Unsafe.getUnsafe().getLong(ptr);
+                    long xor1 = word ^ MASK_NEW_LINE;
+                    long xor2 = word ^ MASK_CR;
+                    long xor3 = word ^ MASK_QUOTE;
+                    long xor4 = word ^ getDelimiterMask();
+                    long zeroBytesWord = SwarUtils.checkZeroByte(xor1)
+                            | SwarUtils.checkZeroByte(xor2)
+                            | SwarUtils.checkZeroByte(xor3)
+                            | SwarUtils.checkZeroByte(xor4);
+                    if (zeroBytesWord == 0) {
+                        ptr += 7;
+                        this.fieldHi += 7;
+                        continue;
+                    } else {
+                        long idx = SwarUtils.indexOfFirstNonZeroByte(zeroBytesWord);
+                        ptr += idx;
+                        this.fieldHi += idx;
+                    }
+                }
+
                 final byte c = Unsafe.getUnsafe().getByte(ptr++);
 
                 if (checkState(ptr, c)) {
@@ -405,11 +451,13 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
     }
 
-    protected abstract void doSwitch(long lo, long hi, byte c) throws LineLimitException;
+    protected abstract void doSwitch(long lo, long hi, byte b) throws LineLimitException;
+
+    protected abstract long getDelimiterMask();
 
     protected void onColumnDelimiter(long lo) {
         if (!eol && !inQuote && !ignoreEolOnce && lineCount > 0 && fieldIndex < fieldMax && lastQuotePos < 0) {
-            fields.getQuick(fieldIndex++).of(this.fieldLo, this.fieldHi - 1);
+            fields.getQuick(fieldIndex++).of(fieldLo, fieldHi - 1);
             this.fieldLo = this.fieldHi;
         } else {
             onColumnDelimiterSlow(lo);
@@ -443,7 +491,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     protected void onQuote() {
         if (inQuote) {
             delayedOutQuote = !delayedOutQuote;
-            lastQuotePos = this.fieldHi;
+            lastQuotePos = fieldHi;
         } else if (fieldHi - fieldLo == 1) {
             inQuote = true;
             this.fieldLo = this.fieldHi;
