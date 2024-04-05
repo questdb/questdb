@@ -163,7 +163,7 @@ Per iniziare a contribuire:
 - [Crea un fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) di QuestDB e invia una pull
   request con le tue modifiche
 
-✨ Come segno della nostra gratitudine, inviamo dei gadget QuestDB ai nostri contributori. Una volta contribuito, puoi richiedre il tuo gadget [qui.](https://questdb.io/community)
+✨ Come segno della nostra gratitudine, inviamo dei gadget QuestDB ai nostri contributori. Una volta contribuito, puoi richiedere il tuo gadget [qui.](https://questdb.io/community)
 
 Uno speciale ringraziamento va alle persone meravigliose che contribuiscono a QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
