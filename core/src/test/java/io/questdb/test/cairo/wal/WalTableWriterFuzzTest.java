@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -909,7 +909,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         row.putGeoHash(col++, i); // geo long
         row.putStr(col++, (char) (65 + i % 26));
         row.putSym(col++, symbol);
-        row.putLong128(col++, Hash.hashLong(i), Hash.hashLong(i + 1)); // UUID
+        row.putLong128(col++, Hash.hashLong64(i), Hash.hashLong64(i + 1)); // UUID
         col++; // binary ('bin') column is not set
         row.putVarchar(col, rndVarchar);
         row.append();

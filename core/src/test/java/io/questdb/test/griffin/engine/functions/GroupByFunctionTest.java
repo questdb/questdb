@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -167,6 +167,14 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+        }
+
+        @Override
+        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
+        }
+
+        @Override
         public CharSequence getStrA(Record rec) {
             return null;
         }
@@ -174,14 +182,6 @@ public class GroupByFunctionTest {
         @Override
         public CharSequence getStrA(Record rec, int arrayIndex) {
             return null;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
         }
 
         @Override
@@ -245,15 +245,15 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        public void initValueIndex(int valueIndex) {
+        }
+
+        @Override
+        public void initValueTypes(ArrayColumnTypes columnTypes) {
         }
 
         @Override
         public void setNull(MapValue mapValue) {
-        }
-
-        @Override
-        public void setValueIndex(int valueIndex) {
         }
     };
 

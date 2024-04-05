@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,8 +43,7 @@ public class FirstNotNullStrGroupByFunction extends FirstStrGroupByFunction {
             if (val != null) {
                 mapValue.putLong(valueIndex, rowId);
                 long ptr = mapValue.getLong(valueIndex + 1);
-                sink.of(ptr).clear();
-                sink.put(val);
+                sink.of(ptr).clearAndSet(val);
                 mapValue.putLong(valueIndex + 1, sink.ptr());
                 mapValue.putBool(valueIndex + 2, false);
             }

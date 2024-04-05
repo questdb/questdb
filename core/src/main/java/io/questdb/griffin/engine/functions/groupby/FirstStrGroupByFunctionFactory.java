@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,10 +50,6 @@ public class FirstStrGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function arg = args.getQuick(0);
-        if (arg.supportsDirectStr()) {
-            return new FirstDirectStrGroupByFunction(arg);
-        }
-        return new FirstStrGroupByFunction(arg);
+        return new FirstStrGroupByFunction(args.getQuick(0));
     }
 }

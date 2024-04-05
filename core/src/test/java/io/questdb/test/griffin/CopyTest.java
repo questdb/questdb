@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
@@ -1116,7 +1115,7 @@ public class CopyTest extends AbstractCairoTest {
                     Os.sleep(1);
                 }
             } finally {
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
             }
         });
     }
@@ -1210,7 +1209,7 @@ public class CopyTest extends AbstractCairoTest {
     }
 
     @FunctionalInterface
-    interface CopyRunnable {
+    public interface CopyRunnable {
         void run() throws Exception;
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -214,16 +214,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public CharSequence getStrA(Record rec) {
-        return wrappedFunction.getStrA(rec);
-    }
-
-    @Override
-    public CharSequence getStrA(Record rec, int arrayIndex) {
-        return wrappedFunction.getStrA(rec, arrayIndex);
-    }
-
-    @Override
     public void getStr(Record rec, Utf16Sink utf16Sink) {
         wrappedFunction.getStr(rec, utf16Sink);
     }
@@ -231,6 +221,16 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     @Override
     public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
         wrappedFunction.getStr(rec, sink, arrayIndex);
+    }
+
+    @Override
+    public CharSequence getStrA(Record rec) {
+        return wrappedFunction.getStrA(rec);
+    }
+
+    @Override
+    public CharSequence getStrA(Record rec, int arrayIndex) {
+        return wrappedFunction.getStrA(rec, arrayIndex);
     }
 
     @Override
@@ -294,8 +294,13 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        wrappedFunction.pushValueTypes(columnTypes);
+    public void initValueIndex(int valueIndex) {
+        wrappedFunction.initValueIndex(valueIndex);
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        wrappedFunction.initValueTypes(columnTypes);
     }
 
     @Override
@@ -305,11 +310,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     public void setTarget(Record target) {
         this.target = target;
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        wrappedFunction.setValueIndex(valueIndex);
     }
 
     public void startInterpolating(long startTime, long currentTime, long endTime) {

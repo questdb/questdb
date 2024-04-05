@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,13 +25,13 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -94,7 +94,7 @@ public class ConcurrentWalTableRenameTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }));
                 threads.getLast().start();
@@ -125,7 +125,7 @@ public class ConcurrentWalTableRenameTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     ref.set(e);
                 } finally {
-                    TableUtils.clearThreadLocals();
+                    Path.clearThreadLocals();
                 }
             }));
             threads.getLast().start();

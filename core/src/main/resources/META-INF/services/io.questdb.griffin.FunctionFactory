@@ -6,7 +6,7 @@
 #    \__\_\\__,_|\___||___/\__|____/|____/
 #
 #  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2023 QuestDB
+#  Copyright (c) 2019-2024 QuestDB
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -174,7 +174,9 @@ io.questdb.griffin.engine.functions.regex.NotMatchCharFunctionFactory
 
 #  like
 io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory
+io.questdb.griffin.engine.functions.regex.LikeVarcharFunctionFactory
 io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory
+io.questdb.griffin.engine.functions.regex.ILikeVarcharFunctionFactory
 
 # 'to_char'
 io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
@@ -795,6 +797,7 @@ io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory
 
 # substring()
 io.questdb.griffin.engine.functions.str.SubStringFunctionFactory
+io.questdb.griffin.engine.functions.str.SubStringVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.QuoteIdentFunctionFactory
 
 #starts_with()
@@ -870,15 +873,23 @@ io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByDefaultFu
 
 # Change string case
 io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory
+io.questdb.griffin.engine.functions.str.ToUppercaseVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory
+io.questdb.griffin.engine.functions.str.ToLowercaseVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.LowerFunctionFactory
+io.questdb.griffin.engine.functions.str.LowerVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.UpperFunctionFactory
+io.questdb.griffin.engine.functions.str.UpperVarcharFunctionFactory
 
 # Pad string
 io.questdb.griffin.engine.functions.str.LPadFunctionFactory
 io.questdb.griffin.engine.functions.str.LPadStrFunctionFactory
 io.questdb.griffin.engine.functions.str.RPadFunctionFactory
 io.questdb.griffin.engine.functions.str.RPadStrFunctionFactory
+io.questdb.griffin.engine.functions.str.LPadVarcharFunctionFactory
+io.questdb.griffin.engine.functions.str.LPadVarcharVarcharFunctionFactory
+io.questdb.griffin.engine.functions.str.RPadVarcharFunctionFactory
+io.questdb.griffin.engine.functions.str.RPadVarcharVarcharFunctionFactory
 
 # Trim
 io.questdb.griffin.engine.functions.str.TrimFunctionFactory

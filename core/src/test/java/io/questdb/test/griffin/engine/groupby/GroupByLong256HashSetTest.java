@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -129,7 +129,7 @@ public class GroupByLong256HashSetTest extends AbstractCairoTest {
                     long l1 = rnd.nextPositiveLong() + 1;
                     long l2 = rnd.nextPositiveLong() + 1;
                     long l3 = rnd.nextPositiveLong() + 1;
-                    int index = set.keyIndex(l0, l1, l2, l3);
+                    long index = set.keyIndex(l0, l1, l2, l3);
                     Assert.assertTrue(index >= 0);
                     set.addAt(index, l0, l1, l2, l3);
                 }

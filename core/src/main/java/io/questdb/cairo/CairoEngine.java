@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -804,7 +804,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean isTableDropped(TableToken tableToken) {
-        return tableNameRegistry.isTableDropped(tableToken);
+        return isTableDropped(tableToken.getDirName());
+    }
+
+    public boolean isTableDropped(CharSequence dirName) {
+        return tableNameRegistry.isTableDropped(dirName);
     }
 
     public boolean isWalTable(TableToken tableToken) {

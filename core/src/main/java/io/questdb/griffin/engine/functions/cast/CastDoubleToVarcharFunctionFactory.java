@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,10 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.*;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 
 public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
 
@@ -82,23 +85,23 @@ public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
-                return null;
+            if (!Double.isNaN(value)) {
+                sinkA.clear();
+                sinkA.put(value, scale);
+                return sinkA;
             }
-            sinkA.clear();
-            sinkA.put(value, scale);
-            return sinkA;
+            return null;
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
-                return null;
+            if (!Double.isNaN(value)) {
+                sinkB.clear();
+                sinkB.put(value, scale);
+                return sinkB;
             }
-            sinkB.clear();
-            sinkB.put(value, scale);
-            return sinkB;
+            return null;
         }
     }
 }

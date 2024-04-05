@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -111,6 +111,26 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        //first item
+        columnTypes.add(ColumnType.DOUBLE);
+        columnTypes.add(ColumnType.DOUBLE);
+        columnTypes.add(ColumnType.LONG);
+        //last item
+        columnTypes.add(ColumnType.DOUBLE);
+        columnTypes.add(ColumnType.DOUBLE);
+        columnTypes.add(ColumnType.LONG);
+        //result
+        columnTypes.add(ColumnType.DOUBLE);
+    }
+
+    @Override
     public void interpolateBoundary(
             MapValue value1,
             MapValue value2,
@@ -155,21 +175,6 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        //first item
-        columnTypes.add(ColumnType.DOUBLE);
-        columnTypes.add(ColumnType.DOUBLE);
-        columnTypes.add(ColumnType.LONG);
-        //last item
-        columnTypes.add(ColumnType.DOUBLE);
-        columnTypes.add(ColumnType.DOUBLE);
-        columnTypes.add(ColumnType.LONG);
-        //result
-        columnTypes.add(ColumnType.DOUBLE);
-    }
-
-    @Override
     public void setNull(MapValue mapValue) {
         //set null to first item
         saveFirstItem(mapValue, Double.NaN, Double.NaN, Numbers.LONG_NaN);
@@ -177,11 +182,6 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         saveLastItem(mapValue, Double.NaN, Double.NaN, Numbers.LONG_NaN);
         //
         saveDistance(mapValue, 0.0);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

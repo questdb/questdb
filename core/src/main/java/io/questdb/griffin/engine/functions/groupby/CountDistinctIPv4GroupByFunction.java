@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -73,7 +73,7 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
         final int val = arg.getIPv4(record);
         if (val != Numbers.IPv4_NULL) {
             long ptr = mapValue.getLong(valueIndex + 1);
-            final int index = setA.of(ptr).keyIndex(val);
+            final long index = setA.of(ptr).keyIndex(val);
             if (index >= 0) {
                 setA.addAt(index, val);
                 mapValue.addLong(valueIndex, 1);
@@ -100,6 +100,18 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
     @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG); // count
+        columnTypes.add(ColumnType.LONG); // GroupByIntHashSet pointer
     }
 
     @Override
@@ -144,13 +156,6 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // count
-        columnTypes.add(ColumnType.LONG); // GroupByIntHashSet pointer
-    }
-
-    @Override
     public void setAllocator(GroupByAllocator allocator) {
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
@@ -172,11 +177,6 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.IPv4_NULL);
         mapValue.putLong(valueIndex + 1, 0);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

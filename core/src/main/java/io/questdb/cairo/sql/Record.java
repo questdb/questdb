@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,10 @@ package io.questdb.cairo.sql;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -102,15 +105,6 @@ public interface Record {
         return getLong(col);
     }
 
-    /**
-     * Gets the off-heap (direct) value of a string column by index
-     *
-     * @param col numeric index of the column
-     * @return direct string, null if string is empty
-     */
-    default DirectCharSequence getDirectStr(int col) {
-        throw new UnsupportedOperationException();
-    }
 
     /**
      * Gets the value of a double column by index

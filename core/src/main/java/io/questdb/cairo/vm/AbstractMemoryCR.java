@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,8 +34,8 @@ import org.jetbrains.annotations.NotNull;
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-    private final DirectString csviewA = new DirectString();
-    private final DirectString csviewB = new DirectString();
+    private final DirectString csviewA;
+    private final DirectString csviewB;
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
@@ -47,6 +47,16 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     protected long pageAddress = 0;
     protected long size = 0;
     private long shiftAddressRight = 0;
+
+    public AbstractMemoryCR(boolean stableStrings) {
+        if (stableStrings) {
+            csviewA = new StableDirectString();
+            csviewB = new StableDirectString();
+        } else {
+            csviewA = new DirectString();
+            csviewB = new DirectString();
+        }
+    }
 
     public long addressOf(long offset) {
         offset -= shiftAddressRight;
@@ -112,12 +122,14 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return getStr(offset, csviewB);
     }
 
-    @Override @NotNull
+    @Override
+    @NotNull
     public Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
         return getVarchar(offset, size, utf8viewA, ascii);
     }
 
-    @Override @NotNull
+    @Override
+    @NotNull
     public Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
         return getVarchar(offset, size, utf8viewB, ascii);
     }

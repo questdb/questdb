@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -844,7 +844,7 @@ public class SnapshotTest extends AbstractCairoTest {
             Thread controlThread1 = new Thread(() -> {
                 currentMicros = interval;
                 job.drain(0);
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
             });
 
             controlThread1.start();
@@ -859,7 +859,7 @@ public class SnapshotTest extends AbstractCairoTest {
             Thread controlThread2 = new Thread(() -> {
                 currentMicros = 2 * interval;
                 job.drain(0);
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
             });
 
             controlThread2.start();

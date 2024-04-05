@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -354,7 +354,7 @@ public class CairoMemoryTest extends AbstractTest {
                 }
                 Assert.assertEquals(8L * N, mem.getAppendOffset());
             }
-            try (MemoryMR mem = new MemoryCMRImpl(FF, path, 8L * N, MemoryTag.MMAP_DEFAULT)) {
+            try (MemoryMR mem = new MemoryCMRImpl(FF, path, 8L * N, MemoryTag.MMAP_DEFAULT, false)) {
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
@@ -417,7 +417,7 @@ public class CairoMemoryTest extends AbstractTest {
                     mem.jumpTo(800);
                 }
 
-                try (MemoryMR roMem = new MemoryCMRImpl(FF, path, 800, MemoryTag.MMAP_DEFAULT)) {
+                try (MemoryMR roMem = new MemoryCMRImpl(FF, path, 800, MemoryTag.MMAP_DEFAULT, false)) {
                     for (int i = 0; i < 50; i++) {
                         Assert.assertEquals(50 - i, roMem.getLong(i * 8));
                     }

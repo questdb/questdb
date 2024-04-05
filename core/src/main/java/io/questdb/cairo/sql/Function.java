@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
@@ -90,18 +89,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     char getChar(Record rec);
 
     long getDate(Record rec);
-
-    /**
-     * Returns UTF-16 encoded off-heap string.
-     * <p>
-     * Must be called only if {@link #supportsDirectStr()} method returned true.
-     * The method is guaranteed to return off-heap strings with stable pointers,
-     * i.e. once a string is returned, its pointer remains actual until the end
-     * of query execution.
-     */
-    default DirectCharSequence getDirectStr(Record rec) {
-        throw new UnsupportedOperationException();
-    }
 
     double getDouble(Record rec);
 
@@ -216,16 +203,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default boolean isUndefined() {
         return getType() == ColumnType.UNDEFINED;
-    }
-
-    /**
-     * Returns true if {@link #getDirectStr(Record)} method can be safely called.
-     * The method is guaranteed to return off-heap strings with stable pointers,
-     * i.e. once a string is returned, its pointer remains actual until the end
-     * of query execution.
-     */
-    default boolean supportsDirectStr() {
-        return false;
     }
 
     /**
