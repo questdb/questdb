@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -3223,12 +3223,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         // NATIVE_SQL_COMPILER is excluded from TestUtils#assertMemoryLeak(),
         // so here we make sure that SQL compiler releases its memory on close.
 
-        TableUtils.clearThreadLocals();
+        Path.clearThreadLocals();
         long mem = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SQL_COMPILER);
 
         new SqlCompilerImpl(engine).close();
 
-        TableUtils.clearThreadLocals();
+        Path.clearThreadLocals();
         long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SQL_COMPILER);
 
         Assert.assertEquals(mem, memAfter);

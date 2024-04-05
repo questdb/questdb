@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,6 +49,7 @@ public final class Unsafe {
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
     static final AtomicLong MEM_USED = new AtomicLong(0);
+    static final AtomicLong RSS_MEM_USED = new AtomicLong(0);
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
@@ -68,6 +69,7 @@ public final class Unsafe {
 
     public static long malloc(long size, int memoryTag) {
         try {
+            assert memoryTag >= MemoryTag.NATIVE_DEFAULT;
             checkAllocLimit(size, memoryTag);
             long ptr = getUnsafe().allocateMemory(size);
             recordMemAlloc(size, memoryTag);
@@ -76,7 +78,7 @@ public final class Unsafe {
         } catch (OutOfMemoryError oom) {
             System.err.printf(
                     "Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=%d\n",
-                    MEM_USED.get(), size, memoryTag);
+                    RSS_MEM_USED.get(), size, memoryTag);
             throw oom;
         }
     }
@@ -202,6 +204,10 @@ public final class Unsafe {
         return MEM_USED.get();
     }
 
+    public static long getRssMemUsed() {
+        return RSS_MEM_USED.get();
+    }
+
     public static long getMemUsedByTag(int memoryTag) {
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         return COUNTERS[memoryTag].sum();
@@ -242,6 +248,7 @@ public final class Unsafe {
 
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         try {
+            assert memoryTag >= MemoryTag.NATIVE_DEFAULT;
             checkAllocLimit(-oldSize + newSize, memoryTag);
             long ptr = getUnsafe().reallocateMemory(address, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
@@ -250,7 +257,7 @@ public final class Unsafe {
         } catch (OutOfMemoryError oom) {
             System.err.printf(
                     "Unsafe.realloc() OutOfMemoryError, mem_used=%d, old_size=%d, new_size=%d, memoryTag=%d",
-                    MEM_USED.get(), oldSize, newSize, memoryTag);
+                    RSS_MEM_USED.get(), oldSize, newSize, memoryTag);
             throw oom;
         }
     }
@@ -277,6 +284,9 @@ public final class Unsafe {
         assert mem >= 0;
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
+        if (memoryTag >= MemoryTag.NATIVE_DEFAULT) {
+            RSS_MEM_USED.addAndGet(size);
+        }
     }
 
     //#if jdk.version!=8
