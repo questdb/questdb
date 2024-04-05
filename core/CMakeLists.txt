@@ -99,6 +99,7 @@ elseif (UNIX)
                 src/main/c/freebsd/affinity.c
                 src/main/c/freebsd/accept.c
                 src/main/c/freebsd/files.c
+		src/main/c/freebsd/filewatcher.c
         )
     else (CMAKE_SYSTEM_NAME MATCHES "Linux")
         MESSAGE("Building for GNU/Linux")
