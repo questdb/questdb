@@ -98,7 +98,7 @@ Cloud-native Replication, Compression, monitoring and cloud-native snapshots.
 You can interact with QuestDB using the following interfaces:
 
 - [Web Console](https://questdb.io/docs/web-console/) for an interactive SQL editor and CSV import on port `9000`
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/ilp/overview/) for streaming ingestion on port `9000`
+- [InfluxDB line protocol](https://questdb.io/docs/reference/api/ilp/overview/) for streaming ingestion on port `9009`
 - [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) for programmatic queries and transactional inserts on port `8812`
 - [REST API](https://questdb.io/docs/reference/api/rest/) for CSV import and cURL on port `9000`
 
