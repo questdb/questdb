@@ -332,7 +332,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                             casFailures++;
                             if (deadline == Long.MAX_VALUE) {
                                 r.goodbye();
-                                Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                                 LOG.info().$("shutting down. '").utf8(r.getTableToken().getDirName()).$("' is left behind").$();
                                 leftBehind = r.getTableToken();
                             }
