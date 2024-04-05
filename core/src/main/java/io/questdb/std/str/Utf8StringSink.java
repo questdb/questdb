@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,6 +79,11 @@ public class Utf8StringSink implements MutableUtf8Sink {
     @Override
     public boolean isAscii() {
         return ascii;
+    }
+
+    @Override
+    public long longAt(int offset) {
+        return Unsafe.byteArrayGetLong(buffer, offset);
     }
 
     @Override
