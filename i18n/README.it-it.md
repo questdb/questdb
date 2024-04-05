@@ -36,7 +36,7 @@ Tra gli strumenti popolari che si integrano con QuestDB possiamo trovare: [Apach
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img alt="La Console Web di QuestDB mostra le istruzioni SQL e i risultati delle query" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
+    <img alt="La Console Web di QuestDB mostra le istruzioni SQL e i risultati delle query" src="../.github/console.png" width="600" />
   </a>
 </div>
 
@@ -118,7 +118,7 @@ con Grafana, dai un'occhiata al nostro [repository di avvio rapido.](https://git
 e InfluxDB in termini di funzionalità, maturità e prestazioni.
 
 <div align="center">
-    <img alt="Questo grafico compara l'ingestion rate di QuestDB, InfluxDB e TimescaleDB." src=".github/questdb7.3.10-tsbs-benchmark.png" width="600"/>
+    <img alt="Questo grafico compara l'ingestion rate di QuestDB, InfluxDB e TimescaleDB." src="../.github/questdb7.3.10-tsbs-benchmark.png" width="600"/>
   </a>
 </div>
 
