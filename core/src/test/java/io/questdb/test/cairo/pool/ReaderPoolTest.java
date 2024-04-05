@@ -677,7 +677,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 pool.unlock(uTableToken);
             } finally {
                 // Release readers on failure
-                // In OSX the number of shared memory system wide can be quite small
+                // In OSX the number of shared memory system-wide can be quite small
                 // close readers to release shared memory
                 for (int i = 0, n = readers.size(); i < n; i++) {
                     TableReader reader = readers.get(i);

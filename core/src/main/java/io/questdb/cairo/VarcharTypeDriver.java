@@ -234,18 +234,19 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             return ab == 1 ? auxMem.getVarcharA(auxOffset + 1, size, ascii) : auxMem.getVarcharB(auxOffset + 1, size, ascii);
         }
-        // string is split, prefix is in auxMem and the suffix is in data mem
-        Utf8SplitString utf8SplitString = ab == 1 ? auxMem.borrowUtf8SplitStringA() : auxMem.borrowUtf8SplitStringB();
 
-        if (utf8SplitString != null) {
-            return utf8SplitString.of(
-                    auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET),
-                    dataMem.addressOf(getDataOffset(auxMem, auxOffset)),
-                    (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
-                    ascii
-            );
-        }
-        return null;
+        // string is split, prefix is in auxMem and the suffix is in data mem
+        return ab == 1 ? auxMem.getSplitVarcharA(
+                auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET),
+                dataMem.addressOf(getDataOffset(auxMem, auxOffset)),
+                (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
+                ascii
+        ) : auxMem.getSplitVarcharB(
+                auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET),
+                dataMem.addressOf(getDataOffset(auxMem, auxOffset)),
+                (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
+                ascii
+        );
     }
 
     /**
@@ -301,7 +302,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void configureAuxMemMA(MemoryMA auxMem) {
-        // noop
+        // no-op
     }
 
     @Override
@@ -530,6 +531,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
+        // this is a no-op, NULLs do not occupy space in the data vector
+    }
+
+    @Override
     public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
         // varchar vector does not have suffix
         Vect.setVarcharColumnNullRefs(auxMemAddr, 0, rowCount);
@@ -538,11 +544,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     @Override
     public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
         Vect.setVarcharColumnNullRefs(auxMemAddr, initialOffset, columnTop);
-    }
-
-    @Override
-    public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
-        // this is a no-op, NULLs do not occupy space in the data vector
     }
 
     @Override

@@ -28,7 +28,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
 
@@ -38,14 +37,6 @@ import java.io.Closeable;
 public interface MemoryR extends Closeable {
 
     long addressOf(long offset);
-
-    default Utf8SplitString borrowUtf8SplitStringA() {
-        throw new UnsupportedOperationException();
-    }
-
-    default Utf8SplitString borrowUtf8SplitStringB() {
-        throw new UnsupportedOperationException();
-    }
 
     @Override
     void close();
@@ -61,14 +52,6 @@ public interface MemoryR extends Closeable {
     byte getByte(long offset);
 
     char getChar(long offset);
-
-    /**
-     * Returns UTF-16 encoded off-heap string.
-     * <p>
-     * Must return off-heap strings with stable pointers, i.e. once a string is returned,
-     * its pointer remains actual until the memory is closed.
-     */
-    DirectCharSequence getDirectStr(long offset);
 
     double getDouble(long offset);
 
@@ -97,6 +80,14 @@ public interface MemoryR extends Closeable {
     long getPageSize();
 
     short getShort(long offset);
+
+    default Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
+    default Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
 
     CharSequence getStrA(long offset);
 

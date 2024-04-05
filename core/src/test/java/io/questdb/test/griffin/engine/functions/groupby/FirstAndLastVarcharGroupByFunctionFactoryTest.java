@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest {
+public class FirstAndLastVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws Exception {
@@ -35,7 +35,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                 "r1\tr2\n" +
                         "\t\n",
                 "select first(a1) r1, last(a1) r2 from tab",
-                "create table tab as (select cast(list(null,null,null) as string) a1 from long_sequence(3))",
+                "create table tab as (select cast(list(null,null,null) as varchar) a1 from long_sequence(3))",
                 null,
                 false,
                 true
@@ -48,7 +48,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                 "r1\tr2\n" +
                         "\tsomething\n",
                 "select first(a1) r1, last(a1) r2 from tab",
-                "create table tab as (select cast(list(null,'else','something') as string) a1 from long_sequence(3))",
+                "create table tab as (select cast(list(null,'else','something') as varchar) a1 from long_sequence(3))",
                 null,
                 false,
                 true
@@ -61,7 +61,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                 "r1\tr2\n" +
                         "something\t\n",
                 "select first(a1) r1, last(a1) r2 from tab",
-                "create table tab as (select cast(list('something','else',null) as string) a1 from long_sequence(3))",
+                "create table tab as (select cast(list('something','else',null) as varchar) a1 from long_sequence(3))",
                 null,
                 false,
                 true
@@ -74,7 +74,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                 "r1\tr2\tr3\tr4\n" +
                         "foobar\tbarbar\tfoobar\tbarbar\n",
                 "select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab",
-                "create table tab as (select rnd_str('foo','bar') a1, rnd_str('bar','baz') a2 from long_sequence(10))",
+                "create table tab as (select rnd_varchar('foo','bar') a1, rnd_varchar('bar','baz') a2 from long_sequence(10))",
                 null,
                 false,
                 true
@@ -87,7 +87,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                 "r1\tr2\tr3\tr4\n" +
                         "\t\t\t\n",
                 "select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab",
-                "create table tab as (select rnd_str(null) a1, rnd_str(null) a2 from long_sequence(10))",
+                "create table tab as (select rnd_varchar(null) a1, rnd_varchar(null) a2 from long_sequence(10))",
                 null,
                 false,
                 true
@@ -100,7 +100,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                 "r1\tr2\tr3\tr4\n" +
                         "foobar\tfoobaz\tfoobar\tfoobaz\n",
                 "select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab",
-                "create table tab as (select rnd_str('foo','bar',null) a1, rnd_str('bar','baz',null) a2 from long_sequence(10))",
+                "create table tab as (select rnd_varchar('foo','bar',null) a1, rnd_varchar('bar','baz',null) a2 from long_sequence(10))",
                 null,
                 false,
                 true
@@ -111,13 +111,13 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     public void testGroupByOverUnion() throws Exception {
         assertQuery(
                 "first\tlast\tfirst_nn\tlast_nn\n" +
-                        "TJWCPSWHYR\t10\tTJWCPSWHYR\t10\n",
+                        "\u1755\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2Lg\t10\t\u1755\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2Lg\t10\n",
                 "select first(s) first, last(s) last, first_not_null(s) first_nn, last_not_null(s) last_nn " +
-                        "from (x union select x::string s, x::timestamp ts from long_sequence(10))",
+                        "from (x union select x::varchar s, x::timestamp ts from long_sequence(10))",
                 "create table x as (" +
                         "select * from (" +
                         "   select " +
-                        "       rnd_str(10, 10, 0) s, " +
+                        "       rnd_varchar(10, 10, 0) s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(10)" +
                         ") timestamp(ts))",
@@ -139,7 +139,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                         "select * from (" +
                         "   select " +
                         "       rnd_symbol('a','b','c') a," +
-                        "       null::string s, " +
+                        "       null::varchar s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(10)" +
                         ") timestamp(ts))",
@@ -153,7 +153,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     public void testGroupKeyedManyRows() throws Exception {
         assertQuery(
                 "sum\n" +
-                        "9877\n",
+                        "11153\n",
                 "select sum(length(first) + length(last) + length(first_nn) + length(last_nn)) " +
                         "from " +
                         "( " +
@@ -164,7 +164,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                         "select * from (" +
                         "   select " +
                         "       rnd_symbol(300,10,10,0) a," +
-                        "       rnd_str(400, 10, 10, 3) s, " +
+                        "       rnd_varchar(10, 10, 3) s, " +
                         "       timestamp_sequence(0, 100000) ts " +
                         "   from long_sequence(3000)" +
                         ") timestamp(ts))",
@@ -177,7 +177,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testKeyedFirstLast1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, device symbol, valueStr String, valueDb Double) timestamp(ts) partition by day");
+            ddl("create table test (ts timestamp, device symbol, valueStr varchar, valueDb double) timestamp(ts) partition by day");
             insert("insert into test (ts, device, valueStr, valueDb) VALUES \n" +
                     "        ('2023-12-18T18:00:00', 'A', null, null)," +
                     "        ('2023-12-18T18:00:00', 'B', null, null)," +
@@ -213,7 +213,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testKeyedFirstLast2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, device symbol, valueStr String, valueDb Double) timestamp(ts) partition by day");
+            ddl("create table test (ts timestamp, device symbol, valueStr varchar, valueDb Double) timestamp(ts) partition by day");
             insert("insert into test (ts, device, valueStr, valueDb) VALUES \n" +
                     "        ('2023-12-18T18:00:00', 'A', 'hot_1', 150)," +
                     "        ('2023-12-18T18:00:00', 'B', 'cold_1', 3)," +
