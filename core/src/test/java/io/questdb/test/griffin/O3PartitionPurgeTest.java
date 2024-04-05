@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -126,7 +126,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                                     "select 1, '1970-01-09T09'  from long_sequence(1)");
                         }
                     }
-                    TableUtils.clearThreadLocals();
+                    Path.clearThreadLocals();
                     done.incrementAndGet();
                 } catch (Throwable ex) {
                     LOG.error().$(ex).$();
@@ -143,7 +143,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                             readers.get(i).reload();
                         }
                         Os.pause();
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 } catch (Throwable ex) {
                     LOG.error().$(ex).$();

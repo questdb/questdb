@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -385,7 +385,7 @@ public class MapTest extends AbstractCairoTest {
                     MapKey key = map.withKey();
                     key.putInt(i);
                     key.commit();
-                    int hashCode = key.hash();
+                    long hashCode = key.hash();
                     keyHashCodes.add(hashCode);
 
                     MapValue value = key.createValue(hashCode);
@@ -621,6 +621,7 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertEquals(N, map.size());
 
                 map.close();
+                map.close(); // Close must be idempotent
                 map.reopen();
 
                 Assert.assertEquals(0, map.size());

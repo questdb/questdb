@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,7 +46,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public static final long VARCHAR_MAX_COLUMN_SIZE = 1L << 48;
     private static final int FULLY_INLINED_STRING_OFFSET = 1;
     private static final int HEADER_FLAGS_WIDTH = 4;
-    private static final int HEADER_FLAGS_MASK = (1 << HEADER_FLAGS_WIDTH) - 1;
     private static final int HEADER_FLAG_ASCII = 2;
     private static final int HEADER_FLAG_INLINED = 1;
     private static final int HEADER_FLAG_NULL = 4;
@@ -303,7 +302,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void configureAuxMemMA(MemoryMA auxMem) {
-        // noop
+        // no-op
     }
 
     @Override
@@ -532,17 +531,25 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void setColumnRefs(long address, long initialOffset, long count) {
-        Vect.setVarcharColumnNullRefs(address, initialOffset, count);
-    }
-
-    @Override
     public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
         // this is a no-op, NULLs do not occupy space in the data vector
     }
 
     @Override
-    public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr) {
+    public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
+        // varchar vector does not have suffix
+        Vect.setVarcharColumnNullRefs(auxMemAddr, 0, rowCount);
+    }
+
+    @Override
+    public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
+        Vect.setVarcharColumnNullRefs(auxMemAddr, initialOffset, columnTop);
+    }
+
+    @Override
+    public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstAddrSize) {
+        // +1 since srcHi is inclusive
+        assert (srcHi - srcLo + 1) * VARCHAR_AUX_WIDTH_BYTES <= dstAddrSize;
         O3Utils.shiftCopyVarcharColumnAux(
                 shift,
                 srcAddr,

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,7 +62,13 @@ public interface Utf8Sequence {
      * both sides.
      */
     default boolean equalsAssumingSameSize(Utf8Sequence other) {
-        for (int i = 0, n = size(); i < n; i++) {
+        int i = 0;
+        for (int n = size() - 7; i < n; i += 8) {
+            if (longAt(i) != other.longAt(i)) {
+                return false;
+            }
+        }
+        for (int n = size(); i < n; i++) {
             if (byteAt(i) != other.byteAt(i)) {
                 return false;
             }
@@ -122,8 +128,12 @@ public interface Utf8Sequence {
     int size();
 
     default void writeTo(long addr, int lo, int hi) {
-        for (int i = lo; i < hi; i++) {
-            Unsafe.getUnsafe().putByte(addr++, byteAt(i));
+        int i = lo;
+        for (int n = hi - 7; i < n; i += 8, addr += 8) {
+            Unsafe.getUnsafe().putLong(addr, longAt(i));
+        }
+        for (; i < hi; i++, addr++) {
+            Unsafe.getUnsafe().putByte(addr, byteAt(i));
         }
     }
 

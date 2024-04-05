@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,7 +31,10 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 
 public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
 
@@ -76,23 +79,23 @@ public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final int value = arg.getIPv4(rec);
-            if (value == Numbers.IPv4_NULL) {
-                return null;
+            if (value != Numbers.IPv4_NULL) {
+                sinkA.clear();
+                Numbers.intToIPv4Sink(sinkA, value);
+                return sinkA;
             }
-            sinkA.clear();
-            Numbers.intToIPv4Sink(sinkA, value);
-            return sinkA;
+            return null;
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             final int value = arg.getIPv4(rec);
-            if (value == Numbers.IPv4_NULL) {
-                return null;
+            if (value != Numbers.IPv4_NULL) {
+                sinkB.clear();
+                Numbers.intToIPv4Sink(sinkB, value);
+                return sinkB;
             }
-            sinkB.clear();
-            Numbers.intToIPv4Sink(sinkB, value);
-            return sinkB;
+            return null;
         }
     }
 }
