@@ -412,9 +412,8 @@ public class CopyTask {
                     while (ptr < hi) {
                         if (ptr < hi - 7) {
                             long word = Unsafe.getUnsafe().getLong(ptr);
-                            long xor1 = word ^ MASK_NEW_LINE;
-                            long xor2 = word ^ MASK_QUOTE;
-                            long zeroBytesWord = SwarUtils.checkZeroByte(xor1) | SwarUtils.checkZeroByte(xor2);
+                            long zeroBytesWord = SwarUtils.checkZeroByte(word ^ MASK_NEW_LINE)
+                                    | SwarUtils.checkZeroByte(word ^ MASK_QUOTE);
                             if (zeroBytesWord == 0) {
                                 ptr += 7;
                                 continue;
