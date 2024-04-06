@@ -153,8 +153,9 @@ public final class LineHttpSender implements Sender {
             return;
         }
         try {
-            if (autoFlushRows != 0) {
-                // autoFlushRows == 0 means that auto-flush is disabled
+            if (autoFlushRows != 0 || flushIntervalNanos != Long.MAX_VALUE) {
+                // either row-based or time-based auto flushing is enabled
+                // => let's auto-flush on close
                 flush0(true);
             }
         } finally {
