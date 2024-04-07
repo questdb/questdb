@@ -79,6 +79,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    /*
+        testNotInTimestamp were written when follow bug in the ExpressionParser were present: "NOT" part in "NOT IN" construct were parsed slightly differently from regular "NOT" operator
+        This resulted in capitalized "NOT" in the output representation of statement
+     */
+    @Test
+    public void testNotInTimestamp() throws Exception {
+        assertQuery(
+                "select-choose timestamp from (select [timestamp] from trades where not(timestamp in '2015-01-02'))",
+                "SELECT * FROM trades WHERE timestamp NOT IN '2015-01-02'",
+                modelOf("trades").col("timestamp", ColumnType.TIMESTAMP)
+        );
+        assertQuery(
+                "select-choose timestamp from (select [timestamp] from trades where not(timestamp in '2015-01-02'))",
+                "select * from trades where timestamp not in '2015-01-02'",
+                modelOf("trades").col("timestamp", ColumnType.TIMESTAMP)
+        );
+    }
+
     @Test
     public void testBetweenWithNegativeBounds() throws Exception {
         assertQuery(
