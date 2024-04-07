@@ -37,20 +37,20 @@ public final class SwarUtils {
     }
 
     /**
+     * Returns index of lowest (LE) non-zero byte in the input number
+     * or 7 in case if the number is zero.
+     */
+    public static long indexOfFirstMarkedByte(long w) {
+        return ((((w - 1) & 0x101010101010101L) * 0x101010101010101L) >> 56) - 1;
+    }
+
+    /**
      * Returns non-zero result in case if the input contains a zero byte.
      * <p>
      * Each zero byte of the input is replaced with 0x80 in the output.
      * Each non-zero byte is replaced with zero byte.
      */
-    public static long checkZeroByte(long w) {
+    public static long markZeroBytes(long w) {
         return ((w - 0x0101010101010101L) & ~(w) & 0x8080808080808080L);
-    }
-
-    /**
-     * Returns index of lowest (LE) non-zero byte in the input number
-     * or 7 in case if the number is zero.
-     */
-    public static long indexOfFirstNonZeroByte(long w) {
-        return ((((w - 1) & 0x101010101010101L) * 0x101010101010101L) >> 56) - 1;
     }
 }

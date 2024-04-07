@@ -412,13 +412,13 @@ public class CopyTask {
                     while (ptr < hi) {
                         if (ptr < hi - 7) {
                             long word = Unsafe.getUnsafe().getLong(ptr);
-                            long zeroBytesWord = SwarUtils.checkZeroByte(word ^ MASK_NEW_LINE)
-                                    | SwarUtils.checkZeroByte(word ^ MASK_QUOTE);
+                            long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
+                                    | SwarUtils.markZeroBytes(word ^ MASK_QUOTE);
                             if (zeroBytesWord == 0) {
                                 ptr += 7;
                                 continue;
                             } else {
-                                ptr += SwarUtils.indexOfFirstNonZeroByte(zeroBytesWord);
+                                ptr += SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
                             }
                         }
 

@@ -490,16 +490,16 @@ public class CsvFileIndexer implements Closeable, Mutable {
         while (ptr < hi) {
             if (!rollBufferUnusable && !useFieldRollBuf && !delayedOutQuote && ptr < hi - 7) {
                 long word = Unsafe.getUnsafe().getLong(ptr);
-                long zeroBytesWord = SwarUtils.checkZeroByte(word ^ MASK_NEW_LINE)
-                        | SwarUtils.checkZeroByte(word ^ MASK_CR)
-                        | SwarUtils.checkZeroByte(word ^ MASK_QUOTE)
-                        | SwarUtils.checkZeroByte(word ^ columnDelimiterMask);
+                long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
+                        | SwarUtils.markZeroBytes(word ^ MASK_CR)
+                        | SwarUtils.markZeroBytes(word ^ MASK_QUOTE)
+                        | SwarUtils.markZeroBytes(word ^ columnDelimiterMask);
                 if (zeroBytesWord == 0) {
                     ptr += 7;
                     this.fieldHi += 7;
                     continue;
                 } else {
-                    long idx = SwarUtils.indexOfFirstNonZeroByte(zeroBytesWord);
+                    long idx = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
                     ptr += idx;
                     this.fieldHi += idx;
                 }

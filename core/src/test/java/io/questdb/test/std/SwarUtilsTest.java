@@ -43,32 +43,32 @@ public class SwarUtilsTest {
     }
 
     @Test
-    public void testCheckZeroByte() {
-        Assert.assertEquals(0x0L, SwarUtils.checkZeroByte(-1L));
-        Assert.assertEquals(0x0L, SwarUtils.checkZeroByte(Long.MAX_VALUE));
-        Assert.assertEquals(0x8080808080808080L, SwarUtils.checkZeroByte(0L));
-        Assert.assertEquals(0x8080808080808000L, SwarUtils.checkZeroByte(1L));
-        Assert.assertEquals(0x8080808080800080L, SwarUtils.checkZeroByte(1L << 9));
-        Assert.assertEquals(0x8080808080008080L, SwarUtils.checkZeroByte(1L << 17));
-        Assert.assertEquals(0x8080808000808080L, SwarUtils.checkZeroByte(1L << 25));
-        Assert.assertEquals(0x8080800080808080L, SwarUtils.checkZeroByte(1L << 33));
-        Assert.assertEquals(0x8080008080808080L, SwarUtils.checkZeroByte(1L << 41));
-        Assert.assertEquals(0x8000808080808080L, SwarUtils.checkZeroByte(1L << 49));
-        Assert.assertEquals(0x0080808080808080L, SwarUtils.checkZeroByte(1L << 57));
-        Assert.assertEquals(0x0080808080808080L, SwarUtils.checkZeroByte(Long.MIN_VALUE));
+    public void testIndexOfFirstMarkedByte() {
+        Assert.assertEquals(7, SwarUtils.indexOfFirstMarkedByte(0L));
+        Assert.assertEquals(0, SwarUtils.indexOfFirstMarkedByte(0x8080808080808080L));
+        Assert.assertEquals(0, SwarUtils.indexOfFirstMarkedByte(0x0000000000000080L));
+        Assert.assertEquals(1, SwarUtils.indexOfFirstMarkedByte(0x0000000000008000L));
+        Assert.assertEquals(2, SwarUtils.indexOfFirstMarkedByte(0x0000000000800000L));
+        Assert.assertEquals(3, SwarUtils.indexOfFirstMarkedByte(0x0000000080000000L));
+        Assert.assertEquals(4, SwarUtils.indexOfFirstMarkedByte(0x0000008000000000L));
+        Assert.assertEquals(5, SwarUtils.indexOfFirstMarkedByte(0x0000800000000000L));
+        Assert.assertEquals(6, SwarUtils.indexOfFirstMarkedByte(0x0080000000000000L));
+        Assert.assertEquals(7, SwarUtils.indexOfFirstMarkedByte(0x8000000000000000L));
     }
 
     @Test
-    public void testIndexOfFirstNonZeroByte() {
-        Assert.assertEquals(7, SwarUtils.indexOfFirstNonZeroByte(0L));
-        Assert.assertEquals(0, SwarUtils.indexOfFirstNonZeroByte(0x8080808080808080L));
-        Assert.assertEquals(0, SwarUtils.indexOfFirstNonZeroByte(0x0000000000000080L));
-        Assert.assertEquals(1, SwarUtils.indexOfFirstNonZeroByte(0x0000000000008000L));
-        Assert.assertEquals(2, SwarUtils.indexOfFirstNonZeroByte(0x0000000000800000L));
-        Assert.assertEquals(3, SwarUtils.indexOfFirstNonZeroByte(0x0000000080000000L));
-        Assert.assertEquals(4, SwarUtils.indexOfFirstNonZeroByte(0x0000008000000000L));
-        Assert.assertEquals(5, SwarUtils.indexOfFirstNonZeroByte(0x0000800000000000L));
-        Assert.assertEquals(6, SwarUtils.indexOfFirstNonZeroByte(0x0080000000000000L));
-        Assert.assertEquals(7, SwarUtils.indexOfFirstNonZeroByte(0x8000000000000000L));
+    public void testMarkZeroBytes() {
+        Assert.assertEquals(0x0L, SwarUtils.markZeroBytes(-1L));
+        Assert.assertEquals(0x0L, SwarUtils.markZeroBytes(Long.MAX_VALUE));
+        Assert.assertEquals(0x8080808080808080L, SwarUtils.markZeroBytes(0L));
+        Assert.assertEquals(0x8080808080808000L, SwarUtils.markZeroBytes(1L));
+        Assert.assertEquals(0x8080808080800080L, SwarUtils.markZeroBytes(1L << 9));
+        Assert.assertEquals(0x8080808080008080L, SwarUtils.markZeroBytes(1L << 17));
+        Assert.assertEquals(0x8080808000808080L, SwarUtils.markZeroBytes(1L << 25));
+        Assert.assertEquals(0x8080800080808080L, SwarUtils.markZeroBytes(1L << 33));
+        Assert.assertEquals(0x8080008080808080L, SwarUtils.markZeroBytes(1L << 41));
+        Assert.assertEquals(0x8000808080808080L, SwarUtils.markZeroBytes(1L << 49));
+        Assert.assertEquals(0x0080808080808080L, SwarUtils.markZeroBytes(1L << 57));
+        Assert.assertEquals(0x0080808080808080L, SwarUtils.markZeroBytes(Long.MIN_VALUE));
     }
 }
