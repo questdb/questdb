@@ -687,6 +687,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorrectPrecedenceOfBasicOps() throws Exception {
+        x("a ~ b ^ c d & |", "~a^b|c&d");
+        x("1 2 4 & |", "1|2&4");
+        x("true true false and or", "true or true and false");
+        x("1 2 | 3 in", "1 | 2 IN 3");
+    }
+
+    @Test
     public void testExpectQualifier() {
         assertFail(".a",
                 1,
@@ -1064,6 +1072,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testNotIn() throws Exception {
         x("x 'a' 'b' in not", "x not in ('a','b')");
+    }
+
+    @Test
+    public void testNotInTimestamp() throws Exception {
+        x("x '2022-01-01' in not", "x not in '2022-01-01'");
     }
 
     @Test
