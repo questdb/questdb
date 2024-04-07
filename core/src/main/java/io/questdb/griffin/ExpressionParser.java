@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
-import static io.questdb.griffin.OperatorExpression.DOT_PRECEDENCE;
+import static io.questdb.griffin.OperatorExpression.*;
 
 public class ExpressionParser {
 
@@ -860,23 +860,6 @@ public class ExpressionParser {
                         }
                     case 'N':
                     case 'n':
-                        if (SqlKeywords.isNotKeyword(tok)) {
-                            ExpressionNode nn = opStack.peek();
-                            if (nn != null && nn.type == ExpressionNode.LITERAL) {
-                                opStack.pop();
-
-                                node = expressionNodePool.next().of(
-                                        ExpressionNode.OPERATION,
-                                        GenericLexer.immutableOf(tok),
-                                        11,
-                                        lastPos
-                                );
-                                node.paramCount = 1;
-                                opStack.push(node);
-                                opStack.push(nn);
-                                break;
-                            }
-                        }
                     case 't':
                     case 'T':
                     case 'f':
@@ -974,15 +957,6 @@ public class ExpressionParser {
 
                         thisBranch = BRANCH_OPERATOR;
 
-                        // If the token is an operator, o1, then:
-                        // while there is an operator token, o2, at the top of the operator stack, and either
-                        // o1 is left-associative and its precedence is less than or equal to that of o2, or
-                        // o1 is right associative, and has precedence less than that of o2,
-                        //        then pop o2 off the operator stack, onto the output queue;
-                        // push o1 onto the operator stack.
-
-                        int operatorType = op.type;
-
                         if (thisChar == '-' || thisChar == '~') {
                             assert prevBranch != BRANCH_BETWEEN_START; // BRANCH_BETWEEN_START will be processed as default branch, so prevBranch must be BRANCH_OPERATOR in this case
                             switch (prevBranch) {
@@ -992,21 +966,31 @@ public class ExpressionParser {
                                 case BRANCH_NONE:
                                 case BRANCH_CASE_CONTROL:
                                 case BRANCH_BETWEEN_END: // handle unary minus for second operand of BETWEEN operator: BETWEEN x AND -y
-                                    // we have unary minus
-                                    operatorType = OperatorExpression.UNARY;
+                                    // we have unary minus or unary complement, update op completely because it will change precedence
+                                    if (thisChar == '-') {
+                                        op = UnaryMinus;
+                                    }
+                                    if (thisChar == '~') {
+                                        op = UnaryComplement;
+                                    }
                                     break;
                                 default:
                                     break;
                             }
                         }
 
+                        int operatorType = op.type;
+
                         ExpressionNode other;
-                        // UNARY operators must never pop BINARY ones regardless of precedence
-                        // this is to maintain correctness of -a^b
+                        // If the token is an operator, o1, then:
+                        // while there is an operator token, o2, at the top of the operator stack, and either
+                        // o1 is left-associative and its precedence is less than or equal to that of o2, or
+                        // o1 is right associative, and has precedence less than that of o2,
+                        //        then pop o2 off the operator stack, onto the output queue;
+                        // push o1 onto the operator stack.
                         while ((other = opStack.peek()) != null) {
                             boolean greaterPrecedence = (op.leftAssociative && op.precedence >= other.precedence) || (!op.leftAssociative && op.precedence > other.precedence);
-                            if (greaterPrecedence &&
-                                    (operatorType != OperatorExpression.UNARY || (operatorType == OperatorExpression.UNARY && other.paramCount == 1))) {
+                            if (greaterPrecedence) {
                                 argStackDepth = onNode(listener, other, argStackDepth, false);
                                 opStack.pop();
                             } else {
@@ -1187,7 +1171,13 @@ public class ExpressionParser {
                                 // vanilla 'a.b', just concat tokens efficiently
                                 fsA.setHi(lexer.getTokenHi());
                             }
-                        } else if (prevBranch != BRANCH_DOT_DEREFERENCE) {
+                        } else if (prevBranch == BRANCH_DOT_DEREFERENCE) {
+                            argStackDepth++;
+                            final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, ".", Dot.precedence, lastPos);
+                            dotDereference.paramCount = 2;
+                            opStack.push(dotDereference);
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
+                        } else {
                             // this also could be syntax error such as extract(from x), when it should have been
                             // extract(something from x)
                             if (SqlKeywords.isFromKeyword(tok) && opStack.size() > 1 && SqlKeywords.isExtractKeyword(opStack.peek(1).token)) {
@@ -1199,12 +1189,6 @@ public class ExpressionParser {
 
                             // If the token is a function token, then push it onto the stack.
                             opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
-                        } else {
-                            argStackDepth++;
-                            final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, ".", DOT_PRECEDENCE, lastPos);
-                            dotDereference.paramCount = 2;
-                            opStack.push(dotDereference);
-                            opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
                         }
                     } else {
                         ExpressionNode last = this.opStack.peek();
