@@ -44,36 +44,36 @@ public final class OperatorExpression {
         add(new OperatorExpression("%", 3, true, BINARY));
         add(new OperatorExpression("+", 4, true, BINARY));
         add(new OperatorExpression("-", 4, true, BINARY));
-        // bitwise operators
-        add(new OperatorExpression("&", 5, true, BINARY));
-        add(new OperatorExpression("^", 6, false, BINARY));
-        add(new OperatorExpression("|", 7, true, BINARY));
-        // concatenation
-        add(new OperatorExpression("||", 8, true, BINARY));
         // IP operators
-        add(new OperatorExpression("<<", 9, true, BINARY));
-        add(new OperatorExpression(">>", 9, true, BINARY));
-        add(new OperatorExpression("<<=", 9, true, BINARY));
-        add(new OperatorExpression(">>=", 9, true, BINARY));
+        add(new OperatorExpression("<<", 4, true, BINARY));
+        add(new OperatorExpression(">>", 4, true, BINARY));
+        add(new OperatorExpression("<<=", 4, true, BINARY));
+        add(new OperatorExpression(">>=", 4, true, BINARY));
+        // concatenation
+        add(new OperatorExpression("||", 5, true, BINARY));
         // boolean operators
-        add(new OperatorExpression("<", 10, true, BINARY));
-        add(new OperatorExpression("<=", 10, true, BINARY));
-        add(new OperatorExpression(">", 10, true, BINARY));
-        add(new OperatorExpression(">=", 10, true, BINARY));
-        add(new OperatorExpression("=", 11, true, BINARY));
-        add(new OperatorExpression("~", 11, true, BINARY));
-        add(new OperatorExpression("!=", 11, true, BINARY));
-        add(new OperatorExpression("<>", 11, true, BINARY));
-        add(new OperatorExpression("!~", 11, true, BINARY));
-        add(new OperatorExpression("in", 11, true, SET, false));
-        add(new OperatorExpression("between", 11, true, SET, false)); // set ternary operator
-        add(new OperatorExpression("like", 11, true, BINARY, false));
-        add(new OperatorExpression("ilike", 11, true, BINARY, false));
-        add(new OperatorExpression("within", 11, true, SET, false));
+        add(new OperatorExpression("<", 6, true, BINARY));
+        add(new OperatorExpression("<=", 6, true, BINARY));
+        add(new OperatorExpression(">", 6, true, BINARY));
+        add(new OperatorExpression(">=", 6, true, BINARY));
+        add(new OperatorExpression("=", 7, true, BINARY));
+        add(new OperatorExpression("~", 7, true, BINARY));
+        add(new OperatorExpression("!=", 7, true, BINARY));
+        add(new OperatorExpression("<>", 7, true, BINARY));
+        add(new OperatorExpression("!~", 7, true, BINARY));
+        add(new OperatorExpression("in", 7, true, SET, false));
+        add(new OperatorExpression("between", 7, true, SET, false)); // set ternary operator
+        add(new OperatorExpression("like", 7, true, BINARY, false));
+        add(new OperatorExpression("ilike", 7, true, BINARY, false));
+        add(new OperatorExpression("within", 7, true, SET, false));
+        // bitwise operators
+        add(new OperatorExpression("&", 8, true, BINARY));
+        add(new OperatorExpression("^", 9, false, BINARY));
+        add(new OperatorExpression("|", 10, true, BINARY));
         // logical operators
-        add(new OperatorExpression("not", 12, true, UNARY, false));
-        add(new OperatorExpression("and", 13, true, BINARY, false));
-        add(new OperatorExpression("or", 14, true, BINARY, false));
+        add(new OperatorExpression("not", 11, true, UNARY, false));
+        add(new OperatorExpression("and", 12, true, BINARY, false));
+        add(new OperatorExpression("or", 13, true, BINARY, false));
     }};
 
     static final LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression> opMap = new LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression>() {{

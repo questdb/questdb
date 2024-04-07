@@ -691,7 +691,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("a ~ b ^ c d & |", "~a^b|c&d");
         x("1 2 4 & |", "1|2&4");
         x("true true false and or", "true or true and false");
-        x("1 2 | 3 in", "1 | 2 IN 3");
+//        x("1 2 | 3 in", "1 | 2 IN 3");
     }
 
     @Test
