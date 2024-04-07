@@ -70,4 +70,10 @@ abstract class AbstractMSequence extends AbstractSSequence {
     private boolean available0(long lo) {
         return Unsafe.getUnsafe().getIntVolatile(flags, (((lo & mask)) << Unsafe.INT_SCALE) + Unsafe.INT_OFFSET) == (int) (lo >>> shift);
     }
+
+    @Override
+    public void clear() {
+        super.clear();
+        Arrays.fill(flags, -1);
+    }
 }
