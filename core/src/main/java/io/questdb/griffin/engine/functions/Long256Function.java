@@ -183,4 +183,9 @@ public abstract class Long256Function implements ScalarFunction {
     public Utf8Sequence getVarcharB(Record rec) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public final int getVarcharSize(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 }

@@ -305,13 +305,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         // Use JIT-compiled filter.
 
         task.populateJitData();
-        final DirectLongList columns = task.getColumns();
-        final DirectLongList varLenIndexes = task.getVarLenIndexes();
+        final DirectLongList data = task.getData();
+        final DirectLongList varSizeAux = task.getVarSizeAux();
 
         long hi = atom.compiledFilter.call(
-                columns.getAddress(),
-                columns.size(),
-                varLenIndexes.getAddress(),
+                data.getAddress(),
+                data.size(),
+                varSizeAux.getAddress(),
                 atom.bindVarMemory.getAddress(),
                 atom.bindVarFunctions.size(),
                 rows.getAddress(),

@@ -142,13 +142,13 @@ public abstract class BooleanFunction implements ScalarFunction {
     }
 
     @Override
-    public final CharSequence getStrA(Record rec) {
-        return getStr0(rec);
+    public final void getStr(Record rec, Utf16Sink utf16Sink) {
+        utf16Sink.put(getStr0(rec));
     }
 
     @Override
-    public final void getStr(Record rec, Utf16Sink utf16Sink) {
-        utf16Sink.put(getStr0(rec));
+    public final CharSequence getStrA(Record rec) {
+        return getStr0(rec);
     }
 
     @Override
@@ -194,6 +194,11 @@ public abstract class BooleanFunction implements ScalarFunction {
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         return getVarchar0(rec);
+    }
+
+    @Override
+    public final int getVarcharSize(Record rec) {
+        return getVarchar0(rec).size();
     }
 
     protected String getStr0(Record rec) {
