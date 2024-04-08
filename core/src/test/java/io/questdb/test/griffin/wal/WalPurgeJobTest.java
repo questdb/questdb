@@ -29,9 +29,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
+import io.questdb.cairo.wal.WalColFirstWriter;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
@@ -223,7 +223,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             }
         };
 
-        try (WalWriter walWriter1 = getWalWriter(tableName)) {
+        try (WalColFirstWriter walWriter1 = getWalWriter(tableName)) {
             // Assert we've obtained a writer to wal1 and we're not already on wal2.
             assertWalExistence(true, tableName, 1);
             assertWalExistence(false, tableName, 2);
@@ -246,7 +246,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             // We commit the segment to the sequencer.
             walWriter1.commit();
 
-            try (WalWriter walWriter2 = getWalWriter(tableName)) {
+            try (WalColFirstWriter walWriter2 = getWalWriter(tableName)) {
                 assertWalExistence(true, tableName, 1);
                 assertWalExistence(true, tableName, 2);
                 assertSegmentExistence(true, tableName, 2, 0);
@@ -709,7 +709,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
         insert("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
 
-        try (WalWriter walWriter1 = getWalWriter(tableName)) {
+        try (WalColFirstWriter walWriter1 = getWalWriter(tableName)) {
             // Alter is committed.
             addColumn(walWriter1, "i1");
 
@@ -788,7 +788,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testSegmentLockedWhenSweeping() throws Exception {
 
-        AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
+        AtomicReference<WalColFirstWriter> walWriter1Ref = new AtomicReference<>();
         FilesFacade testFF = new TestFilesFacadeImpl() {
 
             @Override
@@ -825,7 +825,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertSegmentExistence(true, tableName, 1, 0);
             drainWalQueue();
 
-            WalWriter walWriter1 = getWalWriter(tableName);
+            WalColFirstWriter walWriter1 = getWalWriter(tableName);
             TableWriter.Row row = walWriter1.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
             row.putLong(0, 11);
             row.append();
@@ -862,7 +862,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testSegmentsCreatedWhenSweeping() throws Exception {
 
-        AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
+        AtomicReference<WalColFirstWriter> walWriter1Ref = new AtomicReference<>();
         FilesFacade testFF = new TestFilesFacadeImpl() {
 
             @Override
@@ -901,7 +901,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertSegmentExistence(true, tableName, 1, 0);
             drainWalQueue();
 
-            WalWriter walWriter1 = getWalWriter(tableName);
+            WalColFirstWriter walWriter1 = getWalWriter(tableName);
             walWriter1Ref.set(walWriter1);
             // This will create new segments 1 and 2 in wal1 after Sequencer transaction scan in overridden FilesFacade
             runWalPurgeJob();
@@ -1141,7 +1141,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         });
     }
 
-    private static void addColumnAndRow(WalWriter writer, String columnName) {
+    private static void addColumnAndRow(WalColFirstWriter writer, String columnName) {
         TestUtils.unchecked(() -> {
             addColumn(writer, columnName);
             TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
@@ -1195,7 +1195,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         }
     }
 
-    static void addColumn(WalWriter writer, String columnName) {
+    static void addColumn(WalColFirstWriter writer, String columnName) {
         writer.addColumn(columnName, ColumnType.INT);
     }
 
@@ -1242,6 +1242,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         }
 
         @Override
+        public void deleteSequencerPart(int seqPart) {
+            assert false;
+        }
+
+        @Override
         public void deleteWalDirectory(int walId, int lockFd) {
             events.add(new DeletionEvent(walId));
         }
@@ -1251,11 +1256,6 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             if (lockFd > -1) {
                 closedFds.add(lockFd);
             }
-        }
-
-        @Override
-        public void deleteSequencerPart(int seqPart) {
-            assert false;
         }
     }
 }

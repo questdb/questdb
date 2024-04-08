@@ -22,31 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.wal.SymbolMapDiff;
+import io.questdb.cairo.wal.SymbolMapDiffEntry;
+import io.questdb.cairo.wal.WalEventCursor;
+import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static io.questdb.cairo.wal.WalTxnType.DATA;
+import static io.questdb.cairo.wal.WalTxnType.ROW_FIRST_DATA;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 
-public class WalReader implements Closeable {
-    private static final Log LOG = LogFactory.getLog(WalReader.class);
+public class WalRowFirstReader implements Closeable {
+    private static final Log LOG = LogFactory.getLog(WalRowFirstReader.class);
     private final int columnCount;
-    private final ObjList<MemoryMR> columns;
-    private final WalDataCursor dataCursor = new WalDataCursor();
+    private final WalRowFirstCursor dataCursor = new WalRowFirstCursor();
     private final WalEventCursor eventCursor;
     private final WalEventReader events;
     private final FilesFacade ff;
@@ -54,11 +54,12 @@ public class WalReader implements Closeable {
     private final Path path;
     private final int rootLen;
     private final long rowCount;
+    private final MemoryMR rowMem;
     private final ObjList<IntObjHashMap<CharSequence>> symbolMaps = new ObjList<>();
     private final String tableName;
     private final String walName;
 
-    public WalReader(CairoConfiguration configuration, TableToken tableToken, CharSequence walName, int segmentId, long rowCount) {
+    public WalRowFirstReader(CairoConfiguration configuration, TableToken tableToken, CharSequence walName, int segmentId, long rowCount) {
         this.tableName = tableToken.getTableName();
         this.walName = Chars.toString(walName);
         this.rowCount = rowCount;
@@ -81,11 +82,7 @@ public class WalReader implements Closeable {
             path.slash().put(segmentId);
             eventCursor.reset();
 
-            final int capacity = 2 * columnCount + 2;
-            columns = new ObjList<>(capacity);
-            columns.setPos(capacity + 2);
-            columns.setQuick(0, NullMemoryMR.INSTANCE);
-            columns.setQuick(1, NullMemoryMR.INSTANCE);
+            rowMem = Vm.getMRInstance();
             dataCursor.of(this);
         } catch (Throwable e) {
             close();
@@ -97,13 +94,9 @@ public class WalReader implements Closeable {
     public void close() {
         Misc.free(events);
         Misc.free(metadata);
-        Misc.freeObjList(columns);
+        Misc.free(rowMem);
         Misc.free(path);
         LOG.debug().$("closed '").utf8(tableName).$('\'').$();
-    }
-
-    public MemoryR getColumn(int absoluteIndex) {
-        return columns.getQuick(absoluteIndex);
     }
 
     public int getColumnCount() {
@@ -118,7 +111,7 @@ public class WalReader implements Closeable {
         return metadata.getColumnType(columnIndex);
     }
 
-    public WalDataCursor getDataCursor() {
+    public WalRowFirstCursor getCursor() {
         dataCursor.toTop();
         return dataCursor;
     }
@@ -129,6 +122,10 @@ public class WalReader implements Closeable {
 
     public int getRealColumnCount() {
         return metadata.getRealColumnCount();
+    }
+
+    public MemoryMR getRowMem() {
+        return rowMem;
     }
 
     public CharSequence getSymbolValue(int col, int key) {
@@ -151,10 +148,10 @@ public class WalReader implements Closeable {
     public long openSegment() {
         try {
             if (ff.exists(path.$())) {
-                openSegmentColumns();
+                doOpenSegment();
                 return rowCount;
             }
-            LOG.error().$("open segment failed, segment does not exist on the disk. [path=").$(path).I$();
+            LOG.error().$("open segment failed, segment does not exist on the disk [path=").$(path).I$();
             throw CairoException.critical(0)
                     .put("WAL data directory does not exist on disk at ")
                     .put(path);
@@ -167,71 +164,21 @@ public class WalReader implements Closeable {
         return rowCount;
     }
 
-    private void loadColumnAt(int columnIndex) {
+    private void doOpenSegment() {
         final int pathLen = path.size();
         try {
-            final int columnType = metadata.getColumnType(columnIndex);
-            if (columnType > 0) {
-                final CharSequence columnName = metadata.getColumnName(columnIndex);
-                final int dataMemIndex = getPrimaryColumnIndex(columnIndex);
-                final int auxMemIndex = dataMemIndex + 1;
-                final MemoryMR dataMem = columns.getQuick(dataMemIndex);
-
-                if (ColumnType.isVarSize(columnType)) {
-                    ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-                    long auxMemSize = columnTypeDriver.getAuxVectorSize(rowCount);
-                    TableUtils.iFile(path.trimTo(pathLen), columnName);
-
-                    MemoryMR auxMem = columns.getQuick(auxMemIndex);
-                    auxMem = openOrCreateMemory(path, columns, auxMemIndex, auxMem, auxMemSize);
-                    final long dataMemSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), rowCount - 1);
-                    TableUtils.dFile(path.trimTo(pathLen), columnName);
-                    openOrCreateMemory(path, columns, dataMemIndex, dataMem, dataMemSize);
-                } else {
-                    final long dataMemSize = rowCount << ColumnType.pow2SizeOf(columnType);
-                    TableUtils.dFile(path.trimTo(pathLen), columnName);
-                    openOrCreateMemory(
-                            path,
-                            columns,
-                            dataMemIndex,
-                            dataMem,
-                            columnIndex == getTimestampIndex() ? dataMemSize << 1 : dataMemSize
-                    );
-                    Misc.free(columns.getAndSetQuick(auxMemIndex, null));
-                }
-            }
+            path.trimTo(pathLen).concat(TableUtils.WAL_SEGMENT_FILE_NAME).$();
+            long size = ff.length(path);
+            rowMem.of(ff, path, size, size, MemoryTag.MMAP_TABLE_WAL_READER);
         } finally {
             path.trimTo(pathLen);
         }
     }
 
-    @NotNull
-    private MemoryMR openOrCreateMemory(
-            Path path,
-            ObjList<MemoryMR> columns,
-            int primaryIndex,
-            MemoryMR mem,
-            long columnSize
-    ) {
-        if (mem != null && mem != NullMemoryMR.INSTANCE) {
-            mem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WAL_READER);
-        } else {
-            mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_WAL_READER);
-            columns.setQuick(primaryIndex, mem);
-        }
-        return mem;
-    }
-
-    private void openSegmentColumns() {
-        for (int i = 0; i < columnCount; i++) {
-            loadColumnAt(i);
-        }
-    }
-
     private void openSymbolMaps(WalEventCursor eventCursor, CairoConfiguration configuration) {
         while (eventCursor.hasNext()) {
-            if (eventCursor.getType() == DATA) {
-                WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+            if (eventCursor.getType() == ROW_FIRST_DATA) {
+                WalEventCursor.RowFirstDataInfo dataInfo = eventCursor.getRowFirstDataInfo();
                 SymbolMapDiff symbolDiff = dataInfo.nextSymbolMapDiff();
                 while (symbolDiff != null) {
                     int cleanSymbolCount = symbolDiff.getCleanSymbolCount();
@@ -271,9 +218,5 @@ public class WalReader implements Closeable {
                 }
             }
         }
-    }
-
-    static int getPrimaryColumnIndex(int index) {
-        return index * 2 + 2;
     }
 }

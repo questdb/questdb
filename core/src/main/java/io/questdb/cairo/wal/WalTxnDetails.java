@@ -31,7 +31,8 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.wal.WalTxnType.DATA;
+import static io.questdb.cairo.wal.WalTxnType.COL_FIRST_DATA;
+import static io.questdb.cairo.wal.WalTxnType.ROW_FIRST_DATA;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnDetails {
@@ -123,7 +124,6 @@ public class WalTxnDetails {
         long runningMinTimestamp = LAST_ROW_COMMIT;
         futureWalSegments.clear();
         for (int i = transactionMeta.size() - TXN_METADATA_LONGS_SIZE; i > -1; i -= TXN_METADATA_LONGS_SIZE) {
-
             long commitToTimestamp = runningMinTimestamp;
             long currentMinTimestamp = transactionMeta.getQuick(i + MIN_TIMESTAMP_OFFSET);
 
@@ -204,8 +204,13 @@ public class WalTxnDetails {
                     }
 
                     final byte walTxnType = walEventCursor.getType();
-                    if (walTxnType == DATA) {
-                        WalEventCursor.DataInfo commitInfo = walEventCursor.getDataInfo();
+                    WalEventCursor.DataInfo commitInfo = null;
+                    if (walTxnType == ROW_FIRST_DATA) {
+                        commitInfo = walEventCursor.getRowFirstDataInfo();
+                    } else if (walTxnType == COL_FIRST_DATA) {
+                        commitInfo = walEventCursor.getColFirstDataInfo();
+                    }
+                    if (commitInfo != null) {
                         transactionMeta.add(-1); // commit to timestamp
                         transactionMeta.add(commitInfo.getMinTimestamp());
                         transactionMeta.add(commitInfo.getMaxTimestamp());

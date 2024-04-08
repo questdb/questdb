@@ -25,8 +25,9 @@
 package io.questdb.cairo.wal;
 
 public class WalTxnType {
-    public static final byte DATA = 0;
+    public static final byte COL_FIRST_DATA = 0;
     public static final byte NONE = -1;
+    public static final byte ROW_FIRST_DATA = 3;
     public static final byte SQL = 1;
     public static final byte TRUNCATE = 2;
 }

@@ -30,8 +30,8 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalColFirstWriter;
 import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -111,7 +111,7 @@ public class FuzzRunner {
     }
 
     public void applyManyWalParallel(ObjList<ObjList<FuzzTransaction>> fuzzTransactions, Rnd rnd, String tableNameBase, boolean multiTable, boolean waitApply) {
-        ObjList<WalWriter> writers = new ObjList<>();
+        ObjList<WalColFirstWriter> writers = new ObjList<>();
         int tableCount = fuzzTransactions.size();
         AtomicInteger done = new AtomicInteger();
         AtomicInteger forceReaderReload = new AtomicInteger();
@@ -242,14 +242,14 @@ public class FuzzRunner {
     }
 
     public void applyToWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
-        ObjList<WalWriter> writers = new ObjList<>();
+        ObjList<WalColFirstWriter> writers = new ObjList<>();
         for (int i = 0; i < walWriterCount; i++) {
-            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+            writers.add((WalColFirstWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
         }
 
         Rnd tempRnd = new Rnd();
         for (int i = 0, n = transactions.size(); i < n; i++) {
-            WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
+            WalColFirstWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
             writer.goActive();
             FuzzTransaction transaction = transactions.getQuick(i);
             for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
@@ -261,7 +261,7 @@ public class FuzzRunner {
                 // Table is dropped, reopen all writers.
                 for (int writerIndex = 0; writerIndex < walWriterCount; writerIndex++) {
                     writers.getQuick(writerIndex).close();
-                    writers.setQuick(writerIndex, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+                    writers.setQuick(writerIndex, (WalColFirstWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
                 }
             } else {
                 if (transaction.rollback) {
@@ -504,7 +504,7 @@ public class FuzzRunner {
     private Thread createWalWriteThread(
             ObjList<FuzzTransaction> transactions,
             String tableName,
-            ObjList<WalWriter> writers,
+            ObjList<WalColFirstWriter> writers,
             AtomicLong waitBarrierVersion,
             AtomicLong doneCount,
             AtomicInteger forceReaderReload,
@@ -513,7 +513,7 @@ public class FuzzRunner {
     ) {
         final int writerIndex;
         synchronized (writers) {
-            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+            writers.add((WalColFirstWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
             writerIndex = writers.size() - 1;
         }
 
@@ -536,7 +536,7 @@ public class FuzzRunner {
                         }
                     }
 
-                    WalWriter walWriter;
+                    WalColFirstWriter walWriter;
                     synchronized (writers) {
                         walWriter = writers.get(writerIndex);
                     }
@@ -561,7 +561,7 @@ public class FuzzRunner {
                             for (int ii = 0; ii < writers.size(); ii++) {
                                 if (writers.get(ii).getTableToken().getTableName().equals(tableName)) {
                                     writers.get(ii).close();
-                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+                                    writers.setQuick(ii, (WalColFirstWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
                                 }
                             }
                         }

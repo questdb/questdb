@@ -22,16 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Misc;
 
-public class WalDataCursor implements RecordCursor {
-    private final WalDataRecord recordA = new WalDataRecord();
+public class WalRowFirstCursor implements RecordCursor {
+    private final WalRowFirstRecord recordA = new WalRowFirstRecord();
     private long maxRecordIndex = -1;
-    private WalReader reader;
+    private WalRowFirstReader reader;
 
     @Override
     public void close() {
@@ -39,25 +39,25 @@ public class WalDataCursor implements RecordCursor {
     }
 
     @Override
-    public Record getRecord() {
+    public WalRowFirstRecord getRecord() {
         return recordA;
     }
 
     @Override
-    public Record getRecordB() {
+    public WalRowFirstRecord getRecordB() {
         throw new UnsupportedOperationException("No B record for WAL");
     }
 
     @Override
     public boolean hasNext() {
-        if (recordA.getRecordIndex() < maxRecordIndex) {
-            recordA.incrementRecordIndex();
+        if (recordA.getRowIndex() < maxRecordIndex) {
+            recordA.nextRow();
             return true;
         }
         return false;
     }
 
-    public void of(WalReader reader) {
+    public void of(WalRowFirstReader reader) {
         close();
 
         this.reader = reader;
@@ -79,6 +79,6 @@ public class WalDataCursor implements RecordCursor {
 
     @Override
     public void toTop() {
-        recordA.jumpTo(-1);
+        recordA.reset();
     }
 }

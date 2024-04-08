@@ -594,9 +594,9 @@ public class WalTableSqlTest extends AbstractCairoTest {
             );
             TableToken tableToken = engine.verifyTableName(tableName);
             try (
-                    WalWriter walWriter1 = engine.getWalWriter(tableToken);
-                    WalWriter walWriter2 = engine.getWalWriter(tableToken);
-                    WalWriter walWriter3 = engine.getWalWriter(tableToken)
+                    WalColFirstWriter walWriter1 = engine.getWalColFirstWriter(tableToken);
+                    WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tableToken);
+                    WalColFirstWriter walWriter3 = engine.getWalColFirstWriter(tableToken)
             ) {
                 insert("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
 

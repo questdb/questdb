@@ -482,7 +482,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
         AtomicInteger walWriterTaken = new AtomicInteger();
 
         serverMain.getEngine().setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WAL_WRITER && tableToken != null && tableToken.getTableName().equals("line")) {
+            if (factoryType == PoolListener.SRC_WAL_COL_FIRST_WRITER && tableToken != null && tableToken.getTableName().equals("line")) {
                 if (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE) {
                     walWriterTaken.incrementAndGet();
                 }

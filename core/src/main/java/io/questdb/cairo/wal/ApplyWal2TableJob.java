@@ -144,14 +144,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return false;
     }
 
-    private static boolean removeOrLog(Path path, FilesFacade ff) {
-        if (!ff.removeQuiet(path.$())) {
-            LOG.info().$("could not remove, will retry [path=").utf8(", errno=").$(ff.errno()).I$();
-            return false;
-        }
-        return true;
-    }
-
     private static boolean matchesWalLock(Utf8Sequence name) {
         if (Utf8s.endsWithAscii(name, ".lock")) {
             for (int i = name.size() - ".lock".length() - 1; i > 0; i--) {
@@ -167,6 +159,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             if (b < '0' || b > '9') {
                 return false;
             }
+        }
+        return true;
+    }
+
+    private static boolean removeOrLog(Path path, FilesFacade ff) {
+        if (!ff.removeQuiet(path.$())) {
+            LOG.info().$("could not remove, will retry [path=").utf8(", errno=").$(ff.errno()).I$();
+            return false;
         }
         return true;
     }
@@ -386,29 +386,44 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
             final byte walTxnType = walEventCursor.getType();
             switch (walTxnType) {
-                case DATA:
-                    final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
+                case ROW_FIRST_DATA:
+                case COL_FIRST_DATA:
                     if (writer.getWalTnxDetails().hasRecord(seqTxn)) {
-                        long rowCount = dataInfo.getEndRowID() - dataInfo.getStartRowID();
                         final long start = microClock.getTicks();
                         walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
+                        final WalEventCursor.DataInfo dataInfo;
+                        final long startOffset;
+                        final long endOffset;
+                        if (walTxnType == ROW_FIRST_DATA) {
+                            WalEventCursor.RowFirstDataInfo rowFirstDataInfo = walEventCursor.getRowFirstDataInfo();
+                            dataInfo = rowFirstDataInfo;
+                            startOffset = rowFirstDataInfo.getStartOffset();
+                            endOffset = rowFirstDataInfo.getEndOffset();
+                        } else {
+                            dataInfo = walEventCursor.getColFirstDataInfo();
+                            startOffset = -1;
+                            endOffset = -1;
+                        }
                         final long rowsAdded = writer.commitWalTransaction(
                                 walPath,
                                 !dataInfo.isOutOfOrder(),
                                 dataInfo.getStartRowID(),
                                 dataInfo.getEndRowID(),
+                                startOffset,
+                                endOffset,
                                 dataInfo.getMinTimestamp(),
                                 dataInfo.getMaxTimestamp(),
                                 dataInfo,
                                 seqTxn
                         );
+                        final long rowCount = dataInfo.getEndRowID() - dataInfo.getStartRowID();
                         final long latency = microClock.getTicks() - start;
                         long physicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
                         metrics.addApplyRowsWritten(rowCount, physicalRowCount, latency);
                         walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, seqTxn, rowsAdded, physicalRowCount, latency);
                         return rowCount;
                     } else {
-                        // re-build wal transaction details
+                        // re-build WAL transaction details
                         return -2L;
                     }
 

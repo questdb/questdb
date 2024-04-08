@@ -29,27 +29,27 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.WalColFirstWriter;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
-public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWriterTenant> {
+public class WalColFirstWriterPool extends AbstractMultiTenantPool<WalColFirstWriterPool.Tenant> {
 
     private final CairoEngine engine;
 
-    public WalWriterPool(CairoConfiguration configuration, CairoEngine engine) {
+    public WalColFirstWriterPool(CairoConfiguration configuration, CairoEngine engine) {
         super(configuration, configuration.getWalWriterPoolMaxSegments(), configuration.getInactiveWalWriterTTL());
         this.engine = engine;
     }
 
     @Override
     protected byte getListenerSrc() {
-        return PoolListener.SRC_WAL_WRITER;
+        return PoolListener.SRC_WAL_COL_FIRST_WRITER;
     }
 
     @Override
-    protected WalWriterTenant newTenant(TableToken tableToken, Entry<WalWriterTenant> entry, int index) {
-        return new WalWriterTenant(
+    protected Tenant newTenant(TableToken tableToken, Entry<Tenant> entry, int index) {
+        return new Tenant(
                 this,
                 entry,
                 index,
@@ -61,14 +61,14 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         );
     }
 
-    public static class WalWriterTenant extends WalWriter implements PoolTenant<WalWriterTenant> {
+    public static class Tenant extends WalColFirstWriter implements PoolTenant<Tenant> {
         private final int index;
-        private Entry<WalWriterTenant> entry;
-        private AbstractMultiTenantPool<WalWriterTenant> pool;
+        private Entry<Tenant> entry;
+        private AbstractMultiTenantPool<Tenant> pool;
 
-        public WalWriterTenant(
-                AbstractMultiTenantPool<WalWriterTenant> pool,
-                Entry<WalWriterTenant> entry,
+        public Tenant(
+                AbstractMultiTenantPool<Tenant> pool,
+                Entry<Tenant> entry,
                 int index,
                 TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI,
@@ -86,7 +86,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         public void close() {
             if (isOpen()) {
                 rollback();
-                final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
+                final AbstractMultiTenantPool<Tenant> pool = this.pool;
                 if (pool != null && entry != null) {
                     if (!isDistressed()) {
                         if (pool.returnToPool(this)) {
@@ -106,7 +106,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         }
 
         @Override
-        public Entry<WalWriterTenant> getEntry() {
+        public Entry<Tenant> getEntry() {
             return entry;
         }
 
@@ -128,6 +128,10 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 close();
                 throw ex;
             }
+        }
+
+        public void updateTableToken(TableToken ignoredTableToken) {
+            // no-op: goActive will update table token
         }
     }
 }

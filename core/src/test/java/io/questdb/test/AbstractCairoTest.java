@@ -1266,8 +1266,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     @NotNull
-    protected static WalWriter getWalWriter(CharSequence tableName) {
-        return engine.getWalWriter(engine.verifyTableName(tableName));
+    protected static WalColFirstWriter getWalWriter(CharSequence tableName) {
+        return engine.getWalColFirstWriter(engine.verifyTableName(tableName));
     }
 
     protected static TableWriter getWriter(CharSequence tableName) {

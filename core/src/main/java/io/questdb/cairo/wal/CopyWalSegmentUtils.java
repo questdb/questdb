@@ -32,12 +32,13 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.wal.WalWriter.NEW_COL_RECORD_SIZE;
+import static io.questdb.cairo.wal.WalColFirstWriter.NEW_COL_RECORD_SIZE;
 
 public class CopyWalSegmentUtils {
     private static final Log LOG = LogFactory.getLog(CopyWalSegmentUtils.class);
     private static final int MEMORY_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
 
+    // column-first
     public static void rollColumnToSegment(
             FilesFacade ff,
             long options,
@@ -118,6 +119,38 @@ public class CopyWalSegmentUtils {
         }
     }
 
+    public static int rollRowFirstToSegment(
+            FilesFacade ff,
+            long options,
+            MemoryMA rowMem,
+            @Transient Path walPath,
+            int newSegment,
+            long offset,
+            long size,
+            int commitMode
+    ) {
+        Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment).concat(WAL_SEGMENT_FILE_NAME).$();
+        int fd = openRW(ff, newSegPath, LOG, options);
+
+        boolean success = ff.copyData(rowMem.getFd(), fd, offset, size) == size;
+        if (success) {
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsync(fd);
+            }
+        } else {
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsyncAndClose(fd);
+            } else {
+                ff.close(fd);
+            }
+            throw CairoException.critical(ff.errno()).put("failed to copy row-first file to new segment [path=").put(newSegPath)
+                    .put(", offset=").put(offset)
+                    .put(", size=").put(size)
+                    .put("]");
+        }
+        return fd;
+    }
+
     private static boolean copyFixLenFile(
             FilesFacade ff,
             MemoryMA primaryColumn,
@@ -131,12 +164,12 @@ public class CopyWalSegmentUtils {
     ) {
         int shl = ColumnType.pow2SizeOf(columnType);
         long offset = rowOffset << shl;
-        long length = rowCount << shl;
+        long size = rowCount << shl;
 
-        boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, offset, length) == length;
+        boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, offset, size) == size;
         if (success) {
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, offset);
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, length);
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, size);
         }
         if (commitMode != CommitMode.NOSYNC) {
             ff.fsync(primaryFd);

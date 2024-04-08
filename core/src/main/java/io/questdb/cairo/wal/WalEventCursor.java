@@ -42,8 +42,9 @@ import static io.questdb.cairo.wal.WalUtils.WALE_HEADER_SIZE;
 public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
 
-    private final DataInfo dataInfo = new DataInfo();
+    private final ColFirstDataInfo colFirstDataInfo = new ColFirstDataInfo();
     private final MemoryMR eventMem;
+    private final RowFirstDataInfo rowFirstDataInfo = new RowFirstDataInfo();
     private final SqlInfo sqlInfo = new SqlInfo();
     private long memSize;
     private long nextOffset = Integer.BYTES;
@@ -76,11 +77,18 @@ public class WalEventCursor {
         }
     }
 
-    public DataInfo getDataInfo() {
-        if (type != DATA) {
-            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
+    public ColFirstDataInfo getColFirstDataInfo() {
+        if (type != COL_FIRST_DATA) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not COL_FIRST_DATA, type=").put(type);
         }
-        return dataInfo;
+        return colFirstDataInfo;
+    }
+
+    public RowFirstDataInfo getRowFirstDataInfo() {
+        if (type != ROW_FIRST_DATA) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not ROW_FIRST_DATA, type=").put(type);
+        }
+        return rowFirstDataInfo;
     }
 
     public SqlInfo getSqlInfo() {
@@ -195,8 +203,11 @@ public class WalEventCursor {
     private void readRecord() {
         type = readByte();
         switch (type) {
-            case DATA:
-                dataInfo.read();
+            case ROW_FIRST_DATA:
+                rowFirstDataInfo.read();
+                break;
+            case COL_FIRST_DATA:
+                colFirstDataInfo.read();
                 break;
             case SQL:
                 sqlInfo.read();
@@ -275,34 +286,54 @@ public class WalEventCursor {
         return entry;
     }
 
-    public class DataInfo implements SymbolMapDiffCursor {
+    public interface DataInfo extends SymbolMapDiffCursor {
+        long getEndRowID();
+
+        long getMaxTimestamp();
+
+        long getMinTimestamp();
+
+        long getStartRowID();
+
+        boolean isOutOfOrder();
+
+        SymbolMapDiff nextSymbolMapDiff();
+    }
+
+    public class ColFirstDataInfo implements DataInfo {
         private final SymbolMapDiffImpl symbolMapDiff = new SymbolMapDiffImpl(WalEventCursor.this);
-        private long endRowID;
+        private long endRowID; // exclusive
         private long maxTimestamp;
         private long minTimestamp;
         private boolean outOfOrder;
         private long startRowID;
 
+        @Override
         public long getEndRowID() {
             return endRowID;
         }
 
+        @Override
         public long getMaxTimestamp() {
             return maxTimestamp;
         }
 
+        @Override
         public long getMinTimestamp() {
             return minTimestamp;
         }
 
+        @Override
         public long getStartRowID() {
             return startRowID;
         }
 
+        @Override
         public boolean isOutOfOrder() {
             return outOfOrder;
         }
 
+        @Override
         public SymbolMapDiff nextSymbolMapDiff() {
             return readNextSymbolMapDiff(symbolMapDiff);
         }
@@ -310,6 +341,65 @@ public class WalEventCursor {
         private void read() {
             startRowID = readLong();
             endRowID = readLong();
+            minTimestamp = readLong();
+            maxTimestamp = readLong();
+            outOfOrder = readBool();
+        }
+    }
+
+    public class RowFirstDataInfo implements DataInfo {
+        private final SymbolMapDiffImpl symbolMapDiff = new SymbolMapDiffImpl(WalEventCursor.this);
+        private long endOffset; // exclusive
+        private long endRowID; // exclusive
+        private long maxTimestamp;
+        private long minTimestamp;
+        private boolean outOfOrder;
+        private long startOffset;
+        private long startRowID;
+
+        public long getEndOffset() {
+            return endOffset;
+        }
+
+        @Override
+        public long getEndRowID() {
+            return endRowID;
+        }
+
+        @Override
+        public long getMaxTimestamp() {
+            return maxTimestamp;
+        }
+
+        @Override
+        public long getMinTimestamp() {
+            return minTimestamp;
+        }
+
+        public long getStartOffset() {
+            return startOffset;
+        }
+
+        @Override
+        public long getStartRowID() {
+            return startRowID;
+        }
+
+        @Override
+        public boolean isOutOfOrder() {
+            return outOfOrder;
+        }
+
+        @Override
+        public SymbolMapDiff nextSymbolMapDiff() {
+            return readNextSymbolMapDiff(symbolMapDiff);
+        }
+
+        private void read() {
+            startRowID = readLong();
+            endRowID = readLong();
+            startOffset = readLong();
+            endOffset = readLong();
             minTimestamp = readLong();
             maxTimestamp = readLong();
             outOfOrder = readBool();

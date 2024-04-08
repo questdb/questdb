@@ -25,10 +25,16 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public class BinaryTypeDriver extends StringTypeDriver {
     public static final BinaryTypeDriver INSTANCE = new BinaryTypeDriver();
+
+    public static long getPlainValueByteCount(@Nullable BinarySequence value) {
+        return value != null ? Long.BYTES + value.length() : Long.BYTES;
+    }
 
     @Override
     public void appendNull(MemoryA dataMem, MemoryA auxMem) {

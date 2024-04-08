@@ -327,6 +327,13 @@ public final class ColumnType {
         return -1;
     }
 
+    public static int sizeOfWalDataColumn(int columnType, boolean designatedTimestamp) {
+        if (columnType == ColumnType.TIMESTAMP && designatedTimestamp) {
+            return 16; // 128 bit column
+        }
+        return sizeOf(columnType);
+    }
+
     public static short tagOf(int type) {
         return (short) (type & 0xFF);
     }

@@ -31,7 +31,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 
-//contiguous readable 
+// contiguous readable
 public interface MemoryCR extends MemoryC, MemoryR {
     default BinarySequence getBin(long offset, ByteSequenceView view) {
         final long addr = addressOf(offset);

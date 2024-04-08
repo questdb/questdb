@@ -92,7 +92,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Telemetry<TelemetryWalTask> telemetryWal;
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
-    private final WalWriterPool walWriterPool;
+    private final WalColFirstWriterPool walColFirstWriterPool;
+    private final WalRowFirstWriterPool walRowFirstWriterPool;
     private final WriterPool writerPool;
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
@@ -120,7 +121,8 @@ public class CairoEngine implements Closeable, WriterSource {
         this.readerPool = new ReaderPool(configuration, messageBus);
         this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
         this.tableMetadataPool = new TableMetadataPool(configuration);
-        this.walWriterPool = new WalWriterPool(configuration, this);
+        this.walRowFirstWriterPool = new WalRowFirstWriterPool(configuration, this);
+        this.walColFirstWriterPool = new WalColFirstWriterPool(configuration, this);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
@@ -296,9 +298,10 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
         boolean b4 = sequencerMetadataPool.releaseAll();
-        boolean b5 = walWriterPool.releaseAll();
-        boolean b6 = tableMetadataPool.releaseAll();
-        return b1 & b2 & b3 & b4 & b5 & b6;
+        boolean b5 = walRowFirstWriterPool.releaseAll();
+        boolean b6 = walColFirstWriterPool.releaseAll();
+        boolean b7 = tableMetadataPool.releaseAll();
+        return b1 & b2 & b3 & b4 & b5 & b6 & b7;
     }
 
     @Override
@@ -308,7 +311,8 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(readerPool);
         Misc.free(sequencerMetadataPool);
         Misc.free(tableMetadataPool);
-        Misc.free(walWriterPool);
+        Misc.free(walRowFirstWriterPool);
+        Misc.free(walColFirstWriterPool);
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
         Misc.free(tableSequencerAPI);
@@ -717,7 +721,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
         }
-        return walWriterPool.get(tableToken);
+        return walColFirstWriterPool.get(tableToken);
     }
 
     @Override
@@ -728,7 +732,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
         }
-        return walWriterPool.get(tableToken);
+        return walColFirstWriterPool.get(tableToken);
     }
 
     public Telemetry<TelemetryTask> getTelemetry() {
@@ -747,6 +751,11 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTokenByDirName(tableToken.getDirName());
     }
 
+    public @NotNull WalColFirstWriter getWalColFirstWriter(TableToken tableToken) {
+        verifyTableToken(tableToken);
+        return walColFirstWriterPool.get(tableToken);
+    }
+
     public @NotNull WalDirectoryPolicy getWalDirectoryPolicy() {
         return walDirectoryPolicy;
     }
@@ -755,24 +764,9 @@ public class CairoEngine implements Closeable, WriterSource {
         return walListener;
     }
 
-    // For testing only
-    @TestOnly
-    public WalReader getWalReader(
-            @SuppressWarnings("unused") SecurityContext securityContext,
-            TableToken tableToken,
-            CharSequence walName,
-            int segmentId,
-            long walRowCount
-    ) {
-        if (tableToken.isWal()) {
-            return new WalReader(configuration, tableToken, walName, segmentId, walRowCount);
-        }
-        throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken);
-    }
-
-    public @NotNull WalWriter getWalWriter(TableToken tableToken) {
+    public @NotNull WalRowFirstWriter getWalRowFirstWriter(TableToken tableToken) {
         verifyTableToken(tableToken);
-        return walWriterPool.get(tableToken);
+        return walRowFirstWriterPool.get(tableToken);
     }
 
     public TableWriter getWriter(TableToken tableToken, @NotNull String lockReason) {
@@ -970,7 +964,8 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void releaseAllWalWriters() {
-        walWriterPool.releaseAll();
+        walRowFirstWriterPool.releaseAll();
+        walColFirstWriterPool.releaseAll();
     }
 
     @TestOnly
@@ -984,13 +979,15 @@ public class CairoEngine implements Closeable, WriterSource {
         useful |= tableSequencerAPI.releaseInactive();
         useful |= sequencerMetadataPool.releaseInactive();
         useful |= tableMetadataPool.releaseInactive();
-        useful |= walWriterPool.releaseInactive();
+        useful |= walRowFirstWriterPool.releaseInactive();
+        useful |= walColFirstWriterPool.releaseInactive();
         return useful;
     }
 
     @TestOnly
     public void releaseInactiveTableSequencers() {
-        walWriterPool.releaseInactive();
+        walRowFirstWriterPool.releaseInactive();
+        walColFirstWriterPool.releaseInactive();
         tableSequencerAPI.releaseInactive();
     }
 
@@ -1045,7 +1042,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (toTableToken != null) {
                     boolean renamed = false;
                     try {
-                        try (WalWriter walWriter = getWalWriter(fromTableToken)) {
+                        try (WalColFirstWriter walWriter = getWalColFirstWriter(fromTableToken)) {
                             long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr);
                             LOG.info().$("renaming table [from='").utf8(fromTableName)
                                     .$("', to='").utf8(toTableName)
@@ -1133,7 +1130,8 @@ public class CairoEngine implements Closeable, WriterSource {
         this.sequencerMetadataPool.setPoolListener(poolListener);
         this.writerPool.setPoolListener(poolListener);
         this.readerPool.setPoolListener(poolListener);
-        this.walWriterPool.setPoolListener(poolListener);
+        this.walRowFirstWriterPool.setPoolListener(poolListener);
+        this.walColFirstWriterPool.setPoolListener(poolListener);
     }
 
     @TestOnly

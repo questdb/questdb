@@ -117,6 +117,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
      *
      * @param offset position from 0 in virtual memory.
      */
+    @Override
     public void jumpTo(long offset) {
         checkAndExtend(pageAddress + offset);
         appendAddress = pageAddress + offset;
@@ -164,7 +165,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     private void extend0(long size) {
-
         if (size == 0 && pageAddress == 0) {
             return;
         }
@@ -189,7 +189,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         handleMemoryReallocation(newBaseAddress, size);
     }
 
-    protected final void handleMemoryReallocation(long newBaseAddress, long newSize) {
+    private void handleMemoryReallocation(long newBaseAddress, long newSize) {
         assert newBaseAddress != 0;
         long appendOffset = appendAddress - pageAddress;
         pageAddress = newBaseAddress;
@@ -201,21 +201,21 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         this.size = newSize;
     }
 
-    protected final void handleMemoryReleased() {
+    private void handleMemoryReleased() {
         pageAddress = 0;
         lim = 0;
         appendAddress = 0;
         size = 0;
     }
 
-    protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
+    private long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
         if (currentBaseAddress != 0) {
             return Unsafe.realloc(currentBaseAddress, currentSize, newSize, memoryTag);
         }
         return Unsafe.malloc(newSize, memoryTag);
     }
 
-    protected final void setPageSize(long size) {
+    private void setPageSize(long size) {
         this.sizeMsb = Numbers.msb(Numbers.ceilPow2(size));
     }
 }

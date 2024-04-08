@@ -33,7 +33,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.MetadataService;
-import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.WalColFirstWriter;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -207,9 +207,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
             IntHashSet badWalIds = new IntHashSet();
 
             try (
-                    WalWriter walWriter1 = engine.getWalWriter(tableToken);
-                    WalWriter walWriter2 = engine.getWalWriter(tableToken);
-                    WalWriter walWriter3 = engine.getWalWriter(tableToken)
+                    WalColFirstWriter walWriter1 = engine.getWalColFirstWriter(tableToken);
+                    WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tableToken);
+                    WalColFirstWriter walWriter3 = engine.getWalColFirstWriter(tableToken)
             ) {
                 Assert.assertEquals(1, walWriter1.getWalId());
                 Assert.assertEquals(2, walWriter2.getWalId());
@@ -225,7 +225,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     TableWriterAPI insertWriter = engine.getTableWriterAPI(tableToken, "test")
             ) {
 
-                badWalIds.add(badWriterId = ((WalWriter) alterWriter).getWalId());
+                badWalIds.add(badWriterId = ((WalColFirstWriter) alterWriter).getWalId());
 
                 // Serialize into WAL sequencer a drop column operation of non-existing column
                 // So that it will fail during application to WAL sequencer
@@ -263,16 +263,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 Misc.free(alterOp);
             }
 
-            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+            try (WalColFirstWriter walWriter1 = engine.getWalColFirstWriter(tableToken)) {
                 Assert.assertTrue(badWalIds.excludes(walWriter1.getWalId()));
 
                 // Assert wal writer 2 is not in the pool after failure to apply structure change
                 // wal writer 3 will fail to go active because of dodgy Alter in the WAL sequencer
 
-                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
+                try (WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tableToken)) {
                     Assert.assertTrue(badWalIds.excludes(walWriter2.getWalId()));
 
-                    try (WalWriter walWriter3 = engine.getWalWriter(tableToken)) {
+                    try (WalColFirstWriter walWriter3 = engine.getWalColFirstWriter(tableToken)) {
                         Assert.assertTrue(badWalIds.excludes(walWriter3.getWalId()));
                         Assert.assertNotEquals(badWriterId, walWriter3.getWalId());
                     }
@@ -344,11 +344,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 Misc.free(alterOp);
             }
 
-            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+            try (WalColFirstWriter walWriter1 = engine.getWalColFirstWriter(tableToken)) {
                 Assert.assertEquals(1, walWriter1.getWalId());
 
                 // Assert wal writer 2 is not in the pool after failure to apply structure change
-                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
+                try (WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tableToken)) {
                     Assert.assertEquals(3, walWriter2.getWalId());
                 }
             }
@@ -539,7 +539,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 
-            try (WalWriter walWriter = engine.getWalWriter(tableName)) {
+            try (WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableName)) {
                 Assert.assertEquals(1, walWriter.getWalId());
 
                 AlterOperation dodgyAlterOp = new AlterOperation() {
@@ -576,7 +576,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 }
             }
 
-            try (WalWriter walWriter = engine.getWalWriter(tableName)) {
+            try (WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableName)) {
                 // Wal Writer 1 is not pooled
                 Assert.assertEquals(2, walWriter.getWalId());
             }
@@ -712,7 +712,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             drainWalQueue();
             //noinspection CatchMayIgnoreException
-            try (WalWriter writer = engine.getWalWriter(tableName)) {
+            try (WalColFirstWriter writer = engine.getWalColFirstWriter(tableName)) {
                 writer.apply(new UpdateOperation(tableName, 1, 22, 1) {
                     @Override
                     public SqlExecutionContext getSqlExecutionContext() {
@@ -1488,9 +1488,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            try (WalWriter ignore = engine.getWalWriter(tableName)) {
+            try (WalColFirstWriter ignore = engine.getWalColFirstWriter(tableName)) {
                 compile("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
-                try (WalWriter insertedWriter = engine.getWalWriter(tableName)) {
+                try (WalColFirstWriter insertedWriter = engine.getWalColFirstWriter(tableName)) {
                     try (Path path = new Path()) {
                         String columnName = "sym";
                         path.of(engine.getConfiguration().getRoot()).concat(tableName).put(Files.SEPARATOR).put(WAL_NAME_BASE).put(insertedWriter.getWalId());

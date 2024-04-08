@@ -454,7 +454,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             tud = new WalTableUpdateDetails(
                                     engine,
                                     securityContext,
-                                    engine.getWalWriter(tableToken),
+                                    engine.getWalColFirstWriter(tableToken),
                                     defaultColumnTypes,
                                     Utf8String.newInstance(tableNameUtf8),
                                     netIoJob.getSymbolCachePool(),

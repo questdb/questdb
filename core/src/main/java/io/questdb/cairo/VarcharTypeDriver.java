@@ -58,7 +58,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     /**
      * Appends UTF8 varchar type to the memory address with a header.
      * This is unsafe method, and it is assumed that the memory address is valid and has enough space to store the header and UTF8 bytes.
-     * The number of bytes to be written can be obtained from {@link #getSingleMemValueByteCount(Utf8Sequence)}
+     * The number of bytes to be written can be obtained from {@link #getPlainValueByteCount(Utf8Sequence)}
      *
      * @param dataMemAddr    memory address to store header and UTF8 bytes in
      * @param value          the UTF8 string to be stored
@@ -79,6 +79,23 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             // ASCII flag is signaled with the highest bit
             Unsafe.getUnsafe().putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
         }
+    }
+
+    /**
+     * Appends varchar to single data vector. The storage in this data vector is
+     * length prefixed. The ascii flag is encoded to the highest bit of the length.
+     *
+     * @param dataMem the target append memory
+     * @param value   the nullable varchar value, UTF8 encoded
+     */
+    public static void appendPlainValue(MemoryA dataMem, @Nullable Utf8Sequence value) {
+        if (value == null) {
+            dataMem.putInt(TableUtils.NULL_LEN);
+            return;
+        }
+        final int size = value.size();
+        dataMem.putInt(value.isAscii() ? size | Integer.MIN_VALUE : size);
+        dataMem.putVarchar(value, 0, size);
     }
 
     /**
@@ -130,23 +147,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         // write 48 bit offset (little-endian)
         auxMem.putShort((short) offset);
         auxMem.putInt((int) (offset >> 16));
-    }
-
-    /**
-     * Appends varchar to single data vector. The storage in this data vector is
-     * length prefixed. The ascii flag is encoded to the highest bit of the length.
-     *
-     * @param dataMem the target append memory
-     * @param value   the nullable varchar value, UTF8 encoded
-     */
-    public static void appendValue(MemoryA dataMem, @Nullable Utf8Sequence value) {
-        if (value == null) {
-            dataMem.putInt(TableUtils.NULL_LEN);
-            return;
-        }
-        final int size = value.size();
-        dataMem.putInt(value.isAscii() ? size | Integer.MIN_VALUE : size);
-        dataMem.putVarchar(value, 0, size);
     }
 
     public static long getDataOffset(long auxEntry) {
@@ -207,6 +207,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return sequence.of(dataMemAddr + Integer.BYTES, dataMemAddr + Integer.BYTES + size(header), isAscii(header));
     }
 
+    public static long getPlainValueByteCount(@Nullable Utf8Sequence value) {
+        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
+    }
+
     /**
      * Reads UTF8 varchar size from the memory with a header.
      *
@@ -231,10 +235,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return TableUtils.NULL_LEN;
         }
         return size(header);
-    }
-
-    public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
-        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
     }
 
     /**

@@ -29,8 +29,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.WalColFirstWriter;
 import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
@@ -969,8 +969,8 @@ public class SnapshotTest extends AbstractCairoTest {
             );
 
             // WalWriter.applyMetadataChangeLog should be triggered
-            try (WalWriter walWriter1 = getWalWriter(tableName)) {
-                try (WalWriter walWriter2 = getWalWriter(tableName)) {
+            try (WalColFirstWriter walWriter1 = getWalWriter(tableName)) {
+                try (WalColFirstWriter walWriter2 = getWalWriter(tableName)) {
                     walWriter1.addColumn("C", ColumnType.INT);
                     walWriter1.commit();
 

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -37,10 +37,10 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.wal.WalReader.getPrimaryColumnIndex;
+import static io.questdb.test.cairo.wal.WalColFirstReader.getPrimaryColumnIndex;
 
-public class WalDataRecord implements Record, Sinkable {
-    private WalReader reader;
+public class WalColFirstRecord implements Record, Sinkable {
+    private WalColFirstReader reader;
     private long recordIndex = 0;
 
     @Override
@@ -78,8 +78,6 @@ public class WalDataRecord implements Record, Sinkable {
         return reader.getColumn(absoluteColumnIndex).getChar(offset);
     }
 
-    // only for tests
-    @SuppressWarnings("SameParameterValue")
     public long getDesignatedTimestampRowId(int col) {
         final long offset = 2 * recordIndex * Long.BYTES + Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
@@ -280,14 +278,14 @@ public class WalDataRecord implements Record, Sinkable {
         this.recordIndex = recordIndex;
     }
 
-    public void of(WalReader reader) {
+    public void of(WalColFirstReader reader) {
         this.reader = reader;
         jumpTo(-1);
     }
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.putAscii("WalReaderRecord [recordIndex=").put(recordIndex).putAscii(']');
+        sink.putAscii("WalColFirstRecord [recordIndex=").put(recordIndex).putAscii(']');
     }
 
     private long getDesignatedTimestamp(int col) {

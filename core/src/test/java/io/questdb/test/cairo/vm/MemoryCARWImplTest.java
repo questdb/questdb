@@ -522,7 +522,6 @@ public class MemoryCARWImplTest {
                 assertEquals(i, mem.getLong(o));
                 o += 8;
             }
-
         }
     }
 

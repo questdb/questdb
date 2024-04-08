@@ -30,11 +30,16 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
 
 public class StringTypeDriver implements ColumnTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
+
+    public static long getPlainValueByteCount(@Nullable CharSequence value) {
+        return value != null ? Integer.BYTES + 2L * value.length() : Integer.BYTES;
+    }
 
     @Override
     public void appendNull(MemoryA dataMem, MemoryA auxMem) {
@@ -311,7 +316,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long srcHi,
             long dstAddr,
             long dstAddrSize
-
     ) {
         assert (srcHi - srcLo + 2) * 8 <= dstAddrSize;
         // +2 because

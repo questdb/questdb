@@ -357,6 +357,6 @@ public class JsonToTableSerializer implements JsonParser, Mutable, QuietCloseabl
         tableName.token = "hello123";
         createTableModel.setWalEnabled(true);
         partitionBy.token = "HOUR";
-        writer = engine.getWalWriter(engine.createTable(AllowAllSecurityContext.INSTANCE, mem, path, false, createTableModel, false));
+        writer = engine.getWalColFirstWriter(engine.createTable(AllowAllSecurityContext.INSTANCE, mem, path, false, createTableModel, false));
     }
 }
