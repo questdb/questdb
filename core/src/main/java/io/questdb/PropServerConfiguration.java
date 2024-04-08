@@ -387,6 +387,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected HttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
     protected HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
+    protected String questdbType = "OSS";
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
     private long cairoSqlCopyMaxIndexChunkSize;
@@ -2729,7 +2730,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public String getType() {
-            return "OSS";
+            return questdbType;
         }
 
         @Override
