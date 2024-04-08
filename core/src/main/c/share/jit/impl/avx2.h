@@ -742,26 +742,26 @@ namespace questdb::avx2 {
         Xmm xmm5 = c.newXmm();
         Xmm xmm6 = c.newXmm();
 
-        c.vxorpd( xmm1, xmm1, xmm1);
-        c.vxorpd( xmm2, xmm2, xmm2);
-        c.vxorpd( xmm3, xmm3, xmm3);
-        c.vxorpd( xmm4, xmm4, xmm4);
+        c.vxorpd(xmm1, xmm1, xmm1);
+        c.vxorpd(xmm2, xmm2, xmm2);
+        c.vxorpd(xmm3, xmm3, xmm3);
+        c.vxorpd(xmm4, xmm4, xmm4);
 
         Mem mem = c.newStack(32, 32);
-        c.vmovdqu( mem, rhs);
+        c.vmovdqu(mem, rhs);
         mem.setSize(8);
-        c.vcvtsi2sd( xmm1, xmm1, mem);
+        c.vcvtsi2sd(xmm1, xmm1, mem);
         mem.addOffset(8);
-        c.vcvtsi2sd( xmm2, xmm2, mem);
+        c.vcvtsi2sd(xmm2, xmm2, mem);
         mem.addOffset(8);
-        c.vcvtsi2sd( xmm3, xmm3, mem);
+        c.vcvtsi2sd(xmm3, xmm3, mem);
         mem.addOffset(8);
-        c.vcvtsi2sd( xmm4, xmm4, mem);
+        c.vcvtsi2sd(xmm4, xmm4, mem);
 
-        c.vunpcklpd( xmm5, xmm1, xmm2);
-        c.vunpcklpd( xmm6, xmm3, xmm4);
-        c.vinsertf128( dst, xmm5.ymm(), xmm6, 1);
-        //c.vzeroupper();
+        c.vunpcklpd(xmm5, xmm1, xmm2);
+        c.vunpcklpd(xmm6, xmm3, xmm4);
+        c.vinsertf128(dst, xmm5.ymm(), xmm6, 1);
+
         if (null_check) {
             Ymm int_nulls_mask = cmp_eq_null(c, data_type_t::i64, rhs);
             Ymm nans = c.newYmm();

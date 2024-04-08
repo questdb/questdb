@@ -237,13 +237,14 @@ namespace questdb::avx2 {
         c.vmovdqu(headers_0_1, ymmword_ptr(varsize_aux_address, header_offset_0, 0));
         c.vmovdqu(headers_2_3, ymmword_ptr(varsize_aux_address, header_offset_2, 0));
 
-        // Permute the first i64 of each header to be in the first YMM lane
-        // and combine them into single YMM.
+        // Permute the first i64 of each header and combine them into single YMM.
+        // 0th and 1st i64 go to the first YMM lane in headers_0_1.
         c.vpermq(headers_0_1, headers_0_1, 0b00001000);
-        c.vpermq(headers_2_3, headers_2_3, 0b00001000);
-        c.vinserti128(headers_0_1, headers_0_1, headers_2_3.xmm(), 1);
+        // 2nd and 3rd i64 go to the second YMM lane in headers_2_3.
+        c.vpermq(headers_2_3, headers_2_3, 0b10000000);
+        c.vinserti128(headers_2_3, headers_2_3, headers_0_1.xmm(), 0);
 
-        return {headers_0_1, data_type_t::i64, data_kind_t::kMemory};
+        return {headers_2_3, data_type_t::i64, data_kind_t::kMemory};
     }
 
     jit_value_t
