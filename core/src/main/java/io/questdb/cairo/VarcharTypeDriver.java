@@ -242,11 +242,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param dataMem base pointer of the data vector
      * @param auxMem  base pointer of the auxiliary vector
      * @param ab      whether to return the A or B flyweight
-     *                <<<<<<< HEAD
      * @return a Utf8Sequence representing the value at rowNum
-     * =======
-     * @return a <code>Utf8Seqence</code> representing the value at <code>rowNum</code>
-     * >>>>>>> upstream/master
      */
     public static Utf8Sequence getValue(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
         final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
@@ -264,17 +260,19 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             return ab == 1 ? auxMem.getVarcharA(auxOffset + 1, size, ascii) : auxMem.getVarcharB(auxOffset + 1, size, ascii);
         }
+
         // string is split, prefix is duplicated in auxMem
-        Utf8SplitString utf8SplitString = ab == 1 ? auxMem.borrowUtf8SplitStringA() : auxMem.borrowUtf8SplitStringB();
-        if (utf8SplitString != null) {
-            return utf8SplitString.of(
-                    auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET),
-                    dataMem.addressOf(getDataOffset(auxMem, auxOffset)),
-                    (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
-                    ascii
-            );
-        }
-        return null;
+        return ab == 1 ? auxMem.getSplitVarcharA(
+                auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET),
+                dataMem.addressOf(getDataOffset(auxMem, auxOffset)),
+                (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
+                ascii
+        ) : auxMem.getSplitVarcharB(
+                auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET),
+                dataMem.addressOf(getDataOffset(auxMem, auxOffset)),
+                (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
+                ascii
+        );
     }
 
     /**

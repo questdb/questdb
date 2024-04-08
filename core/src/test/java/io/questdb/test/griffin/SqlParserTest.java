@@ -80,6 +80,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testBetweenWithNegativeBounds() throws Exception {
+        assertQuery(
+                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
+                "SELECT -5 BETWEEN -10 AND -1"
+        );
+        assertQuery(
+                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
+                "SELECT -5 BETWEEN -10 AND (-1)"
+        );
+        assertQuery(
+                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
+                "SELECT -5 BETWEEN (-10) AND -1"
+        );
+    }
+
+    @Test
     public void testACBetweenOrClause() throws Exception {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 12 preceding or 23 following) from xyz",

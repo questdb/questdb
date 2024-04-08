@@ -44,8 +44,8 @@ public class PageAddressCacheRecord implements Record, Closeable {
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
-    private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
-    private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
+    private final Utf8SplitString utf8SplitViewA = new Utf8SplitString(true);
+    private final Utf8SplitString utf8SplitViewB = new Utf8SplitString(true);
     private final InlinedVarchar utf8viewA = new InlinedVarchar();
     private final InlinedVarchar utf8viewB = new InlinedVarchar();
     private int frameIndex;
@@ -424,8 +424,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
     private Utf8Sequence getVarchar(int columnIndex, InlinedVarchar utf8view, Utf8SplitString utf8SplitView) {
         final long auxPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
         if (auxPageAddress == 0) {
-            // Column top.
-            return null;
+            return null; // Column top.
         }
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         return VarcharTypeDriver.getValue(

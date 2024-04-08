@@ -85,6 +85,16 @@ public interface Utf8Sequence {
     }
 
     /**
+     * Returns true if the pointer returned by {@link #ptr()} method is stable during a query execution.
+     * Stable is defined as:
+     * - the pointer remains valid for the duration of the query execution
+     * - the sequence of bytes pointed to by the pointer does not change during the query execution
+     */
+    default boolean isStable() {
+        return false;
+    }
+
+    /**
      * Returns eight bytes of the UTF-8 sequence located at the provided
      * byte offset, packed into a single `long` value. The bytes are arranged
      * in little-endian order. The method does not check bounds and will
@@ -99,6 +109,14 @@ public interface Utf8Sequence {
             result |= (long) (byteAt(i) & 0xff) << (8 * (i - offset));
         }
         return result;
+    }
+
+    /**
+     * For off-heap sequences returns address of the first character.
+     * For on-heap sequences returns -1.
+     */
+    default long ptr() {
+        return -1;
     }
 
     /**

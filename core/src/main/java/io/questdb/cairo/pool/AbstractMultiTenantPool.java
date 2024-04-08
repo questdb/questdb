@@ -384,6 +384,14 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
             return !closed || !Unsafe.cas(e.allocations, index, UNALLOCATED, owner);
         }
 
+        if (isClosed()) {
+            // Returning to closed pool is ok under race condition
+            // We may end up here because our "allocation" has been erased while we
+            // still see the reference to the pool. The allocation "erasure"
+            // occurs when pool is being closed. The memory writes should be ordered
+            // in such a way that when we see "UNALLOCATED" the pool closed flag is already set.
+            return false;
+        }
         throw CairoException.critical(0).put("double close [table=").put(tableToken.getDirName()).put(", index=").put(index).put(']');
     }
 
