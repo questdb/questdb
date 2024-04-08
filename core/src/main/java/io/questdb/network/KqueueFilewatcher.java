@@ -21,6 +21,7 @@ public class KqueueFilewatcher implements Closeable {
     private final long event;
     private boolean changed;
     private long lastModified;
+    private boolean closed;
 
 
     public KqueueFilewatcher(Path filePath){
@@ -71,6 +72,9 @@ public class KqueueFilewatcher implements Closeable {
                     1
             );
             if (res < 0) {
+                if (closed) {
+                    return;
+                }
                 throw NetworkError.instance(kq, "could not get event");
             };
 
@@ -90,9 +94,9 @@ public class KqueueFilewatcher implements Closeable {
     }
     @Override
     public void close() throws IOException {
+        closed = true;
         Files.close(kq);
         Files.close(fd);
-        fileToWatch.close();
         Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
     }
 
