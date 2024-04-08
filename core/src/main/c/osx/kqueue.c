@@ -27,6 +27,7 @@
 #include <sys/time.h>
 #include <stddef.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include "jni.h"
 
 JNIEXPORT jshort JNICALL Java_io_questdb_network_KqueueAccessor_getEvfiltRead
@@ -88,6 +89,11 @@ JNIEXPORT jshort JNICALL Java_io_questdb_network_KqueueAccessor_getEvDelete
     return EV_DELETE;
 }
 
+JNIEXPORT jshort JNICALL Java_io_questdb_network_KqueueAccessor_getEvClear
+        (JNIEnv *e, jclass cl) {
+    return EV_CLEAR;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_kqueue
         (JNIEnv *e, jclass cl) {
     return kqueue();
@@ -106,17 +112,39 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_kevent
     );
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_keventBlocking
-        (JNIEnv *e, jclass cl, jint kq, jlong changelist, jint nChanges, jlong eventlist, jint nEvents) {
+JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_keventRegister
+        (JNIEnv *e, jclass cl, jint kq, jlong changelist, jint nChanges) {
     return (jint) kevent(
-            kq, (const struct kevent *) changelist,
+            kq,
+            (const struct kevent *) changelist,
             nChanges,
-            (struct kevent *) eventlist,
+            NULL,
+            0,
+            NULL
+    );
+}
+
+
+JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_keventGetBlocking
+        (JNIEnv *e, jclass cl, jint kq, jlong eventList, jint nEvents) {
+    return (jint) kevent(
+            kq,
+            NULL,
+            0,
+            (struct kevent *) eventList,
             nEvents,
             NULL
     );
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_network_KqueueAccessor_evSet
+    (JNIEnv *e, jclass cl, jlong ident, jint filter, jint flags, jint fflags, jlong data) {
+    struct kevent *event = malloc(sizeof(struct kevent));
+    EV_SET(event, ident, filter, flags, fflags, data, NULL);
+    return (jlong)event;
+
+
+}
 JNIEXPORT jlong JNICALL Java_io_questdb_network_KqueueAccessor_pipe
         (JNIEnv *e, jclass cl) {
     int fds[2];

@@ -16,18 +16,28 @@ public class KqueueFilewatcher implements Closeable {
     private final int capacity = 1;
     private final int bufferSize;
     private final Path fileToWatch;
+    private final Path dir;
     private final int fd;
+    private final long event;
     private boolean changed;
     private long lastModified;
 
 
-    public KqueueFilewatcher(String filePath){
-        fileToWatch = new Path().of(filePath);
-        this.fd = Files.openRO(fileToWatch.parent());
+    public KqueueFilewatcher(Path filePath){
+        this.fileToWatch = new Path(255).of(filePath);
+        this.dir = new Path(255).of(this.fileToWatch).parent();
+        this.fd = Files.openRO(dir);
         if (this.fd < 0) {
-            throw CairoException.critical(this.fd).put("could not open file [path=").put(fileToWatch.parent()).put(']');
+            throw CairoException.critical(this.fd).put("could not open file [path=").put(this.dir).put(']');
         }
-        this.lastModified = Files.getLastModified(this.fileToWatch.$());
+        this.lastModified = Files.getLastModified(this.fileToWatch);
+        this.event = KqueueAccessor.evSet(
+                this.fd,
+                KqueueAccessor.EVFILT_VNODE,
+                KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
+                KqueueAccessor.NOTE_WRITE,
+                0
+        );
 
         kq = KqueueAccessor.kqueue();
         if (kq < 0) {
@@ -37,6 +47,17 @@ public class KqueueFilewatcher implements Closeable {
 
         this.bufferSize = KqueueAccessor.SIZEOF_KEVENT * capacity;
         this.eventList = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+
+        // Register event with queue
+        int res = KqueueAccessor.keventRegister(
+                kq,
+                this.event,
+                capacity
+        );
+        if (res < 0) {
+            throw NetworkError.instance(kq, "could not create new event");
+        }
+
     }
 
 
@@ -44,15 +65,16 @@ public class KqueueFilewatcher implements Closeable {
 
         do {
             // Blocks until there is a change in the watched dir
-            KqueueAccessor.keventBlocking(
+            int res = KqueueAccessor.keventGetBlocking(
                     kq,
-                    this.fd,
-                    capacity,
                     eventList,
                     1
             );
+            if (res < 0) {
+                throw NetworkError.instance(kq, "could not get event");
+            };
 
-            long lastModified = Files.getLastModified(this.fileToWatch.$());
+            long lastModified = Files.getLastModified(this.fileToWatch);
             if (lastModified > this.lastModified) {
                 this.changed = true;
                 this.lastModified = lastModified;

@@ -34,6 +34,7 @@ public class KqueueAccessor {
     static final short EV_ADD;
     static final short EV_DELETE;
     static final short EV_ONESHOT;
+    static final short EV_CLEAR;
     static final short FD_OFFSET;
     static final short FILTER_OFFSET;
     static final short FLAGS_OFFSET;
@@ -43,6 +44,7 @@ public class KqueueAccessor {
     static native short getEvAdd();
 
     static native short getEvDelete();
+    static native short getEvClear();
 
     static native short getEvOneshot();
 
@@ -61,7 +63,9 @@ public class KqueueAccessor {
     static native short getSizeofKevent();
 
     static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
-    static native int keventBlocking(int kq, long changeList, int nChanges, long eventList, int nEvents);
+    static native int keventRegister(int kq, long changeList, int nChanges);
+    static native int keventGetBlocking(int kq, long eventList, int nEvents);
+    static native long evSet(long ident, int filter, int flags, int fflags, long data);
 
     static native int kqueue();
 
@@ -84,5 +88,6 @@ public class KqueueAccessor {
         EV_ADD = getEvAdd();
         EV_ONESHOT = getEvOneshot();
         EV_DELETE = getEvDelete();
+        EV_CLEAR = getEvClear();
     }
 }
