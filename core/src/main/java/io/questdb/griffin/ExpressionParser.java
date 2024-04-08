@@ -990,6 +990,11 @@ public class ExpressionParser {
                         // push o1 onto the operator stack.
                         while ((other = opStack.peek()) != null) {
                             boolean greaterPrecedence = (op.leftAssociative && op.precedence >= other.precedence) || (!op.leftAssociative && op.precedence > other.precedence);
+                            // unary infix operator can't pop anything from the left unless it's parameterless exception like literal
+                            // this is helpful to automatically parse constructions like "x NOT IN y" because NOT will be treated like postfix operator
+                            if (op.type == UNARY && other.paramCount > 0) {
+                                break;
+                            }
                             if (greaterPrecedence) {
                                 argStackDepth = onNode(listener, other, argStackDepth, false);
                                 opStack.pop();

@@ -687,6 +687,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBooleanLogicPrecedence() throws Exception {
+        x("x y not =", "x = NOT y");
+    }
+
+    @Test
     public void testCorrectPrecedenceOfBasicOps() throws Exception {
         x("a ~ b ^ c d & |", "~a^b|c&d");
         x("1 2 4 & |", "1|2&4");
