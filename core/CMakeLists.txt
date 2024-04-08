@@ -80,7 +80,6 @@ if (APPLE)
             src/main/c/osx/affinity.c
             src/main/c/osx/accept.c
             src/main/c/freebsd/files.c
-            src/main/c/osx/filewatcher.c
     )
 elseif (UNIX)
     if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
@@ -99,7 +98,6 @@ elseif (UNIX)
                 src/main/c/freebsd/affinity.c
                 src/main/c/freebsd/accept.c
                 src/main/c/freebsd/files.c
-		src/main/c/freebsd/filewatcher.c
         )
     else (CMAKE_SYSTEM_NAME MATCHES "Linux")
         MESSAGE("Building for GNU/Linux")
@@ -330,10 +328,6 @@ else ()
             asm
     )
 endif (AARCH64)
-
-if(APPLE)
-    target_link_libraries(questdb "-framework CoreServices")
-endif (APPLE)
 
 if (WIN32)
     target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc)
