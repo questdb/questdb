@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -96,7 +96,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }));
                 threads.get(2 * i).start();
@@ -137,7 +137,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }));
                 threads.get(2 * i + 1).start();
@@ -167,7 +167,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     ref.set(e);
                 } finally {
-                    TableUtils.clearThreadLocals();
+                    Path.clearThreadLocals();
                 }
             }));
             threads.getLast().start();
@@ -183,7 +183,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     ref.set(e);
                 } finally {
-                    TableUtils.clearThreadLocals();
+                    Path.clearThreadLocals();
                 }
             }));
             threads.getLast().start();
@@ -243,7 +243,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                         halted.countDown();
                     }
                 }));
@@ -305,7 +305,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 } finally {
                     done.set(true);
                     halted.await(TimeUnit.SECONDS.toNanos(4L));
-                    TableUtils.clearThreadLocals();
+                    Path.clearThreadLocals();
                 }
             }
 
@@ -353,7 +353,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     } catch (Throwable e) {
                         ref.set(e);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 }));
                 threads.getLast().start();
@@ -609,7 +609,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         LOG.error().$(e).I$();
                         errorCounter.incrementAndGet();
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                     }
                 });
                 th.start();

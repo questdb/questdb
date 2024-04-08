@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -307,6 +307,19 @@ public class TableReaderRecord implements Record, Sinkable {
     @Nullable
     public Utf8Sequence getVarcharB(int col) {
         return getVarchar(col, 2);
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        final long rowNum = getAdjustedRecordIndex(col);
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                rowNum,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return VarcharTypeDriver.getValueSize(
+                reader.getColumn(absoluteColumnIndex + 1),
+                rowNum
+        );
     }
 
     public void incrementRecordIndex() {

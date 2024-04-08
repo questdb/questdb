@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -8542,10 +8542,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectWithJittedFilter27() throws Exception {
         assertPlan(
-                "create table tab ( s string, ts timestamp);",
+                "create table tab (s string, ts timestamp);",
                 "select * from tab where s = null ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: s is null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
+        );
+    }
+
+    @Test
+    public void testSelectWithJittedFilter28() throws Exception {
+        assertPlan(
+                "create table tab (v varchar, ts timestamp);",
+                "select * from tab where v = null ",
+                "Async JIT Filter workers: 1\n" +
+                        "  filter: v is null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"

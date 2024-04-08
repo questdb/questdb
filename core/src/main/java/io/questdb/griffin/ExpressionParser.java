@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -984,12 +984,14 @@ public class ExpressionParser {
                         int operatorType = op.type;
 
                         if (thisChar == '-' || thisChar == '~') {
+                            assert prevBranch != BRANCH_BETWEEN_START; // BRANCH_BETWEEN_START will be processed as default branch, so prevBranch must be BRANCH_OPERATOR in this case
                             switch (prevBranch) {
                                 case BRANCH_OPERATOR:
                                 case BRANCH_LEFT_PARENTHESIS:
                                 case BRANCH_COMMA:
                                 case BRANCH_NONE:
                                 case BRANCH_CASE_CONTROL:
+                                case BRANCH_BETWEEN_END: // handle unary minus for second operand of BETWEEN operator: BETWEEN x AND -y
                                     // we have unary minus
                                     operatorType = OperatorExpression.UNARY;
                                     break;

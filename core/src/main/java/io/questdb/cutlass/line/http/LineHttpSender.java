@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -461,13 +461,13 @@ public final class LineHttpSender implements Sender {
      * @return true if flush is required
      */
     private boolean rowAdded() {
+        pendingRows++;
         long nowNanos = System.nanoTime();
         if (flushAfterNanos == Long.MAX_VALUE) {
             flushAfterNanos = nowNanos + flushIntervalNanos;
         } else if (flushAfterNanos - nowNanos < 0) {
             return true;
         }
-        pendingRows++;
         return pendingRows == autoFlushRows;
     }
 

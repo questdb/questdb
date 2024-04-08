@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@ package io.questdb.jit;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.*;
@@ -86,6 +88,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int SUB = 15;  // a - b
     // Bind variables and deferred symbols
     public static final int VAR = 3;
+    public static final int VARCHAR_HEADER_TYPE = 9;
     // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
@@ -177,7 +180,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         traverseAlgo.traverse(node, this);
         putOperator(RET);
 
-        ensureOnlyVarlenHeaderChecks();
+        ensureOnlyVarSizeHeaderChecks();
         TypesObserver typesObserver = predicateContext.globalTypesObserver;
         int options = debug ? 1 : 0;
         int typeSize = typesObserver.maxSize();
@@ -304,6 +307,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 return STRING_HEADER_TYPE;
             case ColumnType.BINARY:
                 return BINARY_HEADER_TYPE;
+            case ColumnType.VARCHAR:
+                return VARCHAR_HEADER_TYPE;
             default:
                 return UNDEFINED_CODE;
         }
@@ -350,6 +355,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return true;
         }
         return Chars.equals(token, ">=");
+    }
+
+    private static boolean isVarSizeType(int type) {
+        return type == STRING_HEADER_TYPE || type == BINARY_HEADER_TYPE || type == VARCHAR_HEADER_TYPE;
     }
 
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
@@ -419,7 +428,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         putOperand(offset, VAR, typeCode, index);
     }
 
-    private void ensureOnlyVarlenHeaderChecks() throws SqlException {
+    private void ensureOnlyVarSizeHeaderChecks() throws SqlException {
         final ArrayDeque<Integer> typeStack = new ArrayDeque<>();
         for (long offset = 0; offset < memory.size(); offset += INSTRUCTION_SIZE) {
             int opCode = memory.getInt(offset);
@@ -443,8 +452,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // If none of the above, assume it's a binary operator
                     int lhsType = typeStack.pop();
                     int rhsType = typeStack.pop();
-                    if (lhsType == rhsType && (lhsType == STRING_HEADER_TYPE || lhsType == BINARY_HEADER_TYPE)) {
-                        throw SqlException.$(0, "varlen columns can only be used in length/NULL checks");
+                    if ((lhsType != rhsType && isVarSizeType(lhsType) && isVarSizeType(rhsType))
+                            || (lhsType == rhsType && isVarSizeType(lhsType))) {
+                        throw SqlException.$(0, "var-size columns can only be used in NULL checks");
                     }
                     typeStack.push(typeCode);
             }
@@ -783,10 +793,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 putOperand(offset, IMM, typeCode, Numbers.LONG_NaN, Numbers.LONG_NaN);
                 break;
             case STRING_HEADER_TYPE:
-                putOperand(offset, IMM, I4_TYPE, -1);
+                putOperand(offset, IMM, I4_TYPE, TableUtils.NULL_LEN);
                 break;
             case BINARY_HEADER_TYPE:
-                putOperand(offset, IMM, I8_TYPE, -1);
+                putOperand(offset, IMM, I8_TYPE, TableUtils.NULL_LEN);
+                break;
+            case VARCHAR_HEADER_TYPE: // varchar headers are stored in aux vector
+                putOperand(offset, IMM, I8_TYPE, VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL);
                 break;
             default:
                 throw SqlException.position(position).put("unexpected null type: ").put(typeCode);
@@ -1000,7 +1013,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private static final int I4_INDEX = 2;
         private static final int I8_INDEX = 4;
         private static final int STRING_HEADER_INDEX = 7;
-        private static final int TYPES_COUNT = BINARY_HEADER_INDEX + 1;
+        private static final int VARCHAR_HEADER_INDEX = 9;
+        private static final int TYPES_COUNT = VARCHAR_HEADER_INDEX + 1;
 
         private final byte[] sizes = new byte[TYPES_COUNT];
 
@@ -1084,6 +1098,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case BINARY_HEADER_TYPE:
                     sizes[BINARY_HEADER_INDEX] = 8;
                     break;
+                case VARCHAR_HEADER_TYPE:
+                    // We only read first 8 bytes from the aux vector.
+                    sizes[VARCHAR_HEADER_TYPE] = 8;
+                    break;
             }
         }
 
@@ -1107,6 +1125,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     return STRING_HEADER_TYPE;
                 case BINARY_HEADER_INDEX:
                     return BINARY_HEADER_TYPE;
+                case VARCHAR_HEADER_INDEX:
+                    return VARCHAR_HEADER_TYPE;
             }
             return UNDEFINED_CODE;
         }

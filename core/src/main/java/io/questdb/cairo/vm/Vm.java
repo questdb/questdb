@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,8 @@ import io.questdb.log.Log;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.StableDirectString;
+import io.questdb.std.str.Utf8Sequence;
 
 public class Vm {
     // Set to true to enable the assertion of pointers and buffer sizes which are too expensive for production.
@@ -118,12 +120,12 @@ public class Vm {
         return new MemoryCMRImpl(ff, name, size, memoryTag, false);
     }
 
-
     /**
      * note: set stable strings to true if the memory is used for query evaluation and strings are expected to be stable
      * for the duration of the query.
      *
-     * @see io.questdb.std.str.StableDirectSequence
+     * @see StableDirectString
+     * @see Utf8Sequence#isStable()
      */
     public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean stableStrings) {
         return new MemoryCMRImpl(ff, name, size, memoryTag, stableStrings);

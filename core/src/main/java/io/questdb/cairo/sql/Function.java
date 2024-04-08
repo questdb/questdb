@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -138,13 +138,13 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     short getShort(Record rec);
 
-    CharSequence getStrA(Record rec);
-
-    CharSequence getStrA(Record rec, int arrayIndex);
-
     void getStr(Record rec, Utf16Sink utf16Sink);
 
     void getStr(Record rec, Utf16Sink sink, int arrayIndex);
+
+    CharSequence getStrA(Record rec);
+
+    CharSequence getStrA(Record rec, int arrayIndex);
 
     CharSequence getStrB(Record rec);
 
@@ -154,12 +154,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     int getStrLen(Record rec, int arrayIndex);
 
-    @Nullable Utf8Sequence getVarcharA(Record rec);
-
-    void getVarchar(Record rec, Utf8Sink utf8Sink);
-
-    @Nullable Utf8Sequence getVarcharB(Record rec);
-
     CharSequence getSymbol(Record rec);
 
     CharSequence getSymbolB(Record rec);
@@ -167,6 +161,14 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     long getTimestamp(Record rec);
 
     int getType();
+
+    void getVarchar(Record rec, Utf8Sink utf8Sink);
+
+    @Nullable Utf8Sequence getVarcharA(Record rec);
+
+    @Nullable Utf8Sequence getVarcharB(Record rec);
+
+    int getVarcharSize(Record rec);
 
     default boolean isConstant() {
         return false;
@@ -231,5 +233,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     default void toTop() {
+        // no-op
     }
 }

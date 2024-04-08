@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -98,12 +98,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 .col("astring", ColumnType.STRING)
                 .col("astring2", ColumnType.STRING)
                 .col("avarchar", ColumnType.VARCHAR)
-                    .col("avarchar2", ColumnType.VARCHAR)
-                    .col("abinary", ColumnType.BINARY)
+                .col("avarchar2", ColumnType.VARCHAR)
+                .col("abinary", ColumnType.BINARY)
                 .col("abinary2", ColumnType.BINARY)
                 .col("auuid", ColumnType.UUID)
                 .col("along128", ColumnType.LONG128)
-                    .col("along256", ColumnType.LONG256)
+                .col("along256", ColumnType.LONG256)
                 .timestamp();
         AbstractCairoTest.create(model);
 
@@ -484,6 +484,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("adouble = 0 and along = 0", 8);
         filterToOptions.put("astring = null", 8);
         filterToOptions.put("abinary = null", 8);
+        filterToOptions.put("avarchar = null", 8);
         // 16B
         filterToOptions.put("auuid = '11111111-1111-1111-1111-111111111111'", 16);
         filterToOptions.put("auuid = null", 16);
@@ -505,8 +506,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testStringNullConstant() throws Exception {
         serialize("astring <> null");
         assertIR("(i32 -1L)(string_header astring)(<>)(ret)");
+        serialize("astring is not null");
+        assertIR("(i32 -1L)(string_header astring)(<>)(ret)");
         serialize("astring = null");
         assertIR("(i32 -1L)(string_header astring)(=)(ret)");
+        serialize("astring is null");
+        assertIR("(i32 -1L)(string_header astring)(=)(ret)");
+        serialize("null <> astring");
+        assertIR("(string_header astring)(i32 -1L)(<>)(ret)");
+        serialize("null = astring");
+        assertIR("(string_header astring)(i32 -1L)(=)(ret)");
     }
 
     @Test
@@ -649,6 +658,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
+    public void testUnsupportedMixedStringAndCharColumns() throws Exception {
+        serialize("astring = achar");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedMixedStringAndVarcharColumns() throws Exception {
+        serialize("astring = avarchar");
+    }
+
+    @Test(expected = SqlException.class)
     public void testUnsupportedMixedSymbolAndNumericColumns() throws Exception {
         serialize("asymbol = anint");
     }
@@ -666,6 +685,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedMixedUuidAndVarcharColumns() throws Exception {
         serialize("auuid = avarchar");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedMixedVarcharAndCharColumns() throws Exception {
+        serialize("avarchar = achar");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedMixedVarcharAndStringColumns() throws Exception {
+        serialize("avarchar = astring");
     }
 
     @Test(expected = SqlException.class)
@@ -737,6 +766,22 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testUuidConstant() throws Exception {
         serialize("auuid = '00000000-0000-0000-0000-000000000000'");
         assertIR("(i128 0 0L)(i128 auuid)(=)(ret)");
+    }
+
+    @Test
+    public void testVarcharNullConstant() throws Exception {
+        serialize("avarchar <> null");
+        assertIR("(i64 4L)(varchar_header avarchar)(<>)(ret)");
+        serialize("avarchar is not null");
+        assertIR("(i64 4L)(varchar_header avarchar)(<>)(ret)");
+        serialize("avarchar = null");
+        assertIR("(i64 4L)(varchar_header avarchar)(=)(ret)");
+        serialize("avarchar is null");
+        assertIR("(i64 4L)(varchar_header avarchar)(=)(ret)");
+        serialize("null = avarchar");
+        assertIR("(varchar_header avarchar)(i64 4L)(=)(ret)");
+        serialize("null <> avarchar");
+        assertIR("(varchar_header avarchar)(i64 4L)(<>)(ret)");
     }
 
     private void assertIR(String message, String expectedIR) {
@@ -972,6 +1017,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     return "string_header";
                 case BINARY_HEADER_TYPE:
                     return "binary_header";
+                case VARCHAR_HEADER_TYPE:
+                    return "varchar_header";
                 default:
                     return "unknown: " + type;
             }
