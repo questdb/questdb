@@ -25,11 +25,11 @@
 package io.questdb;
 
 public interface BuildInformation {
-    CharSequence getCommitHash();
+    String getCommitHash();
 
-    CharSequence getJdkVersion();
+    String getJdkVersion();
 
-    CharSequence getSwName();
+    String getSwName();
 
     String getSwVersion();
 }

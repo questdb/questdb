@@ -184,17 +184,17 @@ public class TelemetryTest extends AbstractCairoTest {
         final AtomicReference<String> refVersion = new AtomicReference<>();
         BuildInformation buildInformation = new BuildInformation() {
             @Override
-            public CharSequence getCommitHash() {
+            public String getCommitHash() {
                 return null;
             }
 
             @Override
-            public CharSequence getJdkVersion() {
+            public String getJdkVersion() {
                 return null;
             }
 
             @Override
-            public CharSequence getSwName() {
+            public String getSwName() {
                 return null;
             }
 

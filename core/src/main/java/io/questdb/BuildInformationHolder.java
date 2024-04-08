@@ -34,9 +34,9 @@ import java.util.jar.Manifest;
 public class BuildInformationHolder implements BuildInformation, CharSequence {
     private static final String UNKNOWN = "unknown";
     private final String buildKey;
-    private final CharSequence commitHash;
-    private final CharSequence jdkVersion;
-    private final CharSequence swName;
+    private final String commitHash;
+    private final String jdkVersion;
+    private final String swName;
     private final String swVersion;
 
     public BuildInformationHolder() {
@@ -44,10 +44,10 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     }
 
     public BuildInformationHolder(Class<?> clazz) {
-        CharSequence swVersion;
-        CharSequence swName;
-        CharSequence commitHash;
-        CharSequence jdkVersion;
+        String swVersion;
+        String swName;
+        String commitHash;
+        String jdkVersion;
         try {
             final Attributes manifestAttributes = getManifestAttributes(clazz);
             swVersion = getAttr(manifestAttributes, "Implementation-Version", "[DEVELOPMENT]");
@@ -60,15 +60,15 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
             commitHash = UNKNOWN;
             jdkVersion = UNKNOWN;
         }
-        this.swVersion = swVersion.toString();
+        this.swVersion = swVersion;
         this.swName = swName;
         this.commitHash = commitHash;
         this.jdkVersion = jdkVersion;
         buildKey = makeBuildKey(swVersion, commitHash, jdkVersion);
     }
 
-    public BuildInformationHolder(CharSequence swVersion, CharSequence commitHash, CharSequence jdkVersion, CharSequence swName) {
-        this.swVersion = swVersion.toString();
+    public BuildInformationHolder(String swVersion, String commitHash, String jdkVersion, String swName) {
+        this.swVersion = swVersion;
         this.commitHash = commitHash;
         this.jdkVersion = jdkVersion;
         this.swName = swName;
@@ -81,17 +81,17 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     }
 
     @Override
-    public CharSequence getCommitHash() {
+    public String getCommitHash() {
         return commitHash;
     }
 
     @Override
-    public CharSequence getJdkVersion() {
+    public String getJdkVersion() {
         return jdkVersion;
     }
 
     @Override
-    public CharSequence getSwName() {
+    public String getSwName() {
         return swName;
     }
 
@@ -116,8 +116,8 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
         return buildKey;
     }
 
-    private static CharSequence getAttr(final Attributes manifestAttributes, String attributeName, CharSequence defaultValue) {
-        final CharSequence value = manifestAttributes.getValue(attributeName);
+    private static String getAttr(final Attributes manifestAttributes, String attributeName, String defaultValue) {
+        final String value = manifestAttributes.getValue(attributeName);
         return value != null ? value : defaultValue;
     }
 
