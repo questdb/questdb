@@ -27,6 +27,8 @@ package io.questdb.network;
 public class KqueueAccessor {
     public static final short EVFILT_READ;
     public static final short SIZEOF_KEVENT;
+    static final short EVFILT_VNODE;
+    static final short NOTE_WRITE;
     static final short DATA_OFFSET;
     static final short EVFILT_WRITE;
     static final short EV_ADD;
@@ -47,6 +49,8 @@ public class KqueueAccessor {
     static native short getEvfiltRead();
 
     static native short getEvfiltWrite();
+    static native short getEvfiltVnode();
+    static native short getNoteWrite();
 
     static native short getFdOffset();
 
@@ -57,6 +61,7 @@ public class KqueueAccessor {
     static native short getSizeofKevent();
 
     static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
+    static native int keventBlocking(int kq, long changeList, int nChanges, long eventList, int nEvents);
 
     static native int kqueue();
 
@@ -69,6 +74,8 @@ public class KqueueAccessor {
     static {
         EVFILT_READ = getEvfiltRead();
         EVFILT_WRITE = getEvfiltWrite();
+        EVFILT_VNODE = getEvfiltVnode();
+        NOTE_WRITE = getNoteWrite();
         SIZEOF_KEVENT = getSizeofKevent();
         FD_OFFSET = getFdOffset();
         FILTER_OFFSET = getFilterOffset();

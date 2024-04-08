@@ -39,6 +39,15 @@ JNIEXPORT jshort JNICALL Java_io_questdb_network_KqueueAccessor_getEvfiltWrite
     return EVFILT_WRITE;
 }
 
+JNIEXPORT jshort JNICALL Java_io_questdb_network_KqueueAccessor_getEvfiltVnode
+        (JNIEnv *e, jclass cl) {
+    return EVFILT_VNODE;
+}
+
+JNIEXPORT jshort JNICALL Java_io_questdb_network_KqueueAccessor_getNoteWrite
+        (JNIEnv *e, jclass cl) {
+    return NOTE_WRITE;
+}
 JNIEXPORT jshort JNICALL Java_io_questdb_network_KqueueAccessor_getSizeofKevent
         (JNIEnv *e, jclass cl) {
     return (short) sizeof(struct kevent);
@@ -94,6 +103,17 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_kevent
             (struct kevent *) eventlist,
             nEvents,
             &_timeout
+    );
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_keventBlocking
+        (JNIEnv *e, jclass cl, jint kq, jlong changelist, jint nChanges, jlong eventlist, jint nEvents) {
+    return (jint) kevent(
+            kq, (const struct kevent *) changelist,
+            nChanges,
+            (struct kevent *) eventlist,
+            nEvents,
+            NULL
     );
 }
 
