@@ -165,13 +165,13 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStrA(Record rec) {
-        return getBase().getStrA(rec);
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
+        getBase().getStr(rec, utf16Sink);
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        getBase().getStr(rec, utf16Sink);
+    public CharSequence getStrA(Record rec) {
+        return getBase().getStrA(rec);
     }
 
     @Override
@@ -217,6 +217,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         return getBase().getVarcharB(rec);
+    }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        return getBase().getVarcharSize(rec);
     }
 
     public String getVariableName() {

@@ -29,7 +29,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Chars;
-import io.questdb.std.str.*;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 
 public class VarcharConstant extends VarcharFunction implements ConstantFunction {
     public static final VarcharConstant EMPTY = new VarcharConstant("");
@@ -108,6 +111,11 @@ public class VarcharConstant extends VarcharFunction implements ConstantFunction
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         return value;
+    }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        return value != null ? value.size() : TableUtils.NULL_LEN;
     }
 
     @Override

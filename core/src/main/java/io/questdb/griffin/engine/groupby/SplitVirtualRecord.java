@@ -153,13 +153,13 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
-    public CharSequence getStrA(int col) {
-        return getFunction(col).getStrA(base);
+    public void getStr(int col, Utf16Sink utf16Sink) {
+        getFunction(col).getStr(base, utf16Sink);
     }
 
     @Override
-    public void getStr(int col, Utf16Sink utf16Sink) {
-        getFunction(col).getStr(base, utf16Sink);
+    public CharSequence getStrA(int col) {
+        return getFunction(col).getStrA(base);
     }
 
     @Override
@@ -200,6 +200,11 @@ public class SplitVirtualRecord implements Record {
     @Override
     public Utf8Sequence getVarcharB(int col) {
         return getFunction(col).getVarcharB(base);
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        return getFunction(col).getVarcharSize(base);
     }
 
     public void setActiveA() {

@@ -8542,10 +8542,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectWithJittedFilter27() throws Exception {
         assertPlan(
-                "create table tab ( s string, ts timestamp);",
+                "create table tab (s string, ts timestamp);",
                 "select * from tab where s = null ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: s is null\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
+        );
+    }
+
+    @Test
+    public void testSelectWithJittedFilter28() throws Exception {
+        assertPlan(
+                "create table tab (v varchar, ts timestamp);",
+                "select * from tab where v = null ",
+                "Async JIT Filter workers: 1\n" +
+                        "  filter: v is null\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
