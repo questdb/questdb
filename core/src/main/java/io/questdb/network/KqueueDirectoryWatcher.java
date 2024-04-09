@@ -9,29 +9,23 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 import java.io.IOException;
 
-public class KqueueFilewatcher implements Closeable {
+public class KqueueDirectoryWatcher implements Closeable {
 
     private final int kq;
     private final long eventList;
-    private final int capacity = 1;
     private final int bufferSize;
-    private final Path fileToWatch;
-    private final Path dir;
     private final int fd;
     private final long event;
-    private boolean changed;
-    private long lastModified;
     private boolean closed;
 
 
-    public KqueueFilewatcher(Path filePath){
-        this.fileToWatch = new Path(255).of(filePath);
-        this.dir = new Path(255).of(this.fileToWatch).parent();
-        this.fd = Files.openRO(dir);
+    public KqueueDirectoryWatcher(Path dirPath){
+
+        this.fd = Files.openRO(dirPath);
         if (this.fd < 0) {
-            throw CairoException.critical(this.fd).put("could not open file [path=").put(this.dir).put(']');
+            throw CairoException.critical(this.fd).put("could not open directory [path=").put(dirPath).put(']');
         }
-        this.lastModified = Files.getLastModified(this.fileToWatch);
+
         this.event = KqueueAccessor.evSet(
                 this.fd,
                 KqueueAccessor.EVFILT_VNODE,
@@ -46,14 +40,14 @@ public class KqueueFilewatcher implements Closeable {
         }
         Files.bumpFileCount(this.kq);
 
-        this.bufferSize = KqueueAccessor.SIZEOF_KEVENT * capacity;
+        this.bufferSize = KqueueAccessor.SIZEOF_KEVENT;
         this.eventList = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
 
         // Register event with queue
         int res = KqueueAccessor.keventRegister(
                 kq,
-                this.event,
-                capacity
+                event,
+                1
         );
         if (res < 0) {
             throw NetworkError.instance(kq, "could not create new event");
@@ -61,8 +55,12 @@ public class KqueueFilewatcher implements Closeable {
 
     }
 
+    public interface Callback {
+        void onDirectoryChanged();
+    }
 
-    public void start(){
+
+    public void start(Callback callback){
 
         do {
             // Blocks until there is a change in the watched dir
@@ -78,26 +76,17 @@ public class KqueueFilewatcher implements Closeable {
                 throw NetworkError.instance(kq, "could not get event");
             };
 
-            long lastModified = Files.getLastModified(this.fileToWatch);
-            if (lastModified > this.lastModified) {
-                this.changed = true;
-                this.lastModified = lastModified;
-            }
+            callback.onDirectoryChanged();
         } while (true);
     }
-    public boolean changed(){
-        if (this.changed) {
-            this.changed = false;
-            return true;
-        }
-        return false;
-    }
+
     @Override
     public void close() throws IOException {
         closed = true;
         Files.close(kq);
         Files.close(fd);
         Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+        Unsafe.free(this.event, KqueueAccessor.SIZEOF_KEVENT, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
     }
 
 }
