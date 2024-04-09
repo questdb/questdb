@@ -38,7 +38,13 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
+import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -75,7 +81,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Transient @NotNull EntityColumnFilter entityColumnFilter,
             @Transient @NotNull IntList groupByFunctionPositions,
-            int timestampIndex
+            int timestampIndex,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) throws SqlException {
         super(metadata);
         final int columnCount = model.getBottomUpColumns().size();
@@ -146,7 +156,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         entityColumnFilter.of(keyTypes.getColumnCount());
         this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, false);
 
-        this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes);
+        this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, sampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
     }
 
     @Override
@@ -231,12 +241,30 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private long prevSample = -1;
         private long rowId;
 
+        protected final Function offsetFunc;
+        protected final int offsetFuncPos;
+        protected final TimestampSampler timestampSampler;
+        protected final Function timezoneNameFunc;
+        protected final int timezoneNameFuncPos;
+        protected long fixedOffset;
+        protected long localEpoch;
+        protected long nextDstUtc;
+        protected long prevDst;
+        protected TimeZoneRules rules;
+        protected long tzOffset;
+
+
         public SampleByInterpolateRecordCursor(
                 CairoConfiguration configuration,
                 ObjList<Function> functions,
                 ObjList<GroupByFunction> groupByFunctions,
                 @Transient @NotNull ArrayColumnTypes keyTypes,
-                @Transient @NotNull ArrayColumnTypes valueTypes
+                @Transient @NotNull ArrayColumnTypes valueTypes,
+                TimestampSampler timestampSampler,
+                Function timezoneNameFunc,
+                int timezoneNameFuncPos,
+                Function offsetFunc,
+                int offsetFuncPos
         ) {
             super(functions);
             // this is the map itself, which we must not forget to free when factory closes
@@ -247,6 +275,12 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             allocator = GroupByAllocatorFactory.createThreadUnsafeAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
             isOpen = true;
+
+            this.timestampSampler = timestampSampler;
+            this.timezoneNameFunc = timezoneNameFunc;
+            this.timezoneNameFuncPos = timezoneNameFuncPos;
+            this.offsetFunc = offsetFunc;
+            this.offsetFuncPos = offsetFuncPos;
         }
 
         @Override
@@ -259,6 +293,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Misc.clearObjList(groupByFunctions);
                 super.close();
             }
+            Misc.free(timezoneNameFunc);
+            Misc.free(offsetFunc);
         }
 
         @Override
@@ -270,7 +306,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             return super.hasNext();
         }
 
-        public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) {
+        public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
                 recordKeyMap.reopen();
@@ -287,6 +323,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             isMapInitialized = false;
             isMapFilled = false;
             isMapBuilt = false;
+            parseParams(this, executionContext);
         }
 
         @Override
@@ -489,10 +526,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 // we have data in cursor, so we can grab first value
                 final boolean good = managedCursor.hasNext();
                 assert good;
-                long timestamp = managedRecord.getTimestamp(timestampIndex);
-                sampler.setStart(timestamp);
-                prevSample = sampler.round(timestamp);
-                loSample = prevSample; // the lowest timestamp value
+
+                initTimestamps();
             }
 
             do {
@@ -634,6 +669,79 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     groupByFunctions.getQuick(i).setNull(value);
                 }
             }
+        }
+
+        protected void parseParams(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+            // factory guarantees that base cursor is not empty
+            timezoneNameFunc.init(base, executionContext);
+            offsetFunc.init(base, executionContext);
+            rules = null;
+
+            final CharSequence tz = timezoneNameFunc.getStrA(null);
+            if (tz != null) {
+                try {
+                    long opt = Timestamps.parseOffset(tz);
+                    if (opt == Long.MIN_VALUE) {
+                        // this is timezone name
+                        // fixed rules means the timezone does not have historical or daylight time changes
+                        rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+                                RESOLUTION_MICROS
+                        );
+                    } else {
+                        // here timezone is in numeric offset format
+                        tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
+                        nextDstUtc = Long.MAX_VALUE;
+                    }
+                } catch (NumericException e) {
+                    throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
+                }
+            } else {
+                tzOffset = 0;
+                nextDstUtc = Long.MAX_VALUE;
+            }
+
+            final CharSequence offset = offsetFunc.getStrA(null);
+            if (offset != null) {
+                final long val = Timestamps.parseOffset(offset);
+                if (val == Numbers.LONG_NaN) {
+                    // bad value for offset
+                    throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
+                }
+                fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
+            } else {
+                fixedOffset = Long.MIN_VALUE;
+            }
+        }
+
+
+        private boolean areTimestampsInitialized;
+
+        protected void initTimestamps() {
+            if (areTimestampsInitialized) {
+                return;
+            }
+
+            if (!managedCursor.hasNext()) {
+                managedRecord = null;
+                return;
+            }
+
+            final long timestamp = managedRecord.getTimestamp(timestampIndex);
+            if (rules != null) {
+                tzOffset = rules.getOffset(timestamp);
+                nextDstUtc = rules.getNextDST(timestamp);
+            }
+
+            if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
+                // this is the default path, we align time intervals to the first observation
+                timestampSampler.setStart(timestamp);
+            } else {
+                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+            }
+            prevSample = sampler.round(timestamp);
+            loSample = prevSample; // the lowest timestamp value
+            areTimestampsInitialized = true;
         }
     }
 }

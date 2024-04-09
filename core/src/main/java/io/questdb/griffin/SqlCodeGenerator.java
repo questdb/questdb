@@ -2896,7 +2896,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         valueTypes,
                         entityColumnFilter,
                         groupByFunctionPositions,
-                        timestampIndex
+                        timestampIndex,
+                        timezoneNameFunc,
+                        timezoneNameFuncPos,
+                        offsetFunc,
+                        offsetFuncPos
                 );
             }
 
