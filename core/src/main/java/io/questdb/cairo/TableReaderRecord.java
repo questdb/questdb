@@ -309,6 +309,19 @@ public class TableReaderRecord implements Record, Sinkable {
         return getVarchar(col, 2);
     }
 
+    @Override
+    public int getVarcharSize(int col) {
+        final long rowNum = getAdjustedRecordIndex(col);
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                rowNum,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return VarcharTypeDriver.getValueSize(
+                reader.getColumn(absoluteColumnIndex + 1),
+                rowNum
+        );
+    }
+
     public void incrementRecordIndex() {
         recordIndex++;
     }

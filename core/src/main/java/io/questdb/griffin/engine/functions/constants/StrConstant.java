@@ -91,6 +91,11 @@ public class StrConstant extends StrFunction implements ConstantFunction {
     }
 
     @Override
+    public int getVarcharSize(Record rec) {
+        return utf8Value != null ? utf8Value.size() : TableUtils.NULL_LEN;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         if (value == null) {
             sink.val("null");

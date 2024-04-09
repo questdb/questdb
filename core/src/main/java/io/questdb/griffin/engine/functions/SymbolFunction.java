@@ -210,6 +210,11 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
         return null;
     }
 
+    @Override
+    public final int getVarcharSize(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
     public abstract boolean isSymbolTableStatic();
 
     /**

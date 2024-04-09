@@ -301,6 +301,11 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
+        public int getVarcharSize(int columnIndex) {
+            return baseRecord.getVarcharSize(columnIndex);
+        }
+
+        @Override
         public long keyHashCode() {
             return baseRecord.keyHashCode();
         }

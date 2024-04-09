@@ -385,7 +385,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         return partitionSize;
                     default:
                         throw new UnsupportedOperationException();
-
                 }
             }
 

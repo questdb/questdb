@@ -162,7 +162,7 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getVarcharA(rec) == null);
+            return negated != (arg.getVarcharSize(rec) == -1L);
         }
 
         @Override
