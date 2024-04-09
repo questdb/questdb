@@ -5,7 +5,7 @@ import io.questdb.std.str.Path;
 
 public class DirWatcherFactory {
 
-    public static DirWatcher GetDirWatcher(Path dirPath) {
+    public static DirWatcher GetDirWatcher(String dirPath) {
         if (Os.isOSX() || Os.isFreeBSD()) {
             return new KqueueDirWatcher(dirPath);
         } else if (Os.isWindows()) {

@@ -19,11 +19,13 @@ public class KqueueDirWatcher implements DirWatcher {
     private boolean closed;
 
 
-    public KqueueDirWatcher(Path dirPath){
-
-        this.fd = Files.openRO(dirPath);
-        if (this.fd < 0) {
-            throw CairoException.critical(this.fd).put("could not open directory [path=").put(dirPath).put(']');
+    public KqueueDirWatcher(String dirPath){
+        try (Path p = new Path()) {
+            p.of(dirPath).$();
+            this.fd = Files.openRO(p);
+            if (this.fd < 0) {
+                throw CairoException.critical(this.fd).put("could not open directory [path=").put(dirPath).put(']');
+            }
         }
 
         this.event = KqueueAccessor.evSet(

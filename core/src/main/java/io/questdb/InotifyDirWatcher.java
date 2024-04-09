@@ -6,10 +6,14 @@ import java.io.IOException;
 
 public final class InotifyDirWatcher implements DirWatcher {
 
-    long fd;
+    long dirWatcherPtr;
     boolean closed;
-    public InotifyDirWatcher(Path path) {
-        fd = setup(path.ptr());
+
+    public InotifyDirWatcher(String dirPath) {
+        try (Path p = new Path()) {
+            p.of(dirPath).$();
+            this.dirWatcherPtr = setup(p.ptr());
+        }
     }
 
     static native long setup(long path);
@@ -17,12 +21,11 @@ public final class InotifyDirWatcher implements DirWatcher {
     static native long waitForChange(long address);
 
 
-
     @Override
     public void waitForChange(DirWatcherCallback callback) {
         long result;
         do {
-            result = waitForChange(fd);
+            result = waitForChange(dirWatcherPtr);
             if (result < 0 ){
                 if (closed) {
                     return;
@@ -37,7 +40,8 @@ public final class InotifyDirWatcher implements DirWatcher {
     @Override
     public void close() throws IOException {
         closed = true;
-        teardown(fd);
+        teardown(dirWatcherPtr);
+
     }
 
 }

@@ -11,7 +11,6 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -21,7 +20,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Map;
 import java.util.Properties;
 
-public class SteveServerConfiguration implements DynamicServerConfiguration {
+public class SteveServerConfiguration implements DynamicServerConfiguration, DirWatcherCallback {
     private PropServerConfiguration delegate;
 
     String root;
@@ -32,6 +31,7 @@ public class SteveServerConfiguration implements DynamicServerConfiguration {
     MicrosecondClock microsecondClock;
     FactoryProviderFactory fpf;
     boolean loadAdditionalConfigurations;
+    DirWatcher dirWatcher;
 
     public SteveServerConfiguration(
             String root,
@@ -64,6 +64,8 @@ public class SteveServerConfiguration implements DynamicServerConfiguration {
                 fpf ,
                 loadAdditionalConfigurations
         );
+
+        this.dirWatcher = DirWatcherFactory.GetDirWatcher(this.delegate.getCairoConfiguration().getConfRoot().toString());
 
     }
 
@@ -108,6 +110,11 @@ public class SteveServerConfiguration implements DynamicServerConfiguration {
                 (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
                 true
         );
+    }
+
+    @Override
+    public void onDirChanged() {
+
     }
 
     public void reload(Properties properties) {
