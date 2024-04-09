@@ -221,21 +221,18 @@ namespace questdb::avx2 {
         Gp varsize_aux_address = c.newInt64("varsize_aux_address");
         c.mov(varsize_aux_address, ptr(varsize_aux_ptr, 8 * column_idx, 8));
 
-        Gp header_offset_0 = c.newInt64("header_offset_0");
-        Gp header_offset_2 = c.newInt64("header_offset_2");
+        Gp header_offset = c.newInt64("header_offset");
 
-        c.mov(header_offset_0, input_index);
+        c.mov(header_offset, input_index);
         auto header_shift = type_shift(data_type_t::i128);
-        c.sal(header_offset_0, header_shift);
-        c.mov(header_offset_2, header_offset_0);
-        c.add(header_offset_2, 32);
+        c.sal(header_offset, header_shift);
 
         Ymm headers_0_1 = c.newYmm("headers_0_1");
         Ymm headers_2_3 = c.newYmm("headers_2_3");
 
         // Load 4 headers into two YMMs.
-        c.vmovdqu(headers_0_1, ymmword_ptr(varsize_aux_address, header_offset_0, 0));
-        c.vmovdqu(headers_2_3, ymmword_ptr(varsize_aux_address, header_offset_2, 0));
+        c.vmovdqu(headers_0_1, ymmword_ptr(varsize_aux_address, header_offset, 0));
+        c.vmovdqu(headers_2_3, ymmword_ptr(varsize_aux_address, header_offset, 0, 32));
 
         // Permute the first i64 of each header and combine them into single YMM.
         // 0th and 1st i64 go to the first YMM lane in headers_0_1.
