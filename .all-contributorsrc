@@ -3,14 +3,14 @@
     "README.md",
     "i18n/README.ar-dz.md",
     "i18n/README.es-es.md",
+    "i18n/README.hn-in.md",
     "i18n/README.it-it.md",
     "i18n/README.ja-ja.md",
     "i18n/README.pt.md",
+    "i18n/README.tr-tr.md",
     "i18n/README.ua-ua.md",
     "i18n/README.zh-cn.md",
-    "i18n/README.zh-hk.md",
-    "i18n/README.tr-tr.md",
-    "i18n/README.hn-in.md"
+    "i18n/README.zh-hk.md"
   ],
   "imageSize": 100,
   "commit": false,
@@ -1077,6 +1077,24 @@
       "name": "Sagnik Sahoo",
       "avatar_url": "https://avatars.githubusercontent.com/u/70798495?v=4",
       "profile": "https://github.com/heysagnik",
+      "contributions": [
+        "doc"
+      ]
+    },
+    {
+      "login": "1998code",
+      "name": "MING",
+      "avatar_url": "https://avatars.githubusercontent.com/u/54872601?v=4",
+      "profile": "https://github.com/1998code",
+      "contributions": [
+        "doc"
+      ]
+    },
+    {
+      "login": "TheZalRevolt",
+      "name": "Riccardo Solazzi",
+      "avatar_url": "https://avatars.githubusercontent.com/u/129967922?v=4",
+      "profile": "https://github.com/TheZalRevolt",
       "contributions": [
         "doc"
       ]
