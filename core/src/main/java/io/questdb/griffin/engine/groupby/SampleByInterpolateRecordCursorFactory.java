@@ -247,9 +247,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         protected final Function timezoneNameFunc;
         protected final int timezoneNameFuncPos;
         protected long fixedOffset;
-        protected long localEpoch;
         protected long nextDstUtc;
-        protected long prevDst;
         protected TimeZoneRules rules;
         protected long tzOffset;
 
