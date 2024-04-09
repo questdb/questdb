@@ -233,4 +233,15 @@ public abstract class CharFunction implements ScalarFunction {
         }
         return null;
     }
+
+    @Override
+    public final int getVarcharSize(Record rec) {
+        final char value = getChar(rec);
+        if (value == 0) {
+            return TableUtils.NULL_LEN;
+        }
+        utf8SinkA.clear();
+        utf8SinkA.put(getChar(rec));
+        return utf8SinkA.size();
+    }
 }

@@ -231,7 +231,6 @@ public class GroupByFunctionTest {
 
         @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-
         }
 
         @Override
@@ -242,6 +241,11 @@ public class GroupByFunctionTest {
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             return null;
+        }
+
+        @Override
+        public int getVarcharSize(Record rec) {
+            return 0;
         }
 
         @Override

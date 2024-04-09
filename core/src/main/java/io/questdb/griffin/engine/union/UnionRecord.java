@@ -205,20 +205,20 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public CharSequence getStrA(int col) {
-        if (useA) {
-            return recordA.getStrA(col);
-        }
-        return recordB.getStrA(col);
-    }
-
-    @Override
     public void getStr(int col, Utf16Sink utf16Sink) {
         if (useA) {
             recordA.getStr(col, utf16Sink);
         } else {
             recordB.getStr(col, utf16Sink);
         }
+    }
+
+    @Override
+    public CharSequence getStrA(int col) {
+        if (useA) {
+            return recordA.getStrA(col);
+        }
+        return recordB.getStrA(col);
     }
 
     @Override
@@ -268,5 +268,13 @@ public class UnionRecord extends AbstractUnionRecord {
             return recordA.getVarcharB(col);
         }
         return recordB.getVarcharB(col);
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        if (useA) {
+            return recordA.getVarcharSize(col);
+        }
+        return recordB.getVarcharSize(col);
     }
 }

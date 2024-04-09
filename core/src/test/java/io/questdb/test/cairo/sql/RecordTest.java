@@ -110,6 +110,11 @@ public class RecordTest {
         RECORD.getTimestamp(0);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharSize() {
+        RECORD.getVarcharSize(0);
+    }
+
     private static class MyRecord implements Record {
     }
 }

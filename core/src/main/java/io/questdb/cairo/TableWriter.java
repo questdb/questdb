@@ -2640,7 +2640,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void attachPartitionCheckFilesMatchVarLenColumn(
+    private void attachPartitionCheckFilesMatchVarSizeColumn(
             long partitionSize,
             long columnTop,
             String columnName,
@@ -2648,7 +2648,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Path partitionPath,
             long partitionTimestamp,
             int columnIndex,
-            int columnType) throws CairoException {
+            int columnType
+    ) throws CairoException {
         long columnSize = partitionSize - columnTop;
         if (columnSize == 0) {
             return;
@@ -2919,7 +2920,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (ColumnType.isSymbol(type)) {
                         attachPartitionCheckSymbolColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
                     } else if (ColumnType.isVarSize(type)) {
-                        attachPartitionCheckFilesMatchVarLenColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex, columnType);
+                        attachPartitionCheckFilesMatchVarSizeColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex, columnType);
                     } else if (ColumnType.isFixedSize(type)) {
                         attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
                     } else {
