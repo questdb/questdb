@@ -274,12 +274,25 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("TCPS::addr=localhost;", "invalid schema [schema=TCPS, supported-schemas=[http, https, tcp, tcps]]");
             assertConfStrError("http::addr=localhost;auto_flush=off;auto_flush_interval=1;", "cannot set auto flush interval when interval based auto-flush is already disabled");
             assertConfStrError("http::addr=localhost;auto_flush=off;auto_flush_rows=1;", "cannot set auto flush rows when auto-flush is already disabled");
-
+            assertConfStrError("http::addr=localhost;auto_flush_bytes=1024;", "auto_flush_bytes is only supported for TCP transport");
 
             assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100");
             assertConfStrOk("addr=localhost:8080", "auto_flush=on", "auto_flush_rows=100");
             assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "auto_flush=on");
             assertConfStrOk("addr=localhost", "auto_flush=on");
+
+            runInContext(r -> {
+                String tcpAddr = "tcp::addr=localhost:" + bindPort + ";";
+                assertConfStrOk(tcpAddr + "auto_flush_bytes=1024;");
+                assertConfStrOk(tcpAddr + "init_buf_size=1024;");
+                assertConfStrOk(tcpAddr + "init_buf_size=1024;auto_flush_bytes=1024;");
+                assertConfStrOk(tcpAddr + "auto_flush_bytes=1024;init_buf_size=1024;");
+            });
+            assertConfStrError("tcp::addr=localhost;auto_flush_bytes=1024;init_buf_size=2048;", "TCP transport requires init_buf_size and auto_flush_bytes to be set to the same value [init_buf_size=2048, auto_flush_bytes=1024]");
+            assertConfStrError("tcp::addr=localhost;init_buf_size=1024;auto_flush_bytes=2048;", "TCP transport requires init_buf_size and auto_flush_bytes to be set to the same value [init_buf_size=1024, auto_flush_bytes=2048]");
+            assertConfStrError("tcp::addr=localhost;auto_flush_bytes=off;", "TCP transport must have auto_flush_bytes enabled");
+
+
             assertConfStrOk("http::addr=localhost;auto_flush=off;");
             assertConfStrOk("http::addr=localhost;");
             assertConfStrOk("http::addr=localhost;auto_flush_interval=off;");
