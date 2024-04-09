@@ -27,6 +27,7 @@ package io.questdb.network;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
+import io.questdb.KqueueAccessor;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 

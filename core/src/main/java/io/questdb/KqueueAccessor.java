@@ -22,58 +22,58 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package io.questdb;
 
 public class KqueueAccessor {
     public static final short EVFILT_READ;
     public static final short SIZEOF_KEVENT;
-    static final short EVFILT_VNODE;
-    static final short NOTE_WRITE;
-    static final short DATA_OFFSET;
-    static final short EVFILT_WRITE;
-    static final short EV_ADD;
-    static final short EV_DELETE;
-    static final short EV_ONESHOT;
-    static final short EV_CLEAR;
-    static final short FD_OFFSET;
-    static final short FILTER_OFFSET;
-    static final short FLAGS_OFFSET;
+    public static final short EVFILT_VNODE;
+    public static final short NOTE_WRITE;
+    public static final short DATA_OFFSET;
+    public static final short EVFILT_WRITE;
+    public static final short EV_ADD;
+    public static final short EV_DELETE;
+    public static final short EV_ONESHOT;
+    public static final short EV_CLEAR;
+    public static final short FD_OFFSET;
+    public static final short FILTER_OFFSET;
+    public static final short FLAGS_OFFSET;
 
-    static native short getDataOffset();
+    public static native short getDataOffset();
 
-    static native short getEvAdd();
+    public static native short getEvAdd();
 
-    static native short getEvDelete();
-    static native short getEvClear();
+    public static native short getEvDelete();
+    public static native short getEvClear();
 
-    static native short getEvOneshot();
+    public static native short getEvOneshot();
 
-    static native short getEvfiltRead();
+    public static native short getEvfiltRead();
 
-    static native short getEvfiltWrite();
-    static native short getEvfiltVnode();
-    static native short getNoteWrite();
+    public static native short getEvfiltWrite();
+    public static native short getEvfiltVnode();
+    public static native short getNoteWrite();
 
-    static native short getFdOffset();
+    public static native short getFdOffset();
 
-    static native short getFilterOffset();
+    public static native short getFilterOffset();
 
-    static native short getFlagsOffset();
+    public static native short getFlagsOffset();
 
-    static native short getSizeofKevent();
+    public static native short getSizeofKevent();
 
-    static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
-    static native int keventRegister(int kq, long changeList, int nChanges);
-    static native int keventGetBlocking(int kq, long eventList, int nEvents);
-    static native long evSet(long ident, int filter, int flags, int fflags, long data);
+    public static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
+    public static native int keventRegister(int kq, long changeList, int nChanges);
+    public static native int keventGetBlocking(int kq, long eventList, int nEvents);
+    public static native long evSet(long ident, int filter, int flags, int fflags, long data);
 
-    static native int kqueue();
+    public static native int kqueue();
 
-    static native long pipe();
+    public static native long pipe();
 
-    static native int readPipe(int fd);
+    public static native int readPipe(int fd);
 
-    static native int writePipe(int fd);
+    public static native int writePipe(int fd);
 
     static {
         EVFILT_READ = getEvfiltRead();

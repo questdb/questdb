@@ -26,7 +26,6 @@ package io.questdb;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Filewatcher;
 import io.questdb.std.str.Path;
 import io.questdb.mp.SynchronizedJob;
 import java.io.Closeable;
@@ -36,14 +35,14 @@ import java.nio.file.Paths;
 import java.util.Properties;
 
 public class ServerConfigurationChangeWatcherJob extends SynchronizedJob implements Closeable {
-    private final long watcherAddress;
-    private final DynamicServerConfiguration serverConfiguration;
+    //private final long watcherAddress;
+    //private final DynamicServerConfiguration serverConfiguration;
     private final static Log LOG = LogFactory.getLog(ServerConfigurationChangeWatcherJob.class);
-    private Properties properties;
-    private final java.nio.file.Path confPath;
+    //private Properties properties;
+    //private final java.nio.file.Path confPath;
 
     public ServerConfigurationChangeWatcherJob(DynamicServerConfiguration serverConfiguration) throws IOException {
-
+    /*
         this.serverConfiguration = serverConfiguration;
         this.confPath = Paths.get(serverConfiguration.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
 
@@ -54,18 +53,23 @@ public class ServerConfigurationChangeWatcherJob extends SynchronizedJob impleme
 
         try (Path path = new Path()) {
             path.of(confPath.toString()).$();
-            this.watcherAddress = Filewatcher.setup(path.ptr());
+            this.watcherAddress = InotifyDirWatcher.setup(path.ptr());
         }
+
+     */
     }
 
     public void close() {
-        Filewatcher.teardown(this.watcherAddress);
+        /*
+        InotifyDirWatcher.teardown(this.watcherAddress);
+
+         */
     }
 
     @Override
     protected boolean runSerially() {
-
-        if (Filewatcher.changed(this.watcherAddress)) {
+    /*
+        if (InotifyDirWatcher.changed(this.watcherAddress)) {
             LOG.info().$("config file changed").$();
             Properties newProperties = new Properties();
 
@@ -86,5 +90,7 @@ public class ServerConfigurationChangeWatcherJob extends SynchronizedJob impleme
             }
         }
         return true;
+     */
+        return false;
     }
 }

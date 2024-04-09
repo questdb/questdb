@@ -24,6 +24,8 @@
 
 package io.questdb.network;
 
+import io.questdb.KqueueAccessor;
+
 public class KqueueFacadeImpl implements KqueueFacade {
     public static final KqueueFacade INSTANCE = new KqueueFacadeImpl();
 

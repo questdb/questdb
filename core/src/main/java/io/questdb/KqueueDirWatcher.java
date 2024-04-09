@@ -1,15 +1,15 @@
-package io.questdb.network;
+package io.questdb;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.network.NetworkError;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
-import java.io.Closeable;
 import java.io.IOException;
 
-public class KqueueDirectoryWatcher implements Closeable {
+public class KqueueDirWatcher implements DirWatcher {
 
     private final int kq;
     private final long eventList;
@@ -19,7 +19,7 @@ public class KqueueDirectoryWatcher implements Closeable {
     private boolean closed;
 
 
-    public KqueueDirectoryWatcher(Path dirPath){
+    public KqueueDirWatcher(Path dirPath){
 
         this.fd = Files.openRO(dirPath);
         if (this.fd < 0) {
@@ -55,13 +55,8 @@ public class KqueueDirectoryWatcher implements Closeable {
 
     }
 
-    public interface Callback {
-        void onDirectoryChanged();
-    }
-
-
-    public void start(Callback callback){
-
+    @Override
+    public void waitForChange(DirWatcherCallback callback) {
         do {
             // Blocks until there is a change in the watched dir
             int res = KqueueAccessor.keventGetBlocking(
@@ -76,9 +71,13 @@ public class KqueueDirectoryWatcher implements Closeable {
                 throw NetworkError.instance(kq, "could not get event");
             };
 
-            callback.onDirectoryChanged();
+            callback.onDirChanged();
         } while (true);
     }
+
+
+
+
 
     @Override
     public void close() throws IOException {

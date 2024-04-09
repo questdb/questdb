@@ -1,6 +1,7 @@
-package io.questdb.test.network;
+package io.questdb.test;
 
-import io.questdb.network.KqueueDirectoryWatcher;
+import io.questdb.*;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
@@ -12,21 +13,25 @@ import java.io.File;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 
-public class KqueueDirectoryWatcherTest {
+public class FileChangedCallbackTest  {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
     @Test
-    public void TestKqueueFileWatcher() throws Exception {
-
+    public void TestDirWatcher() throws Exception {
 
         final File targetFile = temp.newFile();
-        /*
+
         try (Path path = new Path()) {
             path.of(targetFile.getAbsolutePath()).$();
-            final KqueueDirectoryWatcher fw = new KqueueDirectoryWatcher(path);
-            Assert.assertFalse(fw.changed());
+            final DirWatcher dw = DirWatcherFactory.GetDirWatcher(path);
+            FileChangedCallback callback = new FileChangedCallback(path);
 
-            Thread thread = new Thread(fw::start);
+            Thread thread = new Thread(() -> {
+                do {
+                    dw.waitForChange(callback);
+                } while(true);
+
+            });
             thread.start();
 
             try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath(), StandardCharsets.UTF_8)) {
@@ -35,8 +40,8 @@ public class KqueueDirectoryWatcherTest {
 
             Thread.sleep(10);
 
-            Assert.assertTrue(fw.changed());
-            Assert.assertFalse(fw.changed());
+            Assert.assertTrue(callback.pollChanged());
+            Assert.assertFalse(callback.pollChanged());
 
             try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath(), StandardCharsets.UTF_8)) {
                 writer.println("hello again ");
@@ -44,14 +49,14 @@ public class KqueueDirectoryWatcherTest {
 
             Thread.sleep(10);
 
-            Assert.assertTrue(fw.changed());
+            Assert.assertTrue(callback.pollChanged());
 
-            fw.close();
+            dw.close();
 
 
         }
 
-         */
+
     }
 
     static {

@@ -144,6 +144,7 @@ public final class Os {
     public static boolean isWindows() {
         return type == Os.WINDOWS;
     }
+    public static boolean isFreeBSD() { return type == Os.FREEBSD; }
 
     public static void park() {
         LockSupport.parkNanos(Os.PARK_NANOS_MAX);
