@@ -294,7 +294,16 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                         "1970-01-01T01:30:00.000000Z\tAAA\t228.55327569899347\t2000.0\n" +
                         "1970-01-01T02:30:00.000000Z\tAAA\t85.73439427824682\t1500.0\n" +
                         "1970-01-01T03:30:00.000000Z\tAAA\t157.22760372823447\t1000.0\n" +
-                        "1970-01-01T04:30:00.000000Z\tAAA\t0.0\t1000.0\n", "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear)"
+                        "1970-01-01T04:30:00.000000Z\tAAA\t0.0\t1000.0\n", "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to first observation"
+        );
+
+        assertSql(
+                "k\ts\thaversine_dist_deg\tsum\n" +
+                        "1970-01-01T00:00:00.000000Z\tAAA\t78.50616567866791\t1000.0\n" +
+                        "1970-01-01T01:00:00.000000Z\tAAA\t264.19224423853797\t2000.0\n" +
+                        "1970-01-01T02:00:00.000000Z\tAAA\t85.73439427824682\t1500.0\n" +
+                        "1970-01-01T03:00:00.000000Z\tAAA\t121.48099900324064\t1000.0\n" +
+                        "1970-01-01T04:00:00.000000Z\tAAA\t78.61380186411724\t1000.0\n", "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to calendar"
         );
     }
 
@@ -369,7 +378,47 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                         "VTJW\t297.90493337981263\t1970-01-03T14:31:40.000000Z\n" +
                         "RXGZ\t141.93824030889962\t1970-01-03T15:31:40.000000Z\n" +
                         "VTJW\t297.90493337981263\t1970-01-03T15:31:40.000000Z\n",
-                "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)",
+                "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation",
+                null,
+                "k",
+                true, true);
+
+        assertQuery("s\thaversine_dist_deg\tk\n" +
+                        "VTJW\t140.48471753024785\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t297.7248158372856\t1970-01-03T01:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T01:00:00.000000Z\n" +
+                        "VTJW\t297.911239737792\t1970-01-03T02:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T02:00:00.000000Z\n" +
+                        "VTJW\t49.65838525039151\t1970-01-03T03:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T03:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T04:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T04:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T05:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T05:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T06:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T06:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T07:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T07:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T08:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T08:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T10:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T10:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T11:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T11:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T12:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T12:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T13:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T13:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T14:00:00.000000Z\n" +
+                        "RXGZ\t268.93561321686246\t1970-01-03T14:00:00.000000Z\n" +
+                        "RXGZ\t141.19868683690248\t1970-01-03T15:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T15:00:00.000000Z\n" +
+                        "RXGZ\t0.0\t1970-01-03T16:00:00.000000Z\n" +
+                        "VTJW\t297.950311502349\t1970-01-03T16:00:00.000000Z\n",
+                "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar",
                 null,
                 "k",
                 true, true);
@@ -411,11 +460,19 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                         ") timestamp(k) partition by NONE", "k", true, true);
 
         assertQuery("s\thaversine_dist_deg\tk\n" +
+                        "AAA\t943.0307116486234\t1970-01-01T00:01:00.000000Z\n" +
+                        "AAA\t942.1704436827788\t1970-01-01T01:01:00.000000Z\n" +
+                        "AAA\t936.1854124136329\t1970-01-01T02:01:00.000000Z\n" +
+                        "AAA\t155.09709548701773\t1970-01-01T03:00:00.000000Z\n"
+                , "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation", null, "k", true, true);
+
+        assertQuery("s\thaversine_dist_deg\tk\n" +
                         "AAA\t943.0307116486234\t1970-01-01T00:00:00.000000Z\n" +
                         "AAA\t942.1704436827788\t1970-01-01T01:00:00.000000Z\n" +
                         "AAA\t936.1854124136329\t1970-01-01T02:00:00.000000Z\n" +
                         "AAA\t155.09709548701773\t1970-01-01T03:00:00.000000Z\n"
-                , "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)", null, "k", true, true);
+                , "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar" , null, "k", true, true);
+
     }
 
     @Test
@@ -460,7 +517,16 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                         "AAA\t1131.6942599455483\t1970-01-01T00:00:01.000000Z\n" +
                         "AAA\t1128.9553037924868\t1970-01-01T01:00:01.000000Z\n" +
                         "AAA\t715.8340994940178\t1970-01-01T02:00:01.000000Z\n",
-                "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear)",
+                "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation",
+                null,
+                "k",
+                true, true);
+
+        assertQuery("s\thaversine_dist_deg\tk\n" +
+                        "AAA\t1131.3799004998614\t1970-01-01T00:00:00.000000Z\n" +
+                        "AAA\t1128.9573035397307\t1970-01-01T01:00:00.000000Z\n" +
+                        "AAA\t716.1464591924607\t1970-01-01T02:00:00.000000Z\n",
+                "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar",
                 null,
                 "k",
                 true, true);

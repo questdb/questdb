@@ -293,8 +293,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Misc.clearObjList(groupByFunctions);
                 super.close();
             }
-            Misc.free(timezoneNameFunc);
-            Misc.free(offsetFunc);
+//            timezoneNameFunc.clear();
+//            offsetFunc.clear();
+//            Misc.free(timezoneNameFunc);
+//            Misc.free(offsetFunc);
         }
 
         @Override
@@ -324,6 +326,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             isMapFilled = false;
             isMapBuilt = false;
             parseParams(this, executionContext);
+            areTimestampsInitialized = false;
         }
 
         @Override
@@ -355,6 +358,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     return;
                 }
                 isMapInitialized = true;
+            }
+
+            if (!areTimestampsInitialized) {
+                initTimestamps();
+                areTimestampsInitialized = true;
             }
 
             if (!isMapFilled) {
@@ -521,14 +529,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // On every change of timestamp sample value we
             // check group for gaps and fill them with placeholder
             // entries. Values for these entries will be interpolated later.
-
-            if (prevSample == -1) {
-                // we have data in cursor, so we can grab first value
-                final boolean good = managedCursor.hasNext();
-                assert good;
-
-                initTimestamps();
-            }
 
             do {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -714,7 +714,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             }
         }
 
-
         private boolean areTimestampsInitialized;
 
         protected void initTimestamps() {
@@ -741,7 +740,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             }
             prevSample = sampler.round(timestamp);
             loSample = prevSample; // the lowest timestamp value
-            areTimestampsInitialized = true;
         }
     }
 }
