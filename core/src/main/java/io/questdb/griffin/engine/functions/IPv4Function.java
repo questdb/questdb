@@ -220,6 +220,11 @@ public abstract class IPv4Function implements ScalarFunction {
         return null;
     }
 
+    @Override
+    public final int getVarcharSize(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
     @Nullable
     private StringSink getStringSink(Record rec, StringSink sinkA) {
         final int value = getIPv4(rec);

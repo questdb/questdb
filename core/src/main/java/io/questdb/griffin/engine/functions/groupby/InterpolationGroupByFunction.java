@@ -294,6 +294,11 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
+    public int getVarcharSize(Record rec) {
+        return wrappedFunction.getVarcharSize(rec);
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         wrappedFunction.initValueIndex(valueIndex);
     }

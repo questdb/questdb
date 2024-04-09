@@ -186,4 +186,9 @@ public abstract class StrArrayFunction implements Function {
     public Utf8Sequence getVarcharB(Record rec) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 }

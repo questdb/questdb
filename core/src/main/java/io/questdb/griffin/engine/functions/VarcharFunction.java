@@ -209,4 +209,13 @@ public abstract class VarcharFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.VARCHAR;
     }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        Utf8Sequence utf8seq = getVarcharA(rec);
+        if (utf8seq == null) {
+            return TableUtils.NULL_LEN;
+        }
+        return utf8seq.size();
+    }
 }

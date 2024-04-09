@@ -2000,16 +2000,18 @@ public class OrderedMapTest extends AbstractCairoTest {
             if ((rnd.nextPositiveInt() % 4) == 0) {
                 Assert.assertNull(record.getStrA(col));
                 Assert.assertEquals(-1, record.getStrLen(col++));
-                Assert.assertNull(record.getVarcharA(col++));
+                Assert.assertNull(record.getVarcharA(col));
+                Assert.assertEquals(-1, record.getVarcharSize(col++));
             } else {
                 CharSequence expected = rnd.nextChars(rnd.nextPositiveInt() % 32);
                 TestUtils.assertEquals(expected, record.getStrA(col++));
                 utf8Sink.clear();
                 rnd.nextUtf8Str(rnd.nextPositiveInt() % 32, utf8Sink);
-                Utf8Sequence varchar = record.getVarcharA(col++);
+                Utf8Sequence varchar = record.getVarcharA(col);
                 Assert.assertNotNull(varchar);
                 Assert.assertFalse(varchar.isAscii());
                 TestUtils.assertEquals(utf8Sink, varchar);
+                Assert.assertEquals(varchar.size(), record.getVarcharSize(col++));
             }
 
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
