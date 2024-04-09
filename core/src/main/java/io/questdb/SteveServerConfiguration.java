@@ -20,7 +20,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Map;
 import java.util.Properties;
 
-public class SteveServerConfiguration implements DynamicServerConfiguration, DirWatcherCallback {
+public class SteveServerConfiguration implements DynamicServerConfiguration {
     private PropServerConfiguration delegate;
 
     String root;
@@ -31,7 +31,6 @@ public class SteveServerConfiguration implements DynamicServerConfiguration, Dir
     MicrosecondClock microsecondClock;
     FactoryProviderFactory fpf;
     boolean loadAdditionalConfigurations;
-    DirWatcher dirWatcher;
 
     public SteveServerConfiguration(
             String root,
@@ -64,9 +63,6 @@ public class SteveServerConfiguration implements DynamicServerConfiguration, Dir
                 fpf ,
                 loadAdditionalConfigurations
         );
-
-        this.dirWatcher = DirWatcherFactory.GetDirWatcher(this.delegate.getCairoConfiguration().getConfRoot().toString());
-
     }
 
     public SteveServerConfiguration(
@@ -110,11 +106,6 @@ public class SteveServerConfiguration implements DynamicServerConfiguration, Dir
                 (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
                 true
         );
-    }
-
-    @Override
-    public void onDirChanged() {
-
     }
 
     public void reload(Properties properties) {
