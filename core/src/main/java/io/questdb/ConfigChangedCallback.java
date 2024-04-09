@@ -11,7 +11,7 @@ import java.nio.file.Paths;
 import java.util.Properties;
 
 public class ConfigChangedCallback implements DirWatcherCallback {
-    private final static Log LOG = LogFactory.getLog(ServerConfigurationChangeWatcherJob.class);
+    private final static Log LOG = LogFactory.getLog(ConfigChangedCallback.class);
     Path fp;
     DynamicServerConfiguration config;
     long lastModified;

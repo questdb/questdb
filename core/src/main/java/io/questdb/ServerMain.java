@@ -70,9 +70,11 @@ public class ServerMain implements Closeable {
     private final Log log;
     private final Metrics metrics;
     private final AtomicBoolean running = new AtomicBoolean();
+    private ConfigReloader configReloader;
     private HttpServer httpServer;
     private boolean initialized;
     private WorkerPoolManager workerPoolManager;
+
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -306,6 +308,13 @@ public class ServerMain implements Closeable {
         final boolean walApplyEnabled = config.getCairoConfiguration().isWalApplyEnabled();
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
 
+        if (config instanceof DynamicServerConfiguration) {
+            configReloader = new ConfigReloader((DynamicServerConfiguration) config);
+            Thread reloadThread = new Thread(configReloader::watch);
+            reloadThread.start();
+            // todo: close the configReloader where appropriate
+        }
+
         workerPoolManager = new WorkerPoolManager(config, metrics) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
@@ -318,11 +327,6 @@ public class ServerMain implements Closeable {
                     sharedPool.assign(new GroupByVectorAggregateJob(messageBus));
                     sharedPool.assign(new GroupByMergeShardJob(messageBus));
                     sharedPool.assign(new LatestByAllIndexedJob(messageBus));
-                    if (config instanceof DynamicServerConfiguration) {
-                        sharedPool.assign(new ServerConfigurationChangeWatcherJob((DynamicServerConfiguration) config));
-                    }
-
-
 
                     if (!isReadOnly) {
                         O3Utils.setupWorkerPool(
