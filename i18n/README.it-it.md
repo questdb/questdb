@@ -23,7 +23,7 @@ Italiano | [Українська](README.ua-ua.md) | [Español](README.es-es.md)
 QuestDB è un [database open-source per serie temporali](https://questdb.io/glossary/time-series-database/) progettato
 per l’ingestione di dati massivi e query SQL prestazionali, il tutto garantendo semplicità operazionale.
 
-QuestDB risulta particolarmente adatto per: dati finanziari, dati che provengono da sensori IoT, ad-tech e dashboard live. Inoltre è ottimizzato per dataset ad [alta cardinalità](https://questdb.io/glossary/high-cardinality/) ed è un replace pronto all'uso per InfluxDB grazie al pieno supporto dell'InfluxDB line protocol.
+QuestDB risulta particolarmente adatto per: dati finanziari, dati che provengono da sensori IoT, ad-tech e dashboard live. Inoltre è ottimizzato per dataset ad [alta cardinalità](https://questdb.io/glossary/high-cardinality/) ed è il sostituto ideale di InfluxDB, immediatamente pronto all'uso grazie al pieno supporto dell'InfluxDB line protocol.
 
 QuestDB implementa SQL ANSI con estensioni SQL native per serie temporali. Queste estensioni semplificano il filtraggio e il campionamento dei dati, o la correlazione dei dati provenienti da più fonti utilizzando join relazionali e di serie temporali.
 
