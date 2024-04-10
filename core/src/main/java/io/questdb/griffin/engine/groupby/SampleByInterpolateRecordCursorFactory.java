@@ -528,6 +528,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // check group for gaps and fill them with placeholder
             // entries. Values for these entries will be interpolated later.
 
+            assert prevSample != -1;
+
             do {
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
