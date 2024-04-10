@@ -460,9 +460,9 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                         ") timestamp(k) partition by NONE", "k", true, true);
 
         assertQuery("s\thaversine_dist_deg\tk\n" +
-                        "AAA\t943.0307116486234\t1970-01-01T00:01:00.000000Z\n" +
-                        "AAA\t942.1704436827788\t1970-01-01T01:01:00.000000Z\n" +
-                        "AAA\t936.1854124136329\t1970-01-01T02:01:00.000000Z\n" +
+                        "AAA\t943.0307116486234\t1970-01-01T00:00:00.000000Z\n" +
+                        "AAA\t942.1704436827788\t1970-01-01T01:00:00.000000Z\n" +
+                        "AAA\t936.1854124136329\t1970-01-01T02:00:00.000000Z\n" +
                         "AAA\t155.09709548701773\t1970-01-01T03:00:00.000000Z\n"
                 , "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation", null, "k", true, true);
 
