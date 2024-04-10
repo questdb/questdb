@@ -12208,7 +12208,4 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlan(query, actualPlan);
         });
     }
-
-
-
 }
