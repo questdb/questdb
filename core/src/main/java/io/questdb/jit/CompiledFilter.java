@@ -37,14 +37,20 @@ public class CompiledFilter implements Closeable {
     private long fnAddress;
 
     public long call(
-            long colsAddress, long colsSize,
-            long varLenIndexesAddress,
-            long varsAddress, long varsSize, long rowsAddress, long rowsSize, long rowsStartOffset) {
+            long dataAddress,
+            long dataSize,
+            long varSizeAuxAddress,
+            long varsAddress,
+            long varsSize,
+            long rowsAddress,
+            long rowsSize,
+            long rowsStartOffset
+    ) {
         return FiltersCompiler.callFunction(
                 fnAddress,
-                colsAddress,
-                colsSize,
-                varLenIndexesAddress,
+                dataAddress,
+                dataSize,
+                varSizeAuxAddress,
                 varsAddress,
                 varsSize,
                 rowsAddress,

@@ -87,12 +87,9 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
             if (isOpen()) {
                 goPassive();
                 final AbstractMultiTenantPool<R> pool = this.pool;
-                if (pool != null && entry != null) {
-                    if (pool.returnToPool(this)) {
-                        return;
-                    }
+                if (pool == null || entry == null || !pool.returnToPool(this)) {
+                    super.close();
                 }
-                super.close();
             }
         }
 

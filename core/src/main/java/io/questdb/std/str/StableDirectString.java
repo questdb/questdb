@@ -24,5 +24,17 @@
 
 package io.questdb.std.str;
 
-public class StableDirectString extends DirectString implements StableDirectSequence {
+/**
+ * A specialization of {@link DirectString} that does not add new methods, but provides additional
+ * guarantees about the stability of the pointer returned by {@link DirectString#ptr()} method.
+ * <p>
+ * Indicates that a pointer returned by {@link DirectString#ptr()} method is stable during a query execution.
+ * Stable is defined as:
+ * - the pointer remains valid for the duration of the query execution
+ * - the sequence of bytes pointed to by the pointer does not change during the query execution
+ * <p>
+ * Note: this class should be only used for direct {@link CharSequence}s. For {@link Utf8Sequence}s
+ * we have special {@link Utf8Sequence#isStable()} method.
+ */
+public class StableDirectString extends DirectString {
 }
