@@ -68,4 +68,9 @@ public final class OpenBarrier implements Barrier {
     public Barrier then(Barrier barrier) {
         return null;
     }
+
+    @Override
+    public void clear() {
+        // no-op
+    }
 }

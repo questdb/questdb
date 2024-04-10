@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Misc;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 
 public class QuestDBTestNode {
     private final int nodeId;
@@ -194,16 +193,7 @@ public class QuestDBTestNode {
                 TestUtils.removeTestPath(root);
             }
             overrides.reset();
-            clearWalQueue();
         }
-
-        private void clearWalQueue() {
-            long seq;
-            while ((seq = engine.getMessageBus().getWalTxnNotificationSubSequence().next()) > -1) {
-                engine.getMessageBus().getWalTxnNotificationSubSequence().done(seq);
-            }
-        }
-
         private void close() {
             engine = Misc.free(engine);
         }

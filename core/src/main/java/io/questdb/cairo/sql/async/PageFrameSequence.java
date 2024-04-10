@@ -173,7 +173,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         if (collectSubSeq != null) {
             messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeq);
             LOG.debug().$("removed [seq=").$(collectSubSeq).I$();
-            collectSubSeq.clear();
         }
         if (localTask != null) {
             localTask.resetCapacities();

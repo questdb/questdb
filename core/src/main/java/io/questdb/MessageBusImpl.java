@@ -445,14 +445,41 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @TestOnly
-    public void reset() {
-        clearQueue(walTxnNotificationSubSequence);
-    }
-
-    private void clearQueue(Sequence subSequence) {
-        long cursor;
-        while ((cursor = subSequence.next()) > -1) {
-            subSequence.done(cursor);
+    public void clear() {
+        columnPurgePubSeq.clear();
+        columnPurgeSubSeq.clear();
+        groupByMergeShardPubSeq.clear();
+        groupByMergeShardSubSeq.clear();
+        indexerPubSeq.clear();
+        indexerSubSeq.clear();
+        latestByPubSeq.clear();
+        latestBySubSeq.clear();
+        columnTaskPubSeq.clear();
+        columnTaskSubSeq.clear();
+        o3CopyPubSeq.clear();
+        o3CopySubSeq.clear();
+        o3OpenColumnPubSeq.clear();
+        o3OpenColumnSubSeq.clear();
+        o3PartitionPubSeq.clear();
+        o3PartitionSubSeq.clear();
+        o3PurgeDiscoveryPubSeq.clear();
+        o3PurgeDiscoverySubSeq.clear();
+        tableWriterEventPubSeq.clear();
+        textImportColSeq.clear();
+        textImportPubSeq.clear();
+        textImportRequestPubSeq.clear();
+        textImportRequestSubSeq.clear();
+        textImportSubSeq.clear();
+        vectorAggregatePubSeq.clear();
+        vectorAggregateSubSeq.clear();
+        walTxnNotificationPubSequence.clear();
+        walTxnNotificationSubSequence.clear();
+        for (int i = 0, n = pageFrameReducePubSeq.length; i < n; i++) {
+            pageFrameReducePubSeq[i].clear();
         }
+        for(int i = 0, n = pageFrameReduceSubSeq.length; i < n; i++) {
+            pageFrameReduceSubSeq[i].clear();
+        }
+        walTxnNotificationSubSequence.clear();
     }
 }
