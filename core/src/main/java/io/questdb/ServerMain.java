@@ -228,6 +228,7 @@ public class ServerMain implements Closeable {
         if (closed.compareAndSet(false, true)) {
             if (initialized) {
                 workerPoolManager.halt();
+                configReloader.close();
             }
             freeOnExit.close();
         }
@@ -312,7 +313,6 @@ public class ServerMain implements Closeable {
             configReloader = new ConfigReloader((DynamicServerConfiguration) config);
             Thread reloadThread = new Thread(configReloader::watch);
             reloadThread.start();
-            // todo: close the configReloader where appropriate
         }
 
         workerPoolManager = new WorkerPoolManager(config, metrics) {
