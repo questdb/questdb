@@ -470,8 +470,8 @@ public class Unordered4Map implements Map, Reopenable {
 
         @Override
         public void copyFrom(MapKey srcKey) {
-            Key srcFastKey = (Key) srcKey;
-            copyFromRawKey(srcFastKey.startAddress());
+            Key src4Key = (Key) srcKey;
+            copyFromRawKey(src4Key.startAddress());
         }
 
         @Override

@@ -38,68 +38,41 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Uses an offsets array to speed up key and value column look-ups.
  */
-final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
+final class UnorderedVarcharMapRecord implements MapRecord {
     private final long[] columnOffsets;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
-    private final long keySize;
-    private final OrderedMapValue value;
+    private final UnorderedVarcharMapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
-    private long keyAddress;
     private long limit;
+    private long startAddress;
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
-    private long valueAddress;
 
-    OrderedMapFixedSizeRecord(
-            long keySize,
+    UnorderedVarcharMapRecord(
             long valueSize,
             long[] valueOffsets,
-            OrderedMapValue value,
-            @NotNull @Transient ColumnTypes keyTypes,
+            UnorderedVarcharMapValue value,
             @Nullable @Transient ColumnTypes valueTypes
     ) {
-        assert keySize >= 0;
-        this.keySize = keySize;
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.value = value;
         this.value.linkRecord(this); // provides feature to position this record at location of map value
 
         int nColumns;
-        int keyIndexOffset;
         if (valueTypes != null) {
-            keyIndexOffset = valueTypes.getColumnCount();
-            nColumns = keyTypes.getColumnCount() + valueTypes.getColumnCount();
+            nColumns = valueTypes.getColumnCount() + 1;
         } else {
-            keyIndexOffset = 0;
-            nColumns = keyTypes.getColumnCount();
+            nColumns = 1;
         }
 
         columnOffsets = new long[nColumns];
 
         Long256Impl[] long256A = null;
         Long256Impl[] long256B = null;
-        int offset = 0;
-        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
-            final int columnType = keyTypes.getColumnType(i);
-            if (ColumnType.tagOf(columnType) == ColumnType.LONG256) {
-                if (long256A == null) {
-                    long256A = new Long256Impl[nColumns];
-                    long256B = new Long256Impl[nColumns];
-                }
-                long256A[i + keyIndexOffset] = new Long256Impl();
-                long256B[i + keyIndexOffset] = new Long256Impl();
-            }
-            final int size = ColumnType.sizeOf(columnType);
-            if (size <= 0) {
-                throw CairoException.nonCritical().put("key type is not supported: ").put(ColumnType.nameOf(columnType));
-            }
-            columnOffsets[i + keyIndexOffset] = offset;
-            offset += size;
-        }
-
+        long offset = UnorderedVarcharMap.KEY_HEADER_SIZE;
         if (valueTypes != null) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 int columnType = valueTypes.getColumnType(i);
@@ -124,36 +97,34 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
         this.keyLong256B = long256B;
     }
 
-    private OrderedMapFixedSizeRecord(
-            long keySize,
+    private UnorderedVarcharMapRecord(
             long valueSize,
             long[] valueOffsets,
             long[] columnOffsets,
             Long256Impl[] keyLong256A,
             Long256Impl[] keyLong256B
     ) {
-        this.keySize = keySize;
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
         this.columnOffsets = columnOffsets;
-        this.value = new OrderedMapValue(valueSize, valueOffsets);
+        this.value = new UnorderedVarcharMapValue(valueSize, valueOffsets);
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
-    public OrderedMapRecord clone() {
+    public UnorderedVarcharMapRecord clone() {
         final Long256Impl[] long256A;
         final Long256Impl[] long256B;
 
-        if (this.keyLong256A != null) {
-            int n = this.keyLong256A.length;
+        if (keyLong256A != null) {
+            int n = keyLong256A.length;
             long256A = new Long256Impl[n];
             long256B = new Long256Impl[n];
 
             for (int i = 0; i < n; i++) {
-                if (this.keyLong256A[i] != null) {
+                if (keyLong256A[i] != null) {
                     long256A[i] = new Long256Impl();
                     long256B[i] = new Long256Impl();
                 }
@@ -162,19 +133,19 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
             long256A = null;
             long256B = null;
         }
-        return new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, columnOffsets, long256A, long256B);
+        return new UnorderedVarcharMapRecord(valueSize, valueOffsets, columnOffsets, long256A, long256B);
     }
 
     @Override
     public void copyToKey(MapKey destKey) {
-        OrderedMap.FixedSizeKey destFastKey = (OrderedMap.FixedSizeKey) destKey;
-        destFastKey.copyFromRawKey(keyAddress, keySize);
+        Unordered16Map.Key destBaseKey = (Unordered16Map.Key) destKey;
+        destBaseKey.copyFromRawKey(startAddress);
     }
 
     @Override
     public void copyValue(MapValue destValue) {
-        OrderedMapValue destFastValue = (OrderedMapValue) destValue;
-        destFastValue.copyRawValue(valueAddress);
+        UnorderedVarcharMapValue destFastValue = (UnorderedVarcharMapValue) destValue;
+        destFastValue.copyRawValue(startAddress + UnorderedVarcharMap.KEY_HEADER_SIZE);
     }
 
     @Override
@@ -269,9 +240,9 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
 
     @Override
     public long getRowId() {
-        // Important invariant: we assume that the FastMap doesn't grow after the first getRowId() call.
+        // Important invariant: we assume that the map doesn't grow after the first getRowId() call.
         // Otherwise, row ids returned by this method may no longer point at a valid memory address.
-        return keyAddress;
+        return startAddress;
     }
 
     @Override
@@ -291,21 +262,20 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
 
     @Override
     public MapValue getValue() {
-        return value.of(keyAddress, valueAddress, limit, false);
+        return value.of(startAddress, limit, false);
     }
 
     @Override
     public long keyHashCode() {
-        return Hash.hashFixedSizeMem64(keyAddress, keySize);
+        long key1 = Unsafe.getUnsafe().getLong(startAddress);
+        long key2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
+        return Hash.hashLong128_64(key1, key2);
     }
 
-    @Override
     public void of(long address) {
-        this.keyAddress = address;
-        this.valueAddress = address + keySize;
+        this.startAddress = address;
     }
 
-    @Override
     public void setLimit(long limit) {
         this.limit = limit;
     }
@@ -317,13 +287,19 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     }
 
     private long addressOfColumn(int index) {
-        return keyAddress + columnOffsets[index];
+        return startAddress + columnOffsets[index];
     }
 
     @NotNull
     private Long256 getLong256Generic(Long256Impl[] keyLong256, int columnIndex) {
+        long address = addressOfColumn(columnIndex);
         Long256Impl long256 = keyLong256[columnIndex];
-        long256.fromAddress(addressOfColumn(columnIndex));
+        long256.setAll(
+                Unsafe.getUnsafe().getLong(address),
+                Unsafe.getUnsafe().getLong(address + Long.BYTES),
+                Unsafe.getUnsafe().getLong(address + Long.BYTES * 2),
+                Unsafe.getUnsafe().getLong(address + Long.BYTES * 3)
+        );
         return long256;
     }
 }

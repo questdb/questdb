@@ -481,8 +481,8 @@ public class Unordered16Map implements Map, Reopenable {
 
         @Override
         public void copyFrom(MapKey srcKey) {
-            Key srcFastKey = (Key) srcKey;
-            copyFromRawKey(srcFastKey.startAddress());
+            Key src16Key = (Key) srcKey;
+            copyFromRawKey(src16Key.startAddress());
         }
 
         @Override

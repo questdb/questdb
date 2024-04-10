@@ -288,8 +288,8 @@ public class Unordered2Map implements Map, Reopenable {
 
         @Override
         public void copyFrom(MapKey srcKey) {
-            Key srcFastKey = (Key) srcKey;
-            copyFromRawKey(srcFastKey.startAddress());
+            Key src2Key = (Key) srcKey;
+            copyFromRawKey(src2Key.startAddress());
         }
 
         @Override

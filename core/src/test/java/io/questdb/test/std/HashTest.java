@@ -40,50 +40,23 @@ import static org.junit.Assert.assertEquals;
 public class HashTest {
 
     @Test
-    public void testHashMemEnglishWordsCorpus() throws IOException {
-        final int maxLen = 128;
-        LongHashSet hashes = new LongHashSet(500000);
-
-        String file = Files.getResourcePath(getClass().getResource("/hash/words.zip"));
-        long address = Unsafe.malloc(maxLen, MemoryTag.NATIVE_DEFAULT);
-        try (
-                ZipFile zipFile = new ZipFile(file);
-                InputStream input = zipFile.getInputStream(zipFile.entries().nextElement());
-                BufferedReader br = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))
-        ) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                byte[] bytes = line.getBytes(StandardCharsets.UTF_8);
-                for (int i = 0; i < bytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(address + i, bytes[i]);
-                }
-                // Use only 32 LSBs for the unique value check since that's where we want entropy.
-                hashes.add((int) Hash.hashMem64(address, bytes.length));
-            }
-            // 466189 is the number of unique values of String#hashCode() on the same corpus.
-            Assert.assertTrue("hash function distribution on English words corpus dropped", hashes.size() >= 466189);
-        } finally {
-            Unsafe.free(address, maxLen, MemoryTag.NATIVE_DEFAULT);
-        }
+    public void testHashMemEnglishWordsCorpus_hashFixedSizeMem64() throws IOException {
+        testHashMemEnglishWordsCorpus(Hash::hashFixedSizeMem64);
     }
 
     @Test
-    public void testHashMemRandomCorpus() {
-        final int len = 15;
-        Rnd rnd = new Rnd();
-        LongHashSet hashes = new LongHashSet(100000);
+    public void testHashMemEnglishWordsCorpus_hashVarSizeMem64() throws IOException {
+        testHashMemEnglishWordsCorpus(Hash::hashVarSizeMem64);
+    }
 
-        long address = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < 100000; i++) {
-                rnd.nextChars(address, len / 2);
-                // Use only 32 LSBs for the unique value check since that's where we want entropy.
-                hashes.add((int) Hash.hashMem64(address, len));
-            }
-            Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
-        } finally {
-            Unsafe.free(address, len, MemoryTag.NATIVE_DEFAULT);
-        }
+    @Test
+    public void testHashMemRandomCorpus_hashFixedSizeMem64() {
+        testHashMemRandomCorpus(Hash::hashFixedSizeMem64);
+    }
+
+    @Test
+    public void testHashMemRandomCorpus_hashVarSizeMem64() {
+        testHashMemRandomCorpus(Hash::hashVarSizeMem64);
     }
 
     @Test
@@ -106,5 +79,54 @@ public class HashTest {
         assertEquals(-6164039929522353948L, Hash.murmur3ToLong(3116016319545714670L));
         assertEquals(5404083732375145584L, Hash.murmur3ToLong(-3505607450965693221L));
         assertEquals(-2748674767479114199L, Hash.murmur3ToLong(-1442442454180049685L));
+    }
+
+    private void testHashMemEnglishWordsCorpus(HashFunction hashFunction) throws IOException {
+        final int maxLen = 128;
+        LongHashSet hashes = new LongHashSet(500000);
+
+        String file = Files.getResourcePath(getClass().getResource("/hash/words.zip"));
+        long address = Unsafe.malloc(maxLen, MemoryTag.NATIVE_DEFAULT);
+        try (
+                ZipFile zipFile = new ZipFile(file);
+                InputStream input = zipFile.getInputStream(zipFile.entries().nextElement());
+                BufferedReader br = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))
+        ) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                byte[] bytes = line.getBytes(StandardCharsets.UTF_8);
+                for (int i = 0; i < bytes.length; i++) {
+                    Unsafe.getUnsafe().putByte(address + i, bytes[i]);
+                }
+                // Use only 32 LSBs for the unique value check since that's where we want entropy.
+                hashes.add((int) hashFunction.hash(address, bytes.length));
+            }
+            // 466189 is the number of unique values of String#hashCode() on the same corpus.
+            Assert.assertTrue("hash function distribution on English words corpus dropped", hashes.size() >= 466189);
+        } finally {
+            Unsafe.free(address, maxLen, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private void testHashMemRandomCorpus(HashFunction hashFunction) {
+        final int len = 15;
+        Rnd rnd = new Rnd();
+        LongHashSet hashes = new LongHashSet(100000);
+
+        long address = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < 100000; i++) {
+                rnd.nextChars(address, len / 2);
+                // Use only 32 LSBs for the unique value check since that's where we want entropy.
+                hashes.add((int) hashFunction.hash(address, len));
+            }
+            Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
+        } finally {
+            Unsafe.free(address, len, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private interface HashFunction {
+        long hash(long p, long len);
     }
 }
