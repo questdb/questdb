@@ -9,10 +9,15 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Paths;
-import java.util.Properties;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ConfigReloader implements Closeable, DirWatcherCallback {
+
     private static final Log LOG = LogFactory.getLog(ConfigReloader.class);
+    private final Set<PropertyKey> reloadableProps = new HashSet<PropertyKey>(List.of(
+            PropertyKey.QUERY_TIMEOUT_SEC
+    ));
     DynamicServerConfiguration config;
     DirWatcher dirWatcher;
     java.nio.file.Path confPath;
@@ -68,10 +73,32 @@ public class ConfigReloader implements Closeable, DirWatcherCallback {
 
                 // Compare the new and existing properties
                 if (!newProperties.equals(this.properties)) {
+                    AtomicBoolean changed = new AtomicBoolean(false);
+                    newProperties.forEach((k, v) -> {
+                        String key = (String)k;
+                        String oldVal = properties.getProperty(key);
+                        if (oldVal != v) {
+                            Optional<PropertyKey> prop = PropertyKey.getByString(key);
+                            if (prop.isEmpty()) {
+                                return;
+                            }
+
+                            if (reloadableProps.contains(prop.get())) {
+                                LOG.info().$("new value of ").$(k).$(" = ").$(v).$();
+                                this.properties.setProperty(key, (String)v);
+                                changed.set(true);
+                            } else {
+                                LOG.advisory().$("property ").$(k).$(" was modified in the config file but cannot be reloaded. ignoring new value").$();
+                            }
+                        }
+                    });
+
                     // If they are different, reload the config in place
-                    config.reload(newProperties);
-                    this.properties = newProperties;
-                    LOG.info().$("config reloaded!").$();
+                    if (changed.get()) {
+                        config.reload(this.properties);
+                        LOG.info().$("config reloaded!").$();
+                    }
+
                 }
             }
         }

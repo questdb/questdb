@@ -9,6 +9,7 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
@@ -20,7 +21,10 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Map;
 import java.util.Properties;
 
+
 public class SteveServerConfiguration implements DynamicServerConfiguration {
+
+    private final static Log LOG = LogFactory.getLog(SteveServerConfiguration.class);
     private PropServerConfiguration delegate;
 
     String root;
