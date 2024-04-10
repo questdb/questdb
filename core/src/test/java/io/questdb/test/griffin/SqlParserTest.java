@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -76,6 +76,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual switch(a,10,'2',20,'3',null) k from (select [a] from x)",
                 "select case when a = 10 then '2' when a = 20 then '3' end k from x",
                 modelOf("x").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testBetweenWithNegativeBounds() throws Exception {
+        assertQuery(
+                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
+                "SELECT -5 BETWEEN -10 AND -1"
+        );
+        assertQuery(
+                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
+                "SELECT -5 BETWEEN -10 AND (-1)"
+        );
+        assertQuery(
+                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
+                "SELECT -5 BETWEEN (-10) AND -1"
         );
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1088,7 +1088,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         }
                     }, failureCounter);
                 } finally {
-                    clearThreadLocals();
+                    Path.clearThreadLocals();
                     end.countDown();
                 }
             });
@@ -1119,7 +1119,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         }
                     }, failureCounter);
                 } finally {
-                    clearThreadLocals();
+                    Path.clearThreadLocals();
                     end.countDown();
                 }
             });
@@ -1209,7 +1209,6 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         // Split partition by committing O3 to "2022-06-01"
                         ddl("insert into " + tableName + "(ts) select ts + 20 * 60 * 60 * 1000000L from " + tableName, sqlExecutionContext);
 
-                        //noinspection resource
                         Path path = Path.getThreadLocal(configuration.getRoot()).concat(token).concat("2022-06-01T200057-183001.1").concat("ts.d");
                         FilesFacade ff = configuration.getFilesFacade();
                         Assert.assertTrue(ff.exists(path.$()));

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -208,5 +208,14 @@ public abstract class VarcharFunction implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.VARCHAR;
+    }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        Utf8Sequence utf8seq = getVarcharA(rec);
+        if (utf8seq == null) {
+            return TableUtils.NULL_LEN;
+        }
+        return utf8seq.size();
     }
 }

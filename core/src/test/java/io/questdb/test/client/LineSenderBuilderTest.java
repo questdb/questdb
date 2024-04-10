@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -170,7 +170,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             try {
                 Sender.builder(Sender.Transport.HTTP).disableAutoFlush().autoFlushIntervalMillis(1);
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "cannot set auto flush interval when auto-flush is disabled");
+                TestUtils.assertContains(e.getMessage(), "cannot set auto flush interval when interval based auto-flush is already disabled");
             }
         });
     }
@@ -187,17 +187,11 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testAutoFlushRowsMustBePositive() {
-        try (Sender ignored = Sender.builder(Sender.Transport.HTTP).autoFlushRows(0).build()) {
-            fail("auto-flush must be positive");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "auto flush rows has to be positive [autoFlushRows=0]");
-        }
-
+    public void testAutoFlushRowsCannotBeNegative() {
         try (Sender ignored = Sender.builder(Sender.Transport.HTTP).autoFlushRows(-1).build()) {
             fail("auto-flush must be positive");
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "auto flush rows has to be positive [autoFlushRows=-1]");
+            TestUtils.assertContains(e.getMessage(), "auto flush rows cannot be negative [autoFlushRows=-1]");
         }
     }
 
@@ -272,12 +266,15 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost:8080;auto_flush_rows=0;", "invalid auto_flush_rows [value=0]");
             assertConfStrError("http::addr=localhost:8080;auto_flush_rows=notanumber;", "invalid auto_flush_rows [value=notanumber]");
             assertConfStrError("http::addr=localhost:8080;auto_flush=invalid;", "invalid auto_flush [value=invalid, allowed-values=[on, off]]");
-            assertConfStrError("http::addr=localhost:8080;auto_flush=off;auto_flush_rows=100;", "cannot set auto flush rows when auto-flush is disabled");
+            assertConfStrError("http::addr=localhost:8080;auto_flush=off;auto_flush_rows=100;", "cannot set auto flush rows when auto-flush is already disabled");
             assertConfStrError("http::addr=localhost:8080;auto_flush_rows=100;auto_flush=off;", "auto flush rows was already configured [autoFlushRows=100]");
             assertConfStrError("HTTP::addr=localhost;", "invalid schema [schema=HTTP, supported-schemas=[http, https, tcp, tcps]]");
             assertConfStrError("HTTPS::addr=localhost;", "invalid schema [schema=HTTPS, supported-schemas=[http, https, tcp, tcps]]");
             assertConfStrError("TCP::addr=localhost;", "invalid schema [schema=TCP, supported-schemas=[http, https, tcp, tcps]]");
             assertConfStrError("TCPS::addr=localhost;", "invalid schema [schema=TCPS, supported-schemas=[http, https, tcp, tcps]]");
+            assertConfStrError("http::addr=localhost;auto_flush=off;auto_flush_interval=1;", "cannot set auto flush interval when interval based auto-flush is already disabled");
+            assertConfStrError("http::addr=localhost;auto_flush=off;auto_flush_rows=1;", "cannot set auto flush rows when auto-flush is already disabled");
+
 
             assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100");
             assertConfStrOk("addr=localhost:8080", "auto_flush=on", "auto_flush_rows=100");
@@ -285,6 +282,13 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrOk("addr=localhost", "auto_flush=on");
             assertConfStrOk("http::addr=localhost;auto_flush=off;");
             assertConfStrOk("http::addr=localhost;");
+            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;");
+            assertConfStrOk("http::addr=localhost;auto_flush_rows=off;");
+            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=off;");
+            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=1;");
+            assertConfStrOk("http::addr=localhost;auto_flush_rows=off;auto_flush_interval=1;");
+            assertConfStrOk("http::addr=localhost;auto_flush_interval=off;auto_flush_rows=off;auto_flush=off;");
+            assertConfStrOk("http::addr=localhost;auto_flush=off;auto_flush_interval=off;auto_flush_rows=off;");
             assertConfStrOk("http::addr=localhost:8080;");
             assertConfStrOk("http::addr=localhost:8080;token=foo;");
             assertConfStrOk("http::addr=localhost:8080;token=foo=bar;");

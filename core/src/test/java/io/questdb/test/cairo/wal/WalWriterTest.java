@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -978,7 +978,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     } catch (Throwable th) {
                         errors.put(walId, th);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                         if (!countedDown) {
                             alterFinished.countDown();
                         }
@@ -1125,7 +1125,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     } catch (Throwable th) {
                         errors.put(walId, th);
                     } finally {
-                        TableUtils.clearThreadLocals();
+                        Path.clearThreadLocals();
                         writeFinished.countDown();
                     }
                 }).start();
@@ -1568,6 +1568,8 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("uuida", ColumnType.UUID) // putUUID(int columnIndex, long lo, long hi)
                     .col("uuidb", ColumnType.UUID) // putUUID(int columnIndex, CharSequence value)
                     .col("IPv4", ColumnType.IPv4)
+                    .col("varchara", ColumnType.VARCHAR)
+                    .col("varcharb", ColumnType.VARCHAR)
                     .timestamp("ts")
                     .wal();
             tableToken = createTable(model);
@@ -1637,6 +1639,9 @@ public class WalWriterTest extends AbstractCairoTest {
                         row.putUuid(29, stringSink);
                         row.putInt(30, i);
 
+                        row.putVarchar(31, new Utf8String(String.valueOf(i)));
+                        row.putVarchar(32, null);
+
                         row.append();
                     }
 
@@ -1650,7 +1655,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowsToInsertTotal)) {
-                    assertEquals(32, reader.getColumnCount());
+                    assertEquals(34, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
                     assertEquals(rowsToInsertTotal, reader.size());
@@ -1717,7 +1722,17 @@ public class WalWriterTest extends AbstractCairoTest {
                         assertEquals(i + 1, record.getLong128Hi(29));
                         assertEquals(i, record.getIPv4(30));
 
-                        assertEquals(ts, record.getTimestamp(31));
+                        TestUtils.assertEquals(String.valueOf(i), record.getVarcharA(31));
+                        TestUtils.assertEquals(record.getVarcharA(31), record.getVarcharB(31));
+                        // the string is ascii, so length is same as size
+                        assertEquals(String.valueOf(i).length(), record.getVarcharSize(31));
+
+                        assertNull(record.getVarcharA(32));
+                        assertNull(record.getVarcharB(32));
+                        // the string is ascii, so length is same as size
+                        assertEquals(-1, record.getVarcharSize(32));
+
+                        assertEquals(ts, record.getTimestamp(33));
                         assertEquals(i, record.getRowId());
                         testSink.clear();
                         ((Sinkable) record).toSink(testSink);

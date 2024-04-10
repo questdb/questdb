@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,6 +55,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.io.File;
+import java.io.IOException;
 import java.security.PublicKey;
 import java.util.HashMap;
 import java.util.Map;
@@ -228,7 +229,11 @@ public class ServerMain implements Closeable {
         if (closed.compareAndSet(false, true)) {
             if (initialized) {
                 workerPoolManager.halt();
-                configReloader.close();
+                try {
+                    configReloader.close();
+                } catch (IOException e) {
+                    log.error().$(e).$();
+                }
             }
             freeOnExit.close();
         }

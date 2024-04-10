@@ -44,8 +44,7 @@ public class FirstNotNullVarcharGroupByFunction extends FirstVarcharGroupByFunct
             if (val != null) {
                 mapValue.putLong(valueIndex, rowId);
                 long ptr = mapValue.getLong(valueIndex + 1);
-                sink.of(ptr).clear();
-                sink.put(val);
+                sink.of(ptr).clearAndSet(val);
                 mapValue.putLong(valueIndex + 1, sink.ptr());
                 mapValue.putBool(valueIndex + 2, false);
             }

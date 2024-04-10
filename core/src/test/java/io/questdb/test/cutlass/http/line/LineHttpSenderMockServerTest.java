@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -123,6 +123,56 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .symbol("sym", "bol")
                 .doubleColumn("x", 1.0)
                 .atNow(), DEFAULT_FACTORY.andThen(b -> b.httpUsernamePassword("Aladdin", "OpenSesame")));
+    }
+
+    @Test
+    public void testDisableIntervalBasedAutoFlush() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> {
+                    for (int i = 0; i < 200; i++) {
+                        sender.table("test")
+                                .symbol("sym", "bol")
+                                .doubleColumn("x", 1.0)
+                                .atNow();
+                        Os.sleep(10);
+                    }
+                },
+                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;"));
+    }
+
+    @Test
+    public void testDisableIntervalBasedAutoFlush_rowBasedFlushesStillWorks() throws Exception {
+        int rows = 10;
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
+        for (int i = 0; i < rows; i++) {
+            mockHttpProcessor.withExpectedContent("test,sym=bol x=1.0\n").replyWithStatus(204);
+        }
+
+        testWithMock(mockHttpProcessor, sender -> {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("test")
+                                .symbol("sym", "bol")
+                                .doubleColumn("x", 1.0)
+                                .atNow();
+                    }
+                },
+                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;auto_flush_rows=1;"));
+    }
+
+    @Test
+    public void testDisableRowBasedAutoFlush() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> {
+                    for (int i = 0; i < 80000; i++) {
+                        sender.table("test")
+                                .symbol("sym", "bol")
+                                .doubleColumn("x", 1.0)
+                                .atNow();
+                    }
+                },
+                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_rows=off;auto_flush_interval=100000;"));
     }
 
     @Test
