@@ -5,5 +5,5 @@ project(win64svc)
 # configuration-dependent suffix.
 #
 # See https://cmake.org/cmake/help/v3.8/prop_tgt/LIBRARY_OUTPUT_DIRECTORY.html
-set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/../../core/src/main/bin/$<$<CONFIG:Debug>:>)
+set(OUTPUT ${CMAKE_CURRENT_LIST_DIR}/../core/src/main/bin/$<$<CONFIG:Debug>:>)
 add_subdirectory(src)
