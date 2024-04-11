@@ -49,13 +49,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.io.File;
-import java.io.IOException;
 import java.security.PublicKey;
 import java.util.HashMap;
 import java.util.Map;
@@ -113,6 +113,10 @@ public class ServerMain implements Closeable {
         return new ServerMain(new Bootstrap(bootstrapConfiguration, Bootstrap.getServerMainArgs(root)));
     }
 
+    public static ServerMain create(String root) {
+        return new ServerMain(Bootstrap.getServerMainArgs(root));
+    }
+
     public static ServerMain createWithoutWalApplyJob(String root, Map<String, String> env) {
         final Map<String, String> newEnv = new HashMap<>(System.getenv());
         newEnv.putAll(env);
@@ -128,10 +132,6 @@ public class ServerMain implements Closeable {
             protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
             }
         };
-    }
-
-    public static ServerMain create(String root) {
-        return new ServerMain(Bootstrap.getServerMainArgs(root));
     }
 
     public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
@@ -229,11 +229,7 @@ public class ServerMain implements Closeable {
         if (closed.compareAndSet(false, true)) {
             if (initialized) {
                 workerPoolManager.halt();
-                try {
-                    configReloader.close();
-                } catch (IOException e) {
-                    log.error().$(e).$();
-                }
+                configReloader = Misc.free(configReloader);
             }
             freeOnExit.close();
         }

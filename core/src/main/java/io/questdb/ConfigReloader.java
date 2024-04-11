@@ -3,19 +3,20 @@ package io.questdb;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ConfigReloader implements Closeable, DirWatcherCallback {
+public class ConfigReloader implements QuietCloseable, DirWatcherCallback {
 
     private static final Log LOG = LogFactory.getLog(ConfigReloader.class);
-    private final Set<PropertyKey> reloadableProps = new HashSet<PropertyKey>(List.of(
+    private final Set<PropertyKey> reloadableProps = new HashSet<>(List.of(
             PropertyKey.QUERY_TIMEOUT_SEC
     ));
     DynamicServerConfiguration config;
@@ -26,7 +27,7 @@ public class ConfigReloader implements Closeable, DirWatcherCallback {
     public ConfigReloader(DynamicServerConfiguration config) {
         this.config = config;
         this.confPath = Paths.get(this.config.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
-        this.dirWatcher = DirWatcherFactory.GetDirWatcher(this.config.getConfRoot().toString());
+        this.dirWatcher = DirWatcherFactory.getDirWatcher(this.config.getConfRoot());
     }
 
     public void watch() {
@@ -47,8 +48,8 @@ public class ConfigReloader implements Closeable, DirWatcherCallback {
     }
 
     @Override
-    public void close() throws IOException {
-        this.dirWatcher.close();
+    public void close() {
+        this.dirWatcher = Misc.free(dirWatcher);
     }
 
 

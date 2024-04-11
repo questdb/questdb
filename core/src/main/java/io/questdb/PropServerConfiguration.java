@@ -1874,7 +1874,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    class PropCairoConfiguration implements CairoConfiguration {
+    public class PropCairoConfiguration implements CairoConfiguration {
         private final LongSupplier randomIDSupplier = () -> getRandom().nextPositiveLong();
         private final LongSupplier sequentialIDSupplier = new LongSupplier() {
             final AtomicLong value = new AtomicLong();

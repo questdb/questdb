@@ -1,8 +1,8 @@
 package io.questdb;
 
-import java.io.Closeable;
+import io.questdb.std.QuietCloseable;
 
-public interface DirWatcher extends Closeable {
+public interface DirWatcher extends QuietCloseable {
     void waitForChange(DirWatcherCallback callback);
 }
 

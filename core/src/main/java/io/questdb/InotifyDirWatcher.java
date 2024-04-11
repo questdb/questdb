@@ -2,14 +2,12 @@ package io.questdb;
 
 import io.questdb.std.str.Path;
 
-import java.io.IOException;
-
 public final class InotifyDirWatcher implements DirWatcher {
 
-    long dirWatcherPtr;
-    boolean closed;
+    private final long dirWatcherPtr;
+    private boolean closed;
 
-    public InotifyDirWatcher(String dirPath) {
+    public InotifyDirWatcher(CharSequence dirPath) {
         try (Path p = new Path()) {
             p.of(dirPath).$();
             this.dirWatcherPtr = setup(p.ptr());
@@ -38,10 +36,8 @@ public final class InotifyDirWatcher implements DirWatcher {
 
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         closed = true;
         teardown(dirWatcherPtr);
-
     }
-
 }

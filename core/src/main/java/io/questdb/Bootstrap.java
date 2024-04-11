@@ -35,6 +35,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
@@ -53,11 +54,12 @@ import java.util.zip.ZipInputStream;
 
 public class Bootstrap {
 
-    public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
     public static final String CONFIG_FILE = "/server.conf";
+    public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
+    public final String[] args;
     private final String banner;
     private final BuildInformation buildInformation;
     private final ServerConfiguration config;
@@ -65,7 +67,6 @@ public class Bootstrap {
     private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
     private final String rootDirectory;
-    public final String[] args;
 
     public Bootstrap(String... args) {
         this(new PropBootstrapConfiguration(), args);
@@ -161,7 +162,6 @@ public class Bootstrap {
                 // /server.conf properties
                 final Properties properties = loadProperties();
                 final FilesFacade ffOverride = bootstrapConfiguration.getFilesFacade();
-                /*
                 if (ffOverride == null) {
                     config = new SteveServerConfiguration(
                             rootDirectory,
@@ -176,32 +176,18 @@ public class Bootstrap {
                             properties,
                             bootstrapConfiguration.getEnv(),
                             log,
-                            buildInformation
-                    ) {
-                        private CairoConfiguration cairoConf;
-
-                        @Override
-                        public CairoConfiguration getCairoConfiguration() {
-                            if (cairoConf == null) {
-                                cairoConf = new PropCairoConfiguration() {
-                                    @Override
-                                    public @NotNull FilesFacade getFilesFacade() {
-                                        return ffOverride;
-                                    }
-                                };
-                            }
-                            return cairoConf;
-                        }
-                    };
+                            buildInformation,
+                            ffOverride,
+                            MicrosecondClockImpl.INSTANCE,
+                            new FactoryProviderFactory() {
+                                @Override
+                                public @NotNull FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine, FreeOnExit freeOnExit) {
+                                    return DefaultFactoryProvider.INSTANCE;
+                                }
+                            },
+                            true
+                    );
                 }
-                 */
-                config = new SteveServerConfiguration(
-                        rootDirectory,
-                        properties,
-                        bootstrapConfiguration.getEnv(),
-                        log,
-                        buildInformation
-                );
             } else {
                 config = configuration;
             }
@@ -466,6 +452,20 @@ public class Bootstrap {
         ff.remove(path);
     }
 
+    private void extractConfDir(byte[] buffer) throws IOException {
+        copyConfResource(rootDirectory, false, buffer, "conf/date.formats", log);
+        try {
+            copyConfResource(rootDirectory, true, buffer, "conf/mime.types", log);
+        } catch (IOException exception) {
+            // conf can be read-only, this is not critical
+            if (exception.getMessage() == null || (!exception.getMessage().contains("Read-only file system") && !exception.getMessage().contains("Permission denied"))) {
+                throw exception;
+            }
+        }
+        copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
+        copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
+    }
+
     private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
         try (final InputStream is = getResourceClass().getResourceAsStream(getPublicZipPath())) {
             if (is != null) {
@@ -485,20 +485,6 @@ public class Bootstrap {
         }
         setPublicVersion(publicDir, thisVersion);
         extractConfDir(buffer);
-    }
-
-    private void extractConfDir(byte[] buffer) throws IOException {
-        copyConfResource(rootDirectory, false, buffer, "conf/date.formats", log);
-        try {
-            copyConfResource(rootDirectory, true, buffer, "conf/mime.types", log);
-        } catch (IOException exception) {
-            // conf can be read-only, this is not critical
-            if (exception.getMessage() == null || (!exception.getMessage().contains("Read-only file system") && !exception.getMessage().contains("Permission denied"))) {
-                throw exception;
-            }
-        }
-        copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
-        copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
     }
 
     private void reportValidateConfig() {

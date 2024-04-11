@@ -7,19 +7,15 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
-import java.io.IOException;
-
 public class KqueueDirWatcher implements DirWatcher {
-
-    private final int kq;
-    private final long eventList;
     private final int bufferSize;
-    private final int fd;
     private final long event;
+    private final long eventList;
+    private final int fd;
+    private final int kq;
     private boolean closed;
 
-
-    public KqueueDirWatcher(String dirPath){
+    public KqueueDirWatcher(CharSequence dirPath) {
         try (Path p = new Path()) {
             p.of(dirPath).$();
             this.fd = Files.openRO(p);
@@ -58,6 +54,17 @@ public class KqueueDirWatcher implements DirWatcher {
     }
 
     @Override
+    public void close() {
+        if (!closed) {
+            closed = true;
+            Files.close(kq);
+            Files.close(fd);
+            Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+            Unsafe.free(this.event, KqueueAccessor.SIZEOF_KEVENT, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+        }
+    }
+
+    @Override
     public void waitForChange(DirWatcherCallback callback) {
         do {
             // Blocks until there is a change in the watched dir
@@ -71,23 +78,8 @@ public class KqueueDirWatcher implements DirWatcher {
                     return;
                 }
                 throw NetworkError.instance(kq, "could not get event");
-            };
-
+            }
             callback.onDirChanged();
         } while (true);
     }
-
-
-
-
-
-    @Override
-    public void close() throws IOException {
-        closed = true;
-        Files.close(kq);
-        Files.close(fd);
-        Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-        Unsafe.free(this.event, KqueueAccessor.SIZEOF_KEVENT, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-    }
-
 }
