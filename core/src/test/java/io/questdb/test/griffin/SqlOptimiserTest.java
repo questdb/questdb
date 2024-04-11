@@ -189,6 +189,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
     public void testConstantInGroupByDoesNotPreventOptimisation() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table hits (\n" +
@@ -233,7 +234,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testNonprefixedAdviceFromDifferentTables() throws Exception {
+    public void testNonPrefixedAdviceFromDifferentTables() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab1 (\n" +
                     "    id int,\n" +
@@ -266,7 +267,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testNonprefixedAdviceFromOneTableWithOrderingAlias() throws Exception {
+    public void testNonPrefixedAdviceFromOneTableWithOrderingAlias() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab1 (\n" +
                     "    id int,\n" +
@@ -300,7 +301,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testNonprefixedAdviceFromOneTableWithOrderingPosition() throws Exception {
+    public void testNonPrefixedAdviceFromOneTableWithOrderingPosition() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab1 (\n" +
                     "    id int,\n" +
@@ -334,7 +335,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testNonprefixedAdviceFromTheSameTable() throws Exception {
+    public void testNonPrefixedAdviceFromTheSameTable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab1 (\n" +
                     "    id int,\n" +
@@ -369,7 +370,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testNonprefixedAdviceFromTheSameTableWithTimestamp() throws Exception {
+    public void testNonPrefixedAdviceFromTheSameTableWithTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab1 (\n" +
                     "    id int,\n" +
