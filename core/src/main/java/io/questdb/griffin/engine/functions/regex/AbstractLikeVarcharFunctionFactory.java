@@ -194,7 +194,7 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                 if (zeroBytesWord != 0) {
                     // We've found a match for the first pattern byte,
                     // slow down and check the full pattern.
-                    int firstIndex = (int) SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                    int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
                     int pos = firstIndex;
                     while (pos < 8) {
                         // Check if the pattern matches only for matched first bytes.
@@ -210,8 +210,8 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                                 return true;
                             }
                         }
-                        zeroBytesWord >>>= 8 * (firstIndex + 1);
-                        firstIndex = (int) SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                        zeroBytesWord >>>= ((firstIndex + 1) << 3);
+                        firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
                         pos += firstIndex + 1;
                     }
                 }
