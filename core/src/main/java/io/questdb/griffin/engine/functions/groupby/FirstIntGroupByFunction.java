@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -76,6 +76,18 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.INT);  // value
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -96,13 +108,6 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // row id
-        columnTypes.add(ColumnType.INT);  // value
-    }
-
-    @Override
     public void setInt(MapValue mapValue, int value) {
         // This method is used to define interpolated points and to init
         // an empty value, so it's ok to reset the row id field here.
@@ -113,11 +118,6 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         setInt(mapValue, Numbers.INT_NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

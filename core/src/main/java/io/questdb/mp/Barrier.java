@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,9 @@
 
 package io.questdb.mp;
 
-public interface Barrier {
+import io.questdb.std.Mutable;
+
+public interface Barrier extends Mutable {
     long availableIndex(long lo);
 
     long current();
@@ -51,4 +53,10 @@ public interface Barrier {
     void setCurrent(long value);
 
     Barrier then(Barrier barrier);
+
+    /**
+     * Resets the sequence to begin processing queue as if the queue was empty. Keeps barriers
+     * intact the maintain originally setup workflow.
+     */
+    void clear();
 }

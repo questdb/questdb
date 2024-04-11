@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,34 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class BitSetTest {
+
+    @Test
+    public void testGetAndSet() {
+        final int N = 1000;
+        BitSet set = new BitSet();
+        Rnd rnd = new Rnd();
+
+        Assert.assertTrue(set.capacity() > 0);
+
+        for (int i = 0; i < N; i++) {
+            Assert.assertFalse(set.get(i));
+        }
+        Assert.assertTrue(set.capacity() >= N);
+
+        rnd.reset();
+
+        for (int i = 0; i < N; i++) {
+            Assert.assertFalse(set.getAndSet(i));
+            Assert.assertTrue(set.get(i));
+        }
+
+        rnd.reset();
+
+        for (int i = 0; i < N; i++) {
+            Assert.assertTrue(set.getAndSet(i));
+            Assert.assertTrue(set.get(i));
+        }
+    }
 
     @Test
     public void testSmoke() {

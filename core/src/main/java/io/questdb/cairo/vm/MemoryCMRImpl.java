@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,11 +44,13 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     protected int memoryTag = MemoryTag.MMAP_DEFAULT;
     private int madviseOpts = -1;
 
-    public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size, int memoryTag) {
+    public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean stableStrings) {
+        super(stableStrings);
         of(ff, name, 0, size, memoryTag, 0);
     }
 
     public MemoryCMRImpl() {
+        super(false);
         // intentionally left empty
     }
 

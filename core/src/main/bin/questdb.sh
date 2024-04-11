@@ -8,7 +8,7 @@
 #    \__\_\\__,_|\___||___/\__|____/|____/
 #
 #  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2023 QuestDB
+#  Copyright (c) 2019-2024 QuestDB
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -70,7 +70,7 @@ case `uname` in
 esac
 
 function usage {
-    echo "Usage: $0 start|status|stop [-f] [-d path] [-t tag]"
+    echo "Usage: $0 start|status|stop [-f] [-n] [-d path] [-t tag]"
     echo
     exit 55
 }
@@ -200,12 +200,12 @@ function start {
     DATE=`date +%Y-%m-%dT%H-%M-%S`
 
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1
     elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt &
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1 &
         sleep 0.5
     else
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > ${QDB_LOG}/stdout-${DATE}.txt
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1
     fi
 }
 

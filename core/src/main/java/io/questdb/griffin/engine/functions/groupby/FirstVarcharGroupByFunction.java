@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByUtf8Sink;
+import io.questdb.griffin.engine.groupby.StableAwareUtf8StringHolder;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
@@ -42,7 +42,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class FirstVarcharGroupByFunction extends VarcharFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
-    protected final GroupByUtf8Sink sink = new GroupByUtf8Sink();
+    protected final StableAwareUtf8StringHolder sink = new StableAwareUtf8StringHolder();
     protected int valueIndex;
 
     public FirstVarcharGroupByFunction(@NotNull Function arg) {
@@ -62,7 +62,7 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
             mapValue.putLong(valueIndex + 1, 0);
             mapValue.putBool(valueIndex + 2, true);
         } else {
-            sink.of(0).put(val);
+            sink.of(0).clearAndSet(val);
             mapValue.putLong(valueIndex + 1, sink.ptr());
             mapValue.putBool(valueIndex + 2, false);
         }
@@ -84,6 +84,16 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
     }
 
     @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        utf8Sink.put(getVarcharA(rec));
+    }
+
+    @Override
     public @Nullable Utf8Sequence getVarcharA(Record rec) {
         final boolean nullValue = rec.getBool(valueIndex + 2);
         if (nullValue) {
@@ -94,18 +104,21 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
     }
 
     @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        utf8Sink.put(getVarcharA(rec));
-    }
-
-    @Override
     public @Nullable Utf8Sequence getVarcharB(Record rec) {
         return getVarcharA(rec);
     }
 
     @Override
-    public int getValueIndex() {
-        return valueIndex;
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);    // row id
+        columnTypes.add(ColumnType.LONG);    // sink pointer
+        columnTypes.add(ColumnType.BOOLEAN); // null flag
     }
 
     @Override
@@ -135,14 +148,6 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);    // row id
-        columnTypes.add(ColumnType.LONG);    // sink pointer
-        columnTypes.add(ColumnType.BOOLEAN); // null flag
-    }
-
-    @Override
     public void setAllocator(GroupByAllocator allocator) {
         sink.setAllocator(allocator);
     }
@@ -152,11 +157,6 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putLong(valueIndex + 1, 0);
         mapValue.putBool(valueIndex + 2, true);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

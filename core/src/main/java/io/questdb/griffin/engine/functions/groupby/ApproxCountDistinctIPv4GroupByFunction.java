@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -124,6 +124,21 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+        this.hllPtrIndex = valueIndex + 1;
+        this.overwrittenFlagIndex = valueIndex + 2;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        initValueIndex(columnTypes.getColumnCount());
+        columnTypes.add(ColumnType.LONG); // overwritten value
+        columnTypes.add(ColumnType.LONG); // pointer to HyperLogLog
+        columnTypes.add(ColumnType.BOOLEAN); // flag denoting whether the value has been overwritten
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -182,14 +197,6 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        setValueIndex(columnTypes.getColumnCount());
-        columnTypes.add(ColumnType.LONG); // overwritten value
-        columnTypes.add(ColumnType.LONG); // pointer to HyperLogLog
-        columnTypes.add(ColumnType.BOOLEAN); // flag denoting whether the value has been overwritten
-    }
-
-    @Override
     public void setAllocator(GroupByAllocator allocator) {
         hllA.setAllocator(allocator);
         hllB.setAllocator(allocator);
@@ -208,13 +215,6 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     @Override
     public void setNull(MapValue mapValue) {
         overwrite(mapValue, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
-        this.hllPtrIndex = valueIndex + 1;
-        this.overwrittenFlagIndex = valueIndex + 2;
     }
 
     @Override

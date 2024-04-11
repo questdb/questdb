@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -69,5 +69,11 @@ abstract class AbstractMSequence extends AbstractSSequence {
 
     private boolean available0(long lo) {
         return Unsafe.getUnsafe().getIntVolatile(flags, (((lo & mask)) << Unsafe.INT_SCALE) + Unsafe.INT_OFFSET) == (int) (lo >>> shift);
+    }
+
+    @Override
+    public void clear() {
+        super.clear();
+        Arrays.fill(flags, -1);
     }
 }

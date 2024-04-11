@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -251,13 +251,13 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public CharSequence getStrA(int columnIndex) {
-            return baseRecord.getStrA(columnIndex);
+        public void getStr(int columnIndex, Utf16Sink utf16Sink) {
+            baseRecord.getStr(columnIndex, utf16Sink);
         }
 
         @Override
-        public void getStr(int columnIndex, Utf16Sink utf16Sink) {
-            baseRecord.getStr(columnIndex, utf16Sink);
+        public CharSequence getStrA(int columnIndex) {
+            return baseRecord.getStrA(columnIndex);
         }
 
         @Override
@@ -301,7 +301,12 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public int keyHashCode() {
+        public int getVarcharSize(int columnIndex) {
+            return baseRecord.getVarcharSize(columnIndex);
+        }
+
+        @Override
+        public long keyHashCode() {
             return baseRecord.keyHashCode();
         }
 

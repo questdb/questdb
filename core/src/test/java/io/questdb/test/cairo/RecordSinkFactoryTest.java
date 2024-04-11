@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -153,6 +153,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         keyFunctions.add(new TestFunction(ColumnType.FLOAT));
         keyFunctions.add(new TestFunction(ColumnType.DOUBLE));
         keyFunctions.add(new TestFunction(ColumnType.STRING));
+        keyFunctions.add(new TestFunction(ColumnType.VARCHAR));
         keyFunctions.add(new TestFunction(ColumnType.BINARY));
         keyFunctions.add(new TestFunction(ColumnType.LONG256));
         keyFunctions.add(new TestFunction(ColumnType.GEOBYTE));
@@ -444,6 +445,17 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            Assert.assertEquals(ColumnType.STRING, type);
+            callCount++;
+        }
+
+        @Override
+        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public CharSequence getStrA(Record rec) {
             Assert.assertEquals(ColumnType.STRING, type);
             callCount++;
@@ -452,17 +464,6 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
 
         @Override
         public CharSequence getStrA(Record rec, int arrayIndex) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            Assert.assertEquals(ColumnType.STRING, type);
-            callCount++;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
             throw new UnsupportedOperationException();
         }
 
@@ -528,6 +529,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             Assert.assertEquals(ColumnType.VARCHAR, type);
             callCount++;
             return new Utf8String("abc");
+        }
+
+        @Override
+        public int getVarcharSize(Record rec) {
+            throw new UnsupportedOperationException();
         }
     }
 

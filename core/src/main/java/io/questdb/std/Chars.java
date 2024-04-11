@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,9 +58,9 @@ public final class Chars {
      * @param ascii ascii string to convert to byte array
      * @return byte array representation of the input string
      */
-    public static byte[] asciiToByteArray(CharSequence ascii) {
+    public static byte[] asciiToByteArray(@NotNull CharSequence ascii) {
         byte[] dst = new byte[ascii.length()];
-        for (int i = 0; i < ascii.length(); i++) {
+        for (int i = 0, n = ascii.length(); i < n; i++) {
             assert ascii.charAt(i) < 128;
             dst[i] = (byte) ascii.charAt(i);
         }
@@ -228,8 +228,8 @@ public final class Chars {
             return true;
         }
 
-        int ll;
-        if ((ll = l.length()) != rHi - rLo) {
+        int ll = l.length();
+        if (ll != rHi - rLo) {
             return false;
         }
 
@@ -275,8 +275,8 @@ public final class Chars {
             return true;
         }
 
-        int ll;
-        if ((ll = l.length()) != r.length()) {
+        int ll = l.length();
+        if (ll != r.length()) {
             return false;
         }
 
@@ -297,8 +297,8 @@ public final class Chars {
             return true;
         }
 
-        int ll;
-        if ((ll = l.length()) != rHi - rLo) {
+        int ll = l.length();
+        if (ll != rHi - rLo) {
             return false;
         }
 
@@ -315,8 +315,8 @@ public final class Chars {
             return true;
         }
 
-        int ll;
-        if ((ll = lLC.length()) != rHi - rLo) {
+        int ll = lLC.length();
+        if (ll != rHi - rLo) {
             return false;
         }
 
@@ -365,8 +365,8 @@ public final class Chars {
     }
 
     public static boolean equalsLowerCaseAscii(@NotNull CharSequence l, @NotNull CharSequence r) {
-        int ll;
-        if ((ll = l.length()) != r.length()) {
+        int ll = l.length();
+        if (ll != r.length()) {
             return false;
         }
 
@@ -613,6 +613,15 @@ public final class Chars {
         }
 
         return -1;
+    }
+
+    public static boolean isAscii(@NotNull CharSequence cs) {
+        for (int i = 0, n = cs.length(); i < n; i++) {
+            if (cs.charAt(i) > 127) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static boolean isBlank(CharSequence s) {
@@ -868,7 +877,6 @@ public final class Chars {
             sink.put(Character.toLowerCase(str.charAt(i)));
         }
     }
-
 
     public static String toLowerCaseAscii(@Nullable CharSequence value) {
         if (value == null) {

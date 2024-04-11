@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -768,7 +768,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
 
                 // we expect memory to zero out the file, which failed to truncate
 
-                try (MemoryMR roMem = new MemoryCMRImpl(ff, path, fileLen, MemoryTag.MMAP_DEFAULT)) {
+                try (MemoryMR roMem = new MemoryCMRImpl(ff, path, fileLen, MemoryTag.MMAP_DEFAULT, false)) {
                     Assert.assertEquals(fileLen, roMem.size());
 
                     for (int i = 0; i < fileLen; i++) {
@@ -996,11 +996,12 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
                             TestFilesFacadeImpl.INSTANCE,
                             path,
                             sz,
-                            MemoryTag.MMAP_DEFAULT)
+                            MemoryTag.MMAP_DEFAULT,
+                            false)
             ) {
                 code.run(rwMem, roMem);
             } finally {
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
             }
         });
 

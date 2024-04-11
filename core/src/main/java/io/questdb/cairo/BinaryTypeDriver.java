@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,11 @@ import io.questdb.std.Vect;
 
 public class BinaryTypeDriver extends StringTypeDriver {
     public static final BinaryTypeDriver INSTANCE = new BinaryTypeDriver();
+
+    @Override
+    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
+        auxMem.putLong(dataMem.putNullBin());
+    }
 
     public long getDataVectorMinEntrySize() {
         return Long.BYTES;
@@ -60,17 +65,17 @@ public class BinaryTypeDriver extends StringTypeDriver {
     }
 
     @Override
-    public void setColumnRefs(long address, long initialOffset, long count) {
-        Vect.setVarColumnRefs64Bit(address, initialOffset, count);
-    }
-
-    @Override
     public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
         Vect.memset(dataMemAddr, rowCount * Long.BYTES, -1);
     }
 
     @Override
-    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
-        auxMem.putLong(dataMem.putNullBin());
+    public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
+        Vect.setVarColumnRefs64Bit(auxMemAddr, 0, rowCount + 1);
+    }
+
+    @Override
+    public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
+        Vect.setVarColumnRefs64Bit(auxMemAddr, initialOffset, columnTop);
     }
 }

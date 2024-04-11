@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -118,6 +118,16 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
         return getVarcharA(rec);
     }
 
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
+    }
 
     @Override
     public boolean isConstant() {
@@ -147,12 +157,6 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-    }
-
-    @Override
     public void setAllocator(GroupByAllocator allocator) {
         sinkA.setAllocator(allocator);
         sinkB.setAllocator(allocator);
@@ -161,11 +165,6 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

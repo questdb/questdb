@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,9 +34,18 @@ import org.jetbrains.annotations.NotNull;
 public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
     public static final Factory FACTORY = new Factory();
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    private final boolean stable;
     private boolean ascii;
     private long hi;
     private long lo;
+
+    public DirectUtf8String() {
+        this(false);
+    }
+
+    public DirectUtf8String(boolean stable) {
+        this.stable = stable;
+    }
 
     @Override
     public @NotNull CharSequence asAsciiCharSequence() {
@@ -46,6 +55,7 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
     @Override
     public void clear() {
         this.lo = this.hi = 0;
+        this.ascii = false;
     }
 
     public DirectUtf8Sequence decHi() {
@@ -56,6 +66,11 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
     @Override
     public boolean isAscii() {
         return ascii;
+    }
+
+    @Override
+    public boolean isStable() {
+        return stable;
     }
 
     public DirectUtf8String of(long lo, long hi) {

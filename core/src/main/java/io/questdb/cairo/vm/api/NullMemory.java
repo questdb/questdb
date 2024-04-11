@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
-import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -71,11 +70,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public BinarySequence getBin(long offset) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public DirectCharSequence getDirectStr(long offset) {
         throw new UnsupportedOperationException();
     }
 

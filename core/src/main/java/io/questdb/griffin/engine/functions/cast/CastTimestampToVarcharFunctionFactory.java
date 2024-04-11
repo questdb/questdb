@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.*;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 
 public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
 
@@ -77,22 +80,22 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            sinkA.clear();
             final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NaN) {
                 return null;
             }
+            sinkA.clear();
             TimestampFormatUtils.appendDateTimeUSec(sinkA, value);
             return sinkA;
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            sinkB.clear();
             final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NaN) {
                 return null;
             }
+            sinkB.clear();
             TimestampFormatUtils.appendDateTimeUSec(sinkB, value);
             return sinkB;
         }

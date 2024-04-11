@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -113,12 +113,12 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     @Override
-    public boolean isConstant() {
-        return false;
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.DOUBLE);
@@ -126,6 +126,11 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
     }
 
     @Override
@@ -142,11 +147,6 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
         mapValue.putDouble(valueIndex + 3, Double.NaN);
         mapValue.putDouble(valueIndex + 4, Double.NaN);
         mapValue.putLong(valueIndex + 5, 0);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

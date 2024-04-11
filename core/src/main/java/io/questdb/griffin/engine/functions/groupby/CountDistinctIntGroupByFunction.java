@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -77,7 +77,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
             long ptr = mapValue.getLong(valueIndex + 1);
             // Remap zero since it's used as the no entry key.
             val = (val == 0) ? Numbers.INT_NaN : val;
-            final int index = setA.of(ptr).keyIndex(val);
+            final long index = setA.of(ptr).keyIndex(val);
             if (index >= 0) {
                 setA.addAt(index, val);
                 mapValue.addLong(valueIndex, 1);
@@ -104,6 +104,18 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG); // count
+        columnTypes.add(ColumnType.LONG); // GroupByIntHashSet pointer
     }
 
     @Override
@@ -148,13 +160,6 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // count
-        columnTypes.add(ColumnType.LONG); // GroupByIntHashSet pointer
-    }
-
-    @Override
     public void setAllocator(GroupByAllocator allocator) {
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
@@ -176,11 +181,6 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putLong(valueIndex + 1, 0);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

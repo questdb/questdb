@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -157,13 +157,13 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public CharSequence getStrA(int col) {
-        return base.getStrA(getColumnIndex(col));
+    public void getStr(int col, Utf16Sink utf16Sink) {
+        base.getStr(getColumnIndex(col), utf16Sink);
     }
 
     @Override
-    public void getStr(int col, Utf16Sink utf16Sink) {
-        base.getStr(getColumnIndex(col), utf16Sink);
+    public CharSequence getStrA(int col) {
+        return base.getStrA(getColumnIndex(col));
     }
 
     @Override
@@ -209,6 +209,11 @@ class SelectedRecord implements Record {
     @Override
     public Utf8Sequence getVarcharB(int col) {
         return base.getVarcharB(getColumnIndex(col));
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        return base.getVarcharSize(getColumnIndex(col));
     }
 
     private int getColumnIndex(int columnIndex) {

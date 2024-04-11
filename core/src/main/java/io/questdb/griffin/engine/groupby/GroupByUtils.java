@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -85,7 +85,7 @@ public class GroupByUtils {
                     // some functions may need more than one column in values,
                     // so we have them do all the work
                     GroupByFunction func = (GroupByFunction) function;
-                    func.pushValueTypes(valueTypes);
+                    func.initValueTypes(valueTypes);
                     groupByFunctions.add(func);
                     groupByFunctionPositions.add(node.position);
                 } else {
@@ -290,7 +290,7 @@ public class GroupByUtils {
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             final GroupByFunction workerGroupByFunction = workerGroupByFunctions.getQuick(i);
             final GroupByFunction groupByFunction = groupByFunctions.getQuick(i);
-            workerGroupByFunction.setValueIndex(groupByFunction.getValueIndex());
+            workerGroupByFunction.initValueIndex(groupByFunction.getValueIndex());
         }
     }
 

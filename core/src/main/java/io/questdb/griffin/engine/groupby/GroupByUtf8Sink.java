@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,12 +46,12 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     private static final long HEADER_SIZE = 2 * Integer.BYTES + Byte.BYTES;
-    private static final long SIZE_OFFSET = Integer.BYTES;
     private static final long IS_ASCII_OFFSET = 2 * Integer.BYTES;
     private static final int MIN_CAPACITY = 16;
+    private static final long SIZE_OFFSET = Integer.BYTES;
     private GroupByAllocator allocator;
-    private long ptr;
     private AsciiCharSequence asciiCharSequence;
+    private long ptr;
 
     @Override
     public @NotNull CharSequence asAsciiCharSequence() {
@@ -66,6 +66,32 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     public byte byteAt(int index) {
         assert ptr != 0;
         return Unsafe.getUnsafe().getByte(ptr + HEADER_SIZE + index);
+    }
+
+    public int capacity() {
+        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
+    }
+
+    public void clear() {
+        if (ptr != 0) {
+            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
+            Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
+        }
+    }
+
+    @Override
+    public boolean isAscii() {
+        return ptr == 0 || Unsafe.getUnsafe().getBoolean(null, ptr + IS_ASCII_OFFSET);
+    }
+
+    public GroupByUtf8Sink of(long ptr) {
+        this.ptr = ptr;
+        return this;
+    }
+
+    public long ptr() {
+        assert ptr != 0;
+        return ptr;
     }
 
     @Override
@@ -84,12 +110,34 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     }
 
     @Override
-    public boolean isAscii() {
-        return ptr == 0 || Unsafe.getUnsafe().getBoolean(null, ptr + IS_ASCII_OFFSET);
+    public Utf8Sink put(byte b) {
+        checkCapacity(1);
+        Unsafe.getUnsafe().putByte(ptr + HEADER_SIZE + size(), b);
+        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, size() + 1);
+        Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, false);
+        return this;
     }
 
-    public int capacity() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
+    @Override
+    public Utf8Sink putUtf8(long lo, long hi) {
+        throw new UnsupportedOperationException("not implemented");
+    }
+
+    public void setAllocator(GroupByAllocator allocator) {
+        this.allocator = allocator;
+    }
+
+    @Override
+    public int size() {
+        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET) : 0;
+    }
+
+    @Override
+    public void writeTo(long addr, int lo, int hi) {
+        if (ptr == 0) {
+            return;
+        }
+        Utf8Sequence.super.writeTo(addr, lo, hi);
     }
 
     private void checkCapacity(int bytes) {
@@ -113,57 +161,5 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
             ptr = allocator.realloc(ptr, capacity + HEADER_SIZE, newSize);
             Unsafe.getUnsafe().putInt(ptr, newCapacity);
         }
-    }
-
-    @Override
-    public Utf8Sink put(byte b) {
-        checkCapacity(1);
-        Unsafe.getUnsafe().putByte(ptr + HEADER_SIZE + size(), b);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, size() + 1);
-        Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, false);
-        return this;
-    }
-
-    @Override
-    public Utf8Sink putUtf8(long lo, long hi) {
-        throw new UnsupportedOperationException("not implemented");
-    }
-
-
-    @Override
-    public int size() {
-        if (ptr == 0) {
-            return 0;
-        }
-        return Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET);
-    }
-
-    @Override
-    public void writeTo(long addr, int lo, int hi) {
-        if (ptr == 0) {
-            return;
-        }
-        Utf8Sequence.super.writeTo(addr, lo, hi);
-    }
-
-    public void clear() {
-        if (ptr != 0) {
-            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
-        }
-    }
-
-    public GroupByUtf8Sink of(long ptr) {
-        this.ptr = ptr;
-        return this;
-    }
-
-    public long ptr() {
-        assert ptr != 0;
-        return ptr;
-    }
-
-    public void setAllocator(GroupByAllocator allocator) {
-        this.allocator = allocator;
     }
 }

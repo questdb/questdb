@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -67,6 +67,31 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose t from (select [t, tt] from x where t between ('2020-01-01','2021-01-02') and tt between ('2021-01-02','2021-01-31'))",
                 "select t from x where t between '2020-01-01' and '2021-01-02' and tt between '2021-01-02' and '2021-01-31'",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testCaseToSwitchRewriteNoElse() throws Exception {
+        assertQuery(
+                "select-virtual switch(a,10,'2',20,'3',null) k from (select [a] from x)",
+                "select case when a = 10 then '2' when a = 20 then '3' end k from x",
+                modelOf("x").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testBetweenWithNegativeBounds() throws Exception {
+        assertQuery(
+                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
+                "SELECT -5 BETWEEN -10 AND -1"
+        );
+        assertQuery(
+                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
+                "SELECT -5 BETWEEN -10 AND (-1)"
+        );
+        assertQuery(
+                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
+                "SELECT -5 BETWEEN (-10) AND -1"
         );
     }
 
@@ -7982,10 +8007,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "  usage_guest_nice LONG,\n" +
                 "  timestamp TIMESTAMP\n" +
                 ") timestamp (timestamp) PARTITION BY DAY WAL;");
+
         assertException("select * from cpu sample by 1d align to first observation", 28, "at least one");
         assertException("select * from cpu sample by 1d align to calendar", 7, "wildcard column select is not allowed in sample-by queries");
         assertException("select cpu.* from cpu sample by 1d align to calendar", 7, "wildcard column select is not allowed in sample-by queries");
         assertException("select hostname, a.* from cpu a sample by 1d align to calendar", 17, "wildcard column select is not allowed in sample-by queries");
+
+        assertQuery(
+                "select-choose column from (select-virtual [avg * 10 column, timestamp] avg * 10 column, timestamp from (select-group-by [avg(usage_user) avg, timestamp_floor('1d',timestamp) timestamp] avg(usage_user) avg, timestamp_floor('1d',timestamp) timestamp from (select [usage_user, timestamp] from cpu timestamp (timestamp))) order by timestamp)",
+                "select avg(usage_user) * 10 from cpu sample by 1d"
+        );
     }
 
     @Test

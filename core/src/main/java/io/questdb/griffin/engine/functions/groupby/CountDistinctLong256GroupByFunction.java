@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -100,7 +100,7 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
                 l2 = Numbers.LONG_NaN;
                 l3 = Numbers.LONG_NaN;
             }
-            final int index = setA.of(ptr).keyIndex(l0, l1, l2, l3);
+            final long index = setA.of(ptr).keyIndex(l0, l1, l2, l3);
             if (index >= 0) {
                 setA.addAt(index, l0, l1, l2, l3);
                 mapValue.addLong(valueIndex, 1);
@@ -127,6 +127,18 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -171,13 +183,6 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.LONG);
-    }
-
-    @Override
     public void setAllocator(GroupByAllocator allocator) {
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
@@ -199,11 +204,6 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putLong(valueIndex + 1, 0);
-    }
-
-    @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
     }
 
     @Override

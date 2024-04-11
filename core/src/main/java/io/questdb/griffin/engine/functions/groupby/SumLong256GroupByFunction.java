@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -100,26 +100,26 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
-    public boolean isConstant() {
-        return false;
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG256);
         columnTypes.add(ColumnType.LONG);
     }
 
     @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putLong256(valueIndex, Long256Impl.NULL_LONG256);
-        mapValue.putLong(valueIndex + 1, 0);
+    public boolean isConstant() {
+        return false;
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
+    public void setNull(MapValue mapValue) {
+        mapValue.putLong256(valueIndex, Long256Impl.NULL_LONG256);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
