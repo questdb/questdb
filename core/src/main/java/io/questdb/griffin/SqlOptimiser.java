@@ -4848,7 +4848,7 @@ public class SqlOptimiser implements Mutable {
                 // select count(*) from t  returns 0  but
                 // select count(*) from t group by 12+3 returns empty result
                 // if we removed 12+3 then we'd affect result
-                else if (!(isEffectivelyConstantExpression(node) && i > 0)) {
+                else if (!(isEffectivelyConstantExpression(node) && n > 1)) {
                     // add expression
                     // if group by element is an expression then we've to use inner model to compute it
                     useInnerModel = true;

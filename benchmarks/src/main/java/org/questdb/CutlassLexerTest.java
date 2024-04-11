@@ -79,17 +79,14 @@ public class CutlassLexerTest {
         lpLexer.withParser(new LineUdpParser() {
             @Override
             public void onError(int position, int state, int code) {
-
             }
 
             @Override
             public void onEvent(CachedCharSequence token, int type, CharSequenceCache cache) {
-
             }
 
             @Override
             public void onLineEnd(CharSequenceCache cache) {
-
             }
         });
     }

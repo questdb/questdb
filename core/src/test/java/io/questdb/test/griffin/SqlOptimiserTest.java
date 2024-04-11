@@ -58,7 +58,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     " ('c', '2023-09-01T03:00:00.000Z')";
 
 
-    //2023-09-01T00:00:00.000Z
     @Test
     public void testAliasAppearsInFuncArgs1() throws Exception {
         assertMemoryLeak(() -> {
@@ -187,6 +186,49 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n");
+        });
+    }
+
+    public void testConstantInGroupByDoesNotPreventOptimisation() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table hits (\n" +
+                    "  URL string, ts timestamp\n" +
+                    ") timestamp(ts) partition by day wal");
+
+            insert("insert into hits (URL, ts) values ('abc', 0), ('abc', 1), ('def', 2), ('ghi', 3)");
+            drainWalQueue();
+
+            String q1 = "SELECT 1, URL, COUNT(*) AS c FROM hits ORDER BY c DESC LIMIT 10;";
+            String q2 = "SELECT 1, URL, COUNT(*) AS c FROM hits GROUP BY 1, URL ORDER BY c DESC LIMIT 10;";
+            String q3 = "SELECT 1, URL, COUNT(*) AS c FROM hits GROUP BY URL, 1 ORDER BY c DESC LIMIT 10;";
+            String q4 = "SELECT 1, URL, COUNT(*) AS c FROM hits GROUP BY 1, 2 ORDER BY c DESC LIMIT 10;";
+
+            String expectedSql = "1\tURL\tc\n" +
+                    "1\tabc\t2\n" +
+                    "1\tghi\t1\n" +
+                    "1\tdef\t1\n";
+            String expectedPlan = "Sort light lo: 10\n" +
+                    "  keys: [c desc]\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [1,URL,c]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [URL]\n" +
+                    "          values: [count(*)]\n" +
+                    "          filter: null\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: hits\n";
+
+            assertSql(expectedSql, q1);
+            assertSql(expectedSql, q2);
+            assertSql(expectedSql, q3);
+            assertSql(expectedSql, q4);
+
+            assertPlan(q1, expectedPlan);
+            assertPlan(q2, expectedPlan);
+            assertPlan(q3, expectedPlan);
+            assertPlan(q4, expectedPlan);
+
         });
     }
 
@@ -492,7 +534,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testOrderByAdviceWorksWithAsofJoin1() throws Exception {
+    public void testOrderByAdviceWorksWithAsOfJoin1() throws Exception {
         // Case when order by is one table and not timestamp first
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
@@ -527,7 +569,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testOrderByAdviceWorksWithAsofJoin2() throws Exception {
+    public void testOrderByAdviceWorksWithAsOfJoin2() throws Exception {
         // Case when order by is one table and timestamp first
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
@@ -562,7 +604,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testOrderByAdviceWorksWithAsofJoin3() throws Exception {
+    public void testOrderByAdviceWorksWithAsOfJoin3() throws Exception {
         // Case when order by is for more than one table prefix
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
@@ -597,7 +639,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testOrderByAdviceWorksWithAsofJoin4() throws Exception {
+    public void testOrderByAdviceWorksWithAsOfJoin4() throws Exception {
         // Case when ordering by secondary table
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
@@ -632,7 +674,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testOrderByAdviceWorksWithAsofJoin5() throws Exception {
+    public void testOrderByAdviceWorksWithAsOfJoin5() throws Exception {
         // Case when order by is one table and not timestamp first
         assertMemoryLeak(() -> {
             ddl(orderByAdviceDdl.replace(" t ", " t1 "));
@@ -1415,5 +1457,3 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         }
     }
 }
-
-

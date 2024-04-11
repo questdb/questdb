@@ -291,7 +291,7 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public boolean clear() {
         snapshotAgent.clear();
-        messageBus.reset();
+        messageBus.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
