@@ -189,36 +189,38 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             int size = us.size();
 
             int i = 0;
-            for (int n = size - 7; i < n; i += 8) {
-                long zeroBytesWord = SwarUtils.checkZeroByte(us.longAt(i) ^ searchWord);
+            for (int n = size - 7 - patternSize + 1; i < n; i += 8) {
+                long zeroBytesWord = SwarUtils.markZeroBytes(us.longAt(i) ^ searchWord);
                 if (zeroBytesWord != 0) {
-                    // We've found a match for the first byte, slow down and check the full pattern.
-                    int numTrailingZeros = Long.numberOfTrailingZeros(zeroBytesWord);
-                    int foundIndex = numTrailingZeros >>> 3;
-                    while (foundIndex < 8) {
+                    // We've found a match for the first pattern byte,
+                    // slow down and check the full pattern.
+                    int firstIndex = (int) SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                    int pos = firstIndex;
+                    while (pos < 8) {
                         // Check if the pattern matches only for matched first bytes.
-                        if ((us.longAt(i + foundIndex) & patternMask) == patternWord) {
-                            return true;
+                        if (size - i - pos > 7) {
+                            // It's safe to load full word.
+                            if ((us.longAt(i + pos) & patternMask) == patternWord) {
+                                return true;
+                            }
+                        } else {
+                            // We can't call longAt safely near the sequence end,
+                            // so construct the word from individual bytes.
+                            if ((tailWord(us, i + pos) & patternMask) == patternWord) {
+                                return true;
+                            }
                         }
-                        zeroBytesWord >>= numTrailingZeros + 1;
-                        numTrailingZeros = Long.numberOfTrailingZeros(zeroBytesWord);
-                        foundIndex += 1 + (numTrailingZeros >>> 3);
+                        zeroBytesWord >>>= 8 * (firstIndex + 1);
+                        firstIndex = (int) SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                        pos += firstIndex + 1;
                     }
                 }
             }
 
             // tail
             for (int n = size - patternSize + 1; i < n; i++) {
-                if (us.byteAt(i) == searchFirstByte) {
-                    // we can't call longAt safely for the tail,
-                    // so construct word at the tail from individual bytes
-                    long tailWord = 0;
-                    for (int j = 0; j < patternSize; j++) {
-                        tailWord |= (us.byteAt(i + j) & 0xffL) << (8 * j);
-                    }
-                    if ((tailWord & patternMask) == patternWord) {
-                        return true;
-                    }
+                if (us.byteAt(i) == searchFirstByte && (tailWord(us, i) & patternMask) == patternWord) {
+                    return true;
                 }
             }
             return false;
@@ -236,6 +238,14 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             sink.val('%');
             sink.val(pattern);
             sink.val('%');
+        }
+
+        private long tailWord(Utf8Sequence us, int i) {
+            long tailWord = 0;
+            for (int j = 0; j < patternSize; j++) {
+                tailWord |= (us.byteAt(i + j) & 0xffL) << (8 * j);
+            }
+            return tailWord;
         }
     }
 

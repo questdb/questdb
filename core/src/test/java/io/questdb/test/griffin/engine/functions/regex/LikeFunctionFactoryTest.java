@@ -553,6 +553,7 @@ public class LikeFunctionFactoryTest extends AbstractCairoTest {
             assertLike("s\nfoobarbaz\nbazbarfoo foobarbaz\n", "select * from x where s like '%barbaz'", false);
             assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%f%'", false);
             assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%o%'", false);
+            assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%ob%'", false);
             assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%foo%'", false);
             assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%foobar%'", false);
             assertLike("s\nfoobarbaz\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%foobarb%'", false);
