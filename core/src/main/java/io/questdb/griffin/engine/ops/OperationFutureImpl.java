@@ -88,7 +88,6 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
     public void close() {
         if (eventSubSeq != null) {
             engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
-            eventSubSeq.clear();
             eventSubSeq = null;
             correlationId = -1;
             tableToken = null;

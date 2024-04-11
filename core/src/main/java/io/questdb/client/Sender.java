@@ -808,6 +808,12 @@ public interface Sender extends Closeable {
             String tcpToken = null;
             String user = null;
             String password = null;
+
+            // We need the autoFlushBytesSet and initBufSizeSet flags, because auto_flush_bytes and init_buf_size params
+            // share the same SenderBuilder field. TCP transport allows both to be set as long as they have the same
+            // value. At the same time, we want to fail when the same parameter is set twice.
+            boolean initBufSizeSet = false;
+            boolean autoFlushBytesSet = false;
             while (ConfStringParser.hasNext(configurationString, pos)) {
                 pos = ConfStringParser.nextKey(configurationString, pos, sink);
                 if (pos < 0) {
@@ -886,8 +892,16 @@ public interface Sender extends Closeable {
                     maxBufferCapacity(maxBufferSize);
                 } else if (Chars.equals("init_buf_size", sink)) {
                     pos = getValue(configurationString, pos, sink, "init_buf_size");
-                    int initBufferSize = parseIntValue(sink, "init_buf_size");
-                    bufferCapacity(initBufferSize);
+                    int initBufSize = parseIntValue(sink, "init_buf_size");
+                    if (autoFlushBytesSet) {
+                        assert protocol == PROTOCOL_TCP;
+                        if (initBufSize != bufferCapacity) {
+                            throw new LineSenderException("TCP transport requires init_buf_size and auto_flush_bytes to be set to the same value [init_buf_size=").put(initBufSize).put(", auto_flush_bytes=").put(bufferCapacity).put(']');
+                        }
+                    } else {
+                        bufferCapacity(initBufSize);
+                    }
+                    initBufSizeSet = true;
                 } else if (Chars.equals("auto_flush_rows", sink)) {
                     pos = getValue(configurationString, pos, sink, "auto_flush_rows");
                     int autoFlushRows;
@@ -912,6 +926,24 @@ public interface Sender extends Closeable {
                         }
                     }
                     autoFlushIntervalMillis(autoFlushInterval);
+                } else if (Chars.equals("auto_flush_bytes", sink)) {
+                    if (protocol != PROTOCOL_TCP) {
+                        throw new LineSenderException("auto_flush_bytes is only supported for TCP transport");
+                    }
+                    pos = getValue(configurationString, pos, sink, "auto_flush_bytes");
+                    if (Chars.equalsIgnoreCase("off", sink)) {
+                        throw new LineSenderException("TCP transport must have auto_flush_bytes enabled");
+                    } else {
+                        int autoFlushBytes = parseIntValue(sink, "auto_flush_bytes");
+                        if (initBufSizeSet) {
+                            if (autoFlushBytes != bufferCapacity) {
+                                throw new LineSenderException("TCP transport requires init_buf_size and auto_flush_bytes to be set to the same value [init_buf_size=").put(bufferCapacity).put(", auto_flush_bytes=").put(autoFlushBytes).put(']');
+                            }
+                        } else {
+                            bufferCapacity(autoFlushBytes);
+                        }
+                    }
+                    autoFlushBytesSet = true;
                 } else if (Chars.equals("auto_flush", sink)) {
                     pos = getValue(configurationString, pos, sink, "auto_flush");
                     if (Chars.equalsIgnoreCase("off", sink)) {

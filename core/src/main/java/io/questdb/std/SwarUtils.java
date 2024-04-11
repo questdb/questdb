@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,37 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.eq;
+package io.questdb.std;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+public final class SwarUtils {
 
-public final class EqStrUuidFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "=(SZ)";
+    private SwarUtils() {
     }
 
-    @Override
-    public boolean isBoolean() {
-        return true;
+    /**
+     * Broadcasts the given byte to a long.
+     */
+    public static long broadcast(byte b) {
+        return 0x101010101010101L * (b & 0xffL);
     }
 
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        Function strFunc = args.getQuick(0);
-        Function uuidFunc = args.getQuick(1);
-        return UuidEqUtils.eqStrUuid(strFunc, uuidFunc);
+    /**
+     * Returns index of lowest (LE) non-zero byte in the input number
+     * or 7 in case if the number is zero.
+     */
+    public static long indexOfFirstMarkedByte(long w) {
+        return ((((w - 1) & 0x101010101010101L) * 0x101010101010101L) >> 56) - 1;
+    }
+
+    /**
+     * Returns non-zero result in case if the input contains a zero byte.
+     * <p>
+     * Each zero byte of the input is replaced with 0x80 in the output.
+     * Each non-zero byte is replaced with zero byte.
+     */
+    public static long markZeroBytes(long w) {
+        return ((w - 0x0101010101010101L) & ~(w) & 0x8080808080808080L);
     }
 }
