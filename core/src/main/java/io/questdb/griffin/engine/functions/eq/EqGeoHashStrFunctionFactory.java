@@ -40,11 +40,13 @@ public class EqGeoHashStrFunctionFactory extends EqGeoHashGeoHashFunctionFactory
     }
 
     @Override
-    public Function newInstance(int position,
-                                ObjList<Function> args,
-                                IntList argPositions,
-                                CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         args.set(1, CastStrToGeoHashFunctionFactory.newInstance(position, args.getQuick(0).getType(), args.getQuick(1)));
         return super.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
     }
