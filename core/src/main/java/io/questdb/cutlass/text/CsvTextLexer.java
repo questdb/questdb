@@ -24,13 +24,18 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.std.SwarUtils;
+
 public class CsvTextLexer extends AbstractTextLexer {
+    private static final long MASK_COMMA = SwarUtils.broadcast((byte) ',');
+
     public CsvTextLexer(TextConfiguration textConfiguration) {
         super(textConfiguration);
     }
 
-    protected void doSwitch(long lo, long ptr, byte c) throws LineLimitException {
-        switch (c) {
+    @Override
+    protected void doSwitch(long lo, long hi, byte b) throws LineLimitException {
+        switch (b) {
             case ',':
                 onColumnDelimiter(lo);
                 break;
@@ -39,12 +44,17 @@ public class CsvTextLexer extends AbstractTextLexer {
                 break;
             case '\n':
             case '\r':
-                onLineEnd(ptr);
+                onLineEnd(hi);
                 break;
             default:
                 checkEol(lo);
                 break;
         }
+    }
+
+    @Override
+    protected long getDelimiterMask() {
+        return MASK_COMMA;
     }
 }
 

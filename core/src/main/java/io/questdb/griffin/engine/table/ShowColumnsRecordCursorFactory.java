@@ -120,6 +120,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         public class ShowColumnsRecord implements Record {
+
             @Override
             public boolean getBool(int col) {
                 if (col == N_INDEXED_COL) {

@@ -157,8 +157,8 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                 "select sum(length(first) + length(last) + length(first_nn) + length(last_nn)) " +
                         "from " +
                         "( " +
-                        "select a, first(s) first, last(s) last, first_not_null(s) first_nn, last_not_null(s) last_nn " +
-                        "from x " +
+                        "   select a, first(s) first, last(s) last, first_not_null(s) first_nn, last_not_null(s) last_nn " +
+                        "   from x " +
                         ")",
                 "create table x as (" +
                         "select * from (" +

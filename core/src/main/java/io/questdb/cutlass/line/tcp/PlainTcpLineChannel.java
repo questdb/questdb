@@ -118,6 +118,6 @@ public final class PlainTcpLineChannel implements LineChannel {
         int orgSndBufSz = nf.getSndBuf(fd);
         nf.setSndBuf(fd, sndBufferSize);
         int newSndBufSz = nf.getSndBuf(fd);
-        LOG.info().$("Send buffer size change from ").$(orgSndBufSz).$(" to ").$(newSndBufSz).$();
+        LOG.debug().$("Send buffer size change from ").$(orgSndBufSz).$(" to ").$(newSndBufSz).$();
     }
 }

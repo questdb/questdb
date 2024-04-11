@@ -90,12 +90,6 @@ public class MemoryPARWImpl implements MemoryARW {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public Utf8SplitString borrowUtf8SplitStringA() {
-        // paged memory does not support reading UTF8 strings from
-        throw new UnsupportedOperationException();
-    }
-
     public void clear() {
         releaseAllPagesButFirst();
         appendPointer = -1;
@@ -174,12 +168,6 @@ public class MemoryPARWImpl implements MemoryARW {
             return Unsafe.getUnsafe().getChar(absolutePointer + offset);
         }
         return getChar0(offset);
-    }
-
-    @Override
-    public DirectCharSequence getDirectStr(long offset) {
-        // Paged memory doesn't support stable pointers.
-        throw new UnsupportedOperationException();
     }
 
     public final double getDouble(long offset) {
@@ -345,6 +333,12 @@ public class MemoryPARWImpl implements MemoryARW {
         }
 
         return value;
+    }
+
+    @Override
+    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
+        // paged memory does not support reading UTF8 strings from
+        throw new UnsupportedOperationException();
     }
 
     public final CharSequence getStr0(long offset, CharSequenceView view) {

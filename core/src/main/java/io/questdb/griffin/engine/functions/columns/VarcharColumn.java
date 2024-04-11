@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 
@@ -63,6 +62,11 @@ public class VarcharColumn extends VarcharFunction implements ScalarFunction {
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         return rec.getVarcharB(columnIndex);
+    }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        return rec.getVarcharSize(columnIndex);
     }
 
     @Override

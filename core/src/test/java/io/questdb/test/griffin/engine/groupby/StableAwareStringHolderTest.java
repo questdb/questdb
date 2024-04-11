@@ -98,7 +98,7 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
     public void testClearAndSetDirect_fuzzed() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
-                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16);
+                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16)
             ) {
                 StableAwareStringHolder holder = new StableAwareStringHolder();
                 holder.setAllocator(allocator);
