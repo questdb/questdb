@@ -667,6 +667,14 @@ public final class Timestamps {
         return Math.abs(a - b) / SECOND_MICROS;
     }
 
+    public static long getMilliSecondsBetween(long a, long b) {
+        return Math.abs(a - b) / MILLI_MICROS;
+    }
+
+    public static long getMicroSecondsBetween(long a, long b) {
+        return Math.abs(a - b);
+    }
+
     // https://en.wikipedia.org/wiki/ISO_week_date
     public static int getWeek(long micros) {
         int w = (10 + getDoy(micros) - getDayOfWeek(micros)) / 7;

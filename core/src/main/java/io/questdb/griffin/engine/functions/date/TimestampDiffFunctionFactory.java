@@ -195,6 +195,8 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
     }
 
     static {
+        diffFunctions.extendAndSet('u', Timestamps::getMicroSecondsBetween);
+        diffFunctions.extendAndSet('T', Timestamps::getMilliSecondsBetween);
         diffFunctions.extendAndSet('s', Timestamps::getSecondsBetween);
         diffFunctions.extendAndSet('m', Timestamps::getMinutesBetween);
         diffFunctions.extendAndSet('h', Timestamps::getHoursBetween);
