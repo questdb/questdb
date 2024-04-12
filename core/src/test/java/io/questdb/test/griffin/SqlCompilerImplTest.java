@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.CreateTableModel;
 import io.questdb.griffin.model.ExecutionModel;
@@ -2034,6 +2035,346 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
 
             assertFailure(7, "", "select datediff('ma', 0::timestamp, 1::timestamp) ");
+        });
+    }
+
+    @Test
+    public void testCompareVarcharAndStr() throws Exception {
+        assertMemoryLeak(() -> {
+            // constant
+            assertSql("column\ntrue\n", "select cast('ab' as varchar) > 'a'");
+            assertSql("column\nfalse\n", "select cast('ab' as varchar) = 'a'");
+            assertSql("column\ntrue\n", "select cast('ab' as varchar) != 'a'");
+            assertSql("column\nfalse\n", "select cast('ab' as varchar) < 'a'");
+
+            // non-constant
+            assertSql("column\ntrue\ntrue\n", "select x < 'd' from (select cast('a' as varchar) x union all select cast('cd' as varchar))");
+            assertSql("column\ntrue\n", "select rnd_varchar('be', 'cd') < 'd' ");
+            assertSql("column\ntrue\n", "select rnd_varchar('ac', 'be', 'cd') != 'd'");
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n",
+                    "select rnd_varchar('d', 'cd', null) != 'd' from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n",
+                    "select rnd_str('d', 'cd', null) != 'd'::varchar from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "true\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_varchar('d', 'cd', null) < 'd' from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "true\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_str('d', 'cd', null) < 'd'::varchar from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "true\n" +
+                            "true\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_varchar('d', null, null) <= 'd' from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "true\n" +
+                            "true\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_str('d', null, null) <= 'd'::varchar from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_varchar('d', 'cd', null) > 'd' from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_str('d', 'cd', null) > 'd'::varchar from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "true\n" +
+                            "true\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_varchar('d', 'cd', null) >= 'd' from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "true\n" +
+                            "true\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_str('d', 'cd', null) >= 'd'::varchar from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "true\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "true\n",
+                    "select rnd_str('d', 'cd', null) >= rnd_str('d', 'cd', null) from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "true\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "true\n",
+                    "select rnd_varchar('d', 'cd', null) >= rnd_varchar('d', 'cd', null) from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+
+            ddl("create table x as (select rnd_str('d', 'cd', null) rnd_str, rnd_varchar('d', 'cd', null) rnd_varchar from long_sequence(5))");
+            assertSql(
+                    "rnd_str\trnd_varchar\n" +
+                            "d\td\n" +
+                            "cd\t\n" +
+                            "\t\n" +
+                            "\tcd\n" +
+                            "d\tcd\n",
+                    "x"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "true\n",
+                    "select \"rnd_str\" > \"rnd_varchar\" from x"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select \"rnd_str\" < \"rnd_varchar\" from x"
+            );
+
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_str('d', 'cd', null) < rnd_varchar('d', 'cd', null) from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_varchar('d', 'cd', null) < null from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_varchar('d', 'cd', null) > null from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_str('d', 'cd', null) > cast(null as varchar) from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_str('d', 'cd', null) < cast(null as varchar) from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_varchar('d', 'cd', null) > cast(null as varchar) from long_sequence(5)"
+            );
+
+            SharedRandom.RANDOM.set(new Rnd());
+            assertSql(
+                    "column\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n" +
+                            "false\n",
+                    "select rnd_varchar('d', 'cd', null) < cast(null as varchar) from long_sequence(5)"
+            );
+
+            assertSql("column\ntrue\n", "select cast('ab' as char) <= cast('a' as varchar)");
+            assertSql("column\nfalse\n", "select cast('ab' as string) <= cast('a' as varchar)");
+            assertSql("column\ntrue\n", "select cast('a' as string) <= cast('a' as varchar)");
+            assertSql("column\ntrue\n", "select cast('a' as char) <= cast('a' as varchar)");
+            assertSql("column\ntrue\n", "select cast('a' as char) <= 'a'::varchar");
+            assertSql("column\ntrue\n", "select cast('' as char) = null");
+            assertSql("column\nfalse\n", "select cast('' as char) < null");
+            assertSql("column\nfalse\n", "select cast('' as char) > null");
+            assertSql("column\nfalse\n", "select cast('' as char) <= null"); // inconsistent with = null
+            assertSql("column\nfalse\n", "select cast('' as char) >= null"); // inconsistent with = null
+            assertSql("column\nfalse\n", "select cast('' as string) = null");
+            assertSql("column\nfalse\n", "select cast('' as string) <= null");
+            assertSql("column\ntrue\n", "select cast(null as string) = null");
+            assertSql("column\nfalse\n", "select cast(null as string) <= null");// inconsistent with = null
+            assertSql("column\nfalse\n", "select cast(null as string) >= null");// inconsistent with = null
+
+            assertFailure(7, "", "select datediff('ma', 0::timestamp, 1::timestamp) ");
+        });
+    }
+
+    @Test
+    public void testCompareVarcharAndStrPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            assertPlan(
+                    "select 'd' < rnd_varchar('d', 'cd', null) from long_sequence(5)",
+                    "VirtualRecord\n" +
+                            "  functions: ['d'<rnd_varchar([d,cd,null])]\n" +
+                            "    long_sequence count: 5\n"
+            );
+
+            assertPlan(
+                    "select 'd' <= rnd_varchar('d', 'cd', null) from long_sequence(5)",
+                    "VirtualRecord\n" +
+                            "  functions: [rnd_varchar([d,cd,null])>='d']\n" +
+                            "    long_sequence count: 5\n"
+            );
+
+            assertPlan(
+                    "select 'd' > rnd_varchar('d', 'cd', null) from long_sequence(5)",
+                    "VirtualRecord\n" +
+                            "  functions: [rnd_varchar([d,cd,null])<'d']\n" +
+                            "    long_sequence count: 5\n"
+            );
+
+            assertPlan(
+                    "select 'd' >= rnd_varchar('d', 'cd', null) from long_sequence(5)",
+                    "VirtualRecord\n" +
+                            "  functions: ['d'>=rnd_varchar([d,cd,null])]\n" +
+                            "    long_sequence count: 5\n"
+            );
+
+            assertPlan(
+                    "select rnd_varchar('d', 'cd', null) > 'd'::varchar from long_sequence(5)",
+                    "VirtualRecord\n" +
+                            "  functions: ['d'<rnd_varchar([d,cd,null])]\n" +
+                            "    long_sequence count: 5\n"
+            );
+
+            assertPlan(
+                    "select rnd_varchar('d', 'cd', null) >= 'd'::varchar  from long_sequence(5)",
+                    "VirtualRecord\n" +
+                            "  functions: [rnd_varchar([d,cd,null])>='d']\n" +
+                            "    long_sequence count: 5\n"
+            );
+
+            assertPlan(
+                    "select rnd_varchar('d', 'cd', null) > rnd_varchar('d', 'cd', null) from long_sequence(5)",
+                    "VirtualRecord\n" +
+                            "  functions: [rnd_varchar([d,cd,null])<rnd_varchar([d,cd,null])]\n" +
+                            "    long_sequence count: 5\n"
+            );
+
+            assertPlan(
+                    "select rnd_varchar('d', 'cd', null) >= rnd_varchar('d', 'cd', null)  from long_sequence(5)",
+                    "VirtualRecord\n" +
+                            "  functions: [rnd_varchar([d,cd,null])>=rnd_varchar([d,cd,null])]\n" +
+                            "    long_sequence count: 5\n"
+            );
         });
     }
 

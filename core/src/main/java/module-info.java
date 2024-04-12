@@ -23,6 +23,8 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.lt.LtStrVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.lt.LtVarcharStrFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -193,6 +195,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.lt.LtStrFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtLongFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtLong256FunctionFactory,
+            LtStrVarcharFunctionFactory,
+            LtVarcharStrFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtVarcharFunctionFactory,
 
 //                   '+' operator
             io.questdb.griffin.engine.functions.math.AddIntFunctionFactory,
@@ -250,6 +255,7 @@ open module io.questdb {
 //                     '~=',
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
+            io.questdb.griffin.engine.functions.regex.MatchVarcharFunctionFactory,
 //                    like
             io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.LikeVarcharFunctionFactory,
@@ -257,6 +263,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.regex.ILikeVarcharFunctionFactory,
 //                     '!~',
             io.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory,
+            io.questdb.griffin.engine.functions.regex.NotMatchVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.NotMatchCharFunctionFactory,
 //                     'to_char',
             io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory,
@@ -831,6 +838,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory,
             // regexp_replace()
             io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory,
+            io.questdb.griffin.engine.functions.regex.RegexpReplaceVarcharFunctionFactory,
 //                  avg()
             io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory,
