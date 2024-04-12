@@ -37,7 +37,6 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private static final long MASK_CR = SwarUtils.broadcast((byte) '\r');
     private static final long MASK_NEW_LINE = SwarUtils.broadcast((byte) '\n');
     private static final long MASK_QUOTE = SwarUtils.broadcast((byte) '"');
-
     private final ObjectPool<DirectUtf8String> csPool;
     private final ObjList<DirectUtf8String> fields = new ObjList<>();
     private final int lineRollBufLimit;
