@@ -1476,6 +1476,29 @@ public final class TestUtils {
         }
     }
 
+    public static void println(Record record, RecordMetadata metadata, CharSink<?> sink) {
+        CursorPrinter.println(record, metadata, sink);
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) == ColumnType.VARCHAR) {
+                Utf8Sequence utf8 = record.getVarcharA(i);
+                if (utf8 != null) {
+                    boolean ascii = true;
+                    for (int k = 0, kl = utf8.size(); k < kl; k++) {
+                        if (utf8.byteAt(k)<0) {
+                            ascii = false;
+                            break;
+                        }
+                    }
+                    if (utf8.isAscii() != ascii) {
+                        record.getVarcharA(i);
+                        System.out.println("ok");
+                    }
+                    Assert.assertEquals(utf8.isAscii(), ascii);
+                }
+            }
+        }
+    }
+
     public static void putUtf8(TableWriter.Row r, String s, int columnIndex, boolean symbol) {
         byte[] bytes = s.getBytes(Files.UTF_8);
         long len = bytes.length;

@@ -655,11 +655,15 @@ public final class Utf8s {
     public static int strCpy(@NotNull Utf8Sequence seq, int charLo, int charHi, @NotNull Utf8Sink sink) {
         if (seq.isAscii()) {
             for (int i = charLo; i < charHi; i++) {
-                sink.put(seq.byteAt(i));
+                sink.putAscii((char) seq.byteAt(i));
             }
             return charHi - charLo;
         }
 
+        return strCpyNonAscii(seq, charLo, charHi, sink);
+    }
+
+    private static int strCpyNonAscii(@NotNull Utf8Sequence seq, int charLo, int charHi, @NotNull Utf8Sink sink) {
         int charPos = 0;
         int bytesCopied = 0;
         for (int i = 0, hi = seq.size(); i < hi && charPos < charHi; charPos++) {
@@ -680,7 +684,7 @@ public final class Utf8s {
                 i += n;
             } else {
                 if (charPos >= charLo) {
-                    sink.put(b);
+                    sink.putAscii((char) b);
                     bytesCopied++;
                 }
                 i++;

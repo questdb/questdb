@@ -168,7 +168,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         long count = 0;
         long cursorSize = cursor.size();
         while (cursor.hasNext()) {
-            CursorPrinter.println(record, metadata, sink);
+            TestUtils.println(record, metadata, sink);
             count++;
         }
 
@@ -197,7 +197,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             CursorPrinter.println(metadata, sink);
             for (int i = 0, n = rows.size(); i < n; i++) {
                 cursor.recordAt(rec, rows.getQuick(i));
-                CursorPrinter.println(rec, metadata, sink);
+                TestUtils.println(rec, metadata, sink);
             }
 
             TestUtils.assertEquals(expected, sink);
@@ -208,7 +208,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             CursorPrinter.println(metadata, sink);
             for (int i = 0, n = rows.size(); i < n; i++) {
                 cursor.recordAt(factRec, rows.getQuick(i));
-                CursorPrinter.println(factRec, metadata, sink);
+                TestUtils.println(factRec, metadata, sink);
             }
 
             TestUtils.assertEquals(expected, sink);
@@ -221,7 +221,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 int target = rows.size() / 2;
                 CursorPrinter.println(metadata, sink);
                 while (target-- > 0 && cursor.hasNext()) {
-                    CursorPrinter.println(record, metadata, sink);
+                    TestUtils.println(record, metadata, sink);
                 }
 
                 // no obliterate record with absolute positioning
@@ -231,7 +231,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
                 // not continue normal fetch
                 while (cursor.hasNext()) {
-                    CursorPrinter.println(record, metadata, sink);
+                    TestUtils.println(record, metadata, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
