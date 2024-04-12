@@ -33,8 +33,6 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
-import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
@@ -2104,10 +2102,7 @@ public class AggregateTest extends AbstractCairoTest {
         ) {
             try {
                 if (pool != null) {
-                    GroupByVectorAggregateJob vectorAggregateJob = new GroupByVectorAggregateJob(engine.getMessageBus());
-                    pool.assign(vectorAggregateJob);
-                    GroupByMergeShardJob mergeShardJob = new GroupByMergeShardJob(engine.getMessageBus());
-                    pool.assign(mergeShardJob);
+                    TestUtils.setupWorkerPool(pool, engine);
                     pool.start(LOG);
                 }
 

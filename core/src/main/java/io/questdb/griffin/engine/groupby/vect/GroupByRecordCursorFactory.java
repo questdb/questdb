@@ -267,7 +267,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
-            Misc.free(pageFrameCursor);
+            pageFrameCursor = Misc.free(pageFrameCursor);
             raf.reset(pRostiBig, ROSTI_MINIMIZED_SIZE);
         }
 

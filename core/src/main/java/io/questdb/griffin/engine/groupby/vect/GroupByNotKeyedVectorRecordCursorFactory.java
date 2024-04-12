@@ -166,7 +166,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public void close() {
-            Misc.free(pageFrameCursor);
+            pageFrameCursor = Misc.free(pageFrameCursor);
         }
 
         @Override
@@ -310,7 +310,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             LOG.info().$("done [total=").$(total)
                     .$(", ownCount=").$(ownCount)
                     .$(", reclaimed=").$(reclaimed)
-                    .$(", queuedCount=").$(queuedCount).I$();
+                    .$(", queuedCount=").$(queuedCount)
+                    .I$();
         }
     }
 }
