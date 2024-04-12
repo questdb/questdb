@@ -22,38 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.engine.functions.regex;
 
 /**
- * A collection of SWAR utilities inspired by <a href="https://github.com/ada-url/ada">Ada URL parser</a>.
+ * This is tactical implementation of regex match over varchar column.
+ * It exploits the ability of a varchar column to return a CharSequence view of the sequence.
  */
-public final class SwarUtils {
-
-    private SwarUtils() {
-    }
-
-    /**
-     * Broadcasts the given byte to a long.
-     */
-    public static long broadcast(byte b) {
-        return 0x101010101010101L * (b & 0xffL);
-    }
-
-    /**
-     * Returns index of lowest (LE) non-zero byte in the input number
-     * or 8 in case if the number is zero.
-     */
-    public static int indexOfFirstMarkedByte(long w) {
-        return Long.numberOfTrailingZeros(w) >>> 3;
-    }
-
-    /**
-     * Returns non-zero result in case if the input contains a zero byte.
-     * <p>
-     * Each zero byte of the input is replaced with 0x80 in the output.
-     * Each non-zero byte is replaced with zero byte.
-     */
-    public static long markZeroBytes(long w) {
-        return ((w - 0x0101010101010101L) & ~(w) & 0x8080808080808080L);
+public class MatchVarcharFunctionFactory extends MatchStrFunctionFactory {
+    @Override
+    public String getSignature() {
+        return "~(ØS)";
     }
 }
