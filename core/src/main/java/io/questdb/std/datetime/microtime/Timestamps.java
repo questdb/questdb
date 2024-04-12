@@ -517,6 +517,10 @@ public final class Timestamps {
         return ((dayOfTheWeekOfEndOfPreviousYear <= 3) ? 0 : 7) - dayOfTheWeekOfEndOfPreviousYear;
     }
 
+    public static long getMicrosBetween(long a, long b) {
+        return Math.abs(a - b);
+    }
+
     public static int getMicrosOfMilli(long micros) {
         if (micros > -1) {
             return (int) (micros % MILLI_MICROS);
@@ -546,6 +550,10 @@ public final class Timestamps {
         int year = getYear(micros);
         int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;
         return millenniumFirstYear / 1000 + 1;
+    }
+
+    public static long getMillisBetween(long a, long b) {
+        return Math.abs(a - b) / MILLI_MICROS;
     }
 
     public static long getMillisOfMinute(long micros) {
@@ -630,6 +638,10 @@ public final class Timestamps {
 
     public static long getPeriodBetween(char type, long start, long end) {
         switch (type) {
+            case 'u':
+                return Timestamps.getMicrosBetween(start, end);
+            case 'T':
+                return Timestamps.getMillisBetween(start, end);
             case 's':
                 return Timestamps.getSecondsBetween(start, end);
             case 'm':
