@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -329,13 +329,13 @@ public class LogFactory implements Closeable {
         // prevent creating blank log dir from unit tests
         String logDir = ".";
         if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
-            logDir = Paths.get(rootDir, "log").toString();
+            logDir = Paths.get(rootDir, "log").toAbsolutePath().toString();
             File logDirFile = new File(logDir);
             if (!logDirFile.exists() && logDirFile.mkdir()) {
                 System.err.printf("Created log directory: %s%n", logDir);
             }
 
-            String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toString();
+            String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toAbsolutePath().toString();
             File f = new File(logPath);
             if (f.isFile() && f.canRead()) {
                 System.err.printf("Reading log configuration from %s%n", logPath);
@@ -952,6 +952,11 @@ public class LogFactory implements Closeable {
 
         @Override
         public LogRecord $ip(long ip) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $size(long memoryBytes) {
             return this;
         }
 

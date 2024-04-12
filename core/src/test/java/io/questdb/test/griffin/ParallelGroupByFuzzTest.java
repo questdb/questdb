@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1951,6 +1951,27 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "46.31818181818182\tk2\t387.0\n" +
                         "47.31818181818182\tk3\t393.0\n" +
                         "48.31818181818182\tk4\t399.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithNotNullCheckInFilter() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, min(ts), max(ts) FROM tab WHERE key IS NOT NULL ORDER BY key",
+                "key\tmin\tmax\n" +
+                        "k0\t1970-01-01T01:12:00.000000Z\t1970-02-10T12:00:00.000000Z\n" +
+                        "k1\t1970-01-01T00:14:24.000000Z\t1970-02-10T11:02:24.000000Z\n" +
+                        "k2\t1970-01-01T00:28:48.000000Z\t1970-02-10T11:16:48.000000Z\n" +
+                        "k3\t1970-01-01T00:43:12.000000Z\t1970-02-10T11:31:12.000000Z\n" +
+                        "k4\t1970-01-01T00:57:36.000000Z\t1970-02-10T11:45:36.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithNullCheckInFilter() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, min(ts), max(ts) FROM tab WHERE key IS NULL ORDER BY key",
+                "key\tmin\tmax\n"
         );
     }
 

@@ -22,16 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.std;
 
-/**
- * A specialization of {@link DirectSequence} that does not add new methods, but provides additional
- * guarantees about the stability of the pointer returned by {@link DirectSequence#ptr()} method.
- * <p>
- * Indicates that a pointer returned by {@link DirectSequence#ptr()} method is stable during a query execution.
- * Stable is defined as:
- * - the pointer remains valid for the duration of the query execution
- * - the sequence of bytes pointed to by the pointer does not change during the query execution
- */
-public interface StableDirectSequence extends DirectSequence {
+public final class SwarUtils {
+
+    private SwarUtils() {
+    }
+
+    /**
+     * Broadcasts the given byte to a long.
+     */
+    public static long broadcast(byte b) {
+        return 0x101010101010101L * (b & 0xffL);
+    }
+
+    /**
+     * Returns index of lowest (LE) non-zero byte in the input number
+     * or 7 in case if the number is zero.
+     */
+    public static long indexOfFirstMarkedByte(long w) {
+        return ((((w - 1) & 0x101010101010101L) * 0x101010101010101L) >> 56) - 1;
+    }
+
+    /**
+     * Returns non-zero result in case if the input contains a zero byte.
+     * <p>
+     * Each zero byte of the input is replaced with 0x80 in the output.
+     * Each non-zero byte is replaced with zero byte.
+     */
+    public static long markZeroBytes(long w) {
+        return ((w - 0x0101010101010101L) & ~(w) & 0x8080808080808080L);
+    }
 }

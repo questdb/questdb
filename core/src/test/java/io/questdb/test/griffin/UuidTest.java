@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -450,6 +450,24 @@ public class UuidTest extends AbstractCairoTest {
                     "b\n" +
                             "22222222-2222-2222-2222-222222222222\n",
                     "x where b = $1"
+            );
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInFilter2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b uuid)");
+            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
+            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
+            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "22222222-2222-2222-2222-222222222222");
+            assertSql(
+                    "b\n" +
+                            "22222222-2222-2222-2222-222222222222\n",
+                    "x where $1 = b"
             );
         });
     }

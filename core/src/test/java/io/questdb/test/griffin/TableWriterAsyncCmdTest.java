@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -532,7 +532,6 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
      */
     private static void stopEngineAsyncWriterEventWait(CairoEngine engine, SCSequence sequence) {
         engine.getMessageBus().getTableWriterEventFanOut().remove(sequence);
-        sequence.clear();
     }
 
     private void executeNoWait(SCSequence tempSequence, CompiledQuery cc) throws SqlException {
@@ -540,5 +539,4 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
             cq.await(0);
         }
     }
-
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -782,10 +782,9 @@ public class ExpressionParser {
                                     }
                                 } else {
                                     opStack.push(
-                                            expressionNodePool.next().of(
-                                                    ExpressionNode.CONSTANT,
+                                            SqlUtil.nextConstant(
+                                                    expressionNodePool,
                                                     lexer.immutableBetween(lastPos - 1, lexer.getTokenHi()),
-                                                    0,
                                                     lastPos
                                             )
                                     );
@@ -797,9 +796,9 @@ public class ExpressionParser {
                                     throw SqlException.$(lastPos, "unclosed quoted string?");
                                 }
 
-                                ExpressionNode constNode = expressionNodePool.next().of(ExpressionNode.CONSTANT,
+                                ExpressionNode constNode = SqlUtil.nextConstant(
+                                        expressionNodePool,
                                         GenericLexer.immutableOf(tok),
-                                        0,
                                         lastPos
                                 );
 
@@ -835,7 +834,7 @@ public class ExpressionParser {
                                     if ((columnType < ColumnType.BOOLEAN || (columnType > ColumnType.LONG256 && columnType != ColumnType.UUID)) && (columnType != ColumnType.IPv4)) {
                                         throw SqlException.$(prevNode.position, "impossible type cast, invalid type");
                                     } else {
-                                        ExpressionNode stringLiteral = expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lastPos);
+                                        ExpressionNode stringLiteral = SqlUtil.nextConstant(expressionNodePool, GenericLexer.immutableOf(tok), lastPos);
                                         onNode(listener, stringLiteral, 0, false);
 
                                         prevNode.type = ExpressionNode.CONSTANT;
@@ -890,7 +889,7 @@ public class ExpressionParser {
                             if (prevBranch != BRANCH_DOT_DEREFERENCE) {
                                 thisBranch = BRANCH_CONSTANT;
                                 // If the token is a number, then add it to the output queue.
-                                opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lastPos));
+                                opStack.push(SqlUtil.nextConstant(expressionNodePool, GenericLexer.immutableOf(tok), lastPos));
                             } else {
                                 throw SqlException.$(lastPos, "constant is not allowed here");
                             }
@@ -985,12 +984,14 @@ public class ExpressionParser {
                         int operatorType = op.type;
 
                         if (thisChar == '-' || thisChar == '~') {
+                            assert prevBranch != BRANCH_BETWEEN_START; // BRANCH_BETWEEN_START will be processed as default branch, so prevBranch must be BRANCH_OPERATOR in this case
                             switch (prevBranch) {
                                 case BRANCH_OPERATOR:
                                 case BRANCH_LEFT_PARENTHESIS:
                                 case BRANCH_COMMA:
                                 case BRANCH_NONE:
                                 case BRANCH_CASE_CONTROL:
+                                case BRANCH_BETWEEN_END: // handle unary minus for second operand of BETWEEN operator: BETWEEN x AND -y
                                     // we have unary minus
                                     operatorType = OperatorExpression.UNARY;
                                     break;

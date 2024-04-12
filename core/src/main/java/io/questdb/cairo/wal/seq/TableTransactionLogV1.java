@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -106,7 +106,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         if (txnMem.isOpen()) {
             long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET_64);
             if (maxTxnInFile != maxTxn.get()) {
-                LOG.error().$("Max txn in the file ").$(maxTxnInFile).$(" but in memory is ").$(maxTxn.get()).$();
+                LOG.info().$("Max txn in the file ").$(maxTxnInFile).$(" but in memory is ").$(maxTxn.get()).$();
             }
         }
         txnMem.close(false);

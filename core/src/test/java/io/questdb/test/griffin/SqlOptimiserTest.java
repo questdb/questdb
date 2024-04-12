@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,23 +40,22 @@ import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
 
-    final String orderByAdviceDdl =   "CREATE TABLE t (\n" +
+    final String orderByAdviceDdl = "CREATE TABLE t (\n" +
             "  s SYMBOL index,\n" +
             "  ts TIMESTAMP\n" +
             ") timestamp(ts) PARTITION BY DAY;";
 
     final String orderByAdviceDml =
-         "INSERT INTO t (s, ts) VALUES" +
-                 " ('a', '2023-09-01T00:00:00.000Z')," +
-                 " ('a', '2023-09-01T00:10:00.000Z')," +
-                 " ('a', '2023-09-01T00:20:00.000Z')," +
-                 " ('b', '2023-09-01T00:05:00.000Z')," +
-                 " ('b', '2023-09-01T00:15:00.000Z')," +
-                 " ('b', '2023-09-01T00:25:00.000Z')," +
-                 " ('c', '2023-09-01T01:00:00.000Z')," +
-                 " ('c', '2023-09-01T02:00:00.000Z')," +
-                 " ('c', '2023-09-01T03:00:00.000Z')";
-
+            "INSERT INTO t (s, ts) VALUES" +
+                    " ('a', '2023-09-01T00:00:00.000Z')," +
+                    " ('a', '2023-09-01T00:10:00.000Z')," +
+                    " ('a', '2023-09-01T00:20:00.000Z')," +
+                    " ('b', '2023-09-01T00:05:00.000Z')," +
+                    " ('b', '2023-09-01T00:15:00.000Z')," +
+                    " ('b', '2023-09-01T00:25:00.000Z')," +
+                    " ('c', '2023-09-01T01:00:00.000Z')," +
+                    " ('c', '2023-09-01T02:00:00.000Z')," +
+                    " ('c', '2023-09-01T03:00:00.000Z')";
 
 
     //2023-09-01T00:00:00.000Z
@@ -578,7 +577,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "ORDER BY t1.s, t1.ts, t2.ts, t2.s\n" +
                     "LIMIT 1000000;";
 
-           assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts, ts1, s1 limit 1000000", query);
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts, ts1, s1 limit 1000000", query);
             assertPlan(query, "Limit lo: 1000000\n" +
                     "    Sort\n" +
                     "      keys: [s, ts, ts1, s1]\n" +
@@ -985,6 +984,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "c\t2023-09-01T01:00:00.000000Z\t\t\n", query);
         });
     }
+
     @Test
     public void testOrderByAdviceWorksWithoutJoin1() throws Exception {
         // Case when no join
@@ -1003,7 +1003,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        Row forward scan\n" +
                     "        Frame forward scan on: t1\n");
 
-            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored = select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -1026,7 +1026,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        Row forward scan\n" +
                     "        Frame forward scan on: t1\n");
 
-            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored = select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -1049,7 +1049,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        Row forward scan\n" +
                     "        Frame forward scan on: t1\n");
 
-            try (RecordCursorFactory ignored =  select(query, sqlExecutionContext)) {
+            try (RecordCursorFactory ignored = select(query, sqlExecutionContext)) {
             }
         });
     }
@@ -1275,23 +1275,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-virtual 1 1 from (select [Id, CreateDate, UserId, TenantId, EventTypeId] from WorkflowEvent el timestamp (CreateDate) join (select [WorkflowEventId, CreateDate, ActionTypeId, Message] from WorkflowEventAction ep0 timestamp (CreateDate) where ActionTypeId = 13 and Message = '2') ep0 on ep0.WorkflowEventId = el.Id and ep0.CreateDate = el.CreateDate join (select [WorkflowEventId, CreateDate, ActionTypeId] from WorkflowEventAction ep timestamp (CreateDate) where ActionTypeId = 8) ep on ep.WorkflowEventId = el.Id and ep.CreateDate = el.CreateDate where UserId = 19 and TenantId = 24024 and EventTypeId = 1 and CreateDate >= to_timestamp('2024-01-26T18:26:14.000000Z','yyyy-MM-ddTHH:mm:ss.SSSUUUZ') and CreateDate <= to_timestamp('2024-01-26T18:47:49.994262Z','yyyy-MM-ddTHH:mm:ss.SSSUUUZ')) el", "SELECT  1\n" +
                     "FROM    WorkflowEvent el\n" +
-                            "\n" +
-                            "JOIN    WorkflowEventAction ep0\n" +
-                            "  ON    el.CreateDate = ep0.CreateDate\n" +
-                            "  and   el.Id = ep0.WorkflowEventId\n" +
-                            "  and   ep0.ActionTypeId = 13\n" +
-                            "  and   ep0.Message = '2'\n" +
-                            "\n" +
-                            "join    WorkflowEventAction ep\n" +
-                            "  on    el.CreateDate = ep.CreateDate\n" +
-                            "  and   el.Id = ep.WorkflowEventId\n" +
-                            "  and   ep.ActionTypeId = 8\n" +
-                            "\n" +
-                            "WHERE   el.UserId = 19\n" +
-                            "  and   el.TenantId = 24024\n" +
-                            "  and   el.EventTypeId = 1\n" +
-                            "  and   el.CreateDate >= to_timestamp('2024-01-26T18:26:14.000000Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')\n" +
-                            "  and   el.CreateDate <= to_timestamp('2024-01-26T18:47:49.994262Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')");
+                    "\n" +
+                    "JOIN    WorkflowEventAction ep0\n" +
+                    "  ON    el.CreateDate = ep0.CreateDate\n" +
+                    "  and   el.Id = ep0.WorkflowEventId\n" +
+                    "  and   ep0.ActionTypeId = 13\n" +
+                    "  and   ep0.Message = '2'\n" +
+                    "\n" +
+                    "join    WorkflowEventAction ep\n" +
+                    "  on    el.CreateDate = ep.CreateDate\n" +
+                    "  and   el.Id = ep.WorkflowEventId\n" +
+                    "  and   ep.ActionTypeId = 8\n" +
+                    "\n" +
+                    "WHERE   el.UserId = 19\n" +
+                    "  and   el.TenantId = 24024\n" +
+                    "  and   el.EventTypeId = 1\n" +
+                    "  and   el.CreateDate >= to_timestamp('2024-01-26T18:26:14.000000Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')\n" +
+                    "  and   el.CreateDate <= to_timestamp('2024-01-26T18:47:49.994262Z', 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ')");
 
             assertSql("1\n", "SELECT  1\n" +
                     "FROM    WorkflowEvent el\n" +
@@ -1318,7 +1318,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t24024\t19\t1\t2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t13\t2\t\t\tNaN\t\n",
 
                     "SELECT  *\n" +
-                    "FROM    WorkflowEvent el\n" +
+                            "FROM    WorkflowEvent el\n" +
                             "\n" +
                             "LEFT JOIN WorkflowEventAction ep0\n" +
                             "  ON    el.CreateDate = ep0.CreateDate\n" +
@@ -1407,13 +1407,55 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    public void testConstantInGroupByDoesNotPreventOptimisation() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table hits (\n" +
+                    "  URL string, ts timestamp\n" +
+                    ") timestamp(ts) partition by day wal");
+
+            insert("insert into hits (URL, ts) values ('abc', 0), ('abc', 1), ('def', 2), ('ghi', 3)");
+            drainWalQueue();
+
+            String q1 = "SELECT 1, URL, COUNT(*) AS c FROM hits ORDER BY c DESC LIMIT 10;";
+            String q2 = "SELECT 1, URL, COUNT(*) AS c FROM hits GROUP BY 1, URL ORDER BY c DESC LIMIT 10;";
+            String q3 = "SELECT 1, URL, COUNT(*) AS c FROM hits GROUP BY URL, 1 ORDER BY c DESC LIMIT 10;";
+            String q4 = "SELECT 1, URL, COUNT(*) AS c FROM hits GROUP BY 1, 2 ORDER BY c DESC LIMIT 10;";
+
+            String expectedSql = "1\tURL\tc\n" +
+                    "1\tabc\t2\n" +
+                    "1\tghi\t1\n" +
+                    "1\tdef\t1\n";
+            String expectedPlan = "Sort light lo: 10\n" +
+                    "  keys: [c desc]\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [1,URL,c]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [URL]\n" +
+                    "          values: [count(*)]\n" +
+                    "          filter: null\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: hits\n";
+
+            assertSql(expectedSql, q1);
+            assertSql(expectedSql, q2);
+            assertSql(expectedSql, q3);
+            assertSql(expectedSql, q4);
+
+            assertPlan(q1, expectedPlan);
+            assertPlan(q2, expectedPlan);
+            assertPlan(q3, expectedPlan);
+            assertPlan(q4, expectedPlan);
+
+        });
+    }
+
     protected QueryModel compileModel(String query, int modelType) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
             Assert.assertEquals(model.getModelType(), modelType);
-            return (QueryModel)model;
+            return (QueryModel) model;
         }
     }
 }
-
 

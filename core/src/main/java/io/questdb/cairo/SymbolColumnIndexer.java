@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     public SymbolColumnIndexer(CairoConfiguration configuration) {
         writer = new BitmapIndexWriter(configuration);
         bufferSize = 4096 * 1024;
-        buffer = Unsafe.malloc(bufferSize, MemoryTag.MMAP_INDEX_READER);
+        buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_INDEX_READER);
     }
 
     @Override
@@ -57,7 +57,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         releaseIndexWriter();
         if (buffer != 0) {
             fd = -1;
-            Unsafe.free(buffer, bufferSize, MemoryTag.MMAP_INDEX_READER);
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_INDEX_READER);
             buffer = 0;
         }
     }
@@ -127,7 +127,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         int bufferCount = (int) (((hiRow - lo) * 4 - 1) / bufferSize + 1);
         for (int i = 0; i < bufferCount; i++) {
             long fileOffset = (lo - columnTop) * 4;
-            long bytesToRead = Math.min(bufferSize, (hiRow - lo) * 4);
+            long bytesToRead = Math.min(bufferSize, (hiRow - loRow) * 4);
             long read = ff.read(dataColumnFd, buffer, bytesToRead, fileOffset);
             if (read == -1) {
                 throw CairoException.critical(ff.errno()).put("could not read symbol column during indexing [fd=").put(dataColumnFd)

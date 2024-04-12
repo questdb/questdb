@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -183,28 +183,13 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public void getVarchar(int col, Utf8Sink utf8Sink) {
-        getFunction(col).getVarchar(base, utf8Sink);
-    }
-
-    @Override
-    public Utf8Sequence getVarcharA(int col) {
-        return getFunction(col).getVarcharA(base);
-    }
-
-    @Override
-    public Utf8Sequence getVarcharB(int col) {
-        return getFunction(col).getVarcharB(base);
+    public void getStr(int col, Utf16Sink utf16Sink) {
+        getFunction(col).getStr(base, utf16Sink);
     }
 
     @Override
     public CharSequence getStrA(int col) {
         return getFunction(col).getStrA(base);
-    }
-
-    @Override
-    public void getStr(int col, Utf16Sink utf16Sink) {
-        getFunction(col).getStr(base, utf16Sink);
     }
 
     @Override
@@ -235,6 +220,26 @@ public class VirtualRecord implements ColumnTypes, Record {
     @Override
     public long getUpdateRowId() {
         return base.getUpdateRowId();
+    }
+
+    @Override
+    public void getVarchar(int col, Utf8Sink utf8Sink) {
+        getFunction(col).getVarchar(base, utf8Sink);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        return getFunction(col).getVarcharA(base);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        return getFunction(col).getVarcharB(base);
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        return getFunction(col).getVarcharSize(base);
     }
 
     public void of(Record record) {

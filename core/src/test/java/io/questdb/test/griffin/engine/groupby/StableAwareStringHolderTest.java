@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -98,7 +98,7 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
     public void testClearAndSetDirect_fuzzed() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
-                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16);
+                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16)
             ) {
                 StableAwareStringHolder holder = new StableAwareStringHolder();
                 holder.setAllocator(allocator);

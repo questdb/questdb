@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,9 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
 
 public class NullMemoryMR implements MemoryMR {
@@ -37,16 +39,6 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public long addressOf(long offset) {
         return 0;
-    }
-
-    @Override
-    public Utf8SplitString borrowUtf8SplitStringA() {
-        return null;
-    }
-
-    @Override
-    public Utf8SplitString borrowUtf8SplitStringB() {
-        return null;
     }
 
     @Override
@@ -80,11 +72,6 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public char getChar(long offset) {
         return 0;
-    }
-
-    @Override
-    public DirectCharSequence getDirectStr(long offset) {
-        return null;
     }
 
     @Override
@@ -162,6 +149,16 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public short getShort(long offset) {
         return 0;
+    }
+
+    @Override
+    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
+        return null;
+    }
+
+    @Override
+    public Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
+        return null;
     }
 
     @Override
