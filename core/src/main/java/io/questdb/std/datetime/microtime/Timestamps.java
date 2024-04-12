@@ -120,6 +120,10 @@ public final class Timestamps {
 
     public static long addPeriod(long lo, char type, int period) {
         switch (type) {
+            case 'u':
+                return Timestamps.addMicros(lo, period);
+            case 'T':
+                return Timestamps.addMillis(lo, period);
             case 's':
                 return Timestamps.addSeconds(lo, period);
             case 'm':
@@ -141,6 +145,14 @@ public final class Timestamps {
 
     public static long addSeconds(long micros, int seconds) {
         return micros + seconds * SECOND_MICROS;
+    }
+
+    public static long addMillis(long micros, int millis) {
+        return micros + millis * MILLI_MICROS;
+    }
+
+    public static long addMicros(long micros, int more_micros) {
+        return micros + more_micros;
     }
 
     public static long addWeeks(long micros, int weeks) {
