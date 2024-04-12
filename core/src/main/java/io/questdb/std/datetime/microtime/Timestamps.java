@@ -151,7 +151,7 @@ public final class Timestamps {
         return micros + millis * MILLI_MICROS;
     }
 
-    public static long addMicros(long micros, int more_micros) {
+    public static long addMicros(long micros, int moreMicros) {
         return micros + more_micros;
     }
 
