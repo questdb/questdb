@@ -499,9 +499,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
                     this.fieldHi += 7;
                     continue;
                 } else {
-                    long idx = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
-                    ptr += idx;
-                    this.fieldHi += idx;
+                    int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                    ptr += firstIndex;
+                    this.fieldHi += firstIndex;
                 }
             }
 

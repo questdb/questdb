@@ -106,7 +106,7 @@ public interface Utf8Sequence {
     default long longAt(int offset) {
         long result = 0;
         for (int i = offset; i < offset + Long.BYTES; i++) {
-            result |= (long) (byteAt(i) & 0xff) << (8 * (i - offset));
+            result |= (byteAt(i) & 0xffL) << (8 * (i - offset));
         }
         return result;
     }

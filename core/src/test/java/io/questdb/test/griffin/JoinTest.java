@@ -3038,6 +3038,35 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftHashJoinOnFunctionConditionVarchar13() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 varchar)");
+            insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 varchar)");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\tNaN\t\n" +
+                            "2\tb\tNaN\t\n" +
+                            "3\tc\tNaN\t\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionConditionVarchar14() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 varchar)");
+            compile("create table t2 (j int, s2 varchar)");
+            insert("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n");
+        });
+    }
+
+    @Test
     public void testLeftHashJoinOnFunctionCondition15() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string)");
