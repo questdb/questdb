@@ -152,7 +152,7 @@ public final class Timestamps {
     }
 
     public static long addMicros(long micros, int moreMicros) {
-        return micros + more_micros;
+        return micros + moreMicros;
     }
 
     public static long addWeeks(long micros, int weeks) {
