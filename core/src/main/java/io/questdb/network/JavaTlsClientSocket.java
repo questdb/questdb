@@ -214,8 +214,13 @@ public final class JavaTlsClientSocket implements Socket {
                     case OK:
                         break;
                     case CLOSED:
-                        log.error().$("Attempt to receive from a closed SSLEngine").$();
-                        return -1;
+                        log.debug().$("SSL engine closed").$();
+                        // We received a TLS close notification from the server. We don't expect any further data from this connection.
+                        // If we have some previously unwrapped data then let's return it so the caller has a chance to process them.
+                        // If a caller calls recv() again and we have no remaining plaintext to return, we will return -1 so the
+                        // caller learned that the connection is closed.
+                        // If we have no plaintext data to return now then we can immediately indicate that we are done with the connection.
+                        return plainBytesReceived == 0 ? -1 : plainBytesReceived;
                 }
             }
         } catch (SSLException e) {
