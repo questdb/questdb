@@ -10,13 +10,13 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>LATEST</version>
+        <version>7.4.0</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: 'latest.release'
+    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
     ```
 - name: ilp-http-auth
   lang: java
@@ -30,13 +30,13 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>LATEST</version>
+        <version>7.4.0</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: 'latest.release'
+    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
     ```
 - name: ilp
   lang: java
@@ -50,13 +50,13 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>6.5</version>
+        <version>7.4.0</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: '6.5'
+    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
     ```
 - name: ilp-auth-tls
   lang: java
@@ -70,13 +70,13 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>6.5</version>
+        <version>7.4.0</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: '6.5'
+    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
     ```
   auth:
     kid: admin
@@ -96,13 +96,13 @@
     <dependency>
         <groupId>org.questdb</groupId>
         <artifactId>questdb</artifactId>
-        <version>6.5</version>
+        <version>7.4.0</version>
     </dependency>
     ```
 
     Gradle
     ```
-    compile group: 'org.questdb', name: 'questdb', version: '6.5'
+    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
     ```
   auth:
     kid: testUser1
@@ -110,3 +110,24 @@
   addr:
     host: localhost
     port: 9009
+- name: ilp-from-conf
+  lang: java
+  path: examples/src/main/java/com/example/sender/BasicExample.java
+  header: |-
+    Java client library [docs](https://questdb.io/docs/reference/clients/java_ilp)
+    and [Maven artifact](https://search.maven.org/artifact/org.questdb/questdb).
+
+    Maven
+    ```
+    <dependency>
+        <groupId>org.questdb</groupId>
+        <artifactId>questdb</artifactId>
+        <version>7.4.0</version>
+    </dependency>
+    ```
+
+    Gradle
+    ```
+    compile group: 'org.questdb', name: 'questdb', version: '7.4.0'
+    ```
+  conf: tcp::addr=localhost:9009;

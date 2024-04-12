@@ -147,7 +147,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIPv4StrFunctionFactory,
-            io.questdb.griffin.engine.functions.eq.EqStrIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLong128FunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory,
@@ -165,9 +164,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqBinaryFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqGeoHashGeoHashFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqGeoHashStrFunctionFactory,
-            io.questdb.griffin.engine.functions.eq.EqStrGeoHashFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqUuidFunctionFactory,
-            io.questdb.griffin.engine.functions.eq.EqStrUuidFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqUuidStrFunctionFactory,
 
             //contains
@@ -595,6 +592,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory,
 //                  'all'
             io.questdb.griffin.engine.functions.bool.AllNotEqStrFunctionFactory,
+            io.questdb.griffin.engine.functions.bool.AllNotEqVarcharFunctionFactory,
 //                  'agg' group by function
             io.questdb.griffin.engine.functions.groupby.StringAggGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.StringAggVarcharGroupByFunctionFactory,

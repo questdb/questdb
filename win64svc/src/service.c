@@ -75,7 +75,7 @@ HANDLE openLogFile(CONFIG *config) {
         return INVALID_HANDLE_VALUE;
     }
 
-    return (HANDLE)_get_osfhandle(fileno(stream));
+    return (HANDLE)_get_osfhandle(_fileno(stream));
 }
 
 VOID WINAPI qdbService(DWORD argc, LPSTR *argv) {

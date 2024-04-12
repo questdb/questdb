@@ -113,13 +113,13 @@ public interface PlanSink {
 
     PlanSink val(Plannable s);
 
-    PlanSink val(long long0, long long1, long long2, long long3);
-
     PlanSink val(long hash, int geoHashBits);
 
     PlanSink valIPv4(int ip);
 
     PlanSink valISODate(long l);
+
+    PlanSink valLong256(long long0, long long1, long long2, long long3);
 
     PlanSink valUuid(long lo, long hi);
 }
