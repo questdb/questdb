@@ -61,7 +61,7 @@ public class LtStrVarcharFunctionFactory implements FunctionFactory {
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
         if (a.isConstant() && !b.isConstant()) {
-            Utf8Sequence constValue = b.getVarcharA(null);
+            Utf8Sequence constValue = a.getVarcharA(null);
             if (constValue == null) {
                 return BooleanConstant.FALSE;
             }
