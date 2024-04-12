@@ -368,7 +368,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testMicroSimple() throws SqlException {
-        call('u', 5, 1587275359886758L).andAssert(1587275359891758L, 0.0001);
+        call('u', 5, 1587275359886758L).andAssert(1587275359886763L, 0.0001);
     }
 
     @Test
