@@ -24,6 +24,8 @@ public class ConfigReloader implements QuietCloseable, DirWatcherCallback {
     java.nio.file.Path confPath;
     long lastModified;
     Properties properties;
+    private boolean closed;
+
     public ConfigReloader(DynamicServerConfiguration config) {
         this.config = config;
         this.confPath = Paths.get(this.config.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
@@ -44,12 +46,24 @@ public class ConfigReloader implements QuietCloseable, DirWatcherCallback {
             return;
         }
 
-        this.dirWatcher.waitForChange(this);
+        do {
+            if (closed) {
+                return;
+            }
+            try {
+                this.dirWatcher.waitForChange(this);
+            } catch(DirWatcherException exc) {
+                LOG.error().$(exc).$();
+            }
+        } while(true);
+
     }
 
     @Override
     public void close() {
-        this.dirWatcher = Misc.free(dirWatcher);
+        if (!closed) {
+            this.dirWatcher = Misc.free(dirWatcher);
+        }
     }
 
 

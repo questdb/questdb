@@ -2,12 +2,14 @@ package io.questdb.test;
 
 import io.questdb.DirWatcher;
 import io.questdb.DirWatcherCallback;
+import io.questdb.DirWatcherException;
 import io.questdb.DirWatcherFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -28,11 +30,11 @@ public class DirWatcherTest extends AbstractTest {
 
             Thread thread = new Thread(() -> {
                 try {
-                    do {
-                        // todo: exit strategy
-                        dw.waitForChange(callback);
-                    } while (true);
-                } finally {
+                    dw.waitForChange(callback);
+                } catch (DirWatcherException exc) {
+                    Assert.fail(exc.getMessage());
+                }
+                finally {
                     threadLatch.countDown();
                 }
             });
@@ -41,21 +43,9 @@ public class DirWatcherTest extends AbstractTest {
             try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath(), StandardCharsets.UTF_8)) {
                 writer.println("hello");
             }
-
-            Thread.sleep(10);
-
-            Assert.assertTrue(callback.pollChanged());
-            Assert.assertFalse(callback.pollChanged());
-
-            try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath(), StandardCharsets.UTF_8)) {
-                writer.println("hello again");
-            }
-
-            Thread.sleep(10);
-
-            Assert.assertTrue(callback.pollChanged());
-
             threadLatch.await();
+
+            Assert.assertTrue(callback.pollChanged());
         }
     }
 
@@ -91,7 +81,6 @@ public class DirWatcherTest extends AbstractTest {
                 return true;
             }
             return false;
-
         }
     }
 

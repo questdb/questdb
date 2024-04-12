@@ -20,18 +20,17 @@ public final class InotifyDirWatcher implements DirWatcher {
 
 
     @Override
-    public void waitForChange(DirWatcherCallback callback) {
+    public void waitForChange(DirWatcherCallback callback) throws DirWatcherException {
         long result;
-        do {
+
             result = waitForChange(dirWatcherPtr);
+            if (closed) {
+                return;
+            }
             if (result < 0 ){
-                if (closed) {
-                    return;
-                }
-                // todo: throw error here
+                throw new DirWatcherException("inotify read", (int)result);
             }
             callback.onDirChanged();
-        } while(true);
     }
 
 

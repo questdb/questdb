@@ -3,6 +3,6 @@ package io.questdb;
 import io.questdb.std.QuietCloseable;
 
 public interface DirWatcher extends QuietCloseable {
-    void waitForChange(DirWatcherCallback callback);
+    void waitForChange(DirWatcherCallback callback) throws DirWatcherException;
 }
 

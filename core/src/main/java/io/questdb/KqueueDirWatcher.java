@@ -65,21 +65,20 @@ public class KqueueDirWatcher implements DirWatcher {
     }
 
     @Override
-    public void waitForChange(DirWatcherCallback callback) {
-        do {
+    public void waitForChange(DirWatcherCallback callback) throws DirWatcherException{
             // Blocks until there is a change in the watched dir
             int res = KqueueAccessor.keventGetBlocking(
                     kq,
                     eventList,
                     1
             );
+            if (closed) {
+                return;
+            }
             if (res < 0) {
-                if (closed) {
-                    return;
-                }
-                throw NetworkError.instance(kq, "could not get event");
+                throw new DirWatcherException("kevent", res);
             }
             callback.onDirChanged();
-        } while (true);
+
     }
 }
