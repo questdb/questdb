@@ -568,24 +568,22 @@ public class ExpressionParser {
                         }
 
                         // enable operation or literal absorb parameters
-                        if ((node = opStack.peek()) != null && (node.type == ExpressionNode.LITERAL || (node.type == ExpressionNode.SET_OPERATION))) {
-                            if (!SqlKeywords.isBetweenKeyword(node.token) || betweenCount == betweenAndCount) {
+                        if ((node = opStack.peek()) != null) {
+                            if (localParamCount > 1 && node.token.charAt(0) == '(') {
+                                throw SqlException.$(lastPos, "no function or operator?");
+                            } else if (node.type == ExpressionNode.LITERAL) {
                                 node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
-                                if (ExpressionNode.SET_OPERATION == node.type && node.paramCount < 2) {
-                                    throw SqlException.position(node.position).put("too few arguments for '").put(node.token).put('\'');
-                                }
                                 node.type = ExpressionNode.FUNCTION;
                                 argStackDepth = onNode(listener, node, argStackDepth, false);
                                 opStack.pop();
-                            }
-                        } else {
-                            // not at function?
-                            // peek the op stack to make sure it isn't a repeating brace
-                            if (localParamCount > 1
-                                    && (node = opStack.peek()) != null
-                                    && node.token.charAt(0) == '('
-                            ) {
-                                throw SqlException.$(lastPos, "no function or operator?");
+                            } else if (node.type == ExpressionNode.SET_OPERATION && !SqlKeywords.isBetweenKeyword(node.token)) {
+                                if (node.paramCount < 2) {
+                                    throw SqlException.position(node.position).put("too few arguments for '").put(node.token).put('\'');
+                                }
+                                node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
+                                node.type = ExpressionNode.FUNCTION;
+                                argStackDepth = onNode(listener, node, argStackDepth, false);
+                                opStack.pop();
                             }
                         }
 
@@ -996,6 +994,11 @@ public class ExpressionParser {
                         int operatorType = op.type;
 
                         ExpressionNode other;
+                        // precedence of not should be patched if we encounter set operation (like NOT IN)
+                        if ((other = opStack.peek()) != null && operatorType == OperatorExpression.SET && SqlKeywords.isNotKeyword(other.token)) {
+                            other.precedence = op.precedence;
+                        }
+
                         // If the token is an operator, o1, then:
                         // while there is an operator token, o2, at the top of the operator stack, and either
                         // o1 is left-associative and its precedence is less than or equal to that of o2, or
@@ -1004,9 +1007,8 @@ public class ExpressionParser {
                         // push o1 onto the operator stack.
                         while ((other = opStack.peek()) != null) {
                             boolean greaterPrecedence = (op.leftAssociative && op.precedence >= other.precedence) || (!op.leftAssociative && op.precedence > other.precedence);
-                            // unary infix operator can't pop anything from the left unless it's parameterless exception like literal
-                            // this is helpful to automatically parse constructions like "x NOT IN y" because NOT will be treated like postfix operator
-                            if (op.type == UNARY && other.paramCount > 0) {
+                            // unary infix operator can't pop binary operator from the left if not enough arguments are on the stack
+                            if (op.type == UNARY && argStackDepth < other.paramCount) {
                                 break;
                             }
                             if (greaterPrecedence) {

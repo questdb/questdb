@@ -62,21 +62,21 @@ public final class OperatorExpression {
         add(new OperatorExpression("<=", 11, true, BINARY));
         add(new OperatorExpression(">", 11, true, BINARY));
         add(new OperatorExpression(">=", 11, true, BINARY));
-
         add(new OperatorExpression("=", 12, true, BINARY));
-        add(new OperatorExpression("~", 12, true, BINARY));
         add(new OperatorExpression("!=", 12, true, BINARY));
         add(new OperatorExpression("<>", 12, true, BINARY));
+        add(new OperatorExpression("~", 12, true, BINARY));
         add(new OperatorExpression("!~", 12, true, BINARY));
-        add(new OperatorExpression("in", 12, true, SET, false));
-        add(new OperatorExpression("between", 12, true, SET, false)); // set ternary operator
         add(new OperatorExpression("like", 12, true, BINARY, false));
         add(new OperatorExpression("ilike", 12, true, BINARY, false));
-        add(new OperatorExpression("within", 12, true, SET, false));
+        // set operators
+        add(new OperatorExpression("in", 13, false, SET, false));
+        add(new OperatorExpression("between", 13, false, SET, false)); // ternary operator
+        add(new OperatorExpression("within", 13, false, SET, false));
         // logical operators
-        add(new OperatorExpression("not", 13, false, UNARY, false));
-        add(new OperatorExpression("and", 14, true, BINARY, false));
-        add(new OperatorExpression("or", 15, true, BINARY, false));
+        add(new OperatorExpression("not", 14, false, UNARY, false));
+        add(new OperatorExpression("and", 15, true, BINARY, false));
+        add(new OperatorExpression("or", 16, true, BINARY, false));
     }};
 
     static final LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression> opMap = new LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression>() {{
