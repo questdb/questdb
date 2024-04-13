@@ -467,11 +467,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             final int N = 1_000_000;
             Long256Impl value = new Long256Impl();
             for (int i = 0; i < N; i++) {
-                value.setAll(
-                        rnd.nextLong(),
-                        rnd.nextLong(),
-                        rnd.nextLong(),
-                        rnd.nextLong());
+                value.fromRnd(rnd);
                 rwMem.putLong256(value);
             }
 
@@ -536,12 +532,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             final int N = 1_000_000;
             Long256Impl value = new Long256Impl();
             for (int i = 0; i < N; i++) {
-                value.setAll(
-                        rnd.nextLong()
-                        , rnd.nextLong()
-                        , rnd.nextLong()
-                        , rnd.nextLong()
-                );
+                value.fromRnd(rnd);
                 rwMem.putLong256(i * 32, value);
             }
 

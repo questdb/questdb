@@ -66,7 +66,7 @@ public class CastDateToLong256FunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NaN) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256a.setAll(value, 0, 0, 0);
+            long256a.setLow(value);
             return long256a;
         }
 
@@ -76,7 +76,7 @@ public class CastDateToLong256FunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NaN) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256b.setAll(value, 0, 0, 0);
+            long256b.setLow(value);
             return long256b;
         }
     }
