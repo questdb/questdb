@@ -1192,7 +1192,7 @@ public class ExpressionParser {
                             }
                         } else if (prevBranch == BRANCH_DOT_DEREFERENCE) {
                             argStackDepth++;
-                            final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, ".", Dot.precedence, lastPos);
+                            final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, ".", DOT_PRECEDENCE, lastPos);
                             dotDereference.paramCount = 2;
                             opStack.push(dotDereference);
                             opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
