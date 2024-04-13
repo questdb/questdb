@@ -31,11 +31,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
-import io.questdb.cairo.LogRecordSinkAdapter;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
@@ -669,7 +668,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             );
             compile(alterStatement);
 
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
+            WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
             sharedWorkerPool.start(LOG);
 
             try {
@@ -717,7 +716,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameDedup, rnd, start, end);
 
             transactions = uniqueInserts(transactions);
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
+            WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
             sharedWorkerPool.start(LOG);
 
             try {

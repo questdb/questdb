@@ -7474,6 +7474,38 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVectorKeyedSumAvgDoubleRndColumnWithNullsParallel() throws Exception {
+        final AtomicBoolean running = new AtomicBoolean(true);
+        final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+        final GroupByVectorAggregateJob job = new GroupByVectorAggregateJob(engine.getMessageBus());
+        new Thread(() -> {
+            while (running.get()) {
+                job.run(0);
+            }
+            haltLatch.countDown();
+        }).start();
+
+        try {
+            assertQuery(
+                    "k\tavg\tsum\n" +
+                            "0\t0.5007027\t166978.839049\n" +
+                            "1\t0.5001209999999999\t166570.310699\n" +
+                            "2\t0.5006841\t167117.823216\n" +
+                            "3\t0.5005191\t167086.78959899998\n" +
+                            "4\t0.49972479999999997\t166716.674725\n",
+                    "select k, round(avg(c), 7) avg, round(sum(c), 6) sum from x order by k",
+                    "create table x as (select (x%5)::int k, rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(2000000))",
+                    null,
+                    true,
+                    true
+            );
+        } finally {
+            running.set(false);
+            haltLatch.await();
+        }
+    }
+
+    @Test
     public void testVectorSumAvgDoubleRndColumnWithNulls() throws Exception {
         assertQuery(
                 "avg\tsum\n" +

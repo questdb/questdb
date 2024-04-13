@@ -80,7 +80,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE,
-                JitUtil.isJitSupported() ? SqlJitMode.toString(SqlJitMode.JIT_MODE_ENABLED) :  SqlJitMode.toString(SqlJitMode.JIT_MODE_FORCE_SCALAR));
+                JitUtil.isJitSupported() ? SqlJitMode.toString(SqlJitMode.JIT_MODE_ENABLED) : SqlJitMode.toString(SqlJitMode.JIT_MODE_FORCE_SCALAR));
         super.setUp();
     }
 
@@ -811,7 +811,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             final WorkerPool sharedPool = new TestWorkerPool("pool0", sharedPoolWorkerCount);
-
             TestUtils.setupWorkerPool(sharedPool, engine);
             sharedPool.start();
 

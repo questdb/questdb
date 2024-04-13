@@ -3503,8 +3503,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             RecordMetadata metadata = factory.getMetadata();
 
+            final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
             // Inspect model for possibility of vector aggregate intrinsics.
-            if (pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, !specialCaseKeys)) {
+            if (enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, !specialCaseKeys)) {
                 // Create metadata from everything we've gathered.
                 GenericRecordMetadata meta = new GenericRecordMetadata();
 
@@ -3672,7 +3673,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
 
-            final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
             if (enableParallelGroupBy
                     && SqlUtil.isParallelismSupported(keyFunctions)
                     && GroupByUtils.isParallelismSupported(groupByFunctions)) {
@@ -5753,8 +5753,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         sumConstructors.put(ColumnType.INT, SumIntVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.LONG, SumLongVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.LONG256, SumLong256VectorAggregateFunction::new);
-        sumConstructors.put(ColumnType.DATE, SumDateVectorAggregateFunction::new);
-        sumConstructors.put(ColumnType.TIMESTAMP, SumTimestampVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.SHORT, SumShortVectorAggregateFunction::new);
 
         ksumConstructors.put(ColumnType.DOUBLE, KSumDoubleVectorAggregateFunction::new);
@@ -5762,8 +5760,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         avgConstructors.put(ColumnType.DOUBLE, AvgDoubleVectorAggregateFunction::new);
         avgConstructors.put(ColumnType.LONG, AvgLongVectorAggregateFunction::new);
-        avgConstructors.put(ColumnType.TIMESTAMP, AvgLongVectorAggregateFunction::new);
-        avgConstructors.put(ColumnType.DATE, AvgLongVectorAggregateFunction::new);
         avgConstructors.put(ColumnType.INT, AvgIntVectorAggregateFunction::new);
         avgConstructors.put(ColumnType.SHORT, AvgShortVectorAggregateFunction::new);
 

@@ -45,6 +45,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -1118,17 +1119,6 @@ public final class TestUtils {
             Metrics metrics,
             Log log
     ) throws Exception {
-        execute(pool, null, runnable, configuration, metrics, log);
-    }
-
-    public static void execute(
-            @Nullable WorkerPool pool,
-            WorkerPoolCallback poolCallback,
-            CustomisableRunnable runnable,
-            CairoConfiguration configuration,
-            Metrics metrics,
-            Log log
-    ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         final BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         try (
@@ -1138,9 +1128,6 @@ public final class TestUtils {
         ) {
             try {
                 if (pool != null) {
-                    if (poolCallback != null) {
-                        poolCallback.setupJobs(engine);
-                    }
                     setupWorkerPool(pool, engine);
                     pool.start(log);
                 }
@@ -1162,17 +1149,7 @@ public final class TestUtils {
             CairoConfiguration configuration,
             Log log
     ) throws Exception {
-        execute(pool, null, runner, configuration, Metrics.disabled(), log);
-    }
-
-    public static void execute(
-            @Nullable WorkerPool pool,
-            WorkerPoolCallback poolCallback,
-            CustomisableRunnable runner,
-            CairoConfiguration configuration,
-            Log log
-    ) throws Exception {
-        execute(pool, poolCallback, runner, configuration, Metrics.disabled(), log);
+        execute(pool, runner, configuration, Metrics.disabled(), log);
     }
 
     @NotNull
@@ -1560,7 +1537,8 @@ public final class TestUtils {
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        O3Utils.setupWorkerPool(workerPool, cairoEngine, null);
+        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine, null);
+        WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
     }
 
     public static long toMemory(CharSequence sequence) {
@@ -1898,9 +1876,5 @@ public final class TestUtils {
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;
-    }
-
-    public interface WorkerPoolCallback {
-        void setupJobs(CairoEngine engine);
     }
 }
