@@ -24,7 +24,9 @@
 
 package io.questdb;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -40,12 +42,10 @@ import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
-import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
-import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
@@ -103,6 +103,10 @@ public class ServerMain implements Closeable {
         return new ServerMain(new Bootstrap(bootstrapConfiguration, Bootstrap.getServerMainArgs(root)));
     }
 
+    public static ServerMain create(String root) {
+        return new ServerMain(Bootstrap.getServerMainArgs(root));
+    }
+
     public static ServerMain createWithoutWalApplyJob(String root, Map<String, String> env) {
         final Map<String, String> newEnv = new HashMap<>(System.getenv());
         newEnv.putAll(env);
@@ -118,10 +122,6 @@ public class ServerMain implements Closeable {
             protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
             }
         };
-    }
-
-    public static ServerMain create(String root) {
-        return new ServerMain(Bootstrap.getServerMainArgs(root));
     }
 
     public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
@@ -306,19 +306,14 @@ public class ServerMain implements Closeable {
                 try {
                     sharedPool.assign(engine.getEngineMaintenanceJob());
 
-                    final MessageBus messageBus = engine.getMessageBus();
-                    // register jobs that help parallel execution of queries and column indexing.
-                    sharedPool.assign(new ColumnIndexerJob(messageBus));
-                    sharedPool.assign(new GroupByVectorAggregateJob(messageBus));
-                    sharedPool.assign(new GroupByMergeShardJob(messageBus));
-                    sharedPool.assign(new LatestByAllIndexedJob(messageBus));
+                    WorkerPoolUtils.setupQueryJobs(
+                            sharedPool,
+                            engine,
+                            config.getCairoConfiguration().getCircuitBreakerConfiguration()
+                    );
 
                     if (!isReadOnly) {
-                        O3Utils.setupWorkerPool(
-                                sharedPool,
-                                engine,
-                                config.getCairoConfiguration().getCircuitBreakerConfiguration()
-                        );
+                        WorkerPoolUtils.setupWriterJobs(sharedPool, engine);
 
                         if (walSupported) {
                             sharedPool.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));
@@ -335,7 +330,7 @@ public class ServerMain implements Closeable {
                         }
 
                         // text import
-                        CopyJob.assignToPool(messageBus, sharedPool);
+                        CopyJob.assignToPool(engine.getMessageBus(), sharedPool);
                         if (cairoConfig.getSqlCopyInputRoot() != null) {
                             final CopyRequestJob copyRequestJob = new CopyRequestJob(
                                     engine,

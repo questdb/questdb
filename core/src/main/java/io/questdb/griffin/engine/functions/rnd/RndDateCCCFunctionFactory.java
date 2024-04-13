@@ -48,14 +48,14 @@ public class RndDateCCCFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final long lo = args.getQuick(0).getDate(null);
         final long hi = args.getQuick(1).getDate(null);
-        final int nanRate = args.getQuick(2).getInt(null);
+        final int nullRate = args.getQuick(2).getInt(null);
 
-        if (nanRate < 0) {
+        if (nullRate < 0) {
             throw SqlException.$(argPositions.getQuick(2), "invalid NaN rate");
         }
 
         if (lo < hi) {
-            return new Func(lo, hi, nanRate);
+            return new Func(lo, hi, nullRate);
         }
 
         throw SqlException.$(position, "invalid range");

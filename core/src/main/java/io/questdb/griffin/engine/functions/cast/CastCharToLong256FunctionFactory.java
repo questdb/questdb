@@ -58,13 +58,13 @@ public class CastCharToLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public Long256 getLong256A(Record rec) {
-            long256a.setAll(arg.getChar(rec), 0, 0, 0);
+            long256a.setLow(arg.getChar(rec));
             return long256a;
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
-            long256b.setAll(arg.getChar(rec), 0, 0, 0);
+            long256b.setLow(arg.getChar(rec));
             return long256b;
         }
     }
