@@ -1457,7 +1457,13 @@ public final class TestUtils {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
-                CursorPrinter.println(cursor, metadata, sink);
+                sink.clear();
+                CursorPrinter.println(metadata, sink);
+
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    println(record, metadata, sink);
+                }
             }
         }
     }
