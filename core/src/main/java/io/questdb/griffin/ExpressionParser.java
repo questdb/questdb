@@ -56,7 +56,7 @@ public class ExpressionParser {
     private static final int IDX_WHEN = 0;
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
-    private static final IntHashSet nonLiteralBranches = new IntHashSet();
+    private static final IntHashSet nonLiteralBranches = new IntHashSet(); // branches that can't be followed by constants
     private final IntStack argStackDepthStack = new IntStack();
     private final IntStack backupArgStackDepthStack = new IntStack();
     private final IntStack backupCaseBraceCountStack = new IntStack();
@@ -236,11 +236,12 @@ public class ExpressionParser {
                 switch (thisChar) {
                     case '-':
                     case '+':
+                        // floating-point literals in scientific notation (e.g. 1e-10, 1e+10) separated in several tokens by lexer ('1e', '-', '10') - so we need to glue them together
                         processDefaultBranch = true;
                         if (prevBranch == BRANCH_CONSTANT) {
                             if (lastPos > 0) {
                                 char c = lexer.getContent().charAt(lastPos - 1);
-                                if (c == 'e' || c == 'E') { // Incomplete scientific floating-point literal
+                                if (c == 'e' || c == 'E') {
                                     ExpressionNode en = opStack.peek();
                                     ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
                                     processDefaultBranch = false;
@@ -250,7 +251,7 @@ public class ExpressionParser {
                         break;
                     case '.':
                         // Check what is on stack. If we have 'a .b' we have to stop processing
-                        if (thisBranch == BRANCH_LITERAL || thisBranch == BRANCH_CONSTANT) {//here
+                        if (thisBranch == BRANCH_LITERAL || thisBranch == BRANCH_CONSTANT) {
                             char c = lexer.getContent().charAt(lastPos - 1);
                             if (GenericLexer.WHITESPACE_CH.contains(c)) {
                                 lexer.unparseLast();
@@ -294,6 +295,7 @@ public class ExpressionParser {
                             break OUT;
                         }
 
+                        // todo (sivukhin): describe this case in more details!
                         if (castBraceCount > 0 && castBraceCountStack.peek() == castBraceCount) {
                             throw SqlException.$(lastPos, "',' is not expected here");
                         }
@@ -399,6 +401,7 @@ public class ExpressionParser {
 
                     case 'g':
                     case 'G':
+                        // this code ensures that "geohash(6c)" type will be converted to single "geohash6c" node (not two nodes)
                         if (SqlKeywords.isGeoHashKeyword(tok)) {
                             CharSequence geohashTok = GenericLexer.immutableOf(tok);
                             tok = SqlUtil.fetchNext(lexer);
@@ -410,6 +413,7 @@ public class ExpressionParser {
                             }
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok != null && tok.charAt(0) != ')') {
+                                // todo: better to check tok for valid values for geohash precision - in other case this can lead to upstream code failures (e.g. SELECT geohash(]) can fail)
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.CONSTANT,
                                         lexer.immutablePairOf(geohashTok, tok),
@@ -471,6 +475,9 @@ public class ExpressionParser {
                     case '(':
                         if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
                             throw SqlException.$(lastPos, "not a method call");
+                        }
+                        if (prevBranch == BRANCH_CONSTANT) {
+                            throw SqlException.$(lastPos, "dangling expression");
                         }
 
                         thisBranch = BRANCH_LEFT_PARENTHESIS;
@@ -849,6 +856,9 @@ public class ExpressionParser {
                                     }
                                 }
 
+                                // there is one case for valid dangling expression - when we create alias for column (like 'value' 'x' equivalent to 'value' as 'x')
+                                // this helper works for easy cases leaving unparsed last token and give a chance for caller to analyze aliasing
+                                // although for complex cases it will not work (like 'a' || 'b' 'x' will not be parsed as 'a' || 'b' as 'x' without explicit braces)
                                 if (opStack.size() > 1) {
                                     throw SqlException.$(lastPos, "dangling expression");
                                 }
@@ -870,9 +880,13 @@ public class ExpressionParser {
                                 || SqlKeywords.isFalseKeyword(tok)
                         ) {
                             if (prevBranch != BRANCH_DOT_DEREFERENCE) {
-                                thisBranch = BRANCH_CONSTANT;
-                                // If the token is a number, then add it to the output queue.
-                                opStack.push(SqlUtil.nextConstant(expressionNodePool, GenericLexer.immutableOf(tok), lastPos));
+                                if (nonLiteralBranches.excludes(prevBranch)) {
+                                    thisBranch = BRANCH_CONSTANT;
+                                    // If the token is a number, then add it to the output queue.
+                                    opStack.push(SqlUtil.nextConstant(expressionNodePool, GenericLexer.immutableOf(tok), lastPos));
+                                } else {
+                                    throw SqlException.$(lastPos, "dangling expression");
+                                }
                             } else {
                                 throw SqlException.$(lastPos, "constant is not allowed here");
                             }

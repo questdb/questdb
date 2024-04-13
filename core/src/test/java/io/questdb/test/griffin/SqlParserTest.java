@@ -5271,6 +5271,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDanglingValues() throws Exception {
+        assertSyntaxError("SELECT TRUE TRUE", 12, "dangling expression");
+        assertSyntaxError("SELECT AND TRUE TRUE", 16, "dangling expression");
+        assertSyntaxError("SELECT NaN NULL", 11, "dangling expression");
+        assertSyntaxError("SELECT (1+1) TRUE", 13, "dangling expression");
+        assertSyntaxError("SELECT TRUE (1+1)", 12, "dangling expression");
+    }
+
+    @Test
     public void testJoinOnColumns() throws SqlException {
         assertQuery(
                 "select-choose a.x x, b.y y from (select [x, z] from tab1 a join select [y, z] from tab2 b on b.z = a.z) a",
