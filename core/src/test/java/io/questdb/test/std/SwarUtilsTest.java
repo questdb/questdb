@@ -44,7 +44,7 @@ public class SwarUtilsTest {
 
     @Test
     public void testIndexOfFirstMarkedByte() {
-        Assert.assertEquals(7, SwarUtils.indexOfFirstMarkedByte(0L));
+        Assert.assertEquals(8, SwarUtils.indexOfFirstMarkedByte(0L));
         Assert.assertEquals(0, SwarUtils.indexOfFirstMarkedByte(0x8080808080808080L));
         Assert.assertEquals(0, SwarUtils.indexOfFirstMarkedByte(0x0000000000000080L));
         Assert.assertEquals(1, SwarUtils.indexOfFirstMarkedByte(0x0000000000008000L));
