@@ -27,6 +27,9 @@ package io.questdb.std;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.std.str.*;
 
+import java.util.Collections;
+import java.util.List;
+
 public class Rnd {
     private static final double DOUBLE_UNIT = 0x1.0p-53; // 1.0 / (1L << 53)
     private static final float FLOAT_UNIT = 1 / ((float) (1 << 24));
@@ -193,6 +196,13 @@ public class Rnd {
     public void nextUtf8AsciiStr(int len, Utf8Sink sink) {
         for (int i = 0; i < len; i++) {
             sink.putAscii((char) (32 + nextPositiveInt() % (127 - 32)));
+        }
+    }
+
+    public void shuffle(List<?> list) {
+        for (int i = 1; i < list.size(); i++) {
+            int swapTarget = nextInt(i);
+            Collections.swap(list, i, swapTarget);
         }
     }
 

@@ -683,7 +683,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testEqualPrecedence() throws Exception {
-        x("a b c ^ ^", "a^b^c");
+        x("a b ^ c ^", "a^b^c");
     }
 
     @Test
@@ -696,7 +696,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("a ~ b ^ c d & |", "~a^b|c&d");
         x("1 2 4 & |", "1|2&4");
         x("true true false and or", "true or true and false");
-//        x("1 2 | 3 in", "1 | 2 IN 3");
+        x("1 2 | 3 in", "1 | 2 IN 3");
+        x("1 - 1 in not", "-1 not in (1)");
+        x("1 1 in not true =", "1 not in (1) = true");
+        x("'1' '2' || '12' in not", "'1' || '2' not in ('12')");
+        x("'1' '2' || '12' in not", "not '1' || '2' in ('12')");
     }
 
     @Test
