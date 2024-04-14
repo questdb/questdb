@@ -994,9 +994,16 @@ public class ExpressionParser {
                         int operatorType = op.type;
 
                         ExpressionNode other;
-                        // precedence of not should be patched if we encounter set operation (like NOT IN)
-                        if ((other = opStack.peek()) != null && operatorType == OperatorExpression.SET && SqlKeywords.isNotKeyword(other.token)) {
-                            other.precedence = op.precedence;
+                        // negation of set operators (NOT IN / NOT BETWEEN) changes precedence of NOT part
+                        if (SqlKeywords.isNotKeyword(tok)) {
+                            final int lastTokenPosition = lexer.lastTokenPosition();
+                            final CharSequence lastToken = GenericLexer.immutableOf(tok);
+                            final CharSequence nextToken = SqlUtil.fetchNext(lexer);
+                            OperatorExpression nextOp;
+                            if (nextToken != null && (nextOp = opMap.get(nextToken)) != null && nextOp.type == OperatorExpression.SET) {
+                                op = SetOperationNegation;
+                            }
+                            lexer.backTo(lastTokenPosition + lastToken.length(), lastToken);
                         }
 
                         // If the token is an operator, o1, then:

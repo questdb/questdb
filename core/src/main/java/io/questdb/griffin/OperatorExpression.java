@@ -35,6 +35,7 @@ public final class OperatorExpression {
     public static final int DOT_PRECEDENCE = 1;
     static final OperatorExpression UnaryMinus = new OperatorExpression("-", 3, false, UNARY);
     static final OperatorExpression UnaryComplement = new OperatorExpression("~", 3, false, UNARY);
+    static final OperatorExpression SetOperationNegation = new OperatorExpression("not", 11, false, UNARY);
     static final ObjList<OperatorExpression> operators = new ObjList<OperatorExpression>() {{
         add(new OperatorExpression(".", DOT_PRECEDENCE, false, BINARY));
 
@@ -57,22 +58,22 @@ public final class OperatorExpression {
         add(new OperatorExpression("&", 8, true, BINARY));
         add(new OperatorExpression("^", 9, true, BINARY));
         add(new OperatorExpression("|", 10, true, BINARY));
-        // boolean operators
-        add(new OperatorExpression("<", 11, true, BINARY));
-        add(new OperatorExpression("<=", 11, true, BINARY));
-        add(new OperatorExpression(">", 11, true, BINARY));
-        add(new OperatorExpression(">=", 11, true, BINARY));
-        add(new OperatorExpression("=", 12, true, BINARY));
-        add(new OperatorExpression("!=", 12, true, BINARY));
-        add(new OperatorExpression("<>", 12, true, BINARY));
-        add(new OperatorExpression("~", 12, true, BINARY));
-        add(new OperatorExpression("!~", 12, true, BINARY));
-        add(new OperatorExpression("like", 12, true, BINARY, false));
-        add(new OperatorExpression("ilike", 12, true, BINARY, false));
         // set operators
-        add(new OperatorExpression("in", 13, false, SET, false));
-        add(new OperatorExpression("between", 13, false, SET, false)); // ternary operator
-        add(new OperatorExpression("within", 13, false, SET, false));
+        add(new OperatorExpression("in", 11, false, SET, false));
+        add(new OperatorExpression("between", 11, false, SET, false)); // ternary operator
+        add(new OperatorExpression("within", 11, false, SET, false));
+        // boolean operators
+        add(new OperatorExpression("<", 12, true, BINARY));
+        add(new OperatorExpression("<=", 12, true, BINARY));
+        add(new OperatorExpression(">", 12, true, BINARY));
+        add(new OperatorExpression(">=", 12, true, BINARY));
+        add(new OperatorExpression("=", 13, true, BINARY));
+        add(new OperatorExpression("!=", 13, true, BINARY));
+        add(new OperatorExpression("<>", 13, true, BINARY));
+        add(new OperatorExpression("~", 13, true, BINARY));
+        add(new OperatorExpression("!~", 13, true, BINARY));
+        add(new OperatorExpression("like", 13, true, BINARY, false));
+        add(new OperatorExpression("ilike", 13, true, BINARY, false));
         // logical operators
         add(new OperatorExpression("not", 14, false, UNARY, false));
         add(new OperatorExpression("and", 15, true, BINARY, false));
