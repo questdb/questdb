@@ -993,7 +993,7 @@ public class ExpressionParser {
 
                         int operatorType = op.type;
 
-                        ExpressionNode other;
+                        boolean unaryOperator = op.type == UNARY;
                         // negation of set operators (NOT IN / NOT BETWEEN) changes precedence of NOT part
                         if (SqlKeywords.isNotKeyword(tok)) {
                             final int lastTokenPosition = lexer.lastTokenPosition();
@@ -1002,10 +1002,12 @@ public class ExpressionParser {
                             OperatorExpression nextOp;
                             if (nextToken != null && (nextOp = opMap.get(nextToken)) != null && nextOp.type == OperatorExpression.SET) {
                                 op = SetOperationNegation;
+                                unaryOperator = false; // NOT is part of multi-ary set operation negation
                             }
                             lexer.backTo(lastTokenPosition + lastToken.length(), lastToken);
                         }
 
+                        ExpressionNode other;
                         // If the token is an operator, o1, then:
                         // while there is an operator token, o2, at the top of the operator stack, and either
                         // o1 is left-associative and its precedence is less than or equal to that of o2, or
@@ -1014,8 +1016,8 @@ public class ExpressionParser {
                         // push o1 onto the operator stack.
                         while ((other = opStack.peek()) != null) {
                             boolean greaterPrecedence = (op.leftAssociative && op.precedence >= other.precedence) || (!op.leftAssociative && op.precedence > other.precedence);
-                            // unary infix operator can't pop binary operator from the left if not enough arguments are on the stack
-                            if (op.type == UNARY && argStackDepth < other.paramCount) {
+                            // NOT unary infix operator can't pop binary operator from the left, although it have very high precedence (this is made to allow usage of subexpressions like y = FALSE AND NOT x = TRUE)
+                            if (unaryOperator && other.paramCount > 0) {
                                 break;
                             }
                             if (greaterPrecedence) {

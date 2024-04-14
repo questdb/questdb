@@ -221,6 +221,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotOperator() throws SqlException {
+        x("aboolean true = aboolean false not = not or", "aboolean = true or not aboolean = not false");
+    }
+
+    @Test
     public void testCaseLowercase() throws SqlException {
         x("10  w1 1 + 5 * 10 = 'th1' 1 - w2 3 * 1 > 'th2' 0 case 1 + *",
                 "10*(CASE" +
