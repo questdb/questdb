@@ -114,18 +114,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testBetweenNegation() throws Exception {
-        assertQuery(
-                "select-virtual not(1 between (2,3)) column from (long_sequence(1))",
-                "SELECT 1 not between 2 AND 3"
-        );
-        assertQuery(
-                "select-virtual not(-(1) between (2,3)) column from (long_sequence(1))",
-                "SELECT -1 not between 2 AND 3"
-        );
-    }
-
-    @Test
     public void testACBetweenOrClause() throws Exception {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 12 preceding or 23 following) from xyz",
@@ -5289,6 +5277,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError("SELECT NaN NULL", 11, "dangling expression");
         assertSyntaxError("SELECT (1+1) TRUE", 13, "dangling expression");
         assertSyntaxError("SELECT TRUE (1+1)", 12, "dangling expression");
+    }
+
+    @Test
+    public void testSetOperationNegation() throws Exception {
+        assertQuery(
+                "select-virtual not(-(1) + 2 * 3 between (2,3)) column from (long_sequence(1))",
+                "SELECT -1+2*3 not between 2 AND 3"
+        );
+        assertQuery(
+                "select-virtual not(-(1) + 2 * 3 in (2,3,4)) column from (long_sequence(1))",
+                "SELECT -1+2*3 not in (2, 3, 4)"
+        );
     }
 
     @Test
