@@ -114,6 +114,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testBetweenNegation() throws Exception {
+        assertQuery(
+                "select-virtual not(1 between (2,3)) column from (long_sequence(1))",
+                "SELECT 1 not between 2 AND 3"
+        );
+        assertQuery(
+                "select-virtual not(-(1) between (2,3)) column from (long_sequence(1))",
+                "SELECT -1 not between 2 AND 3"
+        );
+    }
+
+    @Test
     public void testACBetweenOrClause() throws Exception {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 12 preceding or 23 following) from xyz",
