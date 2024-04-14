@@ -577,10 +577,10 @@ public class ExpressionParser {
                                 argStackDepth = onNode(listener, node, argStackDepth, false);
                                 opStack.pop();
                             } else if (node.type == ExpressionNode.SET_OPERATION && !SqlKeywords.isBetweenKeyword(node.token)) {
+                                node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
                                 if (node.paramCount < 2) {
                                     throw SqlException.position(node.position).put("too few arguments for '").put(node.token).put('\'');
                                 }
-                                node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
                                 node.type = ExpressionNode.FUNCTION;
                                 argStackDepth = onNode(listener, node, argStackDepth, false);
                                 opStack.pop();
