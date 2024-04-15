@@ -30,6 +30,7 @@ open module io.questdb {
     requires transitive jdk.unsupported;
     requires static org.jetbrains.annotations;
     requires static java.management;
+    requires io.questdb.jar.jni;
 
     uses io.questdb.griffin.FunctionFactory;
     exports io.questdb;

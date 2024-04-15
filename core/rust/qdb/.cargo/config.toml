@@ -1,0 +1,4 @@
+[build]
+# core/target/rust-maven-plugin/qdb/
+target-dir = "../../target/rust-maven-plugin/qdb/"
+rustflags = ["-D", "warnings"]

@@ -37,6 +37,10 @@
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
         <web.console.version>0.3.3</web.console.version>
+        <!--
+        For production builds, use -P qdb-release to compile optimized Rust binaries.
+        -->
+        <qdb.release>false</qdb.release>
     </properties>
 
     <version>7.4.1-SNAPSHOT</version>
@@ -212,6 +216,26 @@
                         </QDB_CLIENT_CONF>
                     </environmentVariables>
                 </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.questdb</groupId>
+                <artifactId>rust-maven-plugin</artifactId>
+                <version>1.1.1</version>
+                <executions>
+                    <execution>
+                        <id>qdb</id>
+                        <goals>
+                            <goal>build</goal>
+                        </goals>
+                        <configuration>
+                            <path>rust/qdb</path>
+                            <release>${qdb.release}</release>
+                            <copyTo>${project.build.directory}/classes/io/questdb/rust</copyTo>
+                            <copyWithPlatformDir>true</copyWithPlatformDir>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
@@ -411,7 +435,7 @@
                                         <argument>--module-path</argument>
                                         <argument>${project.build.directory}/questdb-${project.version}.jar</argument>
                                         <argument>--add-modules</argument>
-                                        <argument>io.questdb,jdk.crypto.ec,java.management</argument>
+                                        <argument>io.questdb,io.questdb.jar.jni,jdk.crypto.ec,java.management</argument>
                                         <argument>--output</argument>
                                         <argument>${project.build.directory}/runtime</argument>
                                         <argument>--no-header-files</argument>
@@ -638,6 +662,12 @@
     </profiles>
 
     <dependencies>
+        <dependency>
+            <groupId>org.questdb</groupId>
+            <artifactId>jar-jni</artifactId>
+            <version>1.1.1</version>
+        </dependency>
+
         <!-- test dependencies -->
         <dependency>
             <groupId>junit</groupId>
