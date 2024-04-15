@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -113,13 +113,13 @@ public interface PlanSink {
 
     PlanSink val(Plannable s);
 
-    PlanSink val(long long0, long long1, long long2, long long3);
-
     PlanSink val(long hash, int geoHashBits);
 
     PlanSink valIPv4(int ip);
 
     PlanSink valISODate(long l);
+
+    PlanSink valLong256(long long0, long long1, long long2, long long3);
 
     PlanSink valUuid(long lo, long hi);
 }

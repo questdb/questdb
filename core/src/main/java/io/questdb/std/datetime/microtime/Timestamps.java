@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -120,6 +120,10 @@ public final class Timestamps {
 
     public static long addPeriod(long lo, char type, int period) {
         switch (type) {
+            case 'u':
+                return Timestamps.addMicros(lo, period);
+            case 'T':
+                return Timestamps.addMillis(lo, period);
             case 's':
                 return Timestamps.addSeconds(lo, period);
             case 'm':
@@ -141,6 +145,14 @@ public final class Timestamps {
 
     public static long addSeconds(long micros, int seconds) {
         return micros + seconds * SECOND_MICROS;
+    }
+
+    public static long addMillis(long micros, int millis) {
+        return micros + millis * MILLI_MICROS;
+    }
+
+    public static long addMicros(long micros, int moreMicros) {
+        return micros + moreMicros;
     }
 
     public static long addWeeks(long micros, int weeks) {
@@ -517,6 +529,10 @@ public final class Timestamps {
         return ((dayOfTheWeekOfEndOfPreviousYear <= 3) ? 0 : 7) - dayOfTheWeekOfEndOfPreviousYear;
     }
 
+    public static long getMicrosBetween(long a, long b) {
+        return Math.abs(a - b);
+    }
+
     public static int getMicrosOfMilli(long micros) {
         if (micros > -1) {
             return (int) (micros % MILLI_MICROS);
@@ -546,6 +562,10 @@ public final class Timestamps {
         int year = getYear(micros);
         int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;
         return millenniumFirstYear / 1000 + 1;
+    }
+
+    public static long getMillisBetween(long a, long b) {
+        return Math.abs(a - b) / MILLI_MICROS;
     }
 
     public static long getMillisOfMinute(long micros) {
@@ -630,6 +650,10 @@ public final class Timestamps {
 
     public static long getPeriodBetween(char type, long start, long end) {
         switch (type) {
+            case 'u':
+                return Timestamps.getMicrosBetween(start, end);
+            case 'T':
+                return Timestamps.getMillisBetween(start, end);
             case 's':
                 return Timestamps.getSecondsBetween(start, end);
             case 'm':

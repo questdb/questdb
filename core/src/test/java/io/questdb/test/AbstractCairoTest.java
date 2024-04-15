@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -266,7 +266,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             while (cursor.hasNext()) {
                 for (int i = 0; i < columnCount; i++) {
                     switch (ColumnType.tagOf(metadata.getColumnType(i))) {
-                        case ColumnType.STRING:
+                        case ColumnType.STRING: {
                             CharSequence a = record.getStrA(i);
                             CharSequence b = record.getStrB(i);
                             if (a == null) {
@@ -281,7 +281,20 @@ public abstract class AbstractCairoTest extends AbstractTest {
                                 Assert.assertEquals(a.length(), record.getStrLen(i));
                             }
                             break;
-                        case ColumnType.BINARY:
+                        }
+                        case ColumnType.VARCHAR: {
+                            Utf8Sequence a = record.getVarcharA(i);
+                            Utf8Sequence b = record.getVarcharB(i);
+                            if (a == null) {
+                                Assert.assertNull(b);
+                                Assert.assertEquals(TableUtils.NULL_LEN, record.getVarcharSize(i));
+                            } else {
+                                TestUtils.assertEquals(a, b);
+                                Assert.assertEquals(a.size(), record.getVarcharSize(i));
+                            }
+                            break;
+                        }
+                        case ColumnType.BINARY: {
                             BinarySequence s = record.getBin(i);
                             if (s == null) {
                                 Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
@@ -289,6 +302,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                                 Assert.assertEquals(s.length(), record.getBinLen(i));
                             }
                             break;
+                        }
                         default:
                             break;
                     }
@@ -926,7 +940,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             try {
                 code.run();
                 forEachNode(node -> releaseInactive(node.getEngine()));
-            } catch(Throwable th) {
+            } catch (Throwable th) {
                 LOG.error().$("Error in test: ").$(th).$();
                 throw th;
             } finally {
@@ -1835,5 +1849,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         FACTORY_TAGS[MemoryTag.NATIVE_IMPORT] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_PARALLEL_IMPORT] = false;
         FACTORY_TAGS[MemoryTag.NATIVE_REPL] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_INDEX_READER] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_WAL_WRITER] = false;
     }
 }

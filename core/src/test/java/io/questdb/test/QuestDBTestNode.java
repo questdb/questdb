@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Misc;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 
 public class QuestDBTestNode {
     private final int nodeId;
@@ -194,16 +193,7 @@ public class QuestDBTestNode {
                 TestUtils.removeTestPath(root);
             }
             overrides.reset();
-            clearWalQueue();
         }
-
-        private void clearWalQueue() {
-            long seq;
-            while ((seq = engine.getMessageBus().getWalTxnNotificationSubSequence().next()) > -1) {
-                engine.getMessageBus().getWalTxnNotificationSubSequence().done(seq);
-            }
-        }
-
         private void close() {
             engine = Misc.free(engine);
         }

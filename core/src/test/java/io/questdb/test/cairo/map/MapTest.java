@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -106,12 +106,7 @@ public class MapTest extends AbstractCairoTest {
                     value.putTimestamp(9, rnd.nextLong());
                     value.putInt(10, rnd.nextInt());
                     Long256Impl long256 = new Long256Impl();
-                    long256.setAll(
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong()
-                    );
+                    long256.fromRnd(rnd);
                     value.putLong256(11, long256);
                     value.putLong128(12, rnd.nextLong(), rnd.nextLong());
                 }
@@ -138,12 +133,7 @@ public class MapTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
                     Assert.assertEquals(rnd.nextInt(), value.getInt(10));
                     Long256Impl long256 = new Long256Impl();
-                    long256.setAll(
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong()
-                    );
+                    long256.fromRnd(rnd);
                     Assert.assertEquals(long256, value.getLong256A(11));
                     Assert.assertEquals(rnd.nextLong(), value.getLong128Lo(12));
                     Assert.assertEquals(rnd.nextLong(), value.getLong128Hi(12));
@@ -193,12 +183,7 @@ public class MapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd.nextLong(), record.getTimestamp(col++));
                         Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
                         Long256Impl long256 = new Long256Impl();
-                        long256.setAll(
-                                rnd.nextLong(),
-                                rnd.nextLong(),
-                                rnd.nextLong(),
-                                rnd.nextLong()
-                        );
+                        long256.fromRnd(rnd);
                         Assert.assertEquals(long256, record.getLong256A(col++));
                         Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
                         Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
@@ -385,7 +370,7 @@ public class MapTest extends AbstractCairoTest {
                     MapKey key = map.withKey();
                     key.putInt(i);
                     key.commit();
-                    int hashCode = key.hash();
+                    long hashCode = key.hash();
                     keyHashCodes.add(hashCode);
 
                     MapValue value = key.createValue(hashCode);
@@ -621,6 +606,7 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertEquals(N, map.size());
 
                 map.close();
+                map.close(); // Close must be idempotent
                 map.reopen();
 
                 Assert.assertEquals(0, map.size());

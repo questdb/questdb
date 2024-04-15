@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,11 +33,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import sun.misc.Signal;
@@ -587,10 +589,20 @@ public class Bootstrap {
         }
     }
 
-    static void logWebConsoleUrls(ServerConfiguration config, Log log, String banner, String schema) {
+    void logBannerAndEndpoints(String schema) {
+        final boolean ilpEnabled = config.getHttpServerConfiguration().getLineHttpProcessorConfiguration().isEnabled();
+        final String indent = "    ";
+        final StringBuilder sb = new StringBuilder();
+        sb.append('\n').append(banner);
         if (config.getHttpServerConfiguration().isEnabled()) {
-            final LogRecord r = log.infoW().$('\n').$(banner).$("Web Console URL(s):").$("\n\n");
-
+            sb.append(indent);
+            String col1Header = "Web Console URL";
+            sb.append(col1Header);
+            if (ilpEnabled) {
+                padToNextCol(sb, col1Header.length());
+                sb.append("ILP Client Connection String");
+            }
+            sb.append("\n\n");
             final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();
             final int bindPort = httpConf.getBindPort();
@@ -600,18 +612,65 @@ public class Bootstrap {
                         for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
                             InetAddress inetAddress = addr.nextElement();
                             if (inetAddress instanceof Inet4Address) {
-                                r.$('\t').$(schema).$(inetAddress.getHostAddress()).$(':').$(bindPort).$('\n');
+                                String leftCol = schema + "://" + inetAddress.getHostAddress() + ':' + bindPort;
+                                sb.append(indent).append(leftCol);
+                                if (ilpEnabled) {
+                                    padToNextCol(sb, leftCol.length());
+                                    sb.append(schema).append("::addr=").append(inetAddress.getHostAddress()).append(':').append(bindPort).append(';');
+                                }
+                                sb.append('\n');
                             }
                         }
                     }
                 } catch (SocketException se) {
                     throw new Bootstrap.BootstrapException("Cannot access network interfaces");
                 }
-                r.$('\n').$();
+                sb.append('\n');
             } else {
-                r.$('\t').$("http://").$ip(bindIP).$(':').$(bindPort).$('\n').$();
+                sb.append('\t').append(schema);
+                final Utf8StringSink sink = new Utf8StringSink();
+                Net.appendIP4(sink, bindIP);
+                sb.append(sink).append(':').append(bindPort).append('\n');
             }
+            if (!ilpEnabled) {
+                sb.append("InfluxDB Line Protocol is disabled for HTTP. Enable in server.conf: line.http.enabled=true\n");
+            }
+        } else {
+            sb.append("HTTP server is disabled. Enable in server.conf: http.enabled=true\n");
         }
+        sb.append("QuestDB configuration files are in ");
+        try {
+            sb.append(new File(rootDirectory, "conf").getCanonicalPath());
+        } catch (IOException e) {
+            sb.append(new File(rootDirectory, "conf").getAbsolutePath());
+        }
+        sb.append("\n\n");
+        final String helloMsg = sb.toString();
+        log.infoW().$(helloMsg).$();
+        createHelloFile(helloMsg);
+    }
+
+    private static void padToNextCol(StringBuilder sb, int headerWidth) {
+        int colWidth = 32;
+        // Insert at least one space between columns
+        sb.append("  ");
+        for (int i = headerWidth + 2; i < colWidth; i++) {
+            sb.append(' ');
+        }
+    }
+
+    private void createHelloFile(String helloMsg) {
+        final File helloFile = new File(rootDirectory, "log/hello.txt");
+        final File growingFile = new File(helloFile.getParentFile(), helloFile.getName() + ".tmp");
+        try (Writer w = new FileWriter(growingFile)) {
+            w.write(helloMsg);
+        } catch (IOException e) {
+            log.infoW().$("Failed to create ").$(growingFile.getAbsolutePath()).$();
+        }
+        if (!growingFile.renameTo(helloFile)) {
+            log.infoW().$("Failed to rename ").$(growingFile.getAbsolutePath()).$(" to ").$(helloFile.getName()).$();
+        }
+        helloFile.deleteOnExit();
     }
 
     protected String getPublicZipPath() {

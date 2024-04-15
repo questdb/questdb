@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,15 +31,17 @@ final class FiltersCompiler {
     private FiltersCompiler() {
     }
 
-    public static native long callFunction(long fnAddress,
-                                           long colsAddress,
-                                           long colsSize,
-                                           long varLenIndexesAddress,
-                                           long varsAddress,
-                                           long varsSize,
-                                           long rowsAddress,
-                                           long rowsSize,
-                                           long rowsStartOffset);
+    public static native long callFunction(
+            long fnAddress,
+            long colsAddress,
+            long colsSize,
+            long varSizeIndexesAddress,
+            long varsAddress,
+            long varsSize,
+            long rowsAddress,
+            long rowsSize,
+            long rowsStartOffset
+    );
 
     public static native long compileFunction(long filterAddress, long filterSize, int options, JitError error);
 

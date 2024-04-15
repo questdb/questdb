@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -290,10 +290,10 @@ final class Unordered16MapRecord implements MapRecord {
     }
 
     @Override
-    public int keyHashCode() {
+    public long keyHashCode() {
         long key1 = Unsafe.getUnsafe().getLong(startAddress);
         long key2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
-        return Hash.hashLong128(key1, key2);
+        return Hash.hashLong128_64(key1, key2);
     }
 
     public void of(long address) {
@@ -318,12 +318,7 @@ final class Unordered16MapRecord implements MapRecord {
     private Long256 getLong256Generic(Long256Impl[] keyLong256, int columnIndex) {
         long address = addressOfColumn(columnIndex);
         Long256Impl long256 = keyLong256[columnIndex];
-        long256.setAll(
-                Unsafe.getUnsafe().getLong(address),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES * 2),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES * 3)
-        );
+        long256.fromAddress(address);
         return long256;
     }
 }

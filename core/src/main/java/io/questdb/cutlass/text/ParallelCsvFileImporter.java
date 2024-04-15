@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -476,7 +476,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    //returns list with N chunk boundaries
+    // returns list with N chunk boundaries
     public LongList phaseBoundaryCheck(long fileLength) throws TextImportException {
         phasePrologue(CopyTask.PHASE_BOUNDARY_CHECK);
         assert (workerCount > 0 && minChunkSize > 0);

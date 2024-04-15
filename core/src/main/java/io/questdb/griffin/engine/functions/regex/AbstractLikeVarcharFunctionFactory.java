@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,10 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
@@ -113,7 +110,11 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                                     return new AbstractLikeStrFunctionFactory.ConstIContainsStrFunction(value, subPattern.toString());
                                 }
                             } else {
-                                return new ConstContainsVarcharFunction(value, subPattern);
+                                Utf8String u8subPattern = new Utf8String(subPattern);
+                                if (u8subPattern.size() <= ConstContainsSwarVarcharFunction.MAX_SIZE) {
+                                    return new ConstContainsSwarVarcharFunction(value, u8subPattern);
+                                }
+                                return new ConstContainsVarcharFunction(value, u8subPattern);
                             }
                         }
                     }
@@ -144,13 +145,117 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
 
     protected abstract boolean isCaseInsensitive();
 
+    /**
+     * Optimized variant of {@link ConstContainsVarcharFunction} with SWAR-based contains implementation.
+     * Works only for patterns up to 8 bytes in size.
+     */
+    private static class ConstContainsSwarVarcharFunction extends BooleanFunction implements UnaryFunction {
+        private static final int MAX_SIZE = Long.BYTES;
+        private final Utf8Sequence pattern; // only used in toPlan
+        private final long patternMask;
+        private final int patternSize;
+        private final long patternWord;
+        private final byte searchFirstByte;
+        private final long searchWord;
+        private final Function value;
+
+        public ConstContainsSwarVarcharFunction(Function value, Utf8Sequence pattern) {
+            assert pattern.size() > 0 && pattern.size() <= MAX_SIZE;
+            this.value = value;
+            this.patternSize = pattern.size();
+            this.patternMask = patternSize == MAX_SIZE ? -1L : (1L << 8 * pattern.size()) - 1L;
+            long patternWord = 0;
+            for (int i = 0, n = pattern.size(); i < n; i++) {
+                patternWord |= (long) (pattern.byteAt(i) & 0xff) << (8 * i);
+            }
+            this.patternWord = patternWord;
+            this.searchFirstByte = pattern.byteAt(0);
+            this.searchWord = SwarUtils.broadcast(pattern.byteAt(0));
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            Utf8Sequence us = value.getVarcharA(rec);
+            if (us == null || us.size() < patternSize) {
+                return false;
+            }
+
+            int size = us.size();
+
+            int i = 0;
+            for (int n = size - 7 - patternSize + 1; i < n; i += 8) {
+                long zeroBytesWord = SwarUtils.markZeroBytes(us.longAt(i) ^ searchWord);
+                if (zeroBytesWord != 0) {
+                    // We've found a match for the first pattern byte,
+                    // slow down and check the full pattern.
+                    int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                    int pos = firstIndex;
+                    while (pos < 8) {
+                        // Check if the pattern matches only for matched first bytes.
+                        if (size - i - pos > 7) {
+                            // It's safe to load full word.
+                            if ((us.longAt(i + pos) & patternMask) == patternWord) {
+                                return true;
+                            }
+                        } else {
+                            // We can't call longAt safely near the sequence end,
+                            // so construct the word from individual bytes.
+                            if ((tailWord(us, i + pos) & patternMask) == patternWord) {
+                                return true;
+                            }
+                        }
+                        zeroBytesWord >>>= ((firstIndex + 1) << 3);
+                        firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                        pos += firstIndex + 1;
+                    }
+                }
+            }
+
+            // tail
+            for (int n = size - patternSize + 1; i < n; i++) {
+                if (us.byteAt(i) == searchFirstByte && (tailWord(us, i) & patternMask) == patternWord) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" like ");
+            sink.val('%');
+            sink.val(pattern);
+            sink.val('%');
+        }
+
+        private long tailWord(Utf8Sequence us, int i) {
+            long tailWord = 0;
+            for (int j = 0; j < patternSize; j++) {
+                tailWord |= (us.byteAt(i + j) & 0xffL) << (8 * j);
+            }
+            return tailWord;
+        }
+    }
+
     private static class ConstContainsVarcharFunction extends BooleanFunction implements UnaryFunction {
         private final Utf8String pattern;
         private final Function value;
 
-        public ConstContainsVarcharFunction(Function value, @Transient CharSequence pattern) {
+        public ConstContainsVarcharFunction(Function value, Utf8String pattern) {
             this.value = value;
-            this.pattern = new Utf8String(pattern);
+            this.pattern = pattern;
         }
 
         @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -208,6 +208,37 @@ public class UuidTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastVarcharToUuid() throws Exception {
+        ddl("create table x (i INT, u UUID)");
+        insert("insert into x values (0, cast(cast('11111111-1111-1111-1111-111111111111' as varchar) as uuid))");
+
+
+        assertSql(
+                "i\tu\n" +
+                        "0\t11111111-1111-1111-1111-111111111111\n",
+                "x"
+        );
+    }
+
+    @Test
+    public void testCopyVarcharToUuid() throws Exception {
+        ddl("create table x (i INT, u VARCHAR)");
+        insert("insert into x values (0, cast('11111111-1111-1111-1111-111111111111' as varchar))");
+        insert("insert into x values (0, cast('22222222-2222-2222-2222-222222222222' as varchar))");
+        insert("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
+        insert("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
+        insert("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
+
+
+        assertSql(
+                "i\tcount_distinct\n" +
+                        "0\t2\n" +
+                        "1\t1\n",
+                "select i, count_distinct(u) from x group by i order by i"
+        );
+    }
+
+    @Test
     public void testCountDistinctAggregation_keyed() throws Exception {
         ddl("create table x (i INT, u UUID)");
         insert("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
@@ -351,7 +382,7 @@ public class UuidTest extends AbstractCairoTest {
                 "u\tsum\n" +
                         "11111111-1111-1111-1111-111111111111\t1\n" +
                         "22222222-2222-2222-2222-222222222222\t5\n",
-                "select u, sum(i) from x group by u"
+                "select u, sum(i) from x group by u order by u"
         );
     }
 
@@ -419,6 +450,24 @@ public class UuidTest extends AbstractCairoTest {
                     "b\n" +
                             "22222222-2222-2222-2222-222222222222\n",
                     "x where b = $1"
+            );
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInFilter2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b uuid)");
+            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
+            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
+            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "22222222-2222-2222-2222-222222222222");
+            assertSql(
+                    "b\n" +
+                            "22222222-2222-2222-2222-222222222222\n",
+                    "x where $1 = b"
             );
         });
     }

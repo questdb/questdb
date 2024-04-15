@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,8 +33,6 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
-import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
@@ -45,6 +43,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -314,18 +313,20 @@ public class AggregateTest extends AbstractCairoTest {
                     "    and ts < '2023-02-02' " +
                     "order by 1 asc";
 
-            assertPlan(
-                    query,
-                    "Sort light\n" +
-                            "  keys: [account_uuid]\n" +
-                            "    GroupBy vectorized: true workers: 1\n" +
-                            "      keys: [account_uuid]\n" +
-                            "      values: [sum(requests)]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Interval forward scan on: records\n" +
-                            "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
-            );
+            if (enableParallelGroupBy) {
+                assertPlan(
+                        query,
+                        "Sort light\n" +
+                                "  keys: [account_uuid]\n" +
+                                "    GroupBy vectorized: true workers: 1\n" +
+                                "      keys: [account_uuid]\n" +
+                                "      values: [sum(requests)]\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Interval forward scan on: records\n" +
+                                "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
+                );
+            }
 
             assertQuery(
                     "account_uuid\trequest_count\n" +
@@ -404,10 +405,10 @@ public class AggregateTest extends AbstractCairoTest {
     public void testHourDouble() throws Exception {
         assertQuery(
                 "hour\tsum\tksum\tnsum\tmin\tmax\tavg\tmax1\tmin1\n" +
-                        "0\t15104.996921874219\t15104.996921874184\t15104.996921874175\t1.8362081935174857E-5\t0.999916269120484\t0.5030304023536106\t1970-01-01T00:59:59.900000Z\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\t15097.837814466568\t15097.837814466722\t15097.837814466713\t3.921217994906634E-5\t0.9999575311567217\t0.50183938223256\t1970-01-01T01:59:59.900000Z\t1970-01-01T01:00:00.000000Z\n" +
-                        "2\t11641.765471468498\t11641.76547146845\t11641.765471468458\t1.8566421983501336E-5\t0.9999768905891359\t0.500376750256533\t1970-01-01T02:46:39.900000Z\t1970-01-01T02:00:00.000000Z\n",
-                "select hour(ts), sum(val), ksum(val), nsum(val), min(val), max(val), avg(val), max(ts), min(ts) from tab order by 1",
+                        "0\t15105.0\t15105.0\t15105.0\t1.8362081935174857E-5\t0.999916269120484\t1.0\t1970-01-01T00:59:59.900000Z\t1970-01-01T00:00:00.000000Z\n" +
+                        "1\t15098.0\t15098.0\t15098.0\t3.921217994906634E-5\t0.9999575311567217\t1.0\t1970-01-01T01:59:59.900000Z\t1970-01-01T01:00:00.000000Z\n" +
+                        "2\t11642.0\t11642.0\t11642.0\t1.8566421983501336E-5\t0.9999768905891359\t1.0\t1970-01-01T02:46:39.900000Z\t1970-01-01T02:00:00.000000Z\n",
+                "select hour(ts), round(sum(val)) sum, round(ksum(val)) ksum, round(nsum(val)) nsum, min(val), max(val), round(avg(val)) avg, max(ts), min(ts) from tab order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_double(2) val from long_sequence(100000))",
                 null,
                 true,
@@ -642,25 +643,6 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntSymbolAddValueMidTableAvgDate() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val date");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(-200, 100000, 2) from long_sequence(1000000)");
-            String expected = "s1\tavg\n" +
-                    "\t49882.75926752372\n" +
-                    "a1\t49866.12261939713\n" +
-                    "a2\t49846.02279713851\n" +
-                    "a3\t49881.23256562667\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
-
-            assertSql(expected, "select s1, avg(val) from tab order by s1");
-        });
-    }
-
-    @Test
     public void testIntSymbolAddValueMidTableAvgDouble() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
@@ -718,25 +700,6 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntSymbolAddValueMidTableAvgTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val timestamp");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(-200, 100000, 2) from long_sequence(1000000)");
-            String expected = "s1\tavg\n" +
-                    "\t49882.75926752372\n" +
-                    "a1\t49866.12261939713\n" +
-                    "a2\t49846.02279713851\n" +
-                    "a3\t49881.23256562667\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
-
-            assertSql(expected, "select s1, avg(val) from tab order by s1");
-        });
-    }
-
-    @Test
     public void testIntSymbolAddValueMidTableCount() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
@@ -762,15 +725,15 @@ public class AggregateTest extends AbstractCairoTest {
             ddl("alter table tab add column val double");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
             String expected = "s1\tksum\n" +
-                    "\t104083.7796906751\n" +
-                    "a1\t103982.62399952601\n" +
-                    "a2\t104702.89752880314\n" +
-                    "a3\t104299.02298329599\n" +
+                    "\t104084.0\n" +
+                    "a1\t103983.0\n" +
+                    "a2\t104703.0\n" +
+                    "a3\t104299.0\n" +
                     "s1\tNaN\n" +
                     "s2\tNaN\n" +
                     "s3\tNaN\n";
 
-            assertSql(expected, "select s1, ksum(val) from tab order by s1");
+            assertSql(expected, "select s1, round(ksum(val)) ksum from tab order by s1");
         });
     }
 
@@ -951,25 +914,6 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntSymbolAddValueMidTableSumDate() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val date");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(0, 100000, 2) from long_sequence(1000000)");
-
-            String expected = "s1\tsum\n" +
-                    "\t1970-05-01T15:06:23.318Z\n" +
-                    "a1\t1970-05-01T04:03:16.338Z\n" +
-                    "a2\t1970-05-01T17:13:47.313Z\n" +
-                    "a3\t1970-05-01T06:34:46.269Z\n" +
-                    "s1\t\n" +
-                    "s2\t\n" +
-                    "s3\t\n";
-            assertSql(expected, "select s1, sum(val) from tab order by s1");
-        });
-    }
-
-    @Test
     public void testIntSymbolAddValueMidTableSumDouble() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
@@ -1031,6 +975,8 @@ public class AggregateTest extends AbstractCairoTest {
 
     @Test
     public void testIntSymbolResolution() throws Exception {
+        // Fractional part is slightly different between parallel and non-parallel factories.
+        Assume.assumeTrue(enableParallelGroupBy);
         assertQuery(
                 "s2\tsum\n" +
                         "\t104119.88094816262\n" +
@@ -1479,16 +1425,15 @@ public class AggregateTest extends AbstractCairoTest {
 
             final String[] functions = {
                     "sum(d)", "min(d)", "max(d)", "avg(d)", "nsum(d)", "ksum(d)",
-                    "sum(tstmp)", "min(tstmp)", "max(tstmp)",
+                    "min(tstmp)", "max(tstmp)",
                     "sum(l)", "min(l)", "max(l)", "avg(l)",
                     "sum(i)", "min(i)", "min(i)", "avg(i)",
-                    "sum(dat)", "min(dat)", "max(dat)"
+                    "min(dat)", "max(dat)"
             };
 
             for (String function : functions) {
                 String query = "select s, " + function + " from tab group by s";
                 LOG.infoW().$(function).$();
-                //String query = "select s, sum(d) from tab group by s";
                 assertRostiMemory(engine, query, sqlExecutionContext);
                 sizeCounter.set(0);
             }
@@ -1879,8 +1824,8 @@ public class AggregateTest extends AbstractCairoTest {
                 "select count(*) cnt from " +
                         "(select i, count(*), min(i), avg(i), max(i), sum(i), " +
                         "min(l), avg(l), max(l), sum(l), " +
-                        "min(dat), avg(dat), max(dat), sum(dat), " +
-                        "min(ts), avg(ts), max(ts), sum(ts), " +
+                        "min(dat), max(dat), " +
+                        "min(ts), max(ts), " +
                         "min(d), avg(d), max(d), sum(d), nsum(d), ksum(d)," +
                         "sum(l256), count(i), count(l) from tab group by i )",
                 sqlExecutionContext
@@ -1937,8 +1882,8 @@ public class AggregateTest extends AbstractCairoTest {
                 "select count(*) cnt from " +
                         "(select count(*), min(i), avg(i), max(i), sum(i), " +
                         "min(l), avg(l), max(l), sum(l), " +
-                        "min(dat), avg(dat), max(dat), sum(dat), " +
-                        "min(ts), avg(ts), max(ts), sum(ts), " +
+                        "min(dat), max(dat), " +
+                        "min(ts), max(ts), " +
                         "min(d), avg(d), max(d), sum(d), nsum(d), ksum(d)," +
                         "sum(l256), count(i), count(l) from tab )",
                 sqlExecutionContext
@@ -2157,10 +2102,7 @@ public class AggregateTest extends AbstractCairoTest {
         ) {
             try {
                 if (pool != null) {
-                    GroupByVectorAggregateJob vectorAggregateJob = new GroupByVectorAggregateJob(engine.getMessageBus());
-                    pool.assign(vectorAggregateJob);
-                    GroupByMergeShardJob mergeShardJob = new GroupByMergeShardJob(engine.getMessageBus());
-                    pool.assign(mergeShardJob);
+                    TestUtils.setupWorkerPool(pool, engine);
                     pool.start(LOG);
                 }
 

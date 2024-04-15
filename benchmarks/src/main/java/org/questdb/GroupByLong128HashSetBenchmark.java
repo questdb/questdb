@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,7 +79,7 @@ public class GroupByLong128HashSetBenchmark {
     public void testGroupByLong128HashSet() {
         long lo = rnd.nextLong(size);
         long hi = rnd.nextLong(size);
-        int index = groupByLong128HashSet.of(ptr).keyIndex(lo, hi);
+        long index = groupByLong128HashSet.of(ptr).keyIndex(lo, hi);
         if (index >= 0) {
             groupByLong128HashSet.addAt(index, lo, hi);
             ptr = groupByLong128HashSet.ptr();

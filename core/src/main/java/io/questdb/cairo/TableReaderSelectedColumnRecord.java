@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -318,8 +318,18 @@ public class TableReaderSelectedColumnRecord implements Record {
         return getVarchar(columnIndex, 2);
     }
 
-    public void incrementRecordIndex() {
-        recordIndex++;
+    @Override
+    public int getVarcharSize(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final long rowNum = getAdjustedRecordIndex(col);
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                rowNum,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        return VarcharTypeDriver.getValueSize(
+                reader.getColumn(absoluteColumnIndex + 1),
+                rowNum
+        );
     }
 
     public void jumpTo(int partitionIndex, long recordIndex) {

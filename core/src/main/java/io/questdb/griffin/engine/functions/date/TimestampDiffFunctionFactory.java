@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,8 +50,13 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         final Function periodFunction = args.getQuick(0);
         if (periodFunction.isConstant()) {
             final Function start = args.getQuick(1);
@@ -195,6 +200,8 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
     }
 
     static {
+        diffFunctions.extendAndSet('u', Timestamps::getMicrosBetween);
+        diffFunctions.extendAndSet('T', Timestamps::getMillisBetween);
         diffFunctions.extendAndSet('s', Timestamps::getSecondsBetween);
         diffFunctions.extendAndSet('m', Timestamps::getMinutesBetween);
         diffFunctions.extendAndSet('h', Timestamps::getHoursBetween);

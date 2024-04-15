@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,11 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.std.SwarUtils;
+
 public class GenericTextLexer extends AbstractTextLexer {
     private byte delimiter;
+    private long delimiterMask;
 
     public GenericTextLexer(TextConfiguration textConfiguration) {
         super(textConfiguration);
@@ -33,18 +36,25 @@ public class GenericTextLexer extends AbstractTextLexer {
 
     public void of(byte delimiter) {
         this.delimiter = delimiter;
+        this.delimiterMask = SwarUtils.broadcast(delimiter);
     }
 
-    protected void doSwitch(long lo, long ptr, byte c) throws LineLimitException {
-        if (c == delimiter) {
+    @Override
+    protected void doSwitch(long lo, long hi, byte b) throws LineLimitException {
+        if (b == delimiter) {
             onColumnDelimiter(lo);
-        } else if (c == '"') {
+        } else if (b == '"') {
             onQuote();
-        } else if (c == '\n' || c == '\r') {
-            onLineEnd(ptr);
+        } else if (b == '\n' || b == '\r') {
+            onLineEnd(hi);
         } else {
             checkEol(lo);
         }
+    }
+
+    @Override
+    protected long getDelimiterMask() {
+        return delimiterMask;
     }
 }
 

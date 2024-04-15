@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -90,12 +90,6 @@ public class MemoryPARWImpl implements MemoryARW {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public Utf8SplitString borrowUtf8SplitStringA() {
-        // paged memory does not support reading UTF8 strings from
-        throw new UnsupportedOperationException();
-    }
-
     public void clear() {
         releaseAllPagesButFirst();
         appendPointer = -1;
@@ -174,12 +168,6 @@ public class MemoryPARWImpl implements MemoryARW {
             return Unsafe.getUnsafe().getChar(absolutePointer + offset);
         }
         return getChar0(offset);
-    }
-
-    @Override
-    public DirectCharSequence getDirectStr(long offset) {
-        // Paged memory doesn't support stable pointers.
-        throw new UnsupportedOperationException();
     }
 
     public final double getDouble(long offset) {
@@ -261,12 +249,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void getLong256(long offset, Long256Acceptor sink) {
         if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
-            sink.setAll(
-                    Unsafe.getUnsafe().getLong(absolutePointer + offset),
-                    Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES),
-                    Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 2),
-                    Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES * 3)
-            );
+            sink.fromAddress(absolutePointer + offset);
         } else {
             sink.setAll(
                     getLong(offset),
@@ -345,6 +328,12 @@ public class MemoryPARWImpl implements MemoryARW {
         }
 
         return value;
+    }
+
+    @Override
+    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
+        // paged memory does not support reading UTF8 strings from
+        throw new UnsupportedOperationException();
     }
 
     public final CharSequence getStr0(long offset, CharSequenceView view) {

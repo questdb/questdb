@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -467,11 +467,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             final int N = 1_000_000;
             Long256Impl value = new Long256Impl();
             for (int i = 0; i < N; i++) {
-                value.setAll(
-                        rnd.nextLong(),
-                        rnd.nextLong(),
-                        rnd.nextLong(),
-                        rnd.nextLong());
+                value.fromRnd(rnd);
                 rwMem.putLong256(value);
             }
 
@@ -536,12 +532,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             final int N = 1_000_000;
             Long256Impl value = new Long256Impl();
             for (int i = 0; i < N; i++) {
-                value.setAll(
-                        rnd.nextLong()
-                        , rnd.nextLong()
-                        , rnd.nextLong()
-                        , rnd.nextLong()
-                );
+                value.fromRnd(rnd);
                 rwMem.putLong256(i * 32, value);
             }
 
@@ -1001,7 +992,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             ) {
                 code.run(rwMem, roMem);
             } finally {
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
             }
         });
 

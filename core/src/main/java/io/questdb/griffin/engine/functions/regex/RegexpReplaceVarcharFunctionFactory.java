@@ -22,16 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.griffin.engine.functions.regex;
 
 /**
- * A specialization of {@link DirectSequence} that does not add new methods, but provides additional
- * guarantees about the stability of the pointer returned by {@link DirectSequence#ptr()} method.
- * <p>
- * Indicates that a pointer returned by {@link DirectSequence#ptr()} method is stable during a query execution.
- * Stable is defined as:
- * - the pointer remains valid for the duration of the query execution
- * - the sequence of bytes pointed to by the pointer does not change during the query execution
+ * This is tactical implementation of regex replace over varchar column.
+ * It exploits the ability of a varchar column to return a CharSequence view of the sequence.
  */
-public interface StableDirectSequence extends DirectSequence {
+public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctionFactory {
+    @Override
+    public String getSignature() {
+        return "regexp_replace(ØSS)";
+    }
 }
+

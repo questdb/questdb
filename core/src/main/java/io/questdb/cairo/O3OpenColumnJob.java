@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -321,19 +321,22 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // we need to shift copy the original column so that new block points at strings "below" the
                     // nulls we created above
+                    long dstAddr = srcAuxAddr + wouldBeAuxSize;
+                    long dstAddrSize = newAuxSize - wouldBeAuxSize;
                     columnTypeDriver.shiftCopyAuxVector(
                             -reservedBytesForColTopNulls,
                             srcAuxAddr,
                             0,
                             auxRowCount - 1, // inclusive
-                            srcAuxAddr + wouldBeAuxSize
+                            dstAddr,
+                            dstAddrSize
                     );
 
                     // now set the "empty" bit of fixed size column with references to those
                     // null strings we just added
                     // Call to o3setColumnRefs must be after o3shiftCopyAuxVector
                     // because data first have to be shifted before overwritten
-                    columnTypeDriver.setColumnRefs(srcAuxAddr + oldAuxSize, 0, srcDataTop);
+                    columnTypeDriver.setPartAuxVectorNull(srcAuxAddr + oldAuxSize, 0, srcDataTop);
                     srcDataTop = 0;
                     srcDataFixOffset = oldAuxSize;
                 } else {

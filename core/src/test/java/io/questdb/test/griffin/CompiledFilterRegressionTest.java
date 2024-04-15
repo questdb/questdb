@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,8 +26,8 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -545,18 +545,34 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStringNullComparison() throws Exception {
+    public void testVarSizeNullComparison() throws Exception {
         final String ddl = "create table x as (select" +
+                " x," +
                 " timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_str(2, 1, 5, 3) string_value," +
+                " rnd_varchar(1, 5, 3) varchar_value," +
                 " rnd_bin(1, 32, 3) binary_value" +
                 " from long_sequence(1000)) timestamp(k)";
         final FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("string_value", "binary_value")
+                .withAnyOf("string_value", "varchar_value", "binary_value")
                 .withEqualityOperator()
                 .withAnyOf("null")
                 .withBooleanOperator()
-                .withAnyOf("string_value", "binary_value")
+                .withAnyOf("string_value", "varchar_value", "binary_value")
+                .withEqualityOperator()
+                .withAnyOf("null");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testVarcharNullComparison() throws Exception {
+        final String ddl = "create table x as (select" +
+                " x," +
+                " timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_varchar(1, 5, 3) varchar_value" +
+                " from long_sequence(1000)) timestamp(k)";
+        final FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("varchar_value")
                 .withEqualityOperator()
                 .withAnyOf("null");
         assertGeneratedQueryNullable("select * from x", ddl, gen);

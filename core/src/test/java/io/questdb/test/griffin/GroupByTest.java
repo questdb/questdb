@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1199,25 +1199,28 @@ public class GroupByTest extends AbstractCairoTest {
             String query = "select t1.x, max(t2.y), dateadd('d', t1.x, '2023-03-01T00:00:00')::long + t2.x " +
                     "from t1 " +
                     "join t2 on t1.y = t2.y  " +
-                    "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') ";
+                    "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') " +
+                    "order by 1";
 
-            assertPlan(query, "VirtualRecord\n" +
-                    "  functions: [x,max,dateadd::long+x1]\n" +
-                    "    GroupBy vectorized: false\n" +
-                    "      keys: [x,x1,dateadd]\n" +
-                    "      values: [max(y)]\n" +
-                    "        VirtualRecord\n" +
-                    "          functions: [x,y,x1,dateadd('d',1677628800000000,x)]\n" +
-                    "            SelectedRecord\n" +
-                    "                Hash Join Light\n" +
-                    "                  condition: t2.y=t1.y\n" +
-                    "                    DataFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Frame forward scan on: t1\n" +
-                    "                    Hash\n" +
+            assertPlan(query, "Sort light\n" +
+                    "  keys: [x]\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [x,max,dateadd::long+x1]\n" +
+                    "        GroupBy vectorized: false\n" +
+                    "          keys: [x,x1,dateadd]\n" +
+                    "          values: [max(y)]\n" +
+                    "            VirtualRecord\n" +
+                    "              functions: [x,y,x1,dateadd('d',1677628800000000,x)]\n" +
+                    "                SelectedRecord\n" +
+                    "                    Hash Join Light\n" +
+                    "                      condition: t2.y=t1.y\n" +
                     "                        DataFrame\n" +
                     "                            Row forward scan\n" +
-                    "                            Frame forward scan on: t2\n");
+                    "                            Frame forward scan on: t1\n" +
+                    "                        Hash\n" +
+                    "                            DataFrame\n" +
+                    "                                Row forward scan\n" +
+                    "                                Frame forward scan on: t2\n");
 
             assertQuery(
                     "x\tmax\tcolumn\n" +

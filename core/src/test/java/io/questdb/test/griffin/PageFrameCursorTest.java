@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.InlinedVarchar;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8SplitString;
 import io.questdb.test.AbstractCairoTest;
@@ -197,8 +197,8 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                 sink
         );
 
-        final Utf8SplitString utf8SplitView = new Utf8SplitString();
-        final DirectUtf8String utf8view = new DirectUtf8String();
+        final Utf8SplitString utf8SplitView = new Utf8SplitString(false);
+        final InlinedVarchar utf8view = new InlinedVarchar();
 
         final StringSink actualSink = new StringSink();
         // header

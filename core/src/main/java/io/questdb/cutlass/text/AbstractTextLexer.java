@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,6 +34,10 @@ import java.io.Closeable;
 
 public abstract class AbstractTextLexer implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(AbstractTextLexer.class);
+    private static final long MASK_CR = SwarUtils.broadcast((byte) '\r');
+    private static final long MASK_NEW_LINE = SwarUtils.broadcast((byte) '\n');
+    private static final long MASK_QUOTE = SwarUtils.broadcast((byte) '"');
+
     private final ObjectPool<DirectUtf8String> csPool;
     private final ObjList<DirectUtf8String> fields = new ObjList<>();
     private final int lineRollBufLimit;
@@ -108,6 +112,23 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
         try {
             while (ptr < hi) {
+                if (!eol && !delayedOutQuote && ptr < hi - 7) {
+                    long word = Unsafe.getUnsafe().getLong(ptr);
+                    long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
+                            | SwarUtils.markZeroBytes(word ^ MASK_CR)
+                            | SwarUtils.markZeroBytes(word ^ MASK_QUOTE)
+                            | SwarUtils.markZeroBytes(word ^ getDelimiterMask());
+                    if (zeroBytesWord == 0) {
+                        ptr += 7;
+                        this.fieldHi += 7;
+                        continue;
+                    } else {
+                        int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                        ptr += firstIndex;
+                        this.fieldHi += firstIndex;
+                    }
+                }
+
                 final byte c = Unsafe.getUnsafe().getByte(ptr++);
                 this.fieldHi++;
                 if (delayedOutQuote && c != '"') {
@@ -297,10 +318,27 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
         try {
             while (ptr < hi) {
-                final byte c = Unsafe.getUnsafe().getByte(ptr++);
+                if (!eol && !rollBufferUnusable && !useLineRollBuf && !delayedOutQuote && ptr < hi - 7) {
+                    long word = Unsafe.getUnsafe().getLong(ptr);
+                    long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
+                            | SwarUtils.markZeroBytes(word ^ MASK_CR)
+                            | SwarUtils.markZeroBytes(word ^ MASK_QUOTE)
+                            | SwarUtils.markZeroBytes(word ^ getDelimiterMask());
+                    if (zeroBytesWord == 0) {
+                        ptr += 7;
+                        this.fieldHi += 7;
+                        continue;
+                    } else {
+                        int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                        ptr += firstIndex;
+                        this.fieldHi += firstIndex;
+                    }
+                }
 
-                if (checkState(ptr, c)) {
-                    doSwitch(lo, ptr, c);
+                final byte b = Unsafe.getUnsafe().getByte(ptr++);
+
+                if (checkState(ptr, b)) {
+                    doSwitch(lo, ptr, b);
                 }
             }
         } catch (LineLimitException ignore) {
@@ -405,11 +443,13 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
     }
 
-    protected abstract void doSwitch(long lo, long hi, byte c) throws LineLimitException;
+    protected abstract void doSwitch(long lo, long hi, byte b) throws LineLimitException;
+
+    protected abstract long getDelimiterMask();
 
     protected void onColumnDelimiter(long lo) {
         if (!eol && !inQuote && !ignoreEolOnce && lineCount > 0 && fieldIndex < fieldMax && lastQuotePos < 0) {
-            fields.getQuick(fieldIndex++).of(this.fieldLo, this.fieldHi - 1);
+            fields.getQuick(fieldIndex++).of(fieldLo, fieldHi - 1);
             this.fieldLo = this.fieldHi;
         } else {
             onColumnDelimiterSlow(lo);
@@ -443,7 +483,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     protected void onQuote() {
         if (inQuote) {
             delayedOutQuote = !delayedOutQuote;
-            lastQuotePos = this.fieldHi;
+            lastQuotePos = fieldHi;
         } else if (fieldHi - fieldLo == 1) {
             inQuote = true;
             this.fieldLo = this.fieldHi;

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -154,13 +154,13 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public CharSequence getStrA(Record rec) {
-        return getSymbol(rec);
+    public void getStr(Record rec, Utf16Sink utf16Sink) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        throw new UnsupportedOperationException();
+    public CharSequence getStrA(Record rec) {
+        return getSymbol(rec);
     }
 
     @Override
@@ -190,16 +190,29 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
-        utf8SinkA.clear();
-        utf8SinkA.put(getStrA(rec));
-        return utf8SinkA;
+        final CharSequence cs = getStrA(rec);
+        if (cs != null) {
+            utf8SinkA.clear();
+            utf8SinkA.put(cs);
+            return utf8SinkA;
+        }
+        return null;
     }
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
-        utf8SinkB.clear();
-        utf8SinkB.put(getStrB(rec));
-        return utf8SinkB;
+        final CharSequence cs = getStrB(rec);
+        if (cs != null) {
+            utf8SinkB.clear();
+            utf8SinkB.put(cs);
+            return utf8SinkB;
+        }
+        return null;
+    }
+
+    @Override
+    public final int getVarcharSize(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     public abstract boolean isSymbolTableStatic();

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,8 +39,8 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Worker;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -267,7 +267,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
-            Misc.free(pageFrameCursor);
+            pageFrameCursor = Misc.free(pageFrameCursor);
             raf.reset(pRostiBig, ROSTI_MINIMIZED_SIZE);
         }
 
@@ -567,7 +567,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             @Override
             public double getDouble(int col) {
-                return Unsafe.getUnsafe().getDouble(getValueOffset(col));
+                return Unsafe.getUnsafe().getDouble(getValueAddress(col));
             }
 
             @Override
@@ -597,17 +597,17 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             @Override
             public int getIPv4(int col) {
-                return Unsafe.getUnsafe().getInt(getValueOffset(col));
+                return Unsafe.getUnsafe().getInt(getValueAddress(col));
             }
 
             @Override
             public int getInt(int col) {
-                return Unsafe.getUnsafe().getInt(getValueOffset(col));
+                return Unsafe.getUnsafe().getInt(getValueAddress(col));
             }
 
             @Override
             public long getLong(int col) {
-                return Unsafe.getUnsafe().getLong(getValueOffset(col));
+                return Unsafe.getUnsafe().getLong(getValueAddress(col));
             }
 
             @Override
@@ -627,12 +627,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             public Long256 getLong256Value(Long256 dst, int col) {
-                final long offset = getValueOffset(col);
-                final long l0 = Unsafe.getUnsafe().getLong(offset);
-                final long l1 = Unsafe.getUnsafe().getLong(offset + Long.BYTES);
-                final long l2 = Unsafe.getUnsafe().getLong(offset + 2 * Long.BYTES);
-                final long l3 = Unsafe.getUnsafe().getLong(offset + 3 + Long.BYTES);
-                dst.setAll(l0, l1, l2, l3);
+                dst.fromAddress(getValueAddress(col));
                 return dst;
             }
 
@@ -647,12 +642,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public CharSequence getStrA(int col) {
-                return null;
+            public void getStr(int col, Utf16Sink utf16Sink) {
             }
 
             @Override
-            public void getStr(int col, Utf16Sink utf16Sink) {
+            public CharSequence getStrA(int col) {
+                return null;
             }
 
             @Override
@@ -684,7 +679,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 this.pRow = pRow;
             }
 
-            private long getValueOffset(int column) {
+            private long getValueAddress(int column) {
                 return pRow + columnSkewIndex.getQuick(column);
             }
         }

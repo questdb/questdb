@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -227,20 +227,20 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public CharSequence getStrA(int col) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getStrA(recordA);
-        }
-        return castFunctionsB.getQuick(col).getStrA(recordB);
-    }
-
-    @Override
     public void getStr(int col, Utf16Sink utf16Sink) {
         if (useA) {
             castFunctionsA.getQuick(col).getStr(recordA, utf16Sink);
         } else {
             castFunctionsB.getQuick(col).getStr(recordB, utf16Sink);
         }
+    }
+
+    @Override
+    public CharSequence getStrA(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getStrA(recordA);
+        }
+        return castFunctionsB.getQuick(col).getStrA(recordB);
     }
 
     @Override
@@ -290,5 +290,13 @@ public class UnionCastRecord extends AbstractUnionRecord {
             return castFunctionsA.getQuick(col).getVarcharB(recordA);
         }
         return castFunctionsB.getQuick(col).getVarcharB(recordB);
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getVarcharSize(recordA);
+        }
+        return castFunctionsB.getQuick(col).getVarcharSize(recordB);
     }
 }

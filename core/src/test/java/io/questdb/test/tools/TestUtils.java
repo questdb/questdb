@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,6 +45,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -618,7 +619,7 @@ public final class TestUtils {
     }
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
-        clearThreadLocals();
+        Path.clearThreadLocals();
         long mem = Unsafe.getMemUsed();
         long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
@@ -637,7 +638,7 @@ public final class TestUtils {
         Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
 
         runnable.run();
-        clearThreadLocals();
+        Path.clearThreadLocals();
         if (fileCount != Files.getOpenFileCount()) {
             Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
         }
@@ -1118,17 +1119,6 @@ public final class TestUtils {
             Metrics metrics,
             Log log
     ) throws Exception {
-        execute(pool, null, runnable, configuration, metrics, log);
-    }
-
-    public static void execute(
-            @Nullable WorkerPool pool,
-            WorkerPoolCallback poolCallback,
-            CustomisableRunnable runnable,
-            CairoConfiguration configuration,
-            Metrics metrics,
-            Log log
-    ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         final BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         try (
@@ -1138,9 +1128,6 @@ public final class TestUtils {
         ) {
             try {
                 if (pool != null) {
-                    if (poolCallback != null) {
-                        poolCallback.setupJobs(engine);
-                    }
                     setupWorkerPool(pool, engine);
                     pool.start(log);
                 }
@@ -1162,17 +1149,7 @@ public final class TestUtils {
             CairoConfiguration configuration,
             Log log
     ) throws Exception {
-        execute(pool, null, runner, configuration, Metrics.disabled(), log);
-    }
-
-    public static void execute(
-            @Nullable WorkerPool pool,
-            WorkerPoolCallback poolCallback,
-            CustomisableRunnable runner,
-            CairoConfiguration configuration,
-            Log log
-    ) throws Exception {
-        execute(pool, poolCallback, runner, configuration, Metrics.disabled(), log);
+        execute(pool, runner, configuration, Metrics.disabled(), log);
     }
 
     @NotNull
@@ -1531,7 +1508,8 @@ public final class TestUtils {
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        O3Utils.setupWorkerPool(workerPool, cairoEngine, null);
+        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine, null);
+        WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
     }
 
     public static long toMemory(CharSequence sequence) {
@@ -1869,9 +1847,5 @@ public final class TestUtils {
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;
-    }
-
-    public interface WorkerPoolCallback {
-        void setupJobs(CairoEngine engine);
     }
 }

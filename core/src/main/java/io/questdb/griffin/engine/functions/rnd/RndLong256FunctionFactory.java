@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -83,12 +83,7 @@ public class RndLong256FunctionFactory implements FunctionFactory {
 
         @NotNull
         private Long256 rndLong(Long256Impl long256) {
-            long256.setAll(
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong()
-            );
+            long256.fromRnd(rnd);
             return long256;
         }
     }

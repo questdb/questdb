@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -439,9 +439,15 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public int keyHashCode() {
+    public int getVarcharSize(int columnIndex) {
+        long address = addressOfColumn(columnIndex);
+        return VarcharTypeDriver.getPlainValueSize(address);
+    }
+
+    @Override
+    public long keyHashCode() {
         int keySize = Unsafe.getUnsafe().getInt(startAddress);
-        return Hash.hashMem32(startAddress + Integer.BYTES, keySize);
+        return Hash.hashMem64(startAddress + Integer.BYTES, keySize);
     }
 
     @Override
@@ -514,14 +520,8 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     @NotNull
     private Long256 getLong256Generic(Long256Impl[] keyLong256, int columnIndex) {
-        long address = addressOfColumn(columnIndex);
         Long256Impl long256 = keyLong256[columnIndex];
-        long256.setAll(
-                Unsafe.getUnsafe().getLong(address),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES * 2),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES * 3)
-        );
+        long256.fromAddress(addressOfColumn(columnIndex));
         return long256;
     }
 
@@ -533,6 +533,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     private Utf8Sequence getVarchar0(int index, DirectUtf8String us) {
         long address = addressOfColumn(index);
-        return VarcharTypeDriver.getValue(address, us);
+        return VarcharTypeDriver.getPlainValue(address, us);
     }
 }

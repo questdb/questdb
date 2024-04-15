@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -543,6 +543,50 @@ public class LikeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongPatternLikeVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table x ( s varchar )");
+            compile("insert into x values ( 'foobar' ), ( 'foobarbaz' ), ( 'foobarfoo' ), ( 'bazbarfoo foobarbaz' ), ( 'bazbarfoo foobarbaz bazbarfoo' ), ( null ) ");
+
+            assertLike("s\n", "select * from x where s like '%yyy%'", false);
+            assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\n", "select * from x where s like 'foobar%'", false);
+            assertLike("s\nfoobarbaz\nbazbarfoo foobarbaz\n", "select * from x where s like '%barbaz'", false);
+            assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%f%'", false);
+            assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%o%'", false);
+            assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%ob%'", false);
+            assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%foo%'", false);
+            assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%foobar%'", false);
+            assertLike("s\nfoobarbaz\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%foobarb%'", false);
+            assertLike("s\nfoobarbaz\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%foobarba%'", false);
+            assertLike("s\nfoobarbaz\nbazbarfoo foobarbaz\nbazbarfoo foobarbaz bazbarfoo\n", "select * from x where s like '%foobarbaz%'", false);
+            assertLike("s\n", "select * from x where s like 'foofoofoo%'", false);
+            assertLike("s\n", "select * from x where s like '%foofoofoo'", false);
+            assertLike("s\n", "select * from x where s like '%foofoofoo%'", false);
+        });
+    }
+
+    @Test
+    public void testLongPatternLikeVarcharNonAscii() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table x ( s varchar )");
+            compile("insert into x values ( 'фубар' ), ( 'фубарбаз' ), ( 'фубарфу' ), ( 'базбарфу фубарбаз' ), ( 'базбарфу фубарбаз базбарфу' ), ( null ) ");
+
+            assertLike("s\nфубар\nфубарбаз\nфубарфу\n", "select * from x where s like 'фубар%'", false);
+            assertLike("s\nфубарбаз\nбазбарфу фубарбаз\n", "select * from x where s like '%барбаз'", false);
+            assertLike("s\nфубар\nфубарбаз\nфубарфу\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%ф%'", false);
+            assertLike("s\nфубар\nфубарбаз\nфубарфу\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%фу%'", false);
+            assertLike("s\nфубар\nфубарбаз\nфубарфу\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%фуб%'", false);
+            assertLike("s\nфубар\nфубарбаз\nфубарфу\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%фуба%'", false);
+            assertLike("s\nфубар\nфубарбаз\nфубарфу\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%фубар%'", false);
+            assertLike("s\nфубарбаз\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%фубарба%'", false);
+            assertLike("s\nфубарбаз\nбазбарфу фубарбаз\nбазбарфу фубарбаз базбарфу\n", "select * from x where s like '%фубарбаз%'", false);
+            assertLike("s\n", "select * from x where s like 'фуфуфу%'", false);
+            assertLike("s\n", "select * from x where s like '%фуфуфу'", false);
+            assertLike("s\n", "select * from x where s like '%фуфуфу%'", false);
+        });
+    }
+
+    @Test
     public void testNonConstantExpression() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
@@ -679,6 +723,40 @@ public class LikeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPatternLikeVarcharNonAscii() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table x ( s varchar ) ");
+            compile("insert into x values ( 'ф' ), ( 'фф' ), ( null ) ");
+
+            assertLike("s\nф\n", "select * from x where s like 'ф'", false);
+            assertLike("s\nф\n", "select * from x where s like '_'", false);
+            assertLike("s\nф\nфф\n\n", "select * from x where s like '%'", true);
+            assertLike("s\nф\nфф\n", "select * from x where s like 'ф%'", false);
+            assertLike("s\nф\nфф\n", "select * from x where s like '%ф'", false);
+            assertLike("s\nф\nфф\n", "select * from x where s like '%ф%'", false);
+            assertLike("s\n", "select * from x where s like 'ы%'", false);
+            assertLike("s\n", "select * from x where s like '%ы'", false);
+        });
+    }
+
+    @Test
+    public void testShortPatternLikeVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table x ( s varchar ) ");
+            compile("insert into x values ( 'v' ), ( 'vv' ), ( null ) ");
+
+            assertLike("s\nv\n", "select * from x where s like 'v'", false);
+            assertLike("s\nv\n", "select * from x where s like '_'", false);
+            assertLike("s\nv\nvv\n\n", "select * from x where s like '%'", true);
+            assertLike("s\nv\nvv\n", "select * from x where s like 'v%'", false);
+            assertLike("s\nv\nvv\n", "select * from x where s like '%v'", false);
+            assertLike("s\nv\nvv\n", "select * from x where s like '%v%'", false);
+            assertLike("s\n", "select * from x where s like 'w%'", false);
+            assertLike("s\n", "select * from x where s like '%w'", false);
+        });
+    }
+
+    @Test
     public void testSimplePatternLikeString() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table x ( s string ) ");
@@ -692,40 +770,6 @@ public class LikeFunctionFactoryTest extends AbstractCairoTest {
             assertLike("s\nv\nvv\n", "select * from x where s like '%v%'", false);
             assertLike("s\n", "select * from x where s like 'w%'", false);
             assertLike("s\n", "select * from x where s like '%w'", false);
-        });
-    }
-
-    @Test
-    public void testSimplePatternLikeVarchar() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table x ( s varchar ) ");
-            compile("insert into x values ( 'v' ), ( 'vv' ), ( null ) ");
-
-            assertLike("s\nv\n", "select * from x where s like 'v'", false);
-            assertLike("s\nv\n", "select * from x where s like '_'", false);
-            assertLike("s\nv\nvv\n\n", "select * from x where s like '%'", true);
-            assertLike("s\nv\nvv\n", "select * from x where s like 'v%'", false);
-            assertLike("s\nv\nvv\n", "select * from x where s like '%v'", false);
-            assertLike("s\nv\nvv\n", "select * from x where s like '%v%'", false);
-            assertLike("s\n", "select * from x where s like 'w%'", false);
-            assertLike("s\n", "select * from x where s like '%w'", false);
-        });
-    }
-
-    @Test
-    public void testSimplePatternLikeVarcharNonAscii() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table x ( s varchar ) ");
-            compile("insert into x values ( 'ф' ), ( 'фф' ), ( null ) ");
-
-            assertLike("s\nф\n", "select * from x where s like 'ф'", false);
-            assertLike("s\nф\n", "select * from x where s like '_'", false);
-            assertLike("s\nф\nфф\n\n", "select * from x where s like '%'", true);
-            assertLike("s\nф\nфф\n", "select * from x where s like 'ф%'", false);
-            assertLike("s\nф\nфф\n", "select * from x where s like '%ф'", false);
-            assertLike("s\nф\nфф\n", "select * from x where s like '%ф%'", false);
-            assertLike("s\n", "select * from x where s like 'ы%'", false);
-            assertLike("s\n", "select * from x where s like '%ы'", false);
         });
     }
 

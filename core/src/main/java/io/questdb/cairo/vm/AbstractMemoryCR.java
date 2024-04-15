@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,10 +38,10 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private final DirectString csviewB;
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
-    private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
-    private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
-    private final DirectUtf8String utf8viewA = new DirectUtf8String();
-    private final DirectUtf8String utf8viewB = new DirectUtf8String();
+    private final Utf8SplitString utf8SplitViewA;
+    private final Utf8SplitString utf8SplitViewB;
+    private final DirectUtf8String utf8viewA;
+    private final DirectUtf8String utf8viewB;
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
@@ -56,6 +56,10 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
             csviewA = new DirectString();
             csviewB = new DirectString();
         }
+        utf8SplitViewA = new Utf8SplitString(stableStrings);
+        utf8SplitViewB = new Utf8SplitString(stableStrings);
+        utf8viewA = new DirectUtf8String(stableStrings);
+        utf8viewB = new DirectUtf8String(stableStrings);
     }
 
     public long addressOf(long offset) {
@@ -75,11 +79,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return getBin(offset, bsview);
     }
 
-    @Override
-    public DirectCharSequence getDirectStr(long offset) {
-        return getStr(offset, csviewA);
-    }
-
     public FilesFacade getFilesFacade() {
         return ff;
     }
@@ -95,16 +94,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     }
 
     @Override
-    public Utf8SplitString borrowUtf8SplitStringA() {
-        return utf8SplitViewA;
-    }
-
-    @Override
-    public Utf8SplitString borrowUtf8SplitStringB() {
-        return utf8SplitViewB;
-    }
-
-    @Override
     public long getPageAddress(int pageIndex) {
         return pageAddress;
     }
@@ -112,6 +101,16 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     @Override
     public int getPageCount() {
         return pageAddress == 0 ? 0 : 1;
+    }
+
+    @Override
+    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
+        return utf8SplitViewA.of(auxLo, dataLo, size, ascii);
+    }
+
+    @Override
+    public Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
+        return utf8SplitViewB.of(auxLo, dataLo, size, ascii);
     }
 
     public final CharSequence getStrA(long offset) {

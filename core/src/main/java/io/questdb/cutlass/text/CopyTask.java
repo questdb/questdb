@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,9 +61,10 @@ public class CopyTask {
     public static final byte STATUS_FINISHED = 1;
     public static final byte STATUS_STARTED = 0;
     private static final Log LOG = LogFactory.getLog(CopyTask.class);
+    private static final long MASK_NEW_LINE = SwarUtils.broadcast((byte) '\n');
+    private static final long MASK_QUOTE = SwarUtils.broadcast((byte) '"');
     private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();
     private static final IntObjHashMap<String> STATUS_NAME_MAP = new IntObjHashMap<>();
-
     private final PhaseBoundaryCheck phaseBoundaryCheck = new PhaseBoundaryCheck();
     private final PhaseBuildSymbolIndex phaseBuildSymbolIndex = new PhaseBuildSymbolIndex();
     private final PhaseIndexing phaseIndexing = new PhaseIndexing();
@@ -387,7 +388,7 @@ public class CopyTask {
         public void run(long fileBufPtr, long fileBufSize) throws TextException {
             long offset = chunkStart;
 
-            //output vars
+            // output vars
             long quotes = 0;
             long[] nlCount = new long[2];
             long[] nlFirst = new long[]{-1, -1};
@@ -409,10 +410,22 @@ public class CopyTask {
                     ptr = fileBufPtr;
 
                     while (ptr < hi) {
-                        final byte c = Unsafe.getUnsafe().getByte(ptr++);
-                        if (c == '"') {
+                        if (ptr < hi - 7) {
+                            long word = Unsafe.getUnsafe().getLong(ptr);
+                            long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
+                                    | SwarUtils.markZeroBytes(word ^ MASK_QUOTE);
+                            if (zeroBytesWord == 0) {
+                                ptr += 7;
+                                continue;
+                            } else {
+                                ptr += SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                            }
+                        }
+
+                        final byte b = Unsafe.getUnsafe().getByte(ptr++);
+                        if (b == '"') {
                             quotes++;
-                        } else if (c == '\n') {
+                        } else if (b == '\n') {
                             nlCount[(int) (quotes & 1)]++;
                             if (nlFirst[(int) (quotes & 1)] == -1) {
                                 nlFirst[(int) (quotes & 1)] = offset + (ptr - fileBufPtr);
@@ -851,7 +864,6 @@ public class CopyTask {
                 Path path,
                 Path tmpPath
         ) throws TextException {
-
             this.utf8Sink = utf8Sink;
 
             final CairoConfiguration configuration = engine.getConfiguration();
