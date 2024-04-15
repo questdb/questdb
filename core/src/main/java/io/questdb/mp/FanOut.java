@@ -129,7 +129,7 @@ public class FanOut implements Barrier {
             // read barrier to make sure "holder" read doesn't fall below this
 
             if (h.barriers.indexOf(barrier) == -1) {
-                return;
+                break;
             }
             _new = new Holder();
             for (int i = 0, n = h.barriers.size(); i < n; i++) {
@@ -155,6 +155,14 @@ public class FanOut implements Barrier {
                 break;
             }
         } while (true);
+
+        barrier.setBarrier(OpenBarrier.INSTANCE);
+        barrier.clear();
+    }
+
+    @Override
+    public void clear() {
+        // no-op
     }
 
     @Override

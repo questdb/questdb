@@ -195,6 +195,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
     }
 
     static {
+        addFunctions.extendAndSet('u', Timestamps::addMicros);
+        addFunctions.extendAndSet('T', Timestamps::addMillis);
         addFunctions.extendAndSet('s', Timestamps::addSeconds);
         addFunctions.extendAndSet('m', Timestamps::addMinutes);
         addFunctions.extendAndSet('h', Timestamps::addHours);

@@ -2309,6 +2309,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 args.add(new CharConstant('s'));
                             } else if (factory instanceof EqIntStrCFunctionFactory && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("1"));
+                            } else if (isLong256StrFactory(factory) && sigArgType == ColumnType.STRING) {
+                                args.add(new StrConstant("0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652"));
                             } else if (isIPv4StrFactory(factory) && sigArgType == ColumnType.STRING) {
                                 args.add(new StrConstant("10.8.6.5"));
                             } else if (factory instanceof ContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
@@ -2788,7 +2790,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (i int, d double)",
                 "select min(d) from a",
-                "GroupBy vectorized: true\n" +
+                "GroupBy vectorized: true workers: 1\n" +
                         "  values: [min(d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -2851,7 +2853,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select max(i) - min(i) from a",
                 "VirtualRecord\n" +
                         "  functions: [max-min]\n" +
-                        "    GroupBy vectorized: true\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
                         "      values: [min(i),max(i)]\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
@@ -2892,7 +2894,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (i int, d double)",
                 "select count(*), max(i), min(d) from a",
-                "GroupBy vectorized: true\n" +
+                "GroupBy vectorized: true workers: 1\n" +
                         "  values: [count(*),max(i),min(d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -2933,7 +2935,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (i int, d double)",
                 "select max(i) from (select * from a order by d)",
-                "GroupBy vectorized: true\n" +
+                "GroupBy vectorized: true workers: 1\n" +
                         "  values: [max(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -5663,7 +5665,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x+10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum+COUNT*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5674,7 +5676,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10+x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10+sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5692,7 +5694,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x*10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5703,7 +5705,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10*x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,10*sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5721,7 +5723,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x-10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum-COUNT*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5732,7 +5734,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10-x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10-sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5750,7 +5752,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x+2) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum+COUNT*2]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5761,7 +5763,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(2+x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*2+sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5779,7 +5781,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x*10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5790,7 +5792,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10*x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,10*sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5808,7 +5810,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x-10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum-COUNT*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5819,7 +5821,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10-x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10-sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5939,7 +5941,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x+42) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum+COUNT*42]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5950,7 +5952,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(42+x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*42+sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5968,7 +5970,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x*10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5979,7 +5981,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10*x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,10*sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -5997,7 +5999,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(x-10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum-COUNT*10]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -6008,7 +6010,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT sum(x), sum(10-x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10-sum]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -6108,7 +6110,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "FROM hits",
                     "VirtualRecord\n" +
                             "  functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]\n" +
-                            "    GroupBy vectorized: true\n" +
+                            "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(resolutIONWidth),count(resolutIONWidth),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -10253,10 +10255,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
             return isIPv4StrFactory(((NegatingFunctionFactory) factory).getDelegate());
         }
         return factory instanceof EqIPv4FunctionFactory
-                || factory instanceof EqStrIPv4FunctionFactory
                 || factory instanceof EqIPv4StrFunctionFactory
                 || factory instanceof LtIPv4StrFunctionFactory
                 || factory instanceof LtStrIPv4FunctionFactory;
+    }
+
+    private static boolean isLong256StrFactory(FunctionFactory factory) {
+        if (factory instanceof SwappingArgsFunctionFactory) {
+            return isLong256StrFactory(((SwappingArgsFunctionFactory) factory).getDelegate());
+        }
+        if (factory instanceof NegatingFunctionFactory) {
+            return isLong256StrFactory(((NegatingFunctionFactory) factory).getDelegate());
+        }
+        return factory instanceof EqLong256StrFunctionFactory;
     }
 
     private void assertBindVarPlan(String type) throws SqlException {

@@ -532,7 +532,6 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
      */
     private static void stopEngineAsyncWriterEventWait(CairoEngine engine, SCSequence sequence) {
         engine.getMessageBus().getTableWriterEventFanOut().remove(sequence);
-        sequence.clear();
     }
 
     private void executeNoWait(SCSequence tempSequence, CompiledQuery cc) throws SqlException {
@@ -540,5 +539,4 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
             cq.await(0);
         }
     }
-
 }

@@ -5176,7 +5176,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 });
 
-                O3Utils.setupWorkerPool(workerPool, engine, null);
+                TestUtils.setupWorkerPool(workerPool, engine);
 
                 workerPool.start(LOG);
 
@@ -7911,8 +7911,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 });
 
-                O3Utils.setupWorkerPool(workerPool, engine, engine.getConfiguration().getCircuitBreakerConfiguration());
-
+                WorkerPoolUtils.setupQueryJobs(workerPool, engine, engine.getConfiguration().getCircuitBreakerConfiguration());
                 workerPool.start(LOG);
 
                 try {

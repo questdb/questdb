@@ -45,6 +45,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
@@ -1866,7 +1867,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
 
         if (ioPool == writerPool) {
-            O3Utils.setupWorkerPool(ioPool, engine, null);
+            WorkerPoolUtils.setupWriterJobs(ioPool, engine);
         }
         ioPool.start(LOG);
         if (ioPool != writerPool) {

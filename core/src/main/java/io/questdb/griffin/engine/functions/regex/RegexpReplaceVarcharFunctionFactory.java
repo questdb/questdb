@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,38 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.eq;
+package io.questdb.griffin.engine.functions.regex;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-
-public class EqStrIPv4FunctionFactory implements FunctionFactory {
+/**
+ * This is tactical implementation of regex replace over varchar column.
+ * It exploits the ability of a varchar column to return a CharSequence view of the sequence.
+ */
+public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctionFactory {
     @Override
     public String getSignature() {
-        return "=(SX)";
-    }
-
-    @Override
-    public boolean isBoolean() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        int strFuncPosition = argPositions.getQuick(0);
-        Function strFunc = args.getQuick(0);
-        Function ipv4Func = args.getQuick(1);
-        return IPv4EqUtils.eqStrIPv4(strFuncPosition, strFunc, ipv4Func);
+        return "regexp_replace(ØSS)";
     }
 }
+
