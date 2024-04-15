@@ -73,12 +73,12 @@ public class ExpressionParserFuzzTest extends AbstractCairoTest {
 
 
     /**
-     The idea of the fuzz test is the following:
-     1. Generate random expression in postfix notation
-     2. Convert this expression to infix notation omitting braces in places where precedence rules should disambiguate evaluation (infix)
-     3. Convert this expression to infix notation with all braces in place (infixNoAmbiguities)
-     4. Run SqlParser over infix representation with custom ExpressionParserListener which just creates infix notation with all braces in place (similar to infixNoAmbiguities)
-     5. Compare infixNoAmbiguities with final result from SqlParser
+     * The idea of the fuzz test is the following:
+     * 1. Generate random expression in postfix notation
+     * 2. Convert this expression to infix notation omitting braces in places where precedence rules should disambiguate evaluation (infix)
+     * 3. Convert this expression to infix notation with all braces in place (infixNoAmbiguities)
+     * 4. Run SqlParser over infix representation with custom ExpressionParserListener which just creates infix notation with all braces in place (similar to infixNoAmbiguities)
+     * 5. Compare infixNoAmbiguities with final result from SqlParser
      */
     private void fuzzTestValidExpressionAgainstOperators(Rnd rnd, List<ExpressionElement> operators, int literals, int attempts) {
         for (int attempt = 0; attempt < attempts; attempt++) {
@@ -207,7 +207,7 @@ public class ExpressionParserFuzzTest extends AbstractCairoTest {
         }
         rnd.shuffle(elements);
         int balance = 0, minBalance = 0, minBalanceIndex = 0;
-        for (int i = 0; i < elements.size(); i++) {
+        for (int i = 0, n = elements.size(); i < n; i++) {
             balance += 1 - elements.get(i).arity;
             if (balance <= minBalance) {
                 minBalance = balance;

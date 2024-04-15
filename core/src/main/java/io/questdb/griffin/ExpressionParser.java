@@ -241,7 +241,7 @@ public class ExpressionParser {
                         if (prevBranch == BRANCH_CONSTANT) {
                             if (lastPos > 0) {
                                 char c = lexer.getContent().charAt(lastPos - 1);
-                                if (c == 'e' || c == 'E') {
+                                if (c == 'e' || c == 'E') { // Incomplete scientific floating-point literal
                                     ExpressionNode en = opStack.peek();
                                     ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
                                     processDefaultBranch = false;
@@ -295,7 +295,6 @@ public class ExpressionParser {
                             break OUT;
                         }
 
-                        // todo (sivukhin): describe this case in more details!
                         if (castBraceCount > 0 && castBraceCountStack.peek() == castBraceCount) {
                             throw SqlException.$(lastPos, "',' is not expected here");
                         }
@@ -413,7 +412,7 @@ public class ExpressionParser {
                             }
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok != null && tok.charAt(0) != ')') {
-                                // todo: better to check tok for valid values for geohash precision - in other case this can lead to upstream code failures (e.g. SELECT geohash(]) can fail)
+                                GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok); // validate geohash size token
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.CONSTANT,
                                         lexer.immutablePairOf(geohashTok, tok),

@@ -200,7 +200,7 @@ public class Rnd {
     }
 
     public void shuffle(List<?> list) {
-        for (int i = 1; i < list.size(); i++) {
+        for (int i = 1, n = list.size(); i < n; i++) {
             int swapTarget = nextInt(i);
             Collections.swap(list, i, swapTarget);
         }
