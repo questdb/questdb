@@ -4929,144 +4929,144 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleCountFillLinearFromSubQuery() throws Exception {
         assertQuery("b\tcount\tk\n" +
-                "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
-                "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
-                "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
-                "VTJW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                "RXGZ\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                "\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                "VTJW\t1\t1970-01-03T08:24:00.000000Z\n" +
-                "RXGZ\t1\t1970-01-03T08:24:00.000000Z\n" +
-                "\t1\t1970-01-03T08:24:00.000000Z\n" +
-                "CPSW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                "PEHN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n",
+                        "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
+                        "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
+                        "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "VTJW\t1\t1970-01-03T08:24:00.000000Z\n" +
+                        "RXGZ\t1\t1970-01-03T08:24:00.000000Z\n" +
+                        "\t1\t1970-01-03T08:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n",
                 "select b, count(), k from (x latest on k partition by b) sample by 3h fill(linear) align to first observation", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(172800000000, 360000000) k" +
-                " from" +
-                " long_sequence(100)" +
-                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(277200000000, 360000000) k" +
-                " from" +
-                " long_sequence(35)" +
-                ") timestamp(k)", "b\tcount\tk\n" +
-                "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
-                "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
-                "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
-                "VTJW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                "RXGZ\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                "WGRM\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                "NPIW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                "CGFN\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                "ZNFK\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                "PEVM\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                "\tNaN\t1970-01-03T05:24:00.000000Z\n" +
-                "VTJW\t1\t1970-01-03T08:24:00.000000Z\n" +
-                "RXGZ\t1\t1970-01-03T08:24:00.000000Z\n" +
-                "CPSW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                "PEHN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                "WGRM\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                "NPIW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                "CGFN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                "ZNFK\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                "PEVM\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                "\tNaN\t1970-01-03T08:24:00.000000Z\n" +
-                "CPSW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                "PEHN\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                "HYRX\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                "VTJW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                "RXGZ\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                "WGRM\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                "NPIW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                "CGFN\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                "ZNFK\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                "PEVM\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                "\tNaN\t1970-01-03T11:24:00.000000Z\n" +
-                "CPSW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                "PEHN\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                "HYRX\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                "VTJW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                "RXGZ\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                "WGRM\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                "NPIW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                "CGFN\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                "ZNFK\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                "PEVM\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                "\tNaN\t1970-01-03T14:24:00.000000Z\n" +
-                "CPSW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                "PEHN\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                "HYRX\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                "VTJW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                "RXGZ\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                "WGRM\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                "NPIW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                "CGFN\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                "ZNFK\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                "PEVM\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                "\tNaN\t1970-01-03T17:24:00.000000Z\n" +
-                "CPSW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                "PEHN\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                "HYRX\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                "VTJW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                "RXGZ\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                "WGRM\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                "NPIW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                "CGFN\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                "ZNFK\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                "PEVM\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                "\tNaN\t1970-01-03T20:24:00.000000Z\n" +
-                "CPSW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                "PEHN\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                "HYRX\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                "VTJW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                "RXGZ\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                "WGRM\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                "NPIW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                "CGFN\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                "ZNFK\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                "PEVM\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                "\tNaN\t1970-01-03T23:24:00.000000Z\n" +
-                "CPSW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                "PEHN\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                "HYRX\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                "VTJW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                "RXGZ\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                "WGRM\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                "NPIW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                "CGFN\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                "ZNFK\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                "PEVM\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                "\tNaN\t1970-01-04T02:24:00.000000Z\n" +
-                "WGRM\t1\t1970-01-04T05:24:00.000000Z\n" +
-                "NPIW\t1\t1970-01-04T05:24:00.000000Z\n" +
-                "CGFN\t1\t1970-01-04T05:24:00.000000Z\n" +
-                "ZNFK\t1\t1970-01-04T05:24:00.000000Z\n" +
-                "PEVM\t1\t1970-01-04T05:24:00.000000Z\n" +
-                "CPSW\tNaN\t1970-01-04T05:24:00.000000Z\n" +
-                "PEHN\tNaN\t1970-01-04T05:24:00.000000Z\n" +
-                "HYRX\tNaN\t1970-01-04T05:24:00.000000Z\n" +
-                "VTJW\tNaN\t1970-01-04T05:24:00.000000Z\n" +
-                "RXGZ\tNaN\t1970-01-04T05:24:00.000000Z\n" +
-                "\tNaN\t1970-01-04T05:24:00.000000Z\n" +
-                "\t1\t1970-01-04T08:24:00.000000Z\n" +
-                "CPSW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                "PEHN\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                "HYRX\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                "VTJW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                "RXGZ\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                "WGRM\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                "NPIW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                "CGFN\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                "ZNFK\tNaN\t1970-01-04T08:24:00.000000Z\n" +
-                "PEVM\tNaN\t1970-01-04T08:24:00.000000Z\n", true, true, false);
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(277200000000, 360000000) k" +
+                        " from" +
+                        " long_sequence(35)" +
+                        ") timestamp(k)", "b\tcount\tk\n" +
+                        "CPSW\t1\t1970-01-03T05:24:00.000000Z\n" +
+                        "PEHN\t1\t1970-01-03T05:24:00.000000Z\n" +
+                        "HYRX\t1\t1970-01-03T05:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T05:24:00.000000Z\n" +
+                        "VTJW\t1\t1970-01-03T08:24:00.000000Z\n" +
+                        "RXGZ\t1\t1970-01-03T08:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T08:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T11:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T14:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T17:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T20:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-03T23:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-04T02:24:00.000000Z\n" +
+                        "WGRM\t1\t1970-01-04T05:24:00.000000Z\n" +
+                        "NPIW\t1\t1970-01-04T05:24:00.000000Z\n" +
+                        "CGFN\t1\t1970-01-04T05:24:00.000000Z\n" +
+                        "ZNFK\t1\t1970-01-04T05:24:00.000000Z\n" +
+                        "PEVM\t1\t1970-01-04T05:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                        "\tNaN\t1970-01-04T05:24:00.000000Z\n" +
+                        "\t1\t1970-01-04T08:24:00.000000Z\n" +
+                        "CPSW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "PEHN\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "HYRX\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "VTJW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "RXGZ\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "WGRM\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "NPIW\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "CGFN\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "ZNFK\tNaN\t1970-01-04T08:24:00.000000Z\n" +
+                        "PEVM\tNaN\t1970-01-04T08:24:00.000000Z\n", true, true, false);
 
         drop("drop table x");
 
@@ -5198,6 +5198,118 @@ public class SampleByTest extends AbstractCairoTest {
                         "CBWL\tNaN\t1970-01-04T06:00:00.000000Z\n" +
                         "PFYX\tNaN\t1970-01-04T06:00:00.000000Z\n" +
                         "QWPK\tNaN\t1970-01-04T06:00:00.000000Z\n", true, true, false);
+    }
+
+
+    @Test
+    public void testSampleCountFillLinearWithOffset() throws Exception {
+        assertQuery("b\tcount\tk\n" +
+                "\t9\t1970-01-03T00:45:00.000000Z\n" +
+                "VTJW\t2\t1970-01-03T00:45:00.000000Z\n" +
+                "RXGZ\t1\t1970-01-03T00:45:00.000000Z\n" +
+                "PEHN\t4\t1970-01-03T00:45:00.000000Z\n" +
+                "HYRX\t2\t1970-01-03T00:45:00.000000Z\n" +
+                "CPSW\t5\t1970-01-03T00:45:00.000000Z\n" +
+                "\t15\t1970-01-03T03:45:00.000000Z\n" +
+                "RXGZ\t2\t1970-01-03T03:45:00.000000Z\n" +
+                "PEHN\t1\t1970-01-03T03:45:00.000000Z\n" +
+                "VTJW\t5\t1970-01-03T03:45:00.000000Z\n" +
+                "CPSW\t4\t1970-01-03T03:45:00.000000Z\n" +
+                "HYRX\t3\t1970-01-03T03:45:00.000000Z\n" +
+                "\t15\t1970-01-03T06:45:00.000000Z\n" +
+                "CPSW\t3\t1970-01-03T06:45:00.000000Z\n" +
+                "PEHN\t2\t1970-01-03T06:45:00.000000Z\n" +
+                "HYRX\t4\t1970-01-03T06:45:00.000000Z\n" +
+                "RXGZ\t3\t1970-01-03T06:45:00.000000Z\n" +
+                "VTJW\t3\t1970-01-03T06:45:00.000000Z\n" +
+                "\t11\t1970-01-03T09:45:00.000000Z\n" +
+                "RXGZ\t5\t1970-01-03T09:45:00.000000Z\n" +
+                "PEHN\t1\t1970-01-03T09:45:00.000000Z\n" +
+                "HYRX\t1\t1970-01-03T09:45:00.000000Z\n" +
+                "VTJW\t4\t1970-01-03T09:45:00.000000Z\n" +
+                "CPSW\t2\t1970-01-03T09:45:00.000000Z\n", "select b, count(), k from x sample by 3h fill(linear) align to calendar time zone 'Europe/Berlin'with offset '00:45'", "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(cast('1970-01-03T02:00:00.000000Z' as timestamp), 360000000) k" +
+                " from" +
+                " long_sequence(100)" +
+                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                "select" +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(CAST('1970-01-03T13:10:00.000000Z' as timestamp), 360000000) k" +
+                " from" +
+                " long_sequence(35)" +
+                ") timestamp(k)", "b\tcount\tk\n" +
+                "\t9\t1970-01-03T00:45:00.000000Z\n" +
+                "VTJW\t2\t1970-01-03T00:45:00.000000Z\n" +
+                "RXGZ\t1\t1970-01-03T00:45:00.000000Z\n" +
+                "PEHN\t4\t1970-01-03T00:45:00.000000Z\n" +
+                "HYRX\t2\t1970-01-03T00:45:00.000000Z\n" +
+                "CPSW\t5\t1970-01-03T00:45:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-03T00:45:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-03T00:45:00.000000Z\n" +
+                "PEVM\t6\t1970-01-03T00:45:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T00:45:00.000000Z\n" +
+                "ZNFK\t6\t1970-01-03T00:45:00.000000Z\n" +
+                "\t15\t1970-01-03T03:45:00.000000Z\n" +
+                "RXGZ\t2\t1970-01-03T03:45:00.000000Z\n" +
+                "PEHN\t1\t1970-01-03T03:45:00.000000Z\n" +
+                "VTJW\t5\t1970-01-03T03:45:00.000000Z\n" +
+                "CPSW\t4\t1970-01-03T03:45:00.000000Z\n" +
+                "HYRX\t3\t1970-01-03T03:45:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-03T03:45:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-03T03:45:00.000000Z\n" +
+                "PEVM\t5\t1970-01-03T03:45:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T03:45:00.000000Z\n" +
+                "ZNFK\t5\t1970-01-03T03:45:00.000000Z\n" +
+                "\t15\t1970-01-03T06:45:00.000000Z\n" +
+                "CPSW\t3\t1970-01-03T06:45:00.000000Z\n" +
+                "PEHN\t2\t1970-01-03T06:45:00.000000Z\n" +
+                "HYRX\t4\t1970-01-03T06:45:00.000000Z\n" +
+                "RXGZ\t3\t1970-01-03T06:45:00.000000Z\n" +
+                "VTJW\t3\t1970-01-03T06:45:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-03T06:45:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-03T06:45:00.000000Z\n" +
+                "PEVM\t4\t1970-01-03T06:45:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T06:45:00.000000Z\n" +
+                "ZNFK\t4\t1970-01-03T06:45:00.000000Z\n" +
+                "\t11\t1970-01-03T09:45:00.000000Z\n" +
+                "RXGZ\t5\t1970-01-03T09:45:00.000000Z\n" +
+                "PEHN\t1\t1970-01-03T09:45:00.000000Z\n" +
+                "HYRX\t1\t1970-01-03T09:45:00.000000Z\n" +
+                "VTJW\t4\t1970-01-03T09:45:00.000000Z\n" +
+                "CPSW\t2\t1970-01-03T09:45:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-03T09:45:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-03T09:45:00.000000Z\n" +
+                "PEVM\t3\t1970-01-03T09:45:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T09:45:00.000000Z\n" +
+                "ZNFK\t3\t1970-01-03T09:45:00.000000Z\n" +
+                "\t14\t1970-01-03T12:45:00.000000Z\n" +
+                "CGFN\t3\t1970-01-03T12:45:00.000000Z\n" +
+                "NPIW\t2\t1970-01-03T12:45:00.000000Z\n" +
+                "PEVM\t2\t1970-01-03T12:45:00.000000Z\n" +
+                "WGRM\t3\t1970-01-03T12:45:00.000000Z\n" +
+                "ZNFK\t2\t1970-01-03T12:45:00.000000Z\n" +
+                "VTJW\t5\t1970-01-03T12:45:00.000000Z\n" +
+                "RXGZ\t7\t1970-01-03T12:45:00.000000Z\n" +
+                "PEHN\t0\t1970-01-03T12:45:00.000000Z\n" +
+                "HYRX\t-2\t1970-01-03T12:45:00.000000Z\n" +
+                "CPSW\t1\t1970-01-03T12:45:00.000000Z\n" +
+                "\t7\t1970-01-03T15:45:00.000000Z\n" +
+                "ZNFK\t1\t1970-01-03T15:45:00.000000Z\n" +
+                "PEVM\t1\t1970-01-03T15:45:00.000000Z\n" +
+                "VTJW\t6\t1970-01-03T15:45:00.000000Z\n" +
+                "RXGZ\t9\t1970-01-03T15:45:00.000000Z\n" +
+                "PEHN\t-1\t1970-01-03T15:45:00.000000Z\n" +
+                "HYRX\t-5\t1970-01-03T15:45:00.000000Z\n" +
+                "CPSW\t0\t1970-01-03T15:45:00.000000Z\n" +
+                "CGFN\tNaN\t1970-01-03T15:45:00.000000Z\n" +
+                "NPIW\tNaN\t1970-01-03T15:45:00.000000Z\n" +
+                "WGRM\tNaN\t1970-01-03T15:45:00.000000Z\n", true, true, false);
+
     }
 
     @Test
@@ -5378,37 +5490,37 @@ public class SampleByTest extends AbstractCairoTest {
         // sum_t tests memory leak
         assertQuery("b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n",
                 "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(linear) align to first observation", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_float(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " rnd_double(0)*100 c," +
-                " abs(rnd_int()) d," +
-                " rnd_byte(2, 50) e," +
-                " abs(rnd_short()) f," +
-                " abs(rnd_long()) g," +
-                " timestamp_sequence(172800000000, 3600000000) k" +
-                " from" +
-                " long_sequence(0)" +
-                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
-                "select" +
-                " rnd_float(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " rnd_double(0)*100 c," +
-                " abs(rnd_int()) d," +
-                " rnd_byte(2, 50) e," +
-                " abs(rnd_short()) f," +
-                " abs(rnd_long()) g," +
-                " timestamp_sequence(cast('1970-01-04T05:00:00.000000Z' as timestamp), 3600000000) k" +
-                " from" +
-                " long_sequence(5)" +
-                ") timestamp(k)", "b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n" +
-                "\t25.168644428253174\t96.69784438858017\t1715501826\t97\t28323\t-3537127814486931722\t1970-01-04T05:00:00.000000Z\n" +
-                "DEYY\t96.87422943115234\t67.00476391801053\t44173540\t34\t3282\t6794405451419334859\t1970-01-04T05:00:00.000000Z\n" +
-                "SXUX\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T05:00:00.000000Z\n" +
-                "SXUX\t26.922100067138672\t52.98405941762054\t936627841\t16\t5741\t7153335833712179123\t1970-01-04T08:00:00.000000Z\n" +
-                "DEYY\t29.313718795776367\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T08:00:00.000000Z\n" +
-                "\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T08:00:00.000000Z\n", true, true, false);
+                        "(" +
+                        "select" +
+                        " rnd_float(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_double(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_byte(2, 50) e," +
+                        " abs(rnd_short()) f," +
+                        " abs(rnd_long()) g," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                        "select" +
+                        " rnd_float(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_double(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_byte(2, 50) e," +
+                        " abs(rnd_short()) f," +
+                        " abs(rnd_long()) g," +
+                        " timestamp_sequence(cast('1970-01-04T05:00:00.000000Z' as timestamp), 3600000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)", "b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n" +
+                        "\t25.168644428253174\t96.69784438858017\t1715501826\t97\t28323\t-3537127814486931722\t1970-01-04T05:00:00.000000Z\n" +
+                        "DEYY\t96.87422943115234\t67.00476391801053\t44173540\t34\t3282\t6794405451419334859\t1970-01-04T05:00:00.000000Z\n" +
+                        "SXUX\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T05:00:00.000000Z\n" +
+                        "SXUX\t26.922100067138672\t52.98405941762054\t936627841\t16\t5741\t7153335833712179123\t1970-01-04T08:00:00.000000Z\n" +
+                        "DEYY\t29.313718795776367\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T08:00:00.000000Z\n" +
+                        "\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-04T08:00:00.000000Z\n", true, true, false);
 
         drop("drop table x");
 
@@ -5658,19 +5770,19 @@ public class SampleByTest extends AbstractCairoTest {
                     "('2024-03-30T17:16:28.000000Z'),\n" +
                     "('2024-03-30T17:16:58.000000Z')");
 
-                drainWalQueue();
+            drainWalQueue();
 
-                assertQuery("ts\tcount\n" +
-                        "2024-03-30T12:24:01.000000Z\t10\n" +
-                        "2024-03-30T12:29:01.000000Z\t10\n" +
-                        "2024-03-30T12:34:01.000000Z\t10\n" +
-                        "2024-03-30T12:39:01.000000Z\t5\n" +
-                        "2024-03-30T12:54:01.000000Z\t2\n" +
-                        "2024-03-30T12:59:01.000000Z\t1\n" +
-                        "2024-03-30T13:04:01.000000Z\t1\n" +
-                        "2024-03-30T17:04:01.000000Z\t4\n" +
-                        "2024-03-30T17:09:01.000000Z\t10\n" +
-                        "2024-03-30T17:14:01.000000Z\t6\n", "select ts, count() from x sample by 5m align to first observation\n", "ts", false, false);
+            assertQuery("ts\tcount\n" +
+                    "2024-03-30T12:24:01.000000Z\t10\n" +
+                    "2024-03-30T12:29:01.000000Z\t10\n" +
+                    "2024-03-30T12:34:01.000000Z\t10\n" +
+                    "2024-03-30T12:39:01.000000Z\t5\n" +
+                    "2024-03-30T12:54:01.000000Z\t2\n" +
+                    "2024-03-30T12:59:01.000000Z\t1\n" +
+                    "2024-03-30T13:04:01.000000Z\t1\n" +
+                    "2024-03-30T17:04:01.000000Z\t4\n" +
+                    "2024-03-30T17:09:01.000000Z\t10\n" +
+                    "2024-03-30T17:14:01.000000Z\t6\n", "select ts, count() from x sample by 5m align to first observation\n", "ts", false, false);
 
             assertQuery("ts\tcount\n" +
                     "2024-03-30T12:24:01.000000Z\t10\n" +
