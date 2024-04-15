@@ -126,7 +126,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(),
                     "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
-            Assert.assertEquals(19, e.getPosition());
+            Assert.assertEquals(27, e.getPosition());
         }
     }
 
@@ -150,7 +150,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(),
                     "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
-            Assert.assertEquals(19, e.getPosition());
+            Assert.assertEquals(27, e.getPosition());
         }
     }
 
