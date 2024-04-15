@@ -657,13 +657,27 @@ public final class WhereClauseParser implements Mutable {
                 for (int i = 0; i < n; i++) {
                     ExpressionNode inListItem = in.args.getQuick(i);
                     if (inListItem.type != ExpressionNode.CONSTANT) {
-                        return false;
+                        if (inListItem.type != ExpressionNode.FUNCTION) {
+                            return false;
+                        }
+                        Function f = functionParser.parseFunction(inListItem, metadata, executionContext);
+                        if (!f.isConstant() || !checkFunctionCanBeTimestampInterval(executionContext, f)) {
+                            // todo: support runtime constants too
+                            return false;
+                        }
                     }
                 }
 
                 for (int i = 0; i < n; i++) {
                     ExpressionNode inListItem = in.args.getQuick(i);
-                    long ts = parseTokenAsTimestamp(inListItem);
+                    long ts;
+                    if (inListItem.type == ExpressionNode.CONSTANT) {
+                        ts = parseTokenAsTimestamp(inListItem);
+                    } else {
+                        // todo: we are parsing function twice, we should parse it once and store the resulting function?
+                        Function fun = functionParser.parseFunction(inListItem, metadata, executionContext);
+                        ts = getTimestampFromConstFunction(fun, inListItem.position);
+                    }
                     if (!isNegated) {
                         if (i == 0) {
                             model.intersectIntervals(ts, ts);
