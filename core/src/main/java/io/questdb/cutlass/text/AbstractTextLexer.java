@@ -42,13 +42,13 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private final ObjectPool<DirectUtf8String> csPool;
     private final ObjList<DirectUtf8String> fields = new ObjList<>();
     private final int lineRollBufLimit;
+    private boolean ascii;
     private boolean delayedOutQuote;
     private boolean eol;
     private long errorCount = 0;
     private long fieldHi;
     private int fieldIndex;
     private long fieldLo;
-    private boolean ascii;
     private int fieldMax = -1;
     private boolean header;
     private boolean ignoreEolOnce;
@@ -106,46 +106,6 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     public void parse(long lo, long hi) {
         this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);
         parse0(lo, hi);
-    }
-
-    public void parseExactLines(long lo, long hi) {
-        nextField(lo);
-        long ptr = lo;
-
-        try {
-            while (ptr < hi) {
-                if (!eol && !delayedOutQuote && ptr < hi - 7) {
-                    long word = Unsafe.getUnsafe().getLong(ptr);
-                    long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
-                            | SwarUtils.markZeroBytes(word ^ MASK_CR)
-                            | SwarUtils.markZeroBytes(word ^ MASK_QUOTE)
-                            | SwarUtils.markZeroBytes(word ^ getDelimiterMask());
-                    if (zeroBytesWord == 0) {
-                        ptr += 7;
-                        this.fieldHi += 7;
-                        this.ascii = this.ascii && (word & NON_ASCII_MASK_FULL) == 0;
-                        continue;
-                    } else {
-                        int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
-                        if (firstIndex > 0) {
-                            this.ascii = this.ascii && ((word & (0xffffffffffffffffL >>> (64 - firstIndex * 8))) & NON_ASCII_MASK_FULL) == 0;
-                            ptr += firstIndex;
-                        }
-                        this.fieldHi += firstIndex;
-                    }
-                }
-
-                final byte c = Unsafe.getUnsafe().getByte(ptr++);
-                this.ascii = this.ascii && c > 0;
-                this.fieldHi++;
-                if (delayedOutQuote && c != '"') {
-                    inQuote = delayedOutQuote = false;
-                }
-                doSwitch(lo, hi, c);
-            }
-        } catch (LineLimitException ignore) {
-            // loop exit
-        }
     }
 
     public void parseLast() {
@@ -311,6 +271,16 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         ignoreEolOnce = false;
     }
 
+    private void nextField() {
+        this.ascii = true;
+        this.fieldLo = this.fieldHi;
+    }
+
+    private void nextField(long ptr) {
+        this.ascii = true;
+        this.fieldLo = this.fieldHi = ptr;
+    }
+
     private void onColumnDelimiterSlow(long lo) {
         checkEol(lo);
 
@@ -339,6 +309,11 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
                     } else {
                         int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
                         if (firstIndex > 0) {
+                            // The firstIndex returns the byte count we have to "trust"
+                            // the assumption is that these bytes will become a part of the existing fields
+                            // These bytes come on LOW bits of the "word". To check that these bytes are
+                            // positive, we need to isolate them. We do that by masking out the entire
+                            // word, save for the bytes we intend to keep.
                             this.ascii = this.ascii && ((word & (0xffffffffffffffffL >>> (64 - firstIndex * 8))) & NON_ASCII_MASK_FULL) == 0;
                             ptr += firstIndex;
                         }
@@ -367,16 +342,6 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
             rollLine(lo, hi);
             useLineRollBuf = true;
         }
-    }
-
-    private void nextField() {
-        this.ascii = true;
-        this.fieldLo = this.fieldHi;
-    }
-
-    private void nextField(long ptr) {
-        this.ascii = true;
-        this.fieldLo = this.fieldHi = ptr;
     }
 
     private void putToRollBuf(byte c) {
