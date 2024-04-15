@@ -304,7 +304,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
                     if (zeroBytesWord == 0) {
                         ptr += 7;
                         this.fieldHi += 7;
-                        this.ascii = this.ascii && (word & NON_ASCII_MASK_FULL) == 0;
+                        this.ascii &= (word & NON_ASCII_MASK_FULL) == 0;
                         continue;
                     } else {
                         int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
@@ -314,7 +314,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
                             // These bytes come on LOW bits of the "word". To check that these bytes are
                             // positive, we need to isolate them. We do that by masking out the entire
                             // word, save for the bytes we intend to keep.
-                            this.ascii = this.ascii && ((word & (0xffffffffffffffffL >>> (64 - firstIndex * 8))) & NON_ASCII_MASK_FULL) == 0;
+                            this.ascii &= ((word & (0xffffffffffffffffL >>> (64 - firstIndex * 8))) & NON_ASCII_MASK_FULL) == 0;
                             ptr += firstIndex;
                         }
                         this.fieldHi += firstIndex;

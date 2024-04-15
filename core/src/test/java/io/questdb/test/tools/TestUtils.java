@@ -1472,10 +1472,6 @@ public final class TestUtils {
                             break;
                         }
                     }
-                    if (utf8.isAscii() != ascii) {
-                        record.getVarcharA(i);
-                        System.out.println("ok");
-                    }
                     Assert.assertEquals(utf8.isAscii(), ascii);
                 }
             }
