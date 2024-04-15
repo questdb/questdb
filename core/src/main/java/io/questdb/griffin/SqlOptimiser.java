@@ -1794,21 +1794,34 @@ public class SqlOptimiser implements Mutable {
         sqlNodeStack.clear();
         while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
-                if (node.rhs != null) {
-                    ExpressionNode n = replaceIfAggregateOrLiteral(node.rhs, groupByModel, translatingModel, innerModel, validatingModel, groupByNodes, groupByAliases);
-                    if (node.rhs == n) {
-                        sqlNodeStack.push(node.rhs);
-                    } else {
-                        node.rhs = n;
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        ExpressionNode n = replaceIfAggregateOrLiteral(node.rhs, groupByModel, translatingModel, innerModel, validatingModel, groupByNodes, groupByAliases);
+                        if (node.rhs == n) {
+                            sqlNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = n;
+                        }
                     }
-                }
 
-                ExpressionNode n = replaceIfAggregateOrLiteral(node.lhs, groupByModel, translatingModel, innerModel, validatingModel, groupByNodes, groupByAliases);
-                if (n == node.lhs) {
-                    node = node.lhs;
+                    ExpressionNode n = replaceIfAggregateOrLiteral(node.lhs, groupByModel, translatingModel, innerModel, validatingModel, groupByNodes, groupByAliases);
+                    if (n == node.lhs) {
+                        node = node.lhs;
+                    } else {
+                        node.lhs = n;
+                        node = null;
+                    }
                 } else {
-                    node.lhs = n;
-                    node = null;
+                    for (int i = 0, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        ExpressionNode n = replaceIfAggregateOrLiteral(e, groupByModel, translatingModel, innerModel, validatingModel, groupByNodes, groupByAliases);
+                        if (e == n) {
+                            sqlNodeStack.push(e);
+                        } else {
+                            node.args.setQuick(i, n);
+                        }
+                    }
+                    node = sqlNodeStack.poll();
                 }
             } else {
                 node = sqlNodeStack.poll();
@@ -2721,6 +2734,47 @@ public class SqlOptimiser implements Mutable {
         return nextLiteral(token, 0);
     }
 
+    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, CharSequence argument) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.type != FUNCTION) {
+                if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, argument)) {
+                    return true;
+                }
+            }
+
+            if (node.type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+                if (node.paramCount < 3) {
+                    if (node.lhs != null) {
+                        sqlNodeStack.push(node.lhs);
+                    }
+
+                    if (node.rhs != null) {
+                        node = node.rhs;
+                        continue;
+                    }
+                } else {
+                    for (int i = 1, k = node.paramCount; i < k; i++) {
+                        if (node.args.getQuick(i) != null) {
+                            sqlNodeStack.push(node.args.getQuick(i));
+                        }
+                    }
+
+                    node = node.args.getQuick(0);
+                    continue;
+                }
+            }
+
+            if (!sqlNodeStack.isEmpty()) {
+                node = this.sqlNodeStack.poll();
+            } else {
+                node = null;
+            }
+        }
+
+        return false;
+    }
+
     private void openReaderAndEnumerateColumns(
             SqlExecutionContext executionContext,
             QueryModel model,
@@ -3388,7 +3442,7 @@ public class SqlOptimiser implements Mutable {
             return;
         }
         // placeholder for prefix-stripped advice
-        ObjList<ExpressionNode> advice = null;
+        ObjList<ExpressionNode> advice;
         // Check if the orderByAdvice has names qualified by table names i.e 't1.ts' versus 'ts'
         final boolean orderByAdviceHasDot = checkForDot(orderByAdvice);
         // loop over the join models
@@ -3826,36 +3880,6 @@ public class SqlOptimiser implements Mutable {
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             rewriteCountDistinct(joinModels.getQuick(i));
         }
-    }
-
-    private boolean isTimestampColumnFunction(ExpressionNode node, ExpressionNode timestamp) {
-        sqlNodeStack.clear();
-        while (node != null) {
-            if (node.type != FUNCTION) {
-                if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, timestamp.token)) {
-                    return true;
-                }
-            }
-
-            if (node.type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
-                if (node.lhs != null) {
-                    sqlNodeStack.push(node.lhs);
-                }
-
-                if (node.rhs != null) {
-                    node = node.rhs;
-                    continue;
-                }
-            }
-
-            if (!sqlNodeStack.isEmpty()) {
-                node = this.sqlNodeStack.poll();
-            } else {
-                node = null;
-            }
-        }
-
-        return false;
     }
 
     // push aggregate function calls to group by model, replace key column expressions with group by aliases
@@ -4501,253 +4525,6 @@ public class SqlOptimiser implements Mutable {
 
                 // These lists collect timestamp copies that we remove from the group-by model.
                 // The goal is to re-populate the wrapper model with the copies in the correct positions.
-                ObjList<CharSequence> insetColumnAliases = new ObjList<>();
-                tempList.clear();
-
-                boolean timestampOnly = true;
-
-                // the "select" clause does not include timestamp
-                if (timestampAlias == null) {
-
-                    wrapAction = SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP;
-
-                    // Add artificial timestamp column at the end of the
-                    // selected column list. While doing that we also
-                    // need to avoid alias conflicts1
-
-                    timestampAlias = createColumnAlias(timestampColumn, model);
-                    model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias));
-
-                    timestampOnly = false;
-                } else {
-                    // Check if there are more aliased timestamp references, e.g.
-                    // `select timestamp a, timestamp b, timestamp c`
-                    // We will remove copies from this model and add them back in the wrapper
-
-                    // columnToAlias map is lossy, it only stores "last" alias (non-deterministic)
-                    // to find other aliases we have to loop thru all the columns. We are removing
-                    // columns in this loop, that is why there is no auto-increment.
-
-                    for (int i = 0, k = 0, n = model.getBottomUpColumns().size(); i < n; k++) {
-                        QueryColumn qc = model.getBottomUpColumns().getQuick(i);
-                        if (
-                            // check all literals that refer timestamp column, except the one
-                            // with our chosen timestamp alias.
-                                qc.getAst().type == ExpressionNode.LITERAL
-                                        && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)
-                                        && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias)
-                        ) {
-                            model.removeColumn(i);
-                            // Collect indexes of the removed columns, as they appear in the original list.
-                            // This is a "deleting" loop, the "i" is not representative of the original column
-                            // positions, which is why we need another index "k".
-                            tempList.add(k);
-                            insetColumnAliases.add(qc.getAlias());
-                            n--;
-                            wrapAction = SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES;
-                        } else {
-                            if (!Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)) {
-                                timestampOnly = false;
-                            }
-                            i++;
-                        }
-                    }
-
-                    if (wrapAction == SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) {
-                        // column alias indexes have shifted because of the removal of duplicate timestamp columns
-                        model.updateColumnAliasIndexes();
-                    }
-                }
-
-                int timestampPos = model.getColumnAliasIndex(timestampAlias);
-
-                // create function ast
-                final ExpressionNode top = expressionNodePool.next();
-                top.token = "timestamp_floor";
-                top.paramCount = 2;
-                top.type = FUNCTION;
-
-                CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-                characterStoreEntry.put('\'').put(sampleBy.token).put('\'');
-
-                final ExpressionNode lhs = expressionNodePool.next();
-                lhs.token = characterStoreEntry.toImmutable();
-                lhs.paramCount = 0;
-                lhs.type = CONSTANT;
-
-                final ExpressionNode rhs = expressionNodePool.next();
-                rhs.token = timestampColumn;
-                rhs.position = timestamp.position;
-                rhs.paramCount = 0;
-                rhs.type = LITERAL;
-
-                top.lhs = lhs;
-                top.rhs = rhs;
-
-                model.getBottomUpColumns().setQuick(
-                        timestampPos,
-                        queryColumnPool.next().of(timestampAlias, top)
-                );
-
-                if (timestampOnly || nested.getGroupBy().size() > 0) {
-                    nested.addGroupBy(top);
-                }
-
-                // check if order by is already present
-                if (nested.getOrderBy().size() == 0) {
-                    characterStoreEntry = characterStore.newEntry();
-                    characterStoreEntry.put(timestampPos + 1);
-                    ExpressionNode orderBy = expressionNodePool.next();
-                    orderBy.token = characterStoreEntry.toImmutable();
-                    orderBy.type = CONSTANT;
-                    nested.getOrderBy().add(orderBy);
-                    nested.getOrderByDirection().add(0);
-                    nested.setTimestamp(nextLiteral(timestamp.token));
-                }
-
-                // clear sample by
-                nested.setSampleBy(null);
-                nested.setSampleByOffset(null);
-
-                switch (wrapAction) {
-                    case SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP:
-                        // we added artificial timestamp, which has to be removed
-                        // in the outer query. Single query consists of two
-                        // nested QueryModel instances. The outer of the two is
-                        // SELECT model and the inner of the two is the model providing
-                        // all available columns.
-
-                        // copy columns from the "sample by" SELECT model
-                        model = wrapWithSelectModel(model, model.getBottomUpColumns().size() - 1);
-                        break;
-                    case SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES:
-                        model = wrapWithSelectModel2(model, tempList, insetColumnAliases, timestampAlias);
-                        break;
-                    default:
-                        break;
-                }
-            }
-
-            // recurse nested models
-            nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
-
-            // join models
-            for (int i = 1, n = nested.getJoinModels().size(); i < n; i++) {
-                QueryModel joinModel = nested.getJoinModels().getQuick(i);
-                joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel()));
-            }
-        }
-
-        // unions
-        model.setUnionModel(rewriteSampleBy(model.getUnionModel()));
-        return model;
-    }
-
-    /**
-     * Recursive. Replaces "sample by" models with group-by. Not all forms of "sample by"
-     * can be implemented via this method. Therefore, the rewrite avoids the following:
-     * - fills
-     * - custom non-wall-clock alignments
-     *
-     * @param model the input model, it is expected to be very early in optimisation process
-     *              the typical sample by model consists of two objects, the outer one with the
-     *              list of columns and the inner one with sample by clauses
-     * @return when "timestamp" column is not explicitly selected, this method has to do
-     * a trick to add artificial timestamp to the original model and then wrap the original
-     * model into a sub-query, to select all the intended columns but the artificial timestamp.
-     */
-    private QueryModel rewriteSampleBy2(@Nullable QueryModel model) throws SqlException {
-
-        if (model == null) {
-            return null;
-        }
-
-        QueryModel nested = model.getNestedModel();
-        if (nested != null) {
-            // "sample by" details will be on the nested model of the query
-            ExpressionNode sampleBy = nested.getSampleBy();
-            ExpressionNode sampleByOffset = nested.getSampleByOffset();
-            ObjList<ExpressionNode> sampleByFill = nested.getSampleByFill();
-            ExpressionNode sampleByTimezoneName = nested.getSampleByTimezoneName();
-            ExpressionNode sampleByUnit = nested.getSampleByUnit();
-            ExpressionNode timestamp = nested.getTimestamp();
-
-            if (
-                    sampleBy != null
-                            && timestamp != null
-                            && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
-                            && (sampleByFill.size() == 0 || (sampleByFill.size() == 1 && SqlKeywords.isNoneKeyword(sampleByFill.getQuick(0).token)))
-                            && sampleByUnit == null
-            ) {
-                // Validate that the model does not have wildcard column names.
-                // Using wildcard in group-by expression makes SQL ambiguous and
-                // error-prone. For example, additive table metadata changes (adding a column)
-                // will change the outcome of existing queries, if those supported wildcards for
-                // as group-by keys.
-
-                for (int i = 0, n = model.getColumns().size(); i < n; i++) {
-                    QueryColumn column = model.getColumns().getQuick(i);
-                    if (Chars.endsWith(column.getAst().token, '*')) {
-                        throw SqlException.$(column.getAst().position, "wildcard column select is not allowed in sample-by queries");
-                    }
-                }
-
-                // When timestamp is not explicitly selected, we will
-                // need to add it artificially to enable group-by to
-                // have access to bucket key. If this happens, the artificial
-                // timestamp is added as the last column and this flag is set.
-                // SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP
-
-                // Another reason for creating the wrapper is to re-introduce the copies of the
-                // timestamp column. These are actively removed from the group-by model, to make sure they
-                // don't pollute the group-by keys.
-                // SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES
-
-                int wrapAction = SAMPLE_BY_REWRITE_NO_WRAP;
-
-                // this may or may not be our guy, but may not be, depending on fill settings
-
-                // plan of action:
-                // 1. analyze sample by expression and replace expression in the same
-                //    position where timestamp is in the select clause (timestamp may not be selected, we have to
-                //    have a wrapper)
-                // 2. clear the sample by clause
-                // 3. wrap the result into an order by to maintain the timestamp order, but this can be optional
-
-                // the timestamp could be selected but also aliased
-                CharSequence timestampColumn = timestamp.token;
-                CharSequence timestampAlias = model.getColumnNameToAliasMap().get(timestampColumn);
-
-                if (timestampAlias == null) {
-                    // Let's not give up yet, the timestamp column might be prefixed
-                    // with either table name or table alias
-                    if (nested.getAlias() != null) {
-                        // table is indeed aliased
-                        CharacterStoreEntry e = characterStore.newEntry();
-                        e.put(nested.getAlias().token).putAscii('.').put(timestamp.token);
-                        CharSequence tableAliasPrefixedTimestampColumn = e.toImmutable();
-                        timestampAlias = model.getColumnNameToAliasMap().get(tableAliasPrefixedTimestampColumn);
-                        if (timestampAlias != null) {
-                            timestampColumn = tableAliasPrefixedTimestampColumn;
-                        }
-                    }
-
-                    // still nothing? Let's try table prefix very last time.
-                    if (timestampAlias == null && nested.getTableName() != null) {
-                        CharacterStoreEntry e = characterStore.newEntry();
-                        e.put(nested.getTimestamp()).putAscii('.').put(timestamp.token);
-                        CharSequence tableNamePrefixedTimestampColumn = e.toImmutable();
-                        timestampAlias = model.getColumnNameToAliasMap().get(tableNamePrefixedTimestampColumn);
-
-                        if (timestampAlias != null) {
-                            timestampColumn = tableNamePrefixedTimestampColumn;
-
-                        }
-                    }
-                }
-
-                // These lists collect timestamp copies that we remove from the group-by model.
-                // The goal is to re-populate the wrapper model with the copies in the correct positions.
                 ObjList<QueryColumn> insetColumnAliases = new ObjList<>();
                 tempList.clear();
                 boolean timestampOnly = true;
@@ -4761,12 +4538,16 @@ public class SqlOptimiser implements Mutable {
                 // columns in this loop, that is why there is no auto-increment.
                 for (int i = 0, k = 0, n = model.getBottomUpColumns().size(); i < n; k++) {
                     QueryColumn qc = model.getBottomUpColumns().getQuick(i);
+                    boolean isAFunctionUsingTimestampColumn = (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION)
+                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp().token);
+
                     if (
-                        // check all literals that refer timestamp column, except the one
-                        // with our chosen timestamp alias.
-                            timestampAlias != null && qc.getAst().type == ExpressionNode.LITERAL
-                                    && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)
-                                    && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias)
+                            isAFunctionUsingTimestampColumn ||
+                                    // check all literals that refer timestamp column, except the one
+                                    // with our chosen timestamp alias.
+                                    timestampAlias != null && qc.getAst().type == ExpressionNode.LITERAL
+                                            && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)
+                                            && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias)
                     ) {
                         model.removeColumn(i);
                         // Collect indexes of the removed columns, as they appear in the original list.
@@ -4776,16 +4557,9 @@ public class SqlOptimiser implements Mutable {
                         insetColumnAliases.add(qc);
                         n--;
                         wrapAction = SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES;
-                    } else if ((qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION) && isTimestampColumnFunction(qc.getAst(), nested.getTimestamp())) {
-                        model.removeColumn(i);
-                        // Collect indexes of the removed columns, as they appear in the original list.
-                        // This is a "deleting" loop, the "i" is not representative of the original column
-                        // positions, which is why we need another index "k".
-                        tempList.add(k);
-                        insetColumnAliases.add(qc);
-                        n--;
-                        wrapAction = SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES;
-                        timestampOnly = false;
+                        if (isAFunctionUsingTimestampColumn) {
+                            timestampOnly = false;
+                        }
                     } else {
                         if (!Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)) {
                             timestampOnly = false;
@@ -4863,7 +4637,7 @@ public class SqlOptimiser implements Mutable {
                 nested.setSampleByOffset(null);
 
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
-                    model = wrapWithSelectModel3(model, tempList, insetColumnAliases, timestampAlias);
+                    model = wrapWithSelectModel(model, tempList, insetColumnAliases, timestampAlias);
                 }
 
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP) != 0) {
@@ -4879,17 +4653,17 @@ public class SqlOptimiser implements Mutable {
             }
 
             // recurse nested models
-            nested.setNestedModel(rewriteSampleBy2(nested.getNestedModel()));
+            nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
 
             // join models
             for (int i = 1, n = nested.getJoinModels().size(); i < n; i++) {
                 QueryModel joinModel = nested.getJoinModels().getQuick(i);
-                joinModel.setNestedModel(rewriteSampleBy2(joinModel.getNestedModel()));
+                joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel()));
             }
         }
 
         // unions
-        model.setUnionModel(rewriteSampleBy2(model.getUnionModel()));
+        model.setUnionModel(rewriteSampleBy(model.getUnionModel()));
         return model;
     }
 
@@ -5340,7 +5114,7 @@ public class SqlOptimiser implements Mutable {
                 // this is not a direct call to aggregation function, in which case
                 // we emit aggregation function into group-by model and leave the rest in outer model
                 final int beforeSplit = groupByModel.getBottomUpColumns().size();
-                if (checkForAggregates(qc.getAst()) || (sampleBy != null && isTimestampColumnFunction(qc.getAst(), baseModel.getTimestamp()))) {
+                if (checkForAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp().token))) {
                     // push aggregates and literals outside aggregate functions
                     emitAggregatesAndLiterals(qc.getAst(), groupByModel, translatingModel, innerVirtualModel, baseModel, groupByNodes, groupByAliases);
                     emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
@@ -5883,32 +5657,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     @NotNull
-    private QueryModel wrapWithSelectModel2(QueryModel model, IntList insetColumnIndexes, ObjList<CharSequence> insertColumnAliases, CharSequence timestampAlias) {
-        QueryModel _model = createdWrapperModel(model);
-
-        // These are merged columns, the assumption is that the insetColumnIndexes are ordered.
-        // This loop will fail miserably in indexes are unordered.
-        int src1ColumnCount = model.getBottomUpColumns().size();
-        int src2ColumnCount = insetColumnIndexes.size();
-        for (int i = 0, k = 0, m = 0; i < src1ColumnCount || k < src2ColumnCount; m++) {
-
-            if (k < src2ColumnCount && insetColumnIndexes.getQuick(k) == m) {
-                // insert column at this position, this column must reference our timestamp, that
-                // comes out of the group-by result set, but with user-provided aliases.
-                _model.addBottomUpColumnIfNotExists(nextColumn(insertColumnAliases.getQuick(k), timestampAlias));
-                k++;
-            } else {
-                QueryColumn qcFrom = model.getBottomUpColumns().getQuick(i);
-                _model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
-                i++;
-            }
-        }
-
-        return _model;
-    }
-
-    @NotNull
-    private QueryModel wrapWithSelectModel3(QueryModel model, IntList insetColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
+    private QueryModel wrapWithSelectModel(QueryModel model, IntList insetColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
         QueryModel _model = createdWrapperModel(model);
 
         // These are merged columns, the assumption is that the insetColumnIndexes are ordered.
@@ -5954,8 +5703,7 @@ public class SqlOptimiser implements Mutable {
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
-//            rewrittenModel = rewriteSampleBy(rewrittenModel);
-            rewrittenModel = rewriteSampleBy2(rewrittenModel);
+            rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
