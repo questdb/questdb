@@ -1035,13 +1035,13 @@ public final class Utf8s {
     }
 
     /**
-     * Validates bytes between lo,hi addresses.
+     * Validates if the bytes between lo,hi addresses belong to a valid UTF8 sequence.
      *
-     * @return string length if input is proper UTF-8 and -1 otherwise.
+     * @return -1 if bytes are not a UTF8 sequence, 0 if this is ASCII sequence and 1 if it is non-ascii UTF8 sequence.
      */
-    public static int validateUtf8(long lo, long hi) {
-        int len = 0;
+    public static int getUtf8SequenceType(long lo, long hi) {
         long p = lo;
+        int sequenceType = 0;
         while (p < hi) {
             byte b = Unsafe.getUnsafe().getByte(p);
             if (b < 0) {
@@ -1051,12 +1051,13 @@ public final class Utf8s {
                     return -1;
                 }
                 p += n;
+                // non-ASCII sequence
+                sequenceType = 1;
             } else {
                 ++p;
             }
-            ++len;
         }
-        return len;
+        return sequenceType;
     }
 
     public static int validateUtf8MultiByte(long lo, long hi, byte b) {

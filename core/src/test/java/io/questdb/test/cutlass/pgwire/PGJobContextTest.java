@@ -11684,6 +11684,62 @@ create table tab as (
         }
     }
 
+    @Test
+    public void testVarcharBindVarMixedAscii() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table x (a varchar, ts timestamp) timestamp(ts) partition by day");
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("insert into x values (?, ?)")) {
+                Timestamp bTs = new Timestamp(0);
+                ps.setString(1, "a");
+                ps.setTimestamp(2, bTs);
+                ps.execute();
+
+                ps.setString(1, "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:");
+                ps.setTimestamp(2, bTs);
+                ps.execute();
+
+                ps.setString(1, "d9INVpegZ\"N");
+                ps.setTimestamp(2, bTs);
+                ps.execute();
+
+                ps.setString(1, "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*");
+                ps.setTimestamp(2, bTs);
+                ps.execute();
+            }
+            drainWalQueue();
+
+            try (Statement statement = connection.createStatement()) {
+                ResultSet rs = statement.executeQuery("select * from x");
+                assertResultSet(
+                        "a[VARCHAR],ts[TIMESTAMP]\n" +
+                                "a,1970-01-01 00:00:00.0\n" +
+                                "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:,1970-01-01 00:00:00.0\n" +
+                                "d9INVpegZ\"N,1970-01-01 00:00:00.0\n" +
+                                "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*,1970-01-01 00:00:00.0\n",
+                        sink,
+                        rs
+                );
+            }
+
+            sink.clear();
+
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    "x",
+                    sink,
+                    "a\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000Z\n" +
+                            "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:\t1970-01-01T00:00:00.000000Z\n" +
+                            "d9INVpegZ\"N\t1970-01-01T00:00:00.000000Z\n" +
+                            "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*\t1970-01-01T00:00:00.000000Z\n"
+            );
+        });
+    }
+
     private void testQuery(String s, String s2) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {

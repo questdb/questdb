@@ -1147,6 +1147,19 @@ public class InsertTest extends AbstractCairoTest {
                             "{[pG5d^fG>v [6\tȔ\uDB75\uDF17ߚ`ŷ֪\t1970-01-01T00:00:00.000000Z\n",
                     "y"
             );
+
+            // sort rows without using rowid
+            assertSql(
+                    "a\tb\tts\n" +
+                            "+٘ˣ聉|凜-،W.ƣ\t1);86rU)\t1970-01-01T00:00:00.000000Z\n" +
+                            "2HEz*Dq\tcVԕΖVq\t1970-01-01T00:00:00.000000Z\n" +
+                            "6tuU}+8mV\t\t1970-01-01T00:00:00.000000Z\n" +
+                            "a\tb\t1970-01-01T00:00:00.000000Z\n" +
+                            "te\t葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*\t1970-01-01T00:00:00.000000Z\n" +
+                            "{[pG5d^fG>v [6\tȔ\uDB75\uDF17ߚ`ŷ֪\t1970-01-01T00:00:00.000000Z\n" +
+                            "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:\tC>Wy;\t1970-01-01T00:00:00.000000Z\n",
+                    "'*!*y' order by a, b"
+            );
         });
     }
 
