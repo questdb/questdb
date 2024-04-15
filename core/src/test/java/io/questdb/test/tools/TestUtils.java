@@ -1467,7 +1467,7 @@ public final class TestUtils {
                 if (utf8 != null) {
                     boolean ascii = true;
                     for (int k = 0, kl = utf8.size(); k < kl; k++) {
-                        if (utf8.byteAt(k)<0) {
+                        if (utf8.byteAt(k) < 0) {
                             ascii = false;
                             break;
                         }
