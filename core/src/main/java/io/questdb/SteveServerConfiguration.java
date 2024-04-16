@@ -20,12 +20,13 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicReference;
 
 
 public class SteveServerConfiguration implements DynamicServerConfiguration {
 
     private final static Log LOG = LogFactory.getLog(SteveServerConfiguration.class);
-    private PropServerConfiguration delegate;
+    private AtomicReference<PropServerConfiguration> delegate;
 
     String root;
     @Nullable Map<String, String> env;
@@ -56,7 +57,7 @@ public class SteveServerConfiguration implements DynamicServerConfiguration {
         this.fpf = fpf;
         this.loadAdditionalConfigurations = loadAdditionalConfigurations;
 
-        this.delegate = new PropServerConfiguration(
+        PropServerConfiguration serverConfig = new PropServerConfiguration(
                 root,
                 properties,
                 env,
@@ -67,6 +68,7 @@ public class SteveServerConfiguration implements DynamicServerConfiguration {
                 fpf ,
                 loadAdditionalConfigurations
         );
+        this.delegate = new AtomicReference<>(serverConfig);
     }
 
     public SteveServerConfiguration(
@@ -132,72 +134,72 @@ public class SteveServerConfiguration implements DynamicServerConfiguration {
             return;
         }
 
-        delegate = newConfig;
+        delegate.set(newConfig);
     }
 
     @Override
     public CharSequence getConfRoot() {
-        return this.delegate.getCairoConfiguration().getConfRoot();
+        return delegate.get().getCairoConfiguration().getConfRoot();
     }
 
 
     @Override
     public CairoConfiguration getCairoConfiguration() {
-        return delegate.getCairoConfiguration();
+        return delegate.get().getCairoConfiguration();
     }
 
     @Override
     public FactoryProvider getFactoryProvider() {
-        return delegate.getFactoryProvider();
+        return delegate.get().getFactoryProvider();
     }
 
     @Override
     public HttpMinServerConfiguration getHttpMinServerConfiguration() {
-        return delegate.getHttpMinServerConfiguration();
+        return delegate.get().getHttpMinServerConfiguration();
     }
 
     @Override
     public HttpServerConfiguration getHttpServerConfiguration() {
-        return delegate.getHttpServerConfiguration();
+        return delegate.get().getHttpServerConfiguration();
     }
 
     @Override
     public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
-        return delegate.getLineTcpReceiverConfiguration();
+        return delegate.get().getLineTcpReceiverConfiguration();
     }
 
     @Override
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
-        return delegate.getLineUdpReceiverConfiguration();
+        return delegate.get().getLineUdpReceiverConfiguration();
     }
 
     @Override
     public MetricsConfiguration getMetricsConfiguration() {
-        return delegate.getMetricsConfiguration();
+        return delegate.get().getMetricsConfiguration();
     }
 
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
-        return delegate.getPGWireConfiguration();
+        return delegate.get().getPGWireConfiguration();
     }
 
     @Override
     public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
-        return delegate.getWalApplyPoolConfiguration();
+        return delegate.get().getWalApplyPoolConfiguration();
     }
 
     @Override
     public WorkerPoolConfiguration getWorkerPoolConfiguration() {
-        return delegate.getWorkerPoolConfiguration();
+        return delegate.get().getWorkerPoolConfiguration();
     }
 
     @Override
     public void init(CairoEngine engine, FreeOnExit freeOnExit) {
-        delegate.init(engine, freeOnExit);
+        delegate.get().init(engine, freeOnExit);
     }
 
     @Override
     public boolean isLineTcpEnabled() {
-        return delegate.isLineTcpEnabled();
+        return delegate.get().isLineTcpEnabled();
     }
 }
