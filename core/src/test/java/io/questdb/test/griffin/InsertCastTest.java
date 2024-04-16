@@ -43,7 +43,7 @@ public class InsertCastTest extends AbstractCairoTest {
             try {
                 insert("insert into tab values(null::string)");
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "insert statement must populate timestamp");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "designated timestamp column cannot be NULL");
             }
         });
     }

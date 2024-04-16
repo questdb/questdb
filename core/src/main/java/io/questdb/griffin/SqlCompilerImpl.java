@@ -2245,10 +2245,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 // validate timestamp
-                if (metadataTimestampIndex > -1
-                        && (timestampFunction == null || ColumnType.isNull(timestampFunction.getType()) || timestampFunction.isNullConstant())) {
-                    throw SqlException.$(0, "insert statement must populate timestamp");
+                if (metadataTimestampIndex > -1) {
+                    if (timestampFunction == null) {
+                        throw SqlException.$(0, "insert statement must populate timestamp");
+                    } else if (ColumnType.isNull(timestampFunction.getType()) || timestampFunction.isNullConstant()) {
+                        throw SqlException.$(0, "designated timestamp column cannot be NULL");
+                    }
                 }
+
 
                 VirtualRecord record = new VirtualRecord(valueFunctions);
                 RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);

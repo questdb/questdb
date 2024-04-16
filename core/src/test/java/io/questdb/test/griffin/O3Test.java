@@ -451,8 +451,8 @@ public class O3Test extends AbstractO3Test {
             try {
                 CairoEngine.insert(compiler, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))", sqlExecutionContext);
                 Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 1970-01-01 are not allowed for O3");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "designated timestamp column cannot be NULL");
             }
 
             assertXCount(
