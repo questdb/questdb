@@ -120,7 +120,7 @@ public class FanOut implements Barrier {
         return holder.waitStrategy;
     }
 
-    public void remove(Barrier barrier) {
+    public void remove(SCSequence barrier) {
         Unsafe.getUnsafe().storeFence();
 
         Holder _new;
@@ -155,14 +155,7 @@ public class FanOut implements Barrier {
                 break;
             }
         } while (true);
-
-        barrier.setBarrier(OpenBarrier.INSTANCE);
-        barrier.clear();
-    }
-
-    @Override
-    public void clear() {
-        // no-op
+        barrier.reset();
     }
 
     @Override

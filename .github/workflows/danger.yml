@@ -2,7 +2,7 @@ name: Danger
 
 on:
   pull_request:
-    types: [synchronize, opened, reopened, edited]
+    types: [ synchronize, opened, reopened, edited ]
 
 jobs:
   build:
@@ -10,12 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@master
-      - name: Use Node.js 16.x
+      - name: Use Node.js 18.x
         uses: actions/setup-node@master
         with:
-          node-version: 16.x
-      - name: install danger 
-        run: yarn global add danger 
+          node-version: 18.x
+      - name: install danger
+        run: yarn global add danger
       - name: Validate PR title validation rules
         working-directory: ./ci/validate-pr-title
         run: node validate.test.js
