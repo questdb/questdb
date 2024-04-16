@@ -25,11 +25,17 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.vm.MemoryCMORImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -43,20 +49,18 @@ public class ConvertOperatorImpl implements Closeable {
     private static final Log LOG = LogFactory.getLog(ConvertOperatorImpl.class);
     private final FilesFacade ff;
     private final long fileOpenOpts;
-    private final IndexBuilder indexBuilder;
     private final Path path;
     private final PurgingOperator purgingOperator;
     private final int rootLen;
     private final TableWriter tableWriter;
+    private MemoryCMARW dstFixMem;
+    private MemoryCMARW dstVarMem;
+    private IndexBuilder indexBuilder;
     private int partitionUpdated;
+    private MemoryCMORImpl srcFixMem;
+    private MemoryCMORImpl srcVarMem;
 
-    public ConvertOperatorImpl(
-            CairoConfiguration configuration,
-            TableWriter tableWriter,
-            Path path,
-            int rootLen,
-            PurgingOperator purgingOperator
-    ) {
+    public ConvertOperatorImpl(CairoConfiguration configuration, TableWriter tableWriter, Path path, int rootLen, PurgingOperator purgingOperator) {
         this.tableWriter = tableWriter;
         this.rootLen = rootLen;
         this.purgingOperator = purgingOperator;
@@ -64,15 +68,24 @@ public class ConvertOperatorImpl implements Closeable {
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
         this.ff = configuration.getFilesFacade();
         this.path = path;
+        dstFixMem = Vm.getCMARWInstance();
+        dstVarMem = Vm.getCMARWInstance();
+        srcFixMem = new MemoryCMORImpl();
+        srcVarMem = new MemoryCMORImpl();
+
     }
 
     @Override
     public void close() throws IOException {
-        indexBuilder.close();
+        indexBuilder = Misc.free(indexBuilder);
+        dstFixMem = Misc.free(dstFixMem);
+        dstVarMem = Misc.free(dstVarMem);
+        srcFixMem = Misc.free(srcFixMem);
+        srcVarMem = Misc.free(srcVarMem);
     }
 
     public void convertColumn(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {
-        purgingOperator.clear();
+        clear();
         partitionUpdated = 0;
         try {
             for (int partitionIndex = 0, n = tableWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
@@ -99,18 +112,9 @@ public class ConvertOperatorImpl implements Closeable {
                         tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
                     }
 
-                    LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen)).$(", column=").$(columnName).$(", from=").$(ColumnType.nameOf(existingType))
-                            .$(", to=").$(ColumnType.nameOf(newType)).I$();
+                    LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen)).$(", column=").$(columnName).$(", from=").$(ColumnType.nameOf(existingType)).$(", to=").$(ColumnType.nameOf(newType)).I$();
 
-                    convertColumn(
-                            maxRow - columnTop,
-                            srcFixFd,
-                            srcVarFd,
-                            dstFixFd,
-                            dstVarFd,
-                            existingType,
-                            newType
-                    );
+                    convertColumn(maxRow - columnTop, srcFixFd, srcVarFd, dstFixFd, dstVarFd, existingType, newType);
 
                     long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);
                     purgingOperator.add(existingColIndex, existingColTxnVer, partitionTimestamp, partitionNameTxn);
@@ -124,29 +128,21 @@ public class ConvertOperatorImpl implements Closeable {
 
     public void finishColumnConversion() {
         if (partitionUpdated > -1) {
-            tableWriter.commit();
-            tableWriter.openLastPartition();
-            purgingOperator.purge(
-                    path.trimTo(rootLen),
-                    tableWriter.getTableToken(),
-                    tableWriter.getPartitionBy(),
-                    tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
-                    tableWriter.getMetadata(),
-                    tableWriter.getTruncateVersion(),
-                    tableWriter.getTxn()
-            );
+            partitionUpdated = 0;
+            purgingOperator.purge(path.trimTo(rootLen), tableWriter.getTableToken(), tableWriter.getPartitionBy(), tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(), tableWriter.getMetadata(), tableWriter.getTruncateVersion(), tableWriter.getTxn());
+            clear();
         }
     }
 
-    private void convertColumn(
-            long rowCount,
-            int srcFixMem,
-            int srcVarMem,
-            int dstFixMem,
-            int dstVarMem,
-            int srcColumnType,
-            int dstColumnType
-    ) {
+    private void clear() {
+        purgingOperator.clear();
+        Misc.free(dstFixMem);
+        Misc.free(dstVarMem);
+        Misc.free(srcFixMem);
+        Misc.free(srcVarMem);
+    }
+
+    private void convertColumn(long rowCount, int srcFixMem, int srcVarMem, int dstFixMem, int dstVarMem, int srcColumnType, int dstColumnType) {
         if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
             convertFixedToFixed(rowCount, srcFixMem, dstFixMem, srcColumnType, dstColumnType);
         } else if (ColumnType.isVarSize(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
@@ -167,10 +163,33 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     private void convertStringToVarchar(long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd) {
+        srcVarMem.ofOffset(ff, srcVarFd, null, 0, ff.length(srcVarFd), MemoryTag.MMAP_TABLE_WRITER, fileOpenOpts);
+        // Will not use fixed memory, enough data in var mem
         ff.close(srcFixFd);
-        ff.close(srcVarFd);
-        ff.close(dstFixFd);
-        ff.close(dstVarFd);
+
+        dstVarMem.of(ff, dstVarFd, null, ff.getMapPageSize(), srcVarMem.size(), MemoryTag.MMAP_TABLE_WRITER);
+        dstVarMem.jumpTo(0);
+        dstFixMem.of(ff, dstFixFd, null, ff.getMapPageSize(), rowCount * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES, MemoryTag.MMAP_TABLE_WRITER);
+        dstFixMem.jumpTo(0);
+
+        Utf8StringSink sink = new Utf8StringSink();
+
+        long offset = 0;
+        for (long i = 0; i < rowCount; i++) {
+            CharSequence str = srcVarMem.getStrA(offset);
+            offset += Vm.getStorageLength(str);
+
+            if (str != null) {
+                sink.clear();
+                sink.put(str);
+
+                VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, sink);
+            } else {
+                VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, null);
+            }
+        }
+        dstVarMem.close(true, Vm.TRUNCATE_TO_POINTER);
+        dstFixMem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
     private void convertVarToFixed(long rowCount, int srcFixMem, int srcVarMem, int dstFixMem, int srcColumnType, int dstColumnType) {
@@ -179,7 +198,7 @@ public class ConvertOperatorImpl implements Closeable {
 
     private void convertVarToVar(long rowCount, int srcFixMem, int srcVarMem, int dstFixMem, int dstVarMem, int srcColumnType, int dstColumnType) {
         // Convert STRING to VARCHAR and back
-        // Binary conversions are not supported yet
+        // Binary column usage is rare, conversions can be delayed.
         switch (ColumnType.tagOf(srcColumnType)) {
             case ColumnType.STRING:
                 assert ColumnType.tagOf(dstColumnType) == ColumnType.VARCHAR;

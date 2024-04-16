@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -40,7 +41,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testChangeStringToVarchar() throws Exception {
         assertMemoryLeak(() -> {
             createX();
+            ddl("create table y as (select c from x)", sqlExecutionContext);
             ddl("alter table x alter column c type varchar", sqlExecutionContext);
+
+            assertSqlCursorsConvertedStrings(
+                    "select c from x",
+                    "select c from y"
+            );
         });
     }
 
@@ -81,7 +88,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         " round(rnd_double(0)*100, 3) amt," +
                         " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                         " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_str(5,1024,2) c," +
                         " rnd_double(2) d," +
                         " rnd_float(2) e," +
                         " rnd_short(10,1024) f," +
@@ -93,7 +100,20 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp) PARTITION BY DAY BYPASS WAL;"
+                        ") timestamp (timestamp) PARTITION BY HOUR BYPASS WAL;"
         );
+    }
+
+    protected static void assertSqlCursorsConvertedStrings(CharSequence expectedSql, CharSequence actualSql) throws SqlException {
+        try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
+            TestUtils.assertSqlCursors(
+                    sqlCompiler,
+                    sqlExecutionContext,
+                    expectedSql,
+                    actualSql,
+                    LOG,
+                    true
+            );
+        }
     }
 }

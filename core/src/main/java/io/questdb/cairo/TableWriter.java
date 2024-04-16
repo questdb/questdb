@@ -908,14 +908,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-//        metadata.removeColumn(existingColIndex);
-//        metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey);
-        // increment column count
-
-        // extend columnTop list to make sure row cancel can work
-        // need for setting correct top is hard to test without being able to read from table
-        int columnIndex = columnCount - 1;
-
+        int columnIndex = columnCount;
         long columnNameTxn = getTxn();
 
         // Set txn number in the column version file to mark the transaction where the column is added
@@ -923,7 +916,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         getConvertOperator().convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
 
         // Column converted, add new one to the metadata and remove the existing
-        addColumnToMeta(columnName, newType, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, existingColIndex);
+        addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, existingColIndex);
+        bumpMetadataAndColumnStructureVersion();
         metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey);
 
         getConvertOperator().finishColumnConversion();
@@ -2496,7 +2490,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int replaceColumnIndex
     ) {
         // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, replaceColumnIndex);
+        this.metaSwapIndex = addColumnToMeta0(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, replaceColumnIndex);
 
         // close _meta so we can rename it
         metaMem.close();
@@ -2535,7 +2529,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnCount++;
     }
 
-    private int addColumnToMeta(
+    private int addColumnToMeta0(
             CharSequence name,
             int type,
             boolean indexFlag,
