@@ -796,7 +796,7 @@ public class Utf8sTest {
     }
 
     @Test
-    public void testValidateUtf8Direct() {
+    public void testGetUtf8SequenceType() {
         try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
             Assert.assertEquals(0, Utf8s.getUtf8SequenceType(sink.lo(), sink.hi()));
             sink.put("abc");

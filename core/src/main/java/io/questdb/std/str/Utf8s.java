@@ -663,6 +663,19 @@ public final class Utf8s {
         return strCpyNonAscii(seq, charLo, charHi, sink);
     }
 
+    public static boolean isAscii(Utf8Sequence utf8) {
+        boolean ascii = true;
+        if (utf8 != null) {
+            for (int k = 0, kl = utf8.size(); k < kl; k++) {
+                if (utf8.byteAt(k) < 0) {
+                    ascii = false;
+                    break;
+                }
+            }
+        }
+        return ascii;
+    }
+
     private static int strCpyNonAscii(@NotNull Utf8Sequence seq, int charLo, int charHi, @NotNull Utf8Sink sink) {
         int charPos = 0;
         int bytesCopied = 0;

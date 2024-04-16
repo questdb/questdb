@@ -322,7 +322,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
                 }
 
                 final byte b = Unsafe.getUnsafe().getByte(ptr++);
-                this.ascii = this.ascii && b > 0;
+                this.ascii &= b > 0;
 
                 if (checkState(ptr, b)) {
                     doSwitch(lo, ptr, b);

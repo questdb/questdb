@@ -537,6 +537,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     Utf8Sequence varchar = record.getVarcharA(1);
                     Assert.assertNotNull(varchar);
                     TestUtils.assertEquals(utf8Sink, varchar);
+                    TestUtils.assertAsciiCompliance(varchar);
                     Assert.assertEquals(rnd.nextLong(), record.getLong(0));
                 }
             }

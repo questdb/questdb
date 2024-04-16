@@ -391,7 +391,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public static void println(RecordMetadata metadata, RecordCursor cursor) {
-        CursorPrinter.println(cursor, metadata, sink);
+        ((MutableCharSink<?>) sink).clear();
+        CursorPrinter.println(metadata, sink);
+
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            TestUtils.println(record, metadata, sink);
+        }
     }
 
     public static void refreshTablesInBaseEngine() {
@@ -1212,6 +1218,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         //noinspection StatementWithEmptyBody
         while (walApplyJob.run(0)) ;
         if (checkWalTransactionsJob.run(0)) {
+            //noinspection StatementWithEmptyBody
             while (walApplyJob.run(0)) ;
         }
     }

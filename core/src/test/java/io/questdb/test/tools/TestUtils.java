@@ -95,6 +95,10 @@ public final class TestUtils {
         return true;
     }
 
+    public static void assertAsciiCompliance(@Nullable Utf8Sequence utf8Sequence) {
+        Assert.assertEquals(utf8Sequence == null || utf8Sequence.isAscii(), Utf8s.isAscii(utf8Sequence));
+    }
+
     public static void assertConnect(int fd, long sockAddr) {
         long rc = connect(fd, sockAddr);
         if (rc != 0) {
@@ -1463,17 +1467,7 @@ public final class TestUtils {
         CursorPrinter.println(record, metadata, sink);
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (metadata.getColumnType(i) == ColumnType.VARCHAR) {
-                Utf8Sequence utf8 = record.getVarcharA(i);
-                if (utf8 != null) {
-                    boolean ascii = true;
-                    for (int k = 0, kl = utf8.size(); k < kl; k++) {
-                        if (utf8.byteAt(k) < 0) {
-                            ascii = false;
-                            break;
-                        }
-                    }
-                    Assert.assertEquals(utf8.isAscii(), ascii);
-                }
+                assertAsciiCompliance(record.getVarcharA(i));
             }
         }
     }
