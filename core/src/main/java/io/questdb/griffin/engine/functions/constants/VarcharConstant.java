@@ -89,6 +89,11 @@ public class VarcharConstant extends VarcharFunction implements ConstantFunction
     }
 
     @Override
+    public boolean isNullConstant() {
+        return value == null;
+    }
+
+    @Override
     public CharSequence getStrB(Record rec) {
         return utf16Value;
     }

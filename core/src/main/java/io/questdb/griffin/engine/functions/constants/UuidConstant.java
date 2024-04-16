@@ -45,6 +45,11 @@ public class UuidConstant extends UuidFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean isNullConstant() {
+        return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
+    }
+
+    @Override
     public long getLong128Hi(Record rec) {
         return hi;
     }

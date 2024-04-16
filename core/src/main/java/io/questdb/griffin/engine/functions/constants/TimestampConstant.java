@@ -42,6 +42,11 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
     }
 
     @Override
+    public boolean isNullConstant() {
+        return value == Numbers.LONG_NaN;
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         return value;
     }

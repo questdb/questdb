@@ -53,4 +53,9 @@ public class IntConstant extends IntFunction implements ConstantFunction {
     public void toPlan(PlanSink sink) {
         sink.val(value);
     }
+
+    @Override
+    public boolean isNullConstant() {
+        return value == Numbers.INT_NaN;
+    }
 }

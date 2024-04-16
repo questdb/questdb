@@ -2245,7 +2245,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 // validate timestamp
-                if (metadataTimestampIndex > -1 && (timestampFunction == null || ColumnType.isNull(timestampFunction.getType()))) {
+                if (metadataTimestampIndex > -1
+                        && (timestampFunction == null || ColumnType.isNull(timestampFunction.getType()) || timestampFunction.isNullConstant())) {
                     throw SqlException.$(0, "insert statement must populate timestamp");
                 }
 

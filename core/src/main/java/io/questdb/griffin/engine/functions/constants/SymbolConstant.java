@@ -98,6 +98,11 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean isNullConstant() {
+        return index == VALUE_IS_NULL;
+    }
+
+    @Override
     public Utf8Sequence getVarcharB(Record rec) {
         return utf8Value;
     }

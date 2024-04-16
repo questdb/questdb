@@ -41,6 +41,11 @@ public class GeoByteConstant extends GeoByteFunction implements ConstantFunction
         this.hash = hash;
     }
 
+    @Override
+    public boolean isNullConstant() {
+        return hash == GeoHashes.BYTE_NULL;
+    }
+
     public byte getGeoByte(Record rec) {
         return hash;
     }

@@ -50,4 +50,9 @@ public class DateConstant extends DateFunction implements ConstantFunction {
     public void toPlan(PlanSink sink) {
         sink.val(value);
     }
+
+    @Override
+    public boolean isNullConstant() {
+        return value == Numbers.LONG_NaN;
+    }
 }

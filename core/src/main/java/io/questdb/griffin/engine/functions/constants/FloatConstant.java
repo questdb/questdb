@@ -46,6 +46,13 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean isNullConstant() {
+        // NaN is used as a marker for NULL
+        // we can't use value != value because it will always be false
+        return value != value;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val((double) value).val('f');
     }

@@ -37,6 +37,18 @@ import org.junit.Test;
 public class InsertCastTest extends AbstractCairoTest {
 
     @Test
+    public void testNullStringToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab(ts timestamp) timestamp(ts)");
+            try {
+                insert("insert into tab values(null::string)");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "insert statement must populate timestamp");
+            }
+        });
+    }
+
+    @Test
     public void testCastByteToCharBind() throws Exception {
         assertMemoryLeak(() -> {
             // insert table
