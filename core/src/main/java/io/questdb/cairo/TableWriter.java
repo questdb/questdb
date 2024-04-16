@@ -5580,9 +5580,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             populateDenseIndexerList();
             LOG.info().$("switched partition [path='").$(path).$('\'').I$();
-            if (Utf8s.endsWithAscii(path, "26.9")) {
-                System.out.println("of interest");
-            }
         } catch (Throwable e) {
             distressed = true;
             throw e;
@@ -6935,7 +6932,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
             long timestamp = txWriter.getPartitionTimestampByIndex(i);
             long partitionTxn = txWriter.getPartitionNameTxn(i);
-            partitionRemoveCandidates.add(timestamp, partitionTxn);///tmp/junit7562354284751454754/dbRoot
+            partitionRemoveCandidates.add(timestamp, partitionTxn);
         }
     }
 
