@@ -129,7 +129,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             try {
                 partFd = TableUtils.openRO(ff, path, LOG);
                 long fileReadOffset = (prevTxn % partTransactionCount) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET_40;
-                long buff = Unsafe.malloc(8, MemoryTag.MMAP_SEQUENCER_METADATA);
+                long buff = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
                 try {
                     if (ff.read(partFd, buff, 8, fileReadOffset) != 8) {
                         return -1;
@@ -137,7 +137,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                     long structureVersion = Unsafe.getUnsafe().getLong(buff);
                     return structureVersion & STRUCTURE_VERSION_MASK;
                 } finally {
-                    Unsafe.free(buff, 8, MemoryTag.MMAP_SEQUENCER_METADATA);
+                    Unsafe.free(buff, 8, MemoryTag.NATIVE_DEFAULT);
                 }
             } finally {
                 if (partFd > -1) {
@@ -364,7 +364,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         private long partId = -1;
         private long partMapSize;
         private int partTransactionCount;
-        private Path rootPath;
+        private final Path rootPath;
         private long txn = -2;
         private long txnCount = -1;
         private long txnLo;
