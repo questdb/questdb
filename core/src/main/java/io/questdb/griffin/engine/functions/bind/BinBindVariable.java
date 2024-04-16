@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
 
 public class BinBindVariable extends BinFunction implements ScalarFunction {
-    private final BinarySequence value;
+    BinarySequence value;
 
     public BinBindVariable(BinarySequence value) {
         this.value = value;
