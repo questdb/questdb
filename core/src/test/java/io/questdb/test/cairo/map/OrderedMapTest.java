@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -91,12 +91,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putTimestamp(rnd.nextLong());
                     key.putShort(rnd.nextShort());
                     Long256Impl long256 = new Long256Impl();
-                    long256.setAll(
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong()
-                    );
+                    long256.fromRnd(rnd);
                     key.putLong256(long256);
 
                     MapValue value = key.createValue();
@@ -133,12 +128,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putTimestamp(rnd.nextLong());
                     key.putShort(rnd.nextShort());
                     Long256Impl long256 = new Long256Impl();
-                    long256.setAll(
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong()
-                    );
+                    long256.fromRnd(rnd);
                     key.putLong256(long256);
 
                     MapValue value = key.createValue();
@@ -1171,12 +1161,12 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)) {
                 final int N = 100000;
-                final IntList keyHashCodes = new IntList(N);
+                final LongList keyHashCodes = new LongList(N);
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     key.putInt(i);
                     key.putLong(i + 1);
-                    int hashCode = key.hash();
+                    long hashCode = key.hash();
                     keyHashCodes.add(hashCode);
 
                     MapValue value = key.createValue(hashCode);
@@ -1184,7 +1174,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     value.putLong(0, i + 2);
                 }
 
-                final IntList recordHashCodes = new IntList(N);
+                final LongList recordHashCodes = new LongList(N);
                 RecordCursor cursor = map.getCursor();
                 MapRecord record = map.getRecord();
                 while (cursor.hasNext()) {
@@ -1208,13 +1198,13 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)) {
                 final int N = 100000;
-                final IntList keyHashCodes = new IntList(N);
+                final LongList keyHashCodes = new LongList(N);
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     key.putInt(i);
                     key.putStr(Chars.repeat("a", i % 32));
                     key.commit();
-                    int hashCode = key.hash();
+                    long hashCode = key.hash();
                     keyHashCodes.add(hashCode);
 
                     MapValue value = key.createValue(hashCode);
@@ -1222,7 +1212,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     value.putLong(0, i + 2);
                 }
 
-                final IntList recordHashCodes = new IntList(N);
+                final LongList recordHashCodes = new LongList(N);
                 RecordCursor cursor = map.getCursor();
                 MapRecord record = map.getRecord();
                 while (cursor.hasNext()) {
@@ -2000,16 +1990,18 @@ public class OrderedMapTest extends AbstractCairoTest {
             if ((rnd.nextPositiveInt() % 4) == 0) {
                 Assert.assertNull(record.getStrA(col));
                 Assert.assertEquals(-1, record.getStrLen(col++));
-                Assert.assertNull(record.getVarcharA(col++));
+                Assert.assertNull(record.getVarcharA(col));
+                Assert.assertEquals(-1, record.getVarcharSize(col++));
             } else {
                 CharSequence expected = rnd.nextChars(rnd.nextPositiveInt() % 32);
                 TestUtils.assertEquals(expected, record.getStrA(col++));
                 utf8Sink.clear();
                 rnd.nextUtf8Str(rnd.nextPositiveInt() % 32, utf8Sink);
-                Utf8Sequence varchar = record.getVarcharA(col++);
+                Utf8Sequence varchar = record.getVarcharA(col);
                 Assert.assertNotNull(varchar);
                 Assert.assertFalse(varchar.isAscii());
                 TestUtils.assertEquals(utf8Sink, varchar);
+                Assert.assertEquals(varchar.size(), record.getVarcharSize(col++));
             }
 
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
@@ -2017,12 +2009,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextLong(), record.getTimestamp(col++));
             Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
             Long256Impl long256 = new Long256Impl();
-            long256.setAll(
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong()
-            );
+            long256.fromRnd(rnd);
             Assert.assertEquals(long256, record.getLong256A(col++));
             Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
             Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));

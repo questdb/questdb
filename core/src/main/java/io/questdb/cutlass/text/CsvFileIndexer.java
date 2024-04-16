@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,6 +61,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
     public static final long INDEX_ENTRY_SIZE = 2 * Long.BYTES;
     public static final CharSequence INDEX_FILE_NAME = "index.m";
     private static final Log LOG = LogFactory.getLog(CsvFileIndexer.class);
+    private static final long MASK_CR = SwarUtils.broadcast((byte) '\r');
+    private static final long MASK_NEW_LINE = SwarUtils.broadcast((byte) '\n');
+    private static final long MASK_QUOTE = SwarUtils.broadcast((byte) '"');
     // A guess at how long could a timestamp string be, including long day, month name, etc.
     // since we're only interested in timestamp field/col there's no point buffering whole line
     // we'll copy field part to buffer only if current field is designated timestamp
@@ -85,6 +88,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private boolean cancelled = false;
     private @Nullable ExecutionCircuitBreaker circuitBreaker;
     private byte columnDelimiter;
+    private long columnDelimiterMask;
     private boolean delayedOutQuote;
     private boolean eol;
     private int errorCount = 0;
@@ -168,6 +172,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.partitionFloorMethod = null;
         this.partitionDirFormatMethod = null;
         this.columnDelimiter = -1;
+        this.columnDelimiterMask = 0;
 
         closeOutputFiles();
         closeSortBuffer();
@@ -265,7 +270,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     public void indexLine(long ptr, long lo) throws TextException {
-        //this is fine because Long.MIN_VALUE is treated as null and would be rejected by partitioned tables
+        // this is fine because Long.MIN_VALUE is treated as null and would be rejected by partitioned tables
         if (timestampValue == Long.MIN_VALUE) {
             return;
         }
@@ -326,6 +331,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
         this.offset = 0;
         this.columnDelimiter = columnDelimiter;
+        this.columnDelimiterMask = SwarUtils.broadcast(columnDelimiter);
         if (timestampIndex < 0) {
             throw TextException.$("Timestamp index is not set [value=").put(timestampIndex).put(']');
         }
@@ -482,15 +488,31 @@ public class CsvFileIndexer implements Closeable, Mutable {
         long ptr = lo;
 
         while (ptr < hi) {
-            final byte c = Unsafe.getUnsafe().getByte(ptr++);
+            if (!rollBufferUnusable && !useFieldRollBuf && !delayedOutQuote && ptr < hi - 7) {
+                long word = Unsafe.getUnsafe().getLong(ptr);
+                long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
+                        | SwarUtils.markZeroBytes(word ^ MASK_CR)
+                        | SwarUtils.markZeroBytes(word ^ MASK_QUOTE)
+                        | SwarUtils.markZeroBytes(word ^ columnDelimiterMask);
+                if (zeroBytesWord == 0) {
+                    ptr += 7;
+                    this.fieldHi += 7;
+                    continue;
+                } else {
+                    int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                    ptr += firstIndex;
+                    this.fieldHi += firstIndex;
+                }
+            }
 
+            final byte b = Unsafe.getUnsafe().getByte(ptr++);
             if (rollBufferUnusable) {
-                eol(ptr, c);
+                eol(ptr, b);
                 continue;
             }
 
             if (useFieldRollBuf) {
-                putToRollBuf(c);
+                putToRollBuf(b);
                 if (rollBufferUnusable) {
                     continue;
                 }
@@ -498,16 +520,16 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
             this.fieldHi++;
 
-            if (delayedOutQuote && c != '"') {
+            if (delayedOutQuote && b != '"') {
                 inQuote = delayedOutQuote = false;
             }
 
-            if (c == columnDelimiter) {
+            if (b == columnDelimiter) {
                 onColumnDelimiter(lo, ptr);
-            } else if (c == '"') {
+            } else if (b == '"') {
                 checkEol(lo);
                 onQuote();
-            } else if (c == '\n' || c == '\r') {
+            } else if (b == '\n' || b == '\r') {
                 onLineEnd(ptr, lo);
             } else {
                 checkEol(lo);
@@ -561,7 +583,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
     }
 
-    //roll timestamp field if it's split over  read buffer boundaries
+    // roll timestamp field if it's split over read buffer boundaries
     private void rollField(long hi) {
         // lastLineStart is an offset from 'lo'
         // 'lo' is the address of incoming buffer
@@ -594,9 +616,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private void stashField(int fieldIndex, long ptr) {
         if (fieldIndex == timestampIndex && !header) {
             if (lastQuotePos > -1) {
-                timestampField.of(this.fieldLo, lastQuotePos - 1);
+                timestampField.of(fieldLo, lastQuotePos - 1);
             } else {
-                timestampField.of(this.fieldLo, this.fieldHi - 1);
+                timestampField.of(fieldLo, fieldHi - 1);
             }
 
             parseTimestamp();
@@ -652,7 +674,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         final MemoryPMARImpl memory;
         final long partitionKey;
         int chunkNumber;
-        long dataSize;//partition data size in bytes
+        long dataSize; // partition data size in bytes
         long indexChunkSize;
 
         IndexOutputFile(FilesFacade ff, Path path, long partitionKey) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,6 +45,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
@@ -1610,7 +1611,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         }
                     }
                 }
-                TableUtils.clearThreadLocals();
+                Path.clearThreadLocals();
                 doneLatch.countDown();
             }).start();
 
@@ -1866,7 +1867,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
 
         if (ioPool == writerPool) {
-            O3Utils.setupWorkerPool(ioPool, engine, null);
+            WorkerPoolUtils.setupWriterJobs(ioPool, engine);
         }
         ioPool.start(LOG);
         if (ioPool != writerPool) {
@@ -1920,7 +1921,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             //expected
         } finally {
             finished.await();
-            TableUtils.clearThreadLocals();
+            Path.clearThreadLocals();
         }
     }
 

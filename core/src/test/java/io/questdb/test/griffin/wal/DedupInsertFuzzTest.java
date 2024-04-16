@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,11 +31,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
-import io.questdb.cairo.LogRecordSinkAdapter;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
@@ -669,7 +668,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             );
             compile(alterStatement);
 
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
+            WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
             sharedWorkerPool.start(LOG);
 
             try {
@@ -717,7 +716,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameDedup, rnd, start, end);
 
             transactions = uniqueInserts(transactions);
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
+            WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
             sharedWorkerPool.start(LOG);
 
             try {

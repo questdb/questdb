@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,11 +33,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.*;
-import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
-import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
-import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -700,9 +698,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         ) {
             sqlExecutionContext.with(circuitBreaker);
             if (pool != null) {
-                pool.assign(new GroupByVectorAggregateJob(engine.getMessageBus()));
-                pool.assign(new GroupByMergeShardJob(engine.getMessageBus()));
-                pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
+                WorkerPoolUtils.setupQueryJobs(pool, engine, null);
                 pool.start(LOG);
             }
 

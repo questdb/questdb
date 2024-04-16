@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -67,7 +67,13 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPos,
+            CairoConfiguration config,
+            SqlExecutionContext context
+    ) {
         return new SizePretty(args.getQuick(0));
     }
 
@@ -100,11 +106,16 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
             return getStr0(size.getLong(rec), sinkB);
         }
 
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
         @Nullable
-        private StringSink getStr0(long s, StringSink sinkA) {
+        private StringSink getStr0(long s, StringSink sink) {
             if (s != Numbers.LONG_NaN) {
-                toSizePretty(sinkA, s);
-                return sinkA;
+                toSizePretty(sink, s);
+                return sink;
             }
             return null;
         }

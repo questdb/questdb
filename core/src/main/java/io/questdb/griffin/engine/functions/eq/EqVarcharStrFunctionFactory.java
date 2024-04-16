@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,12 +56,12 @@ public class EqVarcharStrFunctionFactory implements FunctionFactory {
         return newInstance(str, varchar);
     }
 
-    private Function createStrConstantFunc(Function constFunc, Function varFunc) {
-        Utf8Sequence constValue = constFunc.getVarcharA(null);
+    private Function createStrConstantFunc(Function constVarcharFunc, Function varStrFunc) {
+        Utf8Sequence constValue = constVarcharFunc.getVarcharA(null);
         if (constValue == null) {
-            return new EqStrFunctionFactory.NullCheckFunc(varFunc);
+            return new EqStrFunctionFactory.NullCheckFunc(varStrFunc);
         }
-        return new EqStrFunctionFactory.ConstCheckFunc(varFunc, Utf8s.toString(constValue));
+        return new EqStrFunctionFactory.ConstCheckFunc(varStrFunc, Utf8s.toString(constValue));
     }
 
     private Function createVarcharConstantFunc(Function a, Function b) {
@@ -69,7 +69,7 @@ public class EqVarcharStrFunctionFactory implements FunctionFactory {
         if (constValue == null) {
             return new EqVarcharFunctionFactory.NullCheckFunc(b);
         }
-        Utf8String utf8ConstValue = constValue == null ? null : new Utf8String(constValue);
+        Utf8String utf8ConstValue = new Utf8String(constValue);
         return new EqVarcharFunctionFactory.ConstCheckFunc(b, utf8ConstValue);
     }
 

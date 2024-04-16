@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -398,18 +398,18 @@ public class IPv4Test extends AbstractCairoTest {
                         "2.2.76.40\t167\tNOT NULL\n" +
                         "2.2.95.15\t803\tNOT NULL\n" +
                         "2.2.45.145\t182\tNOT NULL\n" +
-                        "\t647\tNULL\n" +
+                        "\t647\tNOT NULL\n" +
                         "2.2.249.199\t203\tNOT NULL\n" +
-                        "\t827\tNULL\n" +
+                        "\t827\tNOT NULL\n" +
                         "2.2.170.235\t987\tNOT NULL\n" +
                         "2.2.184.81\t614\tNOT NULL\n" +
                         "2.2.213.108\t539\tNOT NULL\n" +
                         "2.2.47.76\t585\tNOT NULL\n" +
-                        "\t16\tNULL\n" +
+                        "\t16\tNOT NULL\n" +
                         "2.2.129.200\t981\tNOT NULL\n" +
                         "2.2.171.12\t313\tNOT NULL\n" +
                         "2.2.253.254\t297\tNOT NULL\n" +
-                        "\t773\tNULL\n" +
+                        "\t773\tNOT NULL\n" +
                         "2.2.227.50\t411\tNOT NULL\n" +
                         "2.2.12.210\t95\tNOT NULL\n" +
                         "2.2.205.4\t916\tNOT NULL\n" +
@@ -417,7 +417,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "2.2.183.179\t369\tNOT NULL\n" +
                         "2.2.220.75\t12\tNOT NULL\n" +
                         "2.2.157.48\t613\tNOT NULL\n" +
-                        "\t114\tNULL\n" +
+                        "\t114\tNOT NULL\n" +
                         "2.2.52.211\t678\tNOT NULL\n" +
                         "2.2.35.79\t262\tNOT NULL\n" +
                         "2.2.207.241\t497\tNOT NULL\n" +
@@ -433,9 +433,9 @@ public class IPv4Test extends AbstractCairoTest {
                         "2.2.167.123\t849\tNOT NULL\n" +
                         "2.2.2.123\t941\tNOT NULL\n" +
                         "2.2.140.124\t551\tNOT NULL\n" +
-                        "\t343\tNULL\n" +
-                        "\t77\tNULL\n" +
-                        "\t519\tNULL\n" +
+                        "\t343\tNOT NULL\n" +
+                        "\t77\tNOT NULL\n" +
+                        "\t519\tNOT NULL\n" +
                         "2.2.15.163\t606\tNOT NULL\n" +
                         "2.2.245.83\t446\tNOT NULL\n" +
                         "2.2.204.60\t835\tNOT NULL\n" +
@@ -467,18 +467,18 @@ public class IPv4Test extends AbstractCairoTest {
                         "2.2.76.40\t167\tNOT NULL\n" +
                         "2.2.95.15\t803\tNOT NULL\n" +
                         "2.2.45.145\t182\tNOT NULL\n" +
-                        "\t647\tNULL\n" +
+                        "\t647\tNOT NULL\n" +
                         "2.2.249.199\t203\tNOT NULL\n" +
-                        "\t827\tNULL\n" +
+                        "\t827\tNOT NULL\n" +
                         "2.2.170.235\t987\tNOT NULL\n" +
                         "2.2.184.81\t614\tNOT NULL\n" +
                         "2.2.213.108\t539\tNOT NULL\n" +
                         "2.2.47.76\t585\tNOT NULL\n" +
-                        "\t16\tNULL\n" +
+                        "\t16\tNOT NULL\n" +
                         "2.2.129.200\t981\tNOT NULL\n" +
                         "2.2.171.12\t313\tNOT NULL\n" +
                         "2.2.253.254\t297\tNOT NULL\n" +
-                        "\t773\tNULL\n" +
+                        "\t773\tNOT NULL\n" +
                         "2.2.227.50\t411\tNOT NULL\n" +
                         "2.2.12.210\t95\tNOT NULL\n" +
                         "2.2.205.4\t916\tNOT NULL\n" +
@@ -486,7 +486,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "2.2.183.179\t369\tNOT NULL\n" +
                         "2.2.220.75\t12\tNOT NULL\n" +
                         "2.2.157.48\t613\tNOT NULL\n" +
-                        "\t114\tNULL\n" +
+                        "\t114\tNOT NULL\n" +
                         "2.2.52.211\t678\tNOT NULL\n" +
                         "2.2.35.79\t262\tNOT NULL\n" +
                         "2.2.207.241\t497\tNOT NULL\n" +
@@ -502,9 +502,9 @@ public class IPv4Test extends AbstractCairoTest {
                         "2.2.167.123\t849\tNOT NULL\n" +
                         "2.2.2.123\t941\tNOT NULL\n" +
                         "2.2.140.124\t551\tNOT NULL\n" +
-                        "\t343\tNULL\n" +
-                        "\t77\tNULL\n" +
-                        "\t519\tNULL\n" +
+                        "\t343\tNOT NULL\n" +
+                        "\t77\tNOT NULL\n" +
+                        "\t519\tNOT NULL\n" +
                         "2.2.15.163\t606\tNOT NULL\n" +
                         "2.2.245.83\t446\tNOT NULL\n" +
                         "2.2.204.60\t835\tNOT NULL\n" +
@@ -4274,6 +4274,102 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexedBindVariableInContainsEqFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "255.255.255.255/31");
+            assertSql(
+                    "b\n" +
+                            "255.255.255.255\n",
+                    "x where b <<= $1"
+            );
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInContainsEqFilterInvalidValue() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
+            assertException("x where b <<= $1", 14, "invalid argument: foobar");
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInContainsEqFilterNull() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4, a int)");
+            insert("insert into x values('127.0.0.1', 0)");
+            insert("insert into x values('192.168.0.1', 1)");
+            insert("insert into x values('255.255.255.255', 2)");
+            insert("insert into x values(null, 3)");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, null);
+            assertSql(
+                    "b\ta\n",
+                    "x where b <<= $1"
+            );
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInContainsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "255.255.255.255/31");
+            assertSql(
+                    "b\n" +
+                            "255.255.255.255\n",
+                    "x where b << $1"
+            );
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInContainsFilterInvalidValue() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
+            assertException("x where b << $1", 13, "invalid argument: foobar");
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInContainsFilterNull() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4, a int)");
+            insert("insert into x values('127.0.0.1', 0)");
+            insert("insert into x values('192.168.0.1', 1)");
+            insert("insert into x values('255.255.255.255', 2)");
+            insert("insert into x values(null, 3)");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, null);
+            assertSql(
+                    "b\ta\n",
+                    "x where b << $1"
+            );
+        });
+    }
+
+    @Test
     public void testIndexedBindVariableInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x (b ipv4)");
@@ -4323,6 +4419,102 @@ public class IPv4Test extends AbstractCairoTest {
                     "b\n" +
                             "255.255.255.255\n",
                     "x where $1 < b"
+            );
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInNegContainsEqFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "255.255.255.255/31");
+            assertSql(
+                    "b\n" +
+                            "255.255.255.255\n",
+                    "x where $1 >>= b"
+            );
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInNegContainsEqFilterInvalidValue() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
+            assertException("x where $1 >>= b", 8, "invalid argument: foobar");
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInNegContainsEqFilterNull() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4, a int)");
+            insert("insert into x values('127.0.0.1', 0)");
+            insert("insert into x values('192.168.0.1', 1)");
+            insert("insert into x values('255.255.255.255', 2)");
+            insert("insert into x values(null, 3)");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, null);
+            assertSql(
+                    "b\ta\n",
+                    "x where $1 >>= b"
+            );
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInNegContainsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "255.255.255.255/31");
+            assertSql(
+                    "b\n" +
+                            "255.255.255.255\n",
+                    "x where $1 >> b"
+            );
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInNegContainsFilterInvalidValue() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
+            assertException("x where $1 >> b", 8, "invalid argument: foobar");
+        });
+    }
+
+    @Test
+    public void testIndexedBindVariableInNegContainsFilterNull() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4, a int)");
+            insert("insert into x values('127.0.0.1', 0)");
+            insert("insert into x values('192.168.0.1', 1)");
+            insert("insert into x values('255.255.255.255', 2)");
+            insert("insert into x values(null, 3)");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, null);
+            assertSql(
+                    "b\ta\n",
+                    "x where $1 >> b"
             );
         });
     }
@@ -4659,7 +4851,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testInvalidConstantInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4, a string)");
+            ddl("create table x (b ipv4)");
             assertException("x where b = 'foobar'", 0, "invalid ipv4 format: foobar");
         });
     }
@@ -4870,6 +5062,42 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testNamedBindVariableInContainsEqFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr("ip", "255.255.255.255/31");
+            assertSql(
+                    "b\n" +
+                            "255.255.255.255\n",
+                    "x where b <<= :ip"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedBindVariableInContainsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr("ip", "255.255.255.255/31");
+            assertSql(
+                    "b\n" +
+                            "255.255.255.255\n",
+                    "x where b << :ip"
+            );
+        });
+    }
+
+    @Test
     public void testNamedBindVariableInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x (b ipv4)");
@@ -4924,6 +5152,42 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testNamedBindVariableInNegContainsEqFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr("ip", "255.255.255.255/31");
+            assertSql(
+                    "b\n" +
+                            "255.255.255.255\n",
+                    "x where :ip >>= b"
+            );
+        });
+    }
+
+    @Test
+    public void testNamedBindVariableInNegContainsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4)");
+            insert("insert into x values('127.0.0.1')");
+            insert("insert into x values('192.168.0.1')");
+            insert("insert into x values('255.255.255.255')");
+
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr("ip", "255.255.255.255/31");
+            assertSql(
+                    "b\n" +
+                            "255.255.255.255\n",
+                    "x where :ip >> b"
+            );
+        });
+    }
+
+    @Test
     public void testNegContainsIPv4FunctionFactoryError() throws Exception {
         ddl("create table t (ip ipv4)");
         assertException("select * from t where '1.1.1.1/35' >> ip", 22, "invalid argument: 1.1.1.1/35");
@@ -4934,7 +5198,7 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testNetmask() throws SqlException {
-        ddl("create table tipv4 ( ip ipv4)");
+        ddl("create table tipv4 (ip ipv4)");
         insert("insert into tipv4 values ('255.255.255.254')");
         assertSql("ip\n" +
                 "255.255.255.254\n", "select * from tipv4 where '255.255.255.255/31' >>= ip");
@@ -5293,6 +5557,22 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testStrColumnInContainsEqFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4, a string)");
+            assertException("x where b <<= a", 14, "STRING constant expected");
+        });
+    }
+
+    @Test
+    public void testStrColumnInContainsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4, a string)");
+            assertException("x where b << a", 13, "STRING constant expected");
+        });
+    }
+
+    @Test
     public void testStrColumnInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x (b ipv4, a string)");
@@ -5313,6 +5593,22 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x (b ipv4, a string)");
             assertException("x where b > a", 12, "STRING constant expected");
+        });
+    }
+
+    @Test
+    public void testStrColumnInNegContainsEqFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4, a string)");
+            assertException("x where a >>= b", 8, "STRING constant expected");
+        });
+    }
+
+    @Test
+    public void testStrColumnInNegContainsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (b ipv4, a string)");
+            assertException("x where a >> b", 8, "STRING constant expected");
         });
     }
 

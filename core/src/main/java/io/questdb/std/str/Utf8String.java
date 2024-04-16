@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,6 +28,9 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import java.nio.charset.StandardCharsets;
+
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED;
 
 /**
  * An immutable on-heap sequence of UTF-8 bytes.
@@ -81,12 +84,20 @@ public class Utf8String implements Utf8Sequence {
     }
 
     @Override
+    public long longAt(int offset) {
+        return Unsafe.byteArrayGetLong(bytes, offset);
+    }
+
+    @Override
     public boolean isAscii() {
         return ascii;
     }
 
-    public long longAt(int index) {
-        return Unsafe.byteArrayGetLong(bytes, index);
+    @Override
+    public long zeroPaddedSixPrefix() {
+        assert size() > VARCHAR_MAX_BYTES_FULLY_INLINED
+                : String.format("size %,d <= %d", size(), VARCHAR_MAX_BYTES_FULLY_INLINED);
+        return longAt(0) & VARCHAR_INLINED_PREFIX_MASK;
     }
 
     @Override

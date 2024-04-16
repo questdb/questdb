@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,10 +32,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -97,7 +97,7 @@ public class EmbeddedApiTest {
             try (
                     final CairoEngine engine = new CairoEngine(configuration)
             ) {
-                workerPool.assign(new GroupByVectorAggregateJob(engine.getMessageBus()));
+                WorkerPoolUtils.setupQueryJobs(workerPool, engine, null);
                 workerPool.start(log);
                 try {
                     // number of cores is current thread + workers in the pool

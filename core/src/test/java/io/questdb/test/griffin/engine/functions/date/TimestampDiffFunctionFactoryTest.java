@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,9 +26,9 @@ package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.date.TimestampDiffFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -149,6 +149,124 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     @Test
     public void testHourStartNan() throws SqlException {
         call('h', Numbers.LONG_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    }
+
+    @Test
+    public void testMicroConstantEndNaN() throws SqlException {
+        assertQuery(
+                "datediff\n" +
+                        "NaN\n" +
+                        "NaN\n",
+                "select datediff('u', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testMicroConstantSimple() throws SqlException {
+        assertQuery(
+                "datediff\n" +
+                        "31536000000000\n" +
+                        "31536000000000\n",
+                "select datediff('u', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testMicroConstantStartNaN() throws SqlException {
+        assertQuery(
+                "datediff\n" +
+                        "NaN\n" +
+                        "NaN\n",
+                "select datediff('u', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testMicroEndNan() throws SqlException {
+        call('u', 1587275364886758L, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
+    }
+
+    @Test
+    public void testMicroNegative() throws SqlException {
+        call('u', 1587275364886753L, 1587275364886758L).andAssert(5, 0.0001);
+    }
+
+    @Test
+    public void testMicroSimple() throws SqlException {
+        call('u', 1587275359886758L, 1587275359886763L).andAssert(5, 0.0001);
+    }
+
+    @Test
+    public void testMicroStartNan() throws SqlException {
+        call('u', Numbers.LONG_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    }
+
+    @Test
+    public void testMilliConstantEndNaN() throws SqlException {
+        assertQuery(
+                "datediff\n" +
+                        "NaN\n" +
+                        "NaN\n",
+                "select datediff('T', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testMilliConstantSimple() throws SqlException {
+        assertQuery(
+                "datediff\n" +
+                        "31536000000\n" +
+                        "31536000000\n",
+                "select datediff('T', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testMilliConstantStartNaN() throws SqlException {
+        assertQuery(
+                "datediff\n" +
+                        "NaN\n" +
+                        "NaN\n",
+                "select datediff('T', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testMilliEndNan() throws SqlException {
+        call('T', 1587275364886758L, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
+    }
+
+    @Test
+    public void testMilliNegative() throws SqlException {
+        call('T', 1587275364881758L, 1587275364886758L).andAssert(5, 0.0001);
+    }
+
+    @Test
+    public void testMilliSimple() throws SqlException {
+        call('T', 1587275359886758L, 1587275359891758L).andAssert(5, 0.0001);
+    }
+
+    @Test
+    public void testMilliStartNan() throws SqlException {
+        call('T', Numbers.LONG_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test

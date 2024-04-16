@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -532,11 +532,12 @@ public interface Sender extends Closeable {
          * @return this instance for method chaining
          */
         public LineSenderBuilder autoFlushIntervalMillis(int autoFlushIntervalMillis) {
-            if (this.autoFlushIntervalMillis != PARAMETER_NOT_SET_EXPLICITLY) {
+            if (this.autoFlushIntervalMillis != PARAMETER_NOT_SET_EXPLICITLY && this.autoFlushIntervalMillis != Integer.MAX_VALUE) {
                 throw new LineSenderException("auto flush interval was already configured ")
                         .put("[autoFlushIntervalMillis=").put(this.autoFlushIntervalMillis).put("]");
-            } else if (this.autoFlushRows == AUTO_FLUSH_DISABLED) {
-                throw new LineSenderException("cannot set auto flush interval when auto-flush is disabled");
+            }
+            if (this.autoFlushIntervalMillis == Integer.MAX_VALUE && autoFlushIntervalMillis != Integer.MAX_VALUE) {
+                throw new LineSenderException("cannot set auto flush interval when interval based auto-flush is already disabled");
             }
             if (autoFlushIntervalMillis <= 0) {
                 throw new LineSenderException("auto flush interval cannot be negative ")
@@ -559,6 +560,8 @@ public interface Sender extends Closeable {
          * Setting this to 1 means that the Sender will send each row to a server immediately after it is added. This
          * effectively disables batching and may lead to a significant performance degradation.
          * <br>
+         * Setting this to 0 disables row-based auto-flush. Interval-based auto-flush remains enabled.
+         * <p>
          * You cannot set this value when auto-flush is disabled. See {@link #disableAutoFlush()}.
          *
          * @param autoFlushRows maximum number of rows that can be buffered locally before they are sent to a server.
@@ -569,14 +572,14 @@ public interface Sender extends Closeable {
          * @see #autoFlushIntervalMillis(int)
          */
         public LineSenderBuilder autoFlushRows(int autoFlushRows) {
-            if (this.autoFlushRows > 0) {
+            if (this.autoFlushRows != PARAMETER_NOT_SET_EXPLICITLY && this.autoFlushRows != AUTO_FLUSH_DISABLED) {
                 throw new LineSenderException("auto flush rows was already configured ")
                         .put("[autoFlushRows=").put(this.autoFlushRows).put("]");
-            } else if (this.autoFlushRows == AUTO_FLUSH_DISABLED) {
-                throw new LineSenderException("cannot set auto flush rows when auto-flush is disabled");
+            } else if (this.autoFlushRows == AUTO_FLUSH_DISABLED && autoFlushRows != AUTO_FLUSH_DISABLED) {
+                throw new LineSenderException("cannot set auto flush rows when auto-flush is already disabled");
             }
-            if (autoFlushRows < 1) {
-                throw new LineSenderException("auto flush rows has to be positive ")
+            if (autoFlushRows < 0) {
+                throw new LineSenderException("auto flush rows cannot be negative ")
                         .put("[autoFlushRows=").put(autoFlushRows).put("]");
             }
             this.autoFlushRows = autoFlushRows;
@@ -627,7 +630,7 @@ public interface Sender extends Closeable {
                 long actualMaxRetriesNanos = retryTimeoutMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
                 long actualMinRequestThroughput = minRequestThroughput == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MIN_REQUEST_THROUGHPUT : minRequestThroughput;
                 long actualAutoFlushIntervalMillis;
-                if (autoFlushRows == AUTO_FLUSH_DISABLED) {
+                if (autoFlushIntervalMillis == Integer.MAX_VALUE) {
                     actualAutoFlushIntervalMillis = Long.MAX_VALUE;
                 } else {
                     actualAutoFlushIntervalMillis = TimeUnit.MILLISECONDS.toNanos(autoFlushIntervalMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_AUTO_FLUSH_INTERVAL_MILLIS : autoFlushIntervalMillis);
@@ -698,11 +701,17 @@ public interface Sender extends Closeable {
          * @see #maxBufferCapacity(int)
          */
         public LineSenderBuilder disableAutoFlush() {
-            if (this.autoFlushRows != -1) {
+            if (this.autoFlushRows != PARAMETER_NOT_SET_EXPLICITLY && this.autoFlushRows != AUTO_FLUSH_DISABLED) {
                 throw new LineSenderException("auto flush rows was already configured ")
                         .put("[autoFlushRows=").put(this.autoFlushRows).put("]");
             }
+            if (this.autoFlushIntervalMillis != PARAMETER_NOT_SET_EXPLICITLY && this.autoFlushIntervalMillis != Integer.MAX_VALUE) {
+                throw new LineSenderException("auto flush interval was already configured ")
+                        .put("[autoFlushIntervalMillis=").put(this.autoFlushIntervalMillis).put("]");
+            }
+
             this.autoFlushRows = AUTO_FLUSH_DISABLED;
+            this.autoFlushIntervalMillis = Integer.MAX_VALUE;
             return this;
         }
 
@@ -799,6 +808,12 @@ public interface Sender extends Closeable {
             String tcpToken = null;
             String user = null;
             String password = null;
+
+            // We need the autoFlushBytesSet and initBufSizeSet flags, because auto_flush_bytes and init_buf_size params
+            // share the same SenderBuilder field. TCP transport allows both to be set as long as they have the same
+            // value. At the same time, we want to fail when the same parameter is set twice.
+            boolean initBufSizeSet = false;
+            boolean autoFlushBytesSet = false;
             while (ConfStringParser.hasNext(configurationString, pos)) {
                 pos = ConfStringParser.nextKey(configurationString, pos, sink);
                 if (pos < 0) {
@@ -877,22 +892,58 @@ public interface Sender extends Closeable {
                     maxBufferCapacity(maxBufferSize);
                 } else if (Chars.equals("init_buf_size", sink)) {
                     pos = getValue(configurationString, pos, sink, "init_buf_size");
-                    int initBufferSize = parseIntValue(sink, "init_buf_size");
-                    bufferCapacity(initBufferSize);
+                    int initBufSize = parseIntValue(sink, "init_buf_size");
+                    if (autoFlushBytesSet) {
+                        assert protocol == PROTOCOL_TCP;
+                        if (initBufSize != bufferCapacity) {
+                            throw new LineSenderException("TCP transport requires init_buf_size and auto_flush_bytes to be set to the same value [init_buf_size=").put(initBufSize).put(", auto_flush_bytes=").put(bufferCapacity).put(']');
+                        }
+                    } else {
+                        bufferCapacity(initBufSize);
+                    }
+                    initBufSizeSet = true;
                 } else if (Chars.equals("auto_flush_rows", sink)) {
                     pos = getValue(configurationString, pos, sink, "auto_flush_rows");
-                    int autoFlushRows = parseIntValue(sink, "auto_flush_rows");
-                    if (autoFlushRows < 1) {
-                        throw new LineSenderException("invalid auto_flush_rows [value=").put(autoFlushRows).put("]");
+                    int autoFlushRows;
+                    if (Chars.equalsIgnoreCase("off", sink)) {
+                        autoFlushRows = 0;
+                    } else {
+                        autoFlushRows = parseIntValue(sink, "auto_flush_rows");
+                        if (autoFlushRows < 1) {
+                            throw new LineSenderException("invalid auto_flush_rows [value=").put(autoFlushRows).put("]");
+                        }
                     }
                     autoFlushRows(autoFlushRows);
                 } else if (Chars.equals("auto_flush_interval", sink)) {
                     pos = getValue(configurationString, pos, sink, "auto_flush_interval");
-                    int autoFlushInterval = parseIntValue(sink, "auto_flush_interval");
-                    if (autoFlushInterval < 1) {
-                        throw new LineSenderException("invalid auto_flush_interval [value=").put(autoFlushInterval).put("]");
+                    int autoFlushInterval;
+                    if (Chars.equalsIgnoreCase("off", sink)) {
+                        autoFlushInterval = Integer.MAX_VALUE;
+                    } else {
+                        autoFlushInterval = parseIntValue(sink, "auto_flush_interval");
+                        if (autoFlushInterval < 1) {
+                            throw new LineSenderException("invalid auto_flush_interval [value=").put(autoFlushInterval).put("]");
+                        }
                     }
                     autoFlushIntervalMillis(autoFlushInterval);
+                } else if (Chars.equals("auto_flush_bytes", sink)) {
+                    if (protocol != PROTOCOL_TCP) {
+                        throw new LineSenderException("auto_flush_bytes is only supported for TCP transport");
+                    }
+                    pos = getValue(configurationString, pos, sink, "auto_flush_bytes");
+                    if (Chars.equalsIgnoreCase("off", sink)) {
+                        throw new LineSenderException("TCP transport must have auto_flush_bytes enabled");
+                    } else {
+                        int autoFlushBytes = parseIntValue(sink, "auto_flush_bytes");
+                        if (initBufSizeSet) {
+                            if (autoFlushBytes != bufferCapacity) {
+                                throw new LineSenderException("TCP transport requires init_buf_size and auto_flush_bytes to be set to the same value [init_buf_size=").put(bufferCapacity).put(", auto_flush_bytes=").put(autoFlushBytes).put(']');
+                            }
+                        } else {
+                            bufferCapacity(autoFlushBytes);
+                        }
+                    }
+                    autoFlushBytesSet = true;
                 } else if (Chars.equals("auto_flush", sink)) {
                     pos = getValue(configurationString, pos, sink, "auto_flush");
                     if (Chars.equalsIgnoreCase("off", sink)) {

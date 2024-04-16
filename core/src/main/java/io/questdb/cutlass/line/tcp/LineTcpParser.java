@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -77,7 +77,7 @@ public class LineTcpParser {
 
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
 
-    private static final boolean[] controlChars;
+    private static final boolean[] controlBytes;
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final DirectUtf8String measurementName = new DirectUtf8String();
@@ -189,10 +189,9 @@ public class LineTcpParser {
 
         // Main parsing loop
         while (bufAt < bufHi) {
-            // take the byte
             byte b = Unsafe.getUnsafe().getByte(bufAt);
 
-            if (nEscapedChars == 0 && b >= 0 && !controlChars[b]) {
+            if (nEscapedChars == 0 && !controlBytes[b & 0xff]) {
                 // hot path
                 nextValueCanBeOpenQuote = false;
                 bufAt++;
@@ -265,7 +264,7 @@ public class LineTcpParser {
                     if (nextValueCanBeOpenQuote && ++nQuoteCharacters == 1) {
                         // This means that the processing resumed from "
                         // and it's allowed to start quoted value at this point
-                        bufAt += 1;
+                        bufAt++;
                         // parse quoted value
                         if (!prepareQuotedEntity(bufAt - 1, bufHi)) {
                             // parsing not successful
@@ -802,9 +801,13 @@ public class LineTcpParser {
 
     static {
         char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/'};
-        controlChars = new boolean[Byte.MAX_VALUE];
+        controlBytes = new boolean[256];
         for (char ch : chars) {
-            controlChars[ch] = true;
+            controlBytes[ch] = true;
+        }
+        // non-ascii chars require special handling
+        for (int i = 128; i < 256; i++) {
+            controlBytes[i] = true;
         }
     }
 }

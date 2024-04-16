@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -70,6 +70,7 @@ import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.FILES_RENAME_OK;
+import static io.questdb.std.Files.PAGE_SIZE;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
@@ -271,13 +272,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        if (tableToken.isSystem()) {
-            this.o3ColumnMemorySize = configuration.getSystemO3ColumnMemorySize();
-            this.dataAppendPageSize = configuration.getSystemDataAppendPageSize();
-        } else {
-            this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
-            this.dataAppendPageSize = configuration.getDataAppendPageSize();
-        }
         this.path = new Path().of(root).concat(tableToken);
         this.other = new Path().of(root).concat(tableToken);
         this.rootLen = path.size();
@@ -301,6 +295,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(rootLen);
             this.columnVersionWriter = openColumnVersionFile(configuration, path, rootLen, partitionBy != PartitionBy.NONE);
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
+
+            if (metadata.isWalEnabled()) {
+                // O3 columns will be allocated to the size of the transaction, not reason to over allocate.
+                this.o3ColumnMemorySize = (int) PAGE_SIZE;
+                if (tableToken.isSystem()) {
+                    this.dataAppendPageSize = configuration.getSystemDataAppendPageSize();
+                } else {
+                    this.dataAppendPageSize = configuration.getDataAppendPageSize();
+                }
+            } else {
+                if (tableToken.isSystem()) {
+                    this.o3ColumnMemorySize = configuration.getSystemO3ColumnMemorySize();
+                    this.dataAppendPageSize = configuration.getSystemDataAppendPageSize();
+                } else {
+                    this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
+                    this.dataAppendPageSize = configuration.getDataAppendPageSize();
+                }
+            }
+
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
             switch (todo) {
@@ -1480,6 +1493,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return walTxnDetails;
     }
 
+    public void goActive() {
+
+    }
+
+    public void goPassive() {
+        Misc.freeObjListAndKeepObjects(o3MemColumns1);
+        Misc.freeObjListAndKeepObjects(o3MemColumns2);
+    }
+
     public boolean hasO3() {
         return o3MasterRef > -1;
     }
@@ -2618,7 +2640,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void attachPartitionCheckFilesMatchVarLenColumn(
+    private void attachPartitionCheckFilesMatchVarSizeColumn(
             long partitionSize,
             long columnTop,
             String columnName,
@@ -2626,7 +2648,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Path partitionPath,
             long partitionTimestamp,
             int columnIndex,
-            int columnType) throws CairoException {
+            int columnType
+    ) throws CairoException {
         long columnSize = partitionSize - columnTop;
         if (columnSize == 0) {
             return;
@@ -2897,7 +2920,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (ColumnType.isSymbol(type)) {
                         attachPartitionCheckSymbolColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
                     } else if (ColumnType.isVarSize(type)) {
-                        attachPartitionCheckFilesMatchVarLenColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex, columnType);
+                        attachPartitionCheckFilesMatchVarSizeColumn(partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex, columnType);
                     } else if (ColumnType.isFixedSize(type)) {
                         attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
                     } else {
@@ -3524,7 +3547,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             o3srcAuxMem.addressOf(committedAuxOffset),
                             0,
                             copyRowCount - 1, // inclusive
-                            Math.abs(o3dstAuxAddr)
+                            Math.abs(o3dstAuxAddr),
+                            o3dstAuxSize
                     );
                 } finally {
                     mapAppendColumnBufferRelease(o3dstAuxAddr, o3dstAuxOffset, o3dstAuxSize);
@@ -3812,7 +3836,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long o3auxMemAppendOffset = o3auxMem.getAppendOffset();
 
                     // ensure memory is available
-                    o3auxMem.jumpTo(o3auxMemAppendOffset + columnTypeDriver.getAuxVectorOffset(transientRowsAdded));
+                    long offsetLimit = o3auxMemAppendOffset + columnTypeDriver.getAuxVectorOffset(transientRowsAdded);
+                    o3auxMem.jumpTo(offsetLimit);
                     long colAuxMemAddr = colAuxMem.map(colAuxMemOffset, colAuxMemRequiredSize);
                     boolean locallyMapped = colAuxMemAddr == 0;
 
@@ -3827,13 +3852,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     colDataOffset = columnTypeDriver.getDataVectorOffset(colAuxMemAddr + alignedExtraLen, 0);
+                    long dstAddr = o3auxMem.addressOf(o3auxMemAppendOffset) - columnTypeDriver.getMinAuxVectorSize();
+                    long dstAddrLimit = o3auxMem.addressOf(offsetLimit);
+                    long dstAddrSize = dstAddrLimit - dstAddr;
+
                     columnTypeDriver.shiftCopyAuxVector(
                             colDataOffset - o3dataOffset,
-                            // add one row to where we shift from
-                            colAuxMemAddr + alignedExtraLen + columnTypeDriver.getMinAuxVectorSize(),
+                            colAuxMemAddr + alignedExtraLen,
                             0,
                             transientRowsAdded - 1, // inclusive
-                            o3auxMem.addressOf(o3auxMemAppendOffset)
+                            dstAddr,
+                            dstAddrSize
                     );
 
                     if (locallyMapped) {
@@ -3949,16 +3978,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     // adjust append position of the index column to
                     // maintain n+1 number of entries
-                    dstAuxMem.jumpTo(columnTypeDriver.getAuxVectorSize(existingLagRows + copyToLagRowCount));
+                    long rowLimit = columnTypeDriver.getAuxVectorSize(existingLagRows + copyToLagRowCount);
+                    dstAuxMem.jumpTo(rowLimit);
 
                     // move count + 1 rows, to make sure index column remains n+1
                     // the data is copied back to start of the buffer, no need to set dataSize first
+                    long dstAddr = dstAuxMem.addressOf(columnTypeDriver.getAuxVectorOffset(existingLagRows));
+                    long dstAddrLimit = dstAuxMem.addressOf(rowLimit);
+                    long dstAddrSize = dstAddrLimit - dstAddr;
                     columnTypeDriver.shiftCopyAuxVector(
                             dataOffset - destOffset,
                             srcAuxMem.addressOf(columnTypeDriver.getAuxVectorOffset(columnDataRowOffset)),
                             0,
                             copyToLagRowCount - 1, // inclusive
-                            dstAuxMem.addressOf(columnTypeDriver.getAuxVectorOffset(existingLagRows))
+                            dstAddr,
+                            dstAddrSize
                     );
                     dstDataMem.jumpTo(destOffset + dataSize);
                     assert srcDataMem.size() >= dataSize;
@@ -5796,7 +5830,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", append=").$(append)
                             .$(", pCount=").$(pCount)
                             .$(", flattenTimestamp=").$(flattenTimestamp)
-                            .$(", memUsed=").$(Unsafe.getMemUsed())
+                            .$(", memUsed=").$size(Unsafe.getMemUsed())
+                            .$(", rssMemUsed=").$size(Unsafe.getRssMemUsed())
                             .I$();
 
                     if (partitionIsReadOnly) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -4410,7 +4410,7 @@ public class SqlOptimiser implements Mutable {
 
                 for (int i = 0, n = model.getColumns().size(); i < n; i++) {
                     QueryColumn column = model.getColumns().getQuick(i);
-                    if (Chars.endsWith(column.getAst().token, '*')) {
+                    if (column.getAst().isWildcard()) {
                         throw SqlException.$(column.getAst().position, "wildcard column select is not allowed in sample-by queries");
                     }
                 }
@@ -4848,7 +4848,7 @@ public class SqlOptimiser implements Mutable {
                 // select count(*) from t  returns 0  but
                 // select count(*) from t group by 12+3 returns empty result
                 // if we removed 12+3 then we'd affect result
-                else if (!(isEffectivelyConstantExpression(node) && i > 0)) {
+                else if (!(isEffectivelyConstantExpression(node) && n > 1)) {
                     // add expression
                     // if group by element is an expression then we've to use inner model to compute it
                     useInnerModel = true;

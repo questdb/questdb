@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -86,7 +86,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
                 lo = Numbers.LONG_NaN;
                 hi = Numbers.LONG_NaN;
             }
-            final int index = setA.of(ptr).keyIndex(lo, hi);
+            final long index = setA.of(ptr).keyIndex(lo, hi);
             if (index >= 0) {
                 setA.addAt(index, lo, hi);
                 mapValue.addLong(valueIndex, 1);

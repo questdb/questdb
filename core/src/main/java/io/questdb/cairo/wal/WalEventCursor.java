@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -227,7 +227,7 @@ public class WalEventCursor {
     }
 
     private Utf8Sequence readVarchar() {
-        Utf8Sequence seq = VarcharTypeDriver.getValue(eventMem, offset, 1);
+        Utf8Sequence seq = VarcharTypeDriver.getPlainValue(eventMem, offset, 1);
         if (seq == null) {
             offset += Integer.BYTES;
             return null;

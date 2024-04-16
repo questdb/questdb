@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -102,7 +102,7 @@ namespace questdb::avx2 {
         }
     }
 
-    //https://stackoverflow.com/questions/36932240/avx2-what-is-the-most-efficient-way-to-pack-left-based-on-a-mask
+    // https://stackoverflow.com/questions/36932240/avx2-what-is-the-most-efficient-way-to-pack-left-based-on-a-mask
     inline Ymm compress_register(Compiler &c, const Ymm &ymm0, const Ymm &mask) {
         c.comment("compress_register");
         x86::Gp bits = to_bits32(c, mask);
@@ -742,28 +742,27 @@ namespace questdb::avx2 {
         Xmm xmm5 = c.newXmm();
         Xmm xmm6 = c.newXmm();
 
-
-        c.vxorpd( xmm1, xmm1, xmm1);
-        c.vxorpd( xmm2, xmm2, xmm2);
-        c.vxorpd( xmm3, xmm3, xmm3);
-        c.vxorpd( xmm4, xmm4, xmm4);
+        c.vxorpd(xmm1, xmm1, xmm1);
+        c.vxorpd(xmm2, xmm2, xmm2);
+        c.vxorpd(xmm3, xmm3, xmm3);
+        c.vxorpd(xmm4, xmm4, xmm4);
 
         Mem mem = c.newStack(32, 32);
-        c.vmovdqu( mem, rhs);
+        c.vmovdqu(mem, rhs);
         mem.setSize(8);
-        c.vcvtsi2sd( xmm1, xmm1, mem);
+        c.vcvtsi2sd(xmm1, xmm1, mem);
         mem.addOffset(8);
-        c.vcvtsi2sd( xmm2, xmm2, mem);
+        c.vcvtsi2sd(xmm2, xmm2, mem);
         mem.addOffset(8);
-        c.vcvtsi2sd( xmm3, xmm3, mem);
+        c.vcvtsi2sd(xmm3, xmm3, mem);
         mem.addOffset(8);
-        c.vcvtsi2sd( xmm4, xmm4, mem);
+        c.vcvtsi2sd(xmm4, xmm4, mem);
 
-        c.vunpcklpd( xmm5, xmm1, xmm2);
-        c.vunpcklpd( xmm6, xmm3, xmm4);
-        c.vinsertf128( dst, xmm5.ymm(), xmm6, 1);
-        //c.vzeroupper();
-        if(null_check) {
+        c.vunpcklpd(xmm5, xmm1, xmm2);
+        c.vunpcklpd(xmm6, xmm3, xmm4);
+        c.vinsertf128(dst, xmm5.ymm(), xmm6, 1);
+
+        if (null_check) {
             Ymm int_nulls_mask = cmp_eq_null(c, data_type_t::i64, rhs);
             Ymm nans = c.newYmm();
             c.vmovups(nans, vec_double_null(c));

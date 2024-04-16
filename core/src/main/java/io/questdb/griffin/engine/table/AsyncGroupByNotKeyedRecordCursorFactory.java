@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -252,13 +252,13 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             PageFrameReduceTask task
     ) {
         task.populateJitData();
-        final DirectLongList columns = task.getColumns();
-        final DirectLongList varLenIndexes = task.getVarLenIndexes();
+        final DirectLongList data = task.getData();
+        final DirectLongList varSizeAux = task.getVarSizeAux();
         final DirectLongList rows = task.getFilteredRows();
         long hi = compiledFilter.call(
-                columns.getAddress(),
-                columns.size(),
-                varLenIndexes.getAddress(),
+                data.getAddress(),
+                data.size(),
+                varSizeAux.getAddress(),
                 bindVarMemory.getAddress(),
                 bindVarFunctions.size(),
                 rows.getAddress(),

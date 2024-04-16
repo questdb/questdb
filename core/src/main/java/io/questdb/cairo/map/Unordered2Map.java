@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -140,7 +140,7 @@ public class Unordered2Map implements Map, Reopenable {
     }
 
     @Override
-    public final void close() {
+    public void close() {
         if (memStart != 0) {
             memStart = memLimit = Unsafe.free(memStart, entrySize * TABLE_SIZE, memoryTag);
             keyMemStart = Unsafe.free(keyMemStart, KEY_SIZE, memoryTag);
@@ -312,7 +312,7 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
-        public MapValue createValue(int hashCode) {
+        public MapValue createValue(long hashCode) {
             return createValue();
         }
 
@@ -332,7 +332,7 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
-        public int hash() {
+        public long hash() {
             return 0; // no-op
         }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,22 +24,27 @@
 
 package io.questdb.cairo;
 
-import io.questdb.MessageBus;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cairo.sql.async.PageFrameReduceJob;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Vect;
 
 public class O3Utils {
 
     private static final Log LOG = LogFactory.getLog(O3Utils.class);
 
-    public static void copyFixedSizeCol(FilesFacade ff, long srcAddr, long srcLo, long dstAddr, long dstFixFileOffset, int dstFd, boolean mixedIOFlag, long len, int shl) {
+    public static void copyFixedSizeCol(
+            FilesFacade ff,
+            long srcAddr,
+            long srcLo,
+            long dstAddr,
+            long dstFixFileOffset,
+            int dstFd,
+            boolean mixedIOFlag,
+            long len,
+            int shl
+    ) {
         final long fromAddress = srcAddr + (srcLo << shl);
         if (mixedIOFlag) {
             if (ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset) != len) {
@@ -48,49 +53,6 @@ public class O3Utils {
             }
         } else {
             Vect.memcpy(dstAddr, fromAddress, len);
-        }
-    }
-
-    public static void setupWorkerPool(
-            WorkerPool workerPool,
-            CairoEngine cairoEngine,
-            @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration
-    ) throws SqlException {
-        final MessageBus messageBus = cairoEngine.getMessageBus();
-        final int workerCount = workerPool.getWorkerCount();
-        final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(
-                messageBus,
-                cairoEngine.getSnapshotAgent(),
-                workerPool.getWorkerCount()
-        );
-        workerPool.assign(purgeDiscoveryJob);
-
-        // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
-        if (!cairoEngine.getConfiguration().disableColumnPurgeJob()) {
-            final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine);
-            workerPool.freeOnExit(columnPurgeJob);
-            workerPool.assign(columnPurgeJob);
-        }
-
-        workerPool.assign(new O3PartitionJob(messageBus));
-        workerPool.assign(new O3OpenColumnJob(messageBus));
-        workerPool.assign(new O3CopyJob(messageBus));
-        workerPool.assign(new ColumnTaskJob(messageBus));
-        workerPool.freeOnExit(purgeDiscoveryJob);
-
-        final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
-        final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
-
-        for (int i = 0; i < workerCount; i++) {
-            // create job per worker to allow each worker to have
-            // own shard walk sequence
-            final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
-                    messageBus,
-                    new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
-                    sqlExecutionCircuitBreakerConfiguration
-            );
-            workerPool.assign(i, pageFrameReduceJob);
-            workerPool.freeOnExit(pageFrameReduceJob);
         }
     }
 

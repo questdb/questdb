@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
@@ -42,12 +41,6 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
     private final StringSink planSink = new StringSink();
     private final StringSink sqlSink = new StringSink();
 
-    @Override
-    public void setUp() {
-        super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, false);
-    }
-
     @Test
     public void testAggregatesOnColumnWithNoKeyWorkRegardlessOfCase() throws Exception {
         assertMemoryLeak(() -> {
@@ -58,8 +51,8 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                     {null, null, null, null, "min(val)", "max(val)"}, // char
                     {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // int
                     {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // long
-                    {null, null, "sum(val)", "avg(val)", "min(val)", "max(val)"}, // date
-                    {null, null, "sum(val)", "avg(val)", "min(val)", "max(val)"}, // timestamp
+                    {null, null, null, null, "min(val)", "max(val)"}, // date
+                    {null, null, null, null, "min(val)", "max(val)"}, // timestamp
                     {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // float
                     {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // double
             };
@@ -67,7 +60,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
             for (int t = BYTE; t <= DOUBLE; t++) {
                 String typeName = name(ColumnType.nameOf(t));
                 sqlSink.clear();
-                sqlSink.put("create table test ( key int, val ").put(typeName).put(");");
+                sqlSink.put("create table test (key int, val ").put(typeName).put(");");
                 compile(sqlSink);
 
                 for (int f = 0; f < functions.length; f++) {
@@ -77,14 +70,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                         continue;
                     }
 
-                    boolean vectorized = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"));
-
-                    planSink.clear();
-                    planSink.put("GroupBy vectorized: ").put(vectorized).put("\n")
-                            .put("  values: [").put(expectedFunction).put("]\n")
-                            .put("    DataFrame\n" +
-                                    "        Row forward scan\n" +
-                                    "        Frame forward scan on: test\n");
+                    prepareExpectedPlan(t, f, null, function, expectedFunction);
 
                     sqlSink.clear();
                     sqlSink.put("select ").put(function.toLowerCase()).put("(val) agg from test");
@@ -110,8 +96,8 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                     {null, null, null, null, "min(val)", "max(val)"}, // char
                     {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // int
                     {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // long
-                    {null, null, "sum(val)", "avg(val)", "min(val)", "max(val)"}, // date
-                    {null, null, "sum(val)", "avg(val)", "min(val)", "max(val)"}, // timestamp
+                    {null, null, null, null, "min(val)", "max(val)"}, // date
+                    {null, null, null, null, "min(val)", "max(val)"}, // timestamp
                     {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // float
                     {"ksum(val)", "nsum(val)", "sum(val)", "avg(val)", "min(val)", "max(val)"}, // double
             };
@@ -119,26 +105,17 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
             for (int t = BYTE; t <= DOUBLE; t++) {
                 String typeName = name(ColumnType.nameOf(t));
                 sqlSink.clear();
-                sqlSink.put("create table test ( key int, val ").put(typeName).put(");");
+                sqlSink.put("create table test (key int, val ").put(typeName).put(");");
                 compile(sqlSink);
 
                 for (int f = 0; f < functions.length; f++) {
-
                     String function = functions[f];
                     String expectedFunction = expectedFunctions[t - BYTE][f];
                     if (expectedFunction == null) {
                         continue;
                     }
 
-                    boolean vectorized = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"));
-
-                    planSink.clear();
-                    planSink.put("GroupBy vectorized: ").put(vectorized).put(vectorized ? " workers: 1" : "").put("\n")
-                            .put("  keys: [key]\n")
-                            .put("  values: [").put(expectedFunction).put("]\n")
-                            .put("    DataFrame\n" +
-                                    "        Row forward scan\n" +
-                                    "        Frame forward scan on: test\n");
+                    prepareExpectedPlan(t, f, "key", function, expectedFunction);
 
                     sqlSink.clear();
                     sqlSink.put("select key, ").put(function.toLowerCase()).put("(val) agg from test group by key;");
@@ -178,7 +155,10 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
 
                     try {
                         StringSink planSink = getPlanSink(sqlSink).getSink();
-                        Assert.assertTrue(Chars.contains(planSink, "vectorized: false"));
+                        if (Chars.contains(planSink, "vectorized: false") || Chars.contains(planSink, "Async Group By workers: 1")) {
+                            continue;
+                        }
+                        Assert.fail("vectorized execution is not expected");
                     } catch (Exception ae) {
                         throwWithContext(typeName, function, ae);
                     }
@@ -227,15 +207,14 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                             "  keys: [candle_st]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]\n" +
-                            "        GroupBy vectorized: false\n" +
+                            "        Async Group By workers: 1\n" +
                             "          keys: [candle_st,venue]\n" +
                             "          values: [count(*),sum(qty*price),sum(qty)]\n" +
-                            "            Async Filter workers: 1\n" +
-                            "              filter: (instrument_key ~ ETH.USD.S..*? and venue in [CBS,FUS,LMX,BTS])\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Interval forward scan on: spot_trades\n" +
-                            "                      intervals: [(\"2022-01-01T00:00:00.000000Z\",\"MAX\")]\n"
+                            "          filter: (instrument_key ~ ETH.USD.S..*? and venue in [CBS,FUS,LMX,BTS])\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: spot_trades\n" +
+                            "                  intervals: [(\"2022-01-01T00:00:00.000000Z\",\"MAX\")]\n"
             );
         });
     }
@@ -250,6 +229,30 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
         } catch (AssertionError ae) {
             throwWithContext(typeName, function, ae);
         }
+    }
+
+    private void prepareExpectedPlan(int t, int f, String keys, String function, String expectedFunction) {
+        boolean rosti = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"));
+        boolean parallel = !function.contains("KSum") && !function.contains("NSum");
+
+        planSink.clear();
+        if (rosti) {
+            planSink.put("GroupBy vectorized: true workers: 1\n");
+        } else if (parallel) {
+            planSink.put("Async Group By workers: 1\n");
+        } else {
+            planSink.put("GroupBy vectorized: false\n");
+        }
+        if (keys != null) {
+            planSink.put("  keys: [").put(keys).put("]\n");
+        }
+        planSink.put("  values: [").put(expectedFunction).put("]\n");
+        if (!rosti && parallel) {
+            planSink.put("  filter: null\n");
+        }
+        planSink.put("    DataFrame\n" +
+                "        Row forward scan\n" +
+                "        Frame forward scan on: test\n");
     }
 
     private void throwWithContext(String typeName, String function, Throwable ae) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -68,29 +68,29 @@ public class CastStrToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            utf8Sink.put(arg.getVarcharA(rec));
+            utf8Sink.put(arg.getStrA(rec));
         }
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
-            if (value == null) {
-                return null;
+            final CharSequence cs = arg.getStrA(rec);
+            if (cs != null) {
+                sinkA.clear();
+                sinkA.put(cs);
+                return sinkA;
             }
-            sinkA.clear();
-            sinkA.put(value);
-            return sinkA;
+            return null;
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
-            if (value == null) {
-                return null;
+            final CharSequence cs = arg.getStrB(rec);
+            if (cs != null) {
+                sinkB.clear();
+                sinkB.put(cs);
+                return sinkB;
             }
-            sinkB.clear();
-            sinkB.put(value);
-            return sinkB;
+            return null;
         }
     }
 }

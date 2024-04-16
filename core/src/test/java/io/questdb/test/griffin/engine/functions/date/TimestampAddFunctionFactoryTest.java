@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -267,6 +267,16 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
+    public void testLeftNaNMilli() throws SqlException {
+        call('T', 5, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
+    }
+
+    @Test
+    public void testLeftNaNMicro() throws SqlException {
+        call('u', 5, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
+    }
+
+    @Test
     public void testLeftNaNWeek() throws SqlException {
         call('w', 5, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
@@ -327,6 +337,16 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
+    public void testRightNaNMilli() throws SqlException {
+        call('T', Numbers.INT_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    }
+
+    @Test
+    public void testRightNaNMicro() throws SqlException {
+        call('u', Numbers.INT_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    }
+
+    @Test
     public void testRightNaNWeek() throws SqlException {
         call('w', Numbers.INT_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
@@ -342,8 +362,28 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
+    public void testMilliSimple() throws SqlException {
+        call('T', 5, 1587275359886758L).andAssert(1587275359891758L, 0.0001);
+    }
+
+    @Test
+    public void testMicroSimple() throws SqlException {
+        call('u', 5, 1587275359886758L).andAssert(1587275359886763L, 0.0001);
+    }
+
+    @Test
     public void testSecondSimpleNeg() throws SqlException {
         call('s', -5, 1587275359886758L).andAssert(1587275354886758L, 0.0001);
+    }
+
+    @Test
+    public void testMilliSimpleNeg() throws SqlException {
+        call('T', -5, 1587275359886758L).andAssert(1587275359881758L, 0.0001);
+    }
+
+    @Test
+    public void testMicroSimpleNeg() throws SqlException {
+        call('u', -5, 1587275359886758L).andAssert(1587275359886753L, 0.0001);
     }
 
     @Test

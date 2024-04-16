@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -122,7 +122,7 @@ public class JsonPlanSinkTest {
             sink.attr("geohash");
             sink.val(101010L, 32);
             sink.attr("long256");
-            sink.val(1L, 2L, 3L, 4L);
+            sink.valLong256(1L, 2L, 3L, 4L);
             sink.attr("plan");
             sink.val((Plannable) null);
             sink.attr("uuid");

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -878,7 +878,15 @@ public class SqlUtil {
     }
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
-        return pool.next().of(ExpressionNode.LITERAL, token, 0, position);
+        return nextExpr(pool, ExpressionNode.LITERAL, token, position);
+    }
+
+    static ExpressionNode nextConstant(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
+        return nextExpr(pool, ExpressionNode.CONSTANT, token, position);
+    }
+
+    private static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
+        return pool.next().of(exprNodeType, token, 0, position);
     }
 
     private static class Long256ConstantFactory implements Long256Acceptor {

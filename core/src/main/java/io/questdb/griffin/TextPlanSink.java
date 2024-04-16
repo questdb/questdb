@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -189,11 +189,6 @@ public class TextPlanSink extends BasePlanSink {
         return this;
     }
 
-    public PlanSink val(long long0, long long1, long long2, long long3) {
-        Numbers.appendLong256(long0, long1, long2, long3, sink);
-        return this;
-    }
-
     public PlanSink val(long hash, int geoHashBits) {
         GeoHashes.append(hash, geoHashBits, sink);
         return this;
@@ -206,6 +201,11 @@ public class TextPlanSink extends BasePlanSink {
         } else {
             Numbers.intToIPv4Sink(sink, ip);
         }
+        return this;
+    }
+
+    public PlanSink valLong256(long long0, long long1, long long2, long long3) {
+        Numbers.appendLong256(long0, long1, long2, long3, sink);
         return this;
     }
 

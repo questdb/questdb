@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -96,6 +96,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     public void toPlan(PlanSink sink) {
         sink.type("GroupBy");
         sink.meta("vectorized").val(true);
+        sink.meta("workers").val(workerCount);
         sink.optAttr("values", vafList, true);
         sink.child(base);
     }
@@ -165,7 +166,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public void close() {
-            Misc.free(pageFrameCursor);
+            pageFrameCursor = Misc.free(pageFrameCursor);
         }
 
         @Override
@@ -309,7 +310,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             LOG.info().$("done [total=").$(total)
                     .$(", ownCount=").$(ownCount)
                     .$(", reclaimed=").$(reclaimed)
-                    .$(", queuedCount=").$(queuedCount).I$();
+                    .$(", queuedCount=").$(queuedCount)
+                    .I$();
         }
     }
 }

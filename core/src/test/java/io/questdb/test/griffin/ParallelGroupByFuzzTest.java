@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
@@ -63,7 +63,7 @@ import java.util.concurrent.CyclicBarrier;
 
 import static org.junit.Assert.fail;
 
-// This is not a fuzz test in traditional sense, but it's multi-threaded and we want to run it
+// This is not a fuzz test in traditional sense, but it's multithreaded, and we want to run it
 // in CI frequently along with other fuzz tests.
 @RunWith(Parameterized.class)
 public class ParallelGroupByFuzzTest extends AbstractCairoTest {
@@ -1458,6 +1458,82 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelRostiAvg() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, avg(s) avg_s, avg(i) avg_i, avg(l) avg_l, round(avg(d)) avg_d " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tavg_s\tavg_i\tavg_l\tavg_d\n" +
+                        "k0\t-859.98\t128.27631578947367\t469.4625\t1.0\n" +
+                        "k1\t-2783.67\t113.6375\t548.2073170731708\t0.0\n" +
+                        "k2\t1722.65\t133.21686746987953\t557.6623376623377\t0.0\n" +
+                        "k3\t-376.12\t134.25301204819277\t512.6117647058824\t0.0\n" +
+                        "k4\t844.42\t124.53333333333333\t478.9146341463415\t1.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelRostiCount() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, count(i) count_i, count(l) count_l, count(d) count_d " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tcount_i\tcount_l\tcount_d\n" +
+                        "k0\t76\t80\t88\n" +
+                        "k1\t80\t82\t86\n" +
+                        "k2\t83\t77\t87\n" +
+                        "k3\t83\t85\t75\n" +
+                        "k4\t75\t82\t84\n"
+        );
+    }
+
+    @Test
+    public void testParallelRostiKSumNSum() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, round(ksum(d)) ksum_d, round(nsum(d)) nsum_d " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tksum_d\tnsum_d\n" +
+                        "k0\t48.0\t48.0\n" +
+                        "k1\t43.0\t43.0\n" +
+                        "k2\t39.0\t39.0\n" +
+                        "k3\t33.0\t33.0\n" +
+                        "k4\t46.0\t46.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelRostiMinMax() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, min(s) min_s, max(s) max_s, min(i) min_i, max(i) max_i, min(l) min_l, max(l) max_l, " +
+                        "  min(d) min_d, max(d) max_d, min(dd) min_dd, max(dd) max_dd, min(t) min_t, max(t) max_t " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tmin_s\tmax_s\tmin_i\tmax_i\tmin_l\tmax_l\tmin_d\tmax_d\tmin_dd\tmax_dd\tmin_t\tmax_t\n" +
+                        "k0\t-32314\t32650\t5\t255\t1\t982\t0.023600615130049185\t0.9924997596095891\t1980-01-13T19:56:55.619Z\t1989-12-11T15:05:57.581Z\t1980-05-16T15:35:09.991442Z\t1989-12-01T00:45:38.931160Z\n" +
+                        "k1\t-31947\t32139\t0\t251\t12\t1022\t0.030997441190531494\t0.9869813021229126\t1980-01-27T20:04:53.149Z\t1989-11-09T23:54:33.595Z\t1980-01-20T15:13:30.780056Z\t1989-12-25T11:06:35.080985Z\n" +
+                        "k2\t-32474\t32378\t3\t256\t18\t1020\t0.0031075670450616544\t0.9887681426881507\t1980-02-06T21:12:31.508Z\t1989-10-14T12:01:28.825Z\t1980-01-09T11:42:16.059075Z\t1989-12-02T07:02:03.165501Z\n" +
+                        "k3\t-32129\t32752\t0\t254\t4\t1024\t0.017595931321539804\t0.9958686315610356\t1980-02-04T19:47:05.743Z\t1989-12-28T03:38:43.787Z\t1980-01-09T21:18:50.462647Z\t1989-12-13T15:24:44.892613Z\n" +
+                        "k4\t-32677\t32259\t5\t255\t4\t1017\t0.06790969300705241\t0.9923530546137099\t1980-01-25T07:20:26.116Z\t1989-11-11T09:29:53.477Z\t1980-01-25T11:45:16.361674Z\t1989-11-07T17:55:20.285921Z\n"
+        );
+    }
+
+    @Test
+    public void testParallelRostiSum() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, sum(s) sum_s, sum(i) sum_i, sum(l) sum_l, sum(l256) sum_l256, round(sum(d)) sum_d " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tsum_s\tsum_i\tsum_l\tsum_l256\tsum_d\n" +
+                        "k0\t-85998\t9749\t37557\t0x248af96495cafa7d5c4dbe79c86d46054af590066639cabfb780bce1c77ea11c\t48.0\n" +
+                        "k1\t-278367\t9091\t44953\t0x50b8e23533380471b205e4a7adeb9498426e85e7cf92558e9ca39604592ccea6\t43.0\n" +
+                        "k2\t172265\t11057\t42940\t0xa914b3d66e12185a5d76310378e831be316071aaa2436b2c66e948497c8929ba\t39.0\n" +
+                        "k3\t-37612\t11143\t43572\t0x92fdbf6e1f5b9360329a1dec86290a74b5a3f6b9ed9725c4f457dbb833b212f5\t33.0\n" +
+                        "k4\t84442\t9340\t39271\t0x01708577a8ec2c4308e67d5f43e4cee420525d6d74f480ca312efa8e9fe584ce\t46.0\n"
+        );
+    }
+
+    @Test
     public void testParallelShortKeyGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -1875,6 +1951,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStringKeyGroupByWithFilter2() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE upper(key) = 'K3' ORDER BY key",
+                "key\tavg\tsum\tcount\n" +
+                        "k3\t2025.5\t1640400.0\t1600\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithFilter3() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE substring(key,2,1) = '3' ORDER BY key",
+                "key\tavg\tsum\tcount\n" +
+                        "k3\t2025.5\t1640400.0\t1600\n"
+        );
+    }
+
+    @Test
     public void testParallelStringKeyGroupByWithLimit() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -1933,6 +2027,27 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "46.31818181818182\tk2\t387.0\n" +
                         "47.31818181818182\tk3\t393.0\n" +
                         "48.31818181818182\tk4\t399.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithNotNullCheckInFilter() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, min(ts), max(ts) FROM tab WHERE key IS NOT NULL ORDER BY key",
+                "key\tmin\tmax\n" +
+                        "k0\t1970-01-01T01:12:00.000000Z\t1970-02-10T12:00:00.000000Z\n" +
+                        "k1\t1970-01-01T00:14:24.000000Z\t1970-02-10T11:02:24.000000Z\n" +
+                        "k2\t1970-01-01T00:28:48.000000Z\t1970-02-10T11:16:48.000000Z\n" +
+                        "k3\t1970-01-01T00:43:12.000000Z\t1970-02-10T11:31:12.000000Z\n" +
+                        "k4\t1970-01-01T00:57:36.000000Z\t1970-02-10T11:45:36.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithNullCheckInFilter() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, min(ts), max(ts) FROM tab WHERE key IS NULL ORDER BY key",
+                "key\tmin\tmax\n"
         );
     }
 
@@ -2639,12 +2754,64 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
+    private void testParallelRostiGroupBy(String query, String expected) throws Exception {
+        // Rosti doesn't support filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        // We want each row to be in its own partition
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab AS (SELECT " +
+                                        "cast('k' || (x%5) as symbol) key, " +
+                                        "rnd_short() s, " +
+                                        "rnd_int(0, 256, 2) i, " +
+                                        "rnd_long(0, 1024, 2) l, " +
+                                        "rnd_long256(2) l256, " +
+                                        "rnd_double(2) d, " +
+                                        "rnd_timestamp(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) t, " +
+                                        "rnd_date(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) dd, " +
+                                        "(x * 864000000)::timestamp ts " +
+                                        "from long_sequence(500)) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                query,
+                                sink,
+                                expected
+                        );
+
+                        if (enableParallelGroupBy) {
+                            // Make sure that we're testing Rosti here.
+                            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                                RecordCursorFactory nestedFactory = factory.getBaseFactory();
+                                while (nestedFactory != null) {
+                                    if (nestedFactory.getClass() == GroupByRecordCursorFactory.class) {
+                                        break;
+                                    }
+                                    nestedFactory = nestedFactory.getBaseFactory();
+                                }
+                                Assert.assertNotNull("parallel GROUP BY doesn't use vect.GroupByRecordCursorFactory", nestedFactory);
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
     private void testParallelStringAndVarcharKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(
                     pool,
-                    (engine) -> pool.assign(new GroupByMergeShardJob(engine.getMessageBus())),
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
@@ -2671,7 +2838,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 sqlExecutionContext
                         );
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
-
 
                         // now drop the String table and recreate it with a Varchar key
                         engine.drop("DROP TABLE tab", sqlExecutionContext);
