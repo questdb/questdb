@@ -390,6 +390,142 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
     }
 
+    private int addColumnWithType(AlterOperationBuilder addColumn, CharSequence columnName, int columnNamePosition) throws SqlException {
+        CharSequence tok;
+        tok = expectToken(lexer, "column type");
+
+        int type = ColumnType.tagOf(tok);
+        if (type == -1) {
+            throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
+        }
+
+        if (type == ColumnType.GEOHASH) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || tok.charAt(0) != '(') {
+                throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && tok.charAt(0) != ')') {
+                int geoHashBits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || tok.charAt(0) != ')') {
+                    if (tok != null) {
+                        throw SqlException.position(lexer.lastTokenPosition())
+                                .put("invalid GEOHASH type literal, expected ')'")
+                                .put(" found='").put(tok.charAt(0)).put("'");
+                    }
+                    throw SqlException.position(lexer.getPosition())
+                            .put("invalid GEOHASH type literal, expected ')'");
+                }
+                type = ColumnType.getGeoHashTypeWithBits(geoHashBits);
+            } else {
+                throw SqlException.position(lexer.lastTokenPosition())
+                        .put("missing GEOHASH precision");
+            }
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        final int indexValueBlockCapacity;
+        final boolean cache;
+        int symbolCapacity;
+        final boolean indexed;
+
+        if (
+                ColumnType.isSymbol(type)
+                        && tok != null
+                        && !Chars.equals(tok, ',')
+                        && !Chars.equals(tok, ';')
+        ) {
+            if (isCapacityKeyword(tok)) {
+                tok = expectToken(lexer, "symbol capacity");
+
+                final boolean negative;
+                final int errorPos = lexer.lastTokenPosition();
+                if (Chars.equals(tok, '-')) {
+                    negative = true;
+                    tok = expectToken(lexer, "symbol capacity");
+                } else {
+                    negative = false;
+                }
+
+                try {
+                    symbolCapacity = Numbers.parseInt(tok);
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
+                }
+
+                if (negative) {
+                    symbolCapacity = -symbolCapacity;
+                }
+
+                TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
+
+                tok = SqlUtil.fetchNext(lexer);
+            } else {
+                symbolCapacity = configuration.getDefaultSymbolCapacity();
+            }
+
+            if (Chars.equalsLowerCaseAsciiNc("cache", tok)) {
+                cache = true;
+                tok = SqlUtil.fetchNext(lexer);
+            } else if (Chars.equalsLowerCaseAsciiNc("nocache", tok)) {
+                cache = false;
+                tok = SqlUtil.fetchNext(lexer);
+            } else {
+                cache = configuration.getDefaultSymbolCacheFlag();
+            }
+
+            TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
+
+            indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
+            if (indexed) {
+                tok = SqlUtil.fetchNext(lexer);
+            }
+
+            if (Chars.equalsLowerCaseAsciiNc("capacity", tok)) {
+                tok = expectToken(lexer, "symbol index capacity");
+
+                try {
+                    indexValueBlockCapacity = Numbers.parseInt(tok);
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
+                }
+                SqlUtil.fetchNext(lexer);
+            } else {
+                indexValueBlockCapacity = configuration.getIndexValueBlockSize();
+            }
+        } else { // set defaults
+
+            // ignore `NULL` and `NOT NULL`
+            if (tok != null && SqlKeywords.isNotKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+            }
+
+            if (tok != null && SqlKeywords.isNullKeyword(tok)) {
+                SqlUtil.fetchNext(lexer);
+            }
+
+            cache = configuration.getDefaultSymbolCacheFlag();
+            indexValueBlockCapacity = configuration.getIndexValueBlockSize();
+            symbolCapacity = configuration.getDefaultSymbolCapacity();
+            indexed = false;
+        }
+
+        addColumn.addColumnToList(
+                columnName,
+                columnNamePosition,
+                type,
+                Numbers.ceilPow2(symbolCapacity),
+                cache,
+                indexed,
+                Numbers.ceilPow2(indexValueBlockCapacity),
+                false
+        );
+        lexer.unparseLast();
+        return type;
+    }
+
     private void alterTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !SqlKeywords.isTableKeyword(tok)) {
@@ -449,7 +585,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final int columnNamePosition = lexer.getPosition();
                     tok = expectToken(lexer, "column name");
                     final CharSequence columnName = GenericLexer.immutableOf(tok);
-                    tok = expectToken(lexer, "'add index' or 'drop index' or 'cache' or 'nocache'");
+                    final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
+                    if (columnIndex == -1) {
+                        throw SqlException.$(columnNamePosition, "column '").put(columnName)
+                                .put("' does not exists in table '").put(tableToken.getTableName()).put('\'');
+                    }
+
+                    tok = expectToken(lexer, "'add index' or 'drop index', 'type' or 'cache' or 'nocache'");
                     if (SqlKeywords.isAddKeyword(tok)) {
                         expectKeyword(lexer, "index");
                         tok = SqlUtil.fetchNext(lexer);
@@ -514,6 +656,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 columnName,
                                 tableMetadata,
                                 false
+                        );
+                    } else if (SqlKeywords.isTypeKeyword(tok)) {
+                        alterTableChangeColumnType(
+                                tableNamePosition,
+                                tableToken,
+                                columnNamePosition,
+                                columnName,
+                                tableMetadata,
+                                columnIndex
                         );
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
@@ -658,136 +809,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
-            tok = expectToken(lexer, "column type");
-
-            int type = ColumnType.tagOf(tok);
-            if (type == -1) {
-                throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
-            }
-
-            if (type == ColumnType.GEOHASH) {
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || tok.charAt(0) != '(') {
-                    throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
-                }
-
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok != null && tok.charAt(0) != ')') {
-                    int geoHashBits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
-                    tok = SqlUtil.fetchNext(lexer);
-                    if (tok == null || tok.charAt(0) != ')') {
-                        if (tok != null) {
-                            throw SqlException.position(lexer.lastTokenPosition())
-                                    .put("invalid GEOHASH type literal, expected ')'")
-                                    .put(" found='").put(tok.charAt(0)).put("'");
-                        }
-                        throw SqlException.position(lexer.getPosition())
-                                .put("invalid GEOHASH type literal, expected ')'");
-                    }
-                    type = ColumnType.getGeoHashTypeWithBits(geoHashBits);
-                } else {
-                    throw SqlException.position(lexer.lastTokenPosition())
-                            .put("missing GEOHASH precision");
-                }
-            }
-
+            addColumnWithType(addColumn, columnName, columnNamePosition);
             tok = SqlUtil.fetchNext(lexer);
-            final int indexValueBlockCapacity;
-            final boolean cache;
-            int symbolCapacity;
-            final boolean indexed;
-
-            if (
-                    ColumnType.isSymbol(type)
-                            && tok != null
-                            && !Chars.equals(tok, ',')
-                            && !Chars.equals(tok, ';')
-            ) {
-                if (isCapacityKeyword(tok)) {
-                    tok = expectToken(lexer, "symbol capacity");
-
-                    final boolean negative;
-                    final int errorPos = lexer.lastTokenPosition();
-                    if (Chars.equals(tok, '-')) {
-                        negative = true;
-                        tok = expectToken(lexer, "symbol capacity");
-                    } else {
-                        negative = false;
-                    }
-
-                    try {
-                        symbolCapacity = Numbers.parseInt(tok);
-                    } catch (NumericException e) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
-                    }
-
-                    if (negative) {
-                        symbolCapacity = -symbolCapacity;
-                    }
-
-                    TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
-
-                    tok = SqlUtil.fetchNext(lexer);
-                } else {
-                    symbolCapacity = configuration.getDefaultSymbolCapacity();
-                }
-
-                if (Chars.equalsLowerCaseAsciiNc("cache", tok)) {
-                    cache = true;
-                    tok = SqlUtil.fetchNext(lexer);
-                } else if (Chars.equalsLowerCaseAsciiNc("nocache", tok)) {
-                    cache = false;
-                    tok = SqlUtil.fetchNext(lexer);
-                } else {
-                    cache = configuration.getDefaultSymbolCacheFlag();
-                }
-
-                TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
-
-                indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
-                if (indexed) {
-                    tok = SqlUtil.fetchNext(lexer);
-                }
-
-                if (Chars.equalsLowerCaseAsciiNc("capacity", tok)) {
-                    tok = expectToken(lexer, "symbol index capacity");
-
-                    try {
-                        indexValueBlockCapacity = Numbers.parseInt(tok);
-                    } catch (NumericException e) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
-                    }
-                    tok = SqlUtil.fetchNext(lexer);
-                } else {
-                    indexValueBlockCapacity = configuration.getIndexValueBlockSize();
-                }
-            } else { // set defaults
-
-                // ignore `NULL` and `NOT NULL`
-                if (tok != null && SqlKeywords.isNotKeyword(tok)) {
-                    tok = SqlUtil.fetchNext(lexer);
-                }
-
-                if (tok != null && SqlKeywords.isNullKeyword(tok)) {
-                    tok = SqlUtil.fetchNext(lexer);
-                }
-
-                cache = configuration.getDefaultSymbolCacheFlag();
-                indexValueBlockCapacity = configuration.getIndexValueBlockSize();
-                symbolCapacity = configuration.getDefaultSymbolCapacity();
-                indexed = false;
-            }
-
-            addColumn.addColumnToList(
-                    columnName,
-                    columnNamePosition,
-                    type,
-                    Numbers.ceilPow2(symbolCapacity),
-                    cache,
-                    indexed,
-                    Numbers.ceilPow2(indexValueBlockCapacity),
-                    false
-            );
 
             if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
                 break;
@@ -802,6 +825,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } while (true);
 
         addColumnSuffix(securityContext, null, tableToken, alterOperationBuilder);
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableChangeColumnType(
+            int tableNamePosition,
+            TableToken tableToken,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableRecordMetadata tableMetadata,
+            int columnIndex
+    ) throws SqlException {
+        AlterOperationBuilder addColumn = alterOperationBuilder.ofColumnChangeType(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId()
+        );
+        int newColumnType = addColumnWithType(addColumn, columnName, columnNamePosition);
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
+        }
+        int existingColumnType = tableMetadata.getColumnType(columnIndex);
+        if (!isCompatibleCase(existingColumnType, newColumnType)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "incompatible column type change [existing=")
+                    .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');
+        }
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -1269,7 +1318,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .put("[errno=").put(e.getErrno()).put(']');
         }
     }
-
 
     private CharSequence authorizeInsertForCopy(SecurityContext securityContext, CopyModel model) {
         final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);

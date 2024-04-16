@@ -39,10 +39,7 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.DropIndexOperator;
-import io.questdb.griffin.PurgingOperator;
-import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.UpdateOperatorImpl;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -191,6 +188,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean avoidIndexOnCommit = false;
     private int columnCount;
     private long committedMasterRef;
+    private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
@@ -534,44 +532,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long columnNameTxn = getTxn();
         LOG.info().$("adding column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn).$(" to ").$(path).$();
 
-        // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey);
-
-        // close _meta so we can rename it
-        metaMem.close();
-
-        // validate new meta
-        validateSwapMeta(columnName);
-
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(columnName);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(columnName);
-
-        // rename _meta.swp to _meta
-        renameSwapMetaToMeta(columnName);
-
-        if (ColumnType.isSymbol(columnType)) {
-            try {
-                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
-            } catch (CairoException e) {
-                runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, columnName, e);
-            }
-        } else {
-            // maintain sparse list of symbol writers
-            symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
-        }
-
-        // add column objects
-        configureColumn(columnType, isIndexed, columnCount);
-        if (isIndexed) {
-            populateDenseIndexerList();
-        }
-
-        // increment column count
-        columnCount++;
+        addColumnToMeta(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, -1);
 
         // extend columnTop list to make sure row cancel can work
         // need for setting correct top is hard to test without being able to read from table
@@ -894,6 +855,78 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         updateMetaStructureVersion();
+    }
+
+    @Override
+    public void changeColumnType(
+            CharSequence columnName,
+            int newType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            SecurityContext securityContext
+    ) {
+        int existingColIndex = metadata.getColumnIndexQuiet(columnName);
+        if (existingColIndex < 0) {
+            throw CairoException.nonCritical().put("cannot change column type, column does not exists [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+        int existingType = metadata.getColumnType(existingColIndex);
+        if (existingType < 0) {
+            throw CairoException.nonCritical().put("cannot change column type, column is deleted [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+
+        LOG.info().$("converting column [table=").$(tableToken).$(", column=").$(columnName)
+                .$(", from=").$(ColumnType.nameOf(existingType))
+                .$(", to=").$(ColumnType.nameOf(newType)).I$();
+
+        boolean isDedupKey = metadata.isDedupKey(existingColIndex);
+        if (existingType == newType) {
+            if (ColumnType.isSymbol(newType)) {
+                // If symbol attributes change, rewrite symbol maps instead of the data.
+                if (symbolMapWriters.getQuick(existingColIndex).isCached() != symbolCacheFlag) {
+                    changeCacheFlag(existingColIndex, symbolCacheFlag);
+                    return;
+                }
+                if (symbolMapWriters.getQuick(existingColIndex).getSymbolCapacity() != symbolCapacity) {
+                    changeSymbolCapacity(columnName, symbolCapacity);
+                    return;
+                }
+                if (isIndexed != metadata.isColumnIndexed(existingColIndex)) {
+                    if (isIndexed) {
+                        addIndex(columnName, indexValueBlockCapacity);
+                    } else {
+                        dropIndex(columnName);
+                    }
+                    return;
+                }
+            }
+            LOG.info().$("column type is the same, will not change the column type [table=").utf8(tableToken.getTableName()).$(", column=").utf8(columnName).I$();
+            return;
+        }
+
+//        metadata.removeColumn(existingColIndex);
+//        metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey);
+        // increment column count
+
+        // extend columnTop list to make sure row cancel can work
+        // need for setting correct top is hard to test without being able to read from table
+        int columnIndex = columnCount - 1;
+
+        long columnNameTxn = getTxn();
+
+        // Set txn number in the column version file to mark the transaction where the column is added
+        columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getPartitionTimestampByIndex(0));
+        getConvertOperator().convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
+
+        // Column converted, add new one to the metadata and remove the existing
+        addColumnToMeta(columnName, newType, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, existingColIndex);
+        metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey);
+
+        getConvertOperator().finishColumnConversion();
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
@@ -2450,13 +2483,66 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void addColumnToMeta(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            boolean isDedupKey,
+            long columnNameTxn,
+            int replaceColumnIndex
+    ) {
+        // create new _meta.swp
+        this.metaSwapIndex = addColumnToMeta(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, replaceColumnIndex);
+
+        // close _meta so we can rename it
+        metaMem.close();
+
+        // validate new meta
+        validateSwapMeta(columnName);
+
+        // rename _meta to _meta.prev
+        renameMetaToMetaPrev(columnName);
+
+        // after we moved _meta to _meta.prev
+        // we have to have _todo to restore _meta should anything go wrong
+        writeRestoreMetaTodo(columnName);
+
+        // rename _meta.swp to _meta
+        renameSwapMetaToMeta(columnName);
+
+        if (ColumnType.isSymbol(columnType)) {
+            try {
+                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
+            } catch (CairoException e) {
+                runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, columnName, e);
+            }
+        } else {
+            // maintain sparse list of symbol writers
+            symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
+        }
+
+        // add column objects
+        configureColumn(columnType, isIndexed, columnCount);
+        if (isIndexed) {
+            populateDenseIndexerList();
+        }
+
+        // increment column count
+        columnCount++;
+    }
+
     private int addColumnToMeta(
             CharSequence name,
             int type,
             boolean indexFlag,
             int indexValueBlockCapacity,
             boolean sequentialFlag,
-            boolean dedupKeyFlag
+            boolean dedupKeyFlag,
+            int replaceColumnIndex
     ) {
         int index;
         try {
@@ -2469,7 +2555,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
+                writeColumnEntry(i, i == replaceColumnIndex);
             }
 
             // add new column metadata to bottom of list
@@ -2984,6 +3070,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void cancelRowAndBump() {
         rowCancel();
         masterRef++;
+    }
+
+    private void changeSymbolCapacity(CharSequence name, int newSymbolCapacity) {
+        throw CairoException.nonCritical().put("changing symbol capacity is not implemented yet");
     }
 
     private void checkColumnName(CharSequence name) {
@@ -4258,6 +4348,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(dedupColumnCommitAddresses);
         closeWalFiles();
         updateOperatorImpl = Misc.free(updateOperatorImpl);
+        convertOperatorImpl = Misc.free(convertOperatorImpl);
         dropIndexOperator = null;
         noOpRowCount = 0L;
         lastOpenPartitionTs = Long.MIN_VALUE;
@@ -4534,6 +4625,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (symbolMapWriters != null) {
             symbolMapWriters.clear();
         }
+    }
+
+    private ConvertOperatorImpl getConvertOperator() {
+        if (convertOperatorImpl == null) {
+            convertOperatorImpl = new ConvertOperatorImpl(configuration, this, path, rootLen, getPurgingOperator());
+        }
+        return convertOperatorImpl;
     }
 
     private long getO3RowCount0() {

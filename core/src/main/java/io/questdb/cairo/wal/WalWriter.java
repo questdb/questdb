@@ -1652,6 +1652,11 @@ public class WalWriter implements TableWriterAPI {
             structureVersion++;
         }
 
+        @Override
+        public void changeColumnType(CharSequence name, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
+            throw CairoException.nonCritical().put("change of column type not supported yet");
+        }
+
         public void startAlterValidation() {
             structureVersion = getColumnStructureVersion();
         }
@@ -1842,6 +1847,11 @@ public class WalWriter implements TableWriterAPI {
         public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
             tableToken = metadata.getTableToken().renamed(Chars.toString(toTableName));
             metadata.renameTable(tableToken);
+        }
+
+        @Override
+        public void changeColumnType(CharSequence name, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
+            throw CairoException.nonCritical().put("change of column type not supported yet");
         }
     }
 

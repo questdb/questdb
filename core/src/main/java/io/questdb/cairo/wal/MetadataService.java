@@ -128,4 +128,16 @@ public interface MetadataService {
     void squashPartitions();
 
     void tick();
+
+    void changeColumnType(
+            CharSequence name,
+            int newType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            SecurityContext securityContext
+    );
+
 }

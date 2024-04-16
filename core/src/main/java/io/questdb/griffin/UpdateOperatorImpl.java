@@ -466,6 +466,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         }
     }
 
+
     private void copyColumn(
             long prevRow,
             long maxRow,
@@ -645,58 +646,54 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         purgingOperator.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
                     }
                 }
+                MemoryCMR colMemFixed = (MemoryCMR) columns.get(2 * i);
+                assert !colMemFixed.isOpen();
+                MemoryCMR colMemVar = (MemoryCMR) columns.get(2 * i + 1);
+                colMemVar.close();
+                assert !colMemVar.isOpen();
 
-                long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                if (isVarSize(columnType)) {
-                    MemoryCMR colMemIndex = (MemoryCMR) columns.get(2 * i);
-                    colMemIndex.close();
-                    assert !colMemIndex.isOpen();
-                    MemoryCMR colMemVar = (MemoryCMR) columns.get(2 * i + 1);
-                    colMemVar.close();
-                    assert !colMemVar.isOpen();
-
-                    if (forWrite || columnTop != -1) {
-                        colMemIndex.of(
-                                ff,
-                                iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                                dataAppendPageSize,
-                                -1,
-                                MemoryTag.MMAP_UPDATE,
-                                fileOpenOpts
-                        );
-                        colMemVar.of(
-                                ff,
-                                dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                                dataAppendPageSize,
-                                -1,
-                                MemoryTag.MMAP_UPDATE,
-                                fileOpenOpts
-                        );
-                    }
-                } else {
-                    MemoryCMR colMem = (MemoryCMR) columns.get(2 * i);
-                    colMem.close();
-                    assert !colMem.isOpen();
-
-                    if (forWrite || columnTop != -1) {
-                        colMem.of(
-                                ff,
-                                dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                                dataAppendPageSize,
-                                -1,
-                                MemoryTag.MMAP_UPDATE,
-                                fileOpenOpts
-                        );
-                    }
+                if (forWrite || columnTop != -1) {
+                    openColumns(colMemFixed, colMemVar, name, partitionTimestamp, columnIndex, columnType, pathTrimToLen);
                 }
                 if (forWrite) {
                     if (isVarSize(columnType)) {
-                        ColumnType.getDriver(columnType).configureAuxMemMA((MemoryCMARW) columns.get(2 * i));
+                        ColumnType.getDriver(columnType).configureAuxMemMA((MemoryCMARW) colMemFixed);
                     }
                 }
             }
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    private void openColumns(MemoryCMR colMemFixed, MemoryCMR colMemVar, CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
+        long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+        if (isVarSize(columnType)) {
+            colMemFixed.of(
+                    ff,
+                    iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                    dataAppendPageSize,
+                    -1,
+                    MemoryTag.MMAP_UPDATE,
+                    fileOpenOpts
+            );
+            colMemVar.of(
+                    ff,
+                    dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                    dataAppendPageSize,
+                    -1,
+                    MemoryTag.MMAP_UPDATE,
+                    fileOpenOpts
+            );
+        } else {
+            colMemFixed.of(
+                    ff,
+                    dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                    dataAppendPageSize,
+                    -1,
+                    MemoryTag.MMAP_UPDATE,
+                    fileOpenOpts
+            );
         }
     }
 
