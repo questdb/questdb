@@ -800,17 +800,17 @@ public class SqlUtil {
     /**
      * Parses partial representation of timestamp with time zone.
      *
-     * @param value      the characters representing timestamp
-     * @param tupleIndex the tuple index for insert SQL, which inserts multiple rows at once
-     * @param columnType the target column type, which might be different from timestamp
+     * @param value            the characters representing timestamp
+     * @param tupleIndex       the tuple index for insert SQL, which inserts multiple rows at once
+     * @param targetColumnType the target column type, which might be different from timestamp
      * @return epoch offset
      * @throws ImplicitCastException inconvertible type error.
      */
-    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int columnType) {
+    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int sourceColumnType, int targetColumnType) {
         try {
             return IntervalUtils.parseFloorPartialTimestamp(value);
         } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.STRING, columnType);
+            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, sourceColumnType, targetColumnType);
         }
     }
 

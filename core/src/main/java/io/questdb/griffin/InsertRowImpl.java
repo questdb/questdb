@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.std.ObjList;
 
-public class InsertRowImpl {
+public final class InsertRowImpl {
     private final RecordToRowCopier copier;
     private final RowFactory rowFactory;
     private final Function timestampFunction;
@@ -50,10 +50,11 @@ public class InsertRowImpl {
         this.timestampFunction = timestampFunction;
         this.tupleIndex = tupleIndex;
         if (timestampFunction != null) {
-            if (!ColumnType.isString(timestampFunction.getType()) && !ColumnType.isVarchar(timestampFunction.getType())) {
-                rowFactory = this::getRowWithTimestamp;
-            } else {
+            int type = timestampFunction.getType();
+            if (ColumnType.isString(type) || ColumnType.isVarchar(type)) {
                 rowFactory = this::getRowWithStringTimestamp;
+            } else {
+                rowFactory = this::getRowWithTimestamp;
             }
         } else {
             rowFactory = this::getRowWithoutTimestamp;
@@ -79,6 +80,7 @@ public class InsertRowImpl {
                 SqlUtil.parseFloorPartialTimestamp(
                         timestampFunction.getStrA(null),
                         tupleIndex,
+                        timestampFunction.getType(),
                         ColumnType.TIMESTAMP
                 )
         );
