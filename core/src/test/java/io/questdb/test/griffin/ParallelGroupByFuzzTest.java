@@ -2100,6 +2100,41 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStringKeyLikeFilter() throws Exception {
+        final String fullResult = "key\tcount\n" +
+                "k0\t1600\n" +
+                "k1\t1600\n" +
+                "k2\t1600\n" +
+                "k3\t1600\n" +
+                "k4\t1600\n";
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, count(*) FROM tab WHERE key like '%0' ORDER BY key",
+                "key\tcount\n" +
+                        "k0\t1600\n",
+                "SELECT key, count(*) FROM tab WHERE key like 'k%' ORDER BY key",
+                fullResult,
+                "SELECT key, count(*) FROM tab WHERE key like 'k_' ORDER BY key",
+                fullResult,
+                "SELECT key, count(*) FROM tab WHERE key like '%k%' ORDER BY key",
+                fullResult,
+                "SELECT key, count(*) FROM tab WHERE key like '%foobarbaz%' ORDER BY key",
+                "key\tcount\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyNotLikeFilter() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, count(*) FROM tab WHERE key not like 'k0%' ORDER BY key",
+                "key\tcount\n" +
+                        "k1\t1600\n" +
+                        "k2\t1600\n" +
+                        "k3\t1600\n" +
+                        "k4\t1600\n"
+        );
+    }
+
+    @Test
     public void testParallelStringKeyedFirstFunction() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -2412,6 +2447,41 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "key\tvwap\tsum\n" +
                         "k1\t2682.7321472695826\t1638800.0\n" +
                         "k2\t2683.4065201284266\t1639600.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyLikeFilter() throws Exception {
+        final String fullResult = "key\tcount\n" +
+                "k0\t1600\n" +
+                "k1\t1600\n" +
+                "k2\t1600\n" +
+                "k3\t1600\n" +
+                "k4\t1600\n";
+        testParallelSymbolKeyGroupBy(
+                "SELECT key, count(*) FROM tab WHERE key like '%0' ORDER BY key",
+                "key\tcount\n" +
+                        "k0\t1600\n",
+                "SELECT key, count(*) FROM tab WHERE key like 'k%' ORDER BY key",
+                fullResult,
+                "SELECT key, count(*) FROM tab WHERE key like 'k_' ORDER BY key",
+                fullResult,
+                "SELECT key, count(*) FROM tab WHERE key like '%k%' ORDER BY key",
+                fullResult,
+                "SELECT key, count(*) FROM tab WHERE key like '%foobarbaz%' ORDER BY key",
+                "key\tcount\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyNotLikeFilter() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key, count(*) FROM tab WHERE key not like 'k0%' ORDER BY key",
+                "key\tcount\n" +
+                        "k1\t1600\n" +
+                        "k2\t1600\n" +
+                        "k3\t1600\n" +
+                        "k4\t1600\n"
         );
     }
 
