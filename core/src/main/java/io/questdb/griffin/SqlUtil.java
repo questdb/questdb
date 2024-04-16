@@ -672,6 +672,10 @@ public class SqlUtil {
         return factory.pop();
     }
 
+    public static Long256Constant implicitCastVarcharAsLong256(Utf8Sequence value) {
+        return implicitCastStrAsLong256(value.asAsciiCharSequence());
+    }
+
     public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
         if (value != null) {
             Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);

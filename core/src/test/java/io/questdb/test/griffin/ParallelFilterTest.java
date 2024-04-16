@@ -110,25 +110,23 @@ public class ParallelFilterTest extends AbstractCairoTest {
             "4238042693748641409\n" +
             "4290477379978201771\n";
     private static final String expectedVarcharNoLimit = "l\tv\n" +
-            "3350660451986397456\t\uF885֜\uDB84\uDC57\uDA5F\uDC3E톾uȕ룿׆$ҙʪ薰H\n" +
-            "3520350102904985914\tؕ\uE62E8Q\n" +
-            "3523446414305966840\t涙㿽[gnS V@\uDB0F\uDDC2鉉ⓨQ\uDAE1\uDCBB鰅\uD961\uDC9E\n" +
-            "3547449704743013886\t\uDA51\uDF64Xⴿ\uD947\uDFA2̨RfAɥꚹF\n" +
-            "3564031921719748904\t\uDB62\uDCBCŞծZ骞\uDA1A\uDCB5\uD936\uDF44Uę\uDA65\uDE071(rոҊG\n" +
-            "3608246352203239925\t]Ddjvs\n" +
-            "3704058272045366471\t6\u05CF+ǩ\uD9F1\uDEE2\n" +
-            "3737446659030162960\t\uDB6D\uDFA0W٪Oߔ ɇ䊊\uDAF7\uDD75\uD9DD\uDC07ˡ\uD9F9\uDC4F飪E\n" +
-            "3781351123666129476\t鼨<sѳ\uE82E!ߟ✝س\uD8C6\uDCB6\n" +
-            "3795326354273440728\tΎK\u05F9\uD9CA\uDE84\n" +
-            "3843127285248668146\t堝ᢣ΄B\n" +
-            "3907043318808511548\t\u0092\uDB86\uDDA1̔L\n" +
-            "3917852914082112347\t䥍x\uD8C5\uDE7AS\uD9D9\uDE2Ak\n" +
-            "4007166842224933390\tˠֱ\uDB0A\uDEB4>钹\uDBC5\uDF3C(닸鉩j䂢ӽš評,\n" +
-            "4034325504592033197\tV퍳L嫣\uEB54\uDAF0\uDF8F̅!w\n" +
-            "4080972133824221876\t8W|鹚\uDB64\uDFC2Ԋ!\n" +
-            "4155840810671567423\t\uDB06\uDDF0\uDB6B\uDF55L꽭ܙ\uEB908ȫŒɽ[\uD9B4\uDE21\n" +
-            "4313109016078855600\tn䟺ᦺƼ\uD8CB\uDC7EٷiW\uD93D\uDD98\n" +
-            "4323884142722208393\t\uD99C\uDD61n촗ۉI\uD92F\uDD1C:퐲ޘ\uDA64\uDF82\n";
+            "3342946432339528961\t^̈RɗT\uDBCE\uDF3F\u008E\n" +
+            "3349345766605440862\t\n" +
+            "3394168647660478011\t)|1u%2uL>gG8#3Ts\n" +
+            "3401443869949416748\t\n" +
+            "3433721896286859656\t?[麛P\uD9E8\uDEDE\uD931\uDF48ҽ\uDA01\uDE60\n" +
+            "3523446414305966840\t7yXx>K%H[ g0nHS\\\n" +
+            "3547449704743013886\tfT)D>XP?dYL\n" +
+            "3570175762165818271\t97hVO\n" +
+            "3571824131493518678\tA왋G&ُܵ9}\uD91F\uDCE8+\uDAAF\uDC59\uDAC8\uDE3B亲\n" +
+            "3585172908882940409\t\n" +
+            "3682423623919780100\tF~)xNm\\~Fwz;gR.G\n" +
+            "3739186870210598690\tB&LA.&g\n" +
+            "3780956794407111569\t\n" +
+            "3921912097533020222\tmH%/###`3g?\n" +
+            "3927079694554322589\tg\uECF9J9漫\uDBDB\uDDDB1fÄ}o輖NI\n" +
+            "4171842711013652287\t\n" +
+            "4290056275098552124\t=ܼDdjvsoߛ)*EB\n";
     private static final String symbolQueryNegativeLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit -10";
     private static final String symbolQueryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
     private static final String symbolQueryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
@@ -375,9 +373,9 @@ public class ParallelFilterTest extends AbstractCairoTest {
     @Test
     public void testParallelStressVarcharSingleThreadMultipleWorkersSymbolValueFilter() throws Exception {
         testParallelStressVarchar(
-                "x where l > 3326086085493629941L and l < 4326086085493629941L and v = 'ؕ\uE62E8Q' order by l",
+                "x where l > 3326086085493629941L and l < 4326086085493629941L and v = 'A왋G&ُܵ9}\uD91F\uDCE8+\uDAAF\uDC59\uDAC8\uDE3B亲' order by l",
                 "l\tv\n" +
-                        "3520350102904985914\tؕ\uE62E8Q\n",
+                        "3571824131493518678\tA왋G&ُܵ9}\uD91F\uDCE8+\uDAAF\uDC59\uDAC8\uDE3B亲\n",
                 4,
                 1,
                 SqlJitMode.JIT_MODE_DISABLED

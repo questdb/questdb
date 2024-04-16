@@ -95,6 +95,10 @@ public final class TestUtils {
         return true;
     }
 
+    public static void assertAsciiCompliance(@Nullable Utf8Sequence utf8Sequence) {
+        Assert.assertEquals(utf8Sequence == null || utf8Sequence.isAscii(), Utf8s.isAscii(utf8Sequence));
+    }
+
     public static void assertConnect(int fd, long sockAddr) {
         long rc = connect(fd, sockAddr);
         if (rc != 0) {
@@ -1434,7 +1438,13 @@ public final class TestUtils {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
-                CursorPrinter.println(cursor, metadata, sink);
+                sink.clear();
+                CursorPrinter.println(metadata, sink);
+
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    println(record, metadata, sink);
+                }
             }
         }
     }
@@ -1449,6 +1459,15 @@ public final class TestUtils {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 CursorPrinter.println(cursor, metadata, sink, true, true);
+            }
+        }
+    }
+
+    public static void println(Record record, RecordMetadata metadata, CharSink<?> sink) {
+        CursorPrinter.println(record, metadata, sink);
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) == ColumnType.VARCHAR) {
+                assertAsciiCompliance(record.getVarcharA(i));
             }
         }
     }

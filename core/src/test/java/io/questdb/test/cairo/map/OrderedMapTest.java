@@ -537,7 +537,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     Utf8Sequence varchar = record.getVarcharA(1);
                     Assert.assertNotNull(varchar);
                     TestUtils.assertEquals(utf8Sink, varchar);
-                    Assert.assertFalse(varchar.isAscii());
+                    TestUtils.assertAsciiCompliance(varchar);
                     Assert.assertEquals(rnd.nextLong(), record.getLong(0));
                 }
             }
@@ -1999,7 +1999,6 @@ public class OrderedMapTest extends AbstractCairoTest {
                 rnd.nextUtf8Str(rnd.nextPositiveInt() % 32, utf8Sink);
                 Utf8Sequence varchar = record.getVarcharA(col);
                 Assert.assertNotNull(varchar);
-                Assert.assertFalse(varchar.isAscii());
                 TestUtils.assertEquals(utf8Sink, varchar);
                 Assert.assertEquals(varchar.size(), record.getVarcharSize(col++));
             }

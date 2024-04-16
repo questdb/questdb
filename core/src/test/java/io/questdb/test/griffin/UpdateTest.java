@@ -2482,7 +2482,7 @@ public class UpdateTest extends AbstractCairoTest {
 
             update("UPDATE up SET s = v");
 
-            final String expected = "count\n868\n";
+            final String expected = "count\n883\n";
             assertSql(
                     expected,
                     "select count() from up where s is not null"
