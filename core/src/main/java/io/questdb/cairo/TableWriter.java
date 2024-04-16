@@ -3871,7 +3871,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     colDataExtraSize = colDataMem.getAppendOffset() - colDataOffset;
-                    colAuxMem.jumpTo(columnTypeDriver.getAuxVectorOffset(committedRowCount));
+                    // we have to restore aux column size to its required size to hold "committedRowCount" row count.
+                    colAuxMem.jumpTo(columnTypeDriver.getAuxVectorSize(committedRowCount));
                 } else {
                     // Fixed size
                     final int shl = ColumnType.pow2SizeOf(columnType);
@@ -5579,6 +5580,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             populateDenseIndexerList();
             LOG.info().$("switched partition [path='").$(path).$('\'').I$();
+            if (Utf8s.endsWithAscii(path, "26.9")) {
+                System.out.println("of interest");
+            }
         } catch (Throwable e) {
             distressed = true;
             throw e;
@@ -6931,7 +6935,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
             long timestamp = txWriter.getPartitionTimestampByIndex(i);
             long partitionTxn = txWriter.getPartitionNameTxn(i);
-            partitionRemoveCandidates.add(timestamp, partitionTxn);
+            partitionRemoveCandidates.add(timestamp, partitionTxn);///tmp/junit7562354284751454754/dbRoot
         }
     }
 

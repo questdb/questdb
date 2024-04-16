@@ -136,6 +136,15 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testWalAddRemoveCommitMoveUncommittedSizeIssue() throws Exception {
+        Rnd rnd = fuzzer.generateRandom(LOG, 1512387976418L, 1713227441478L);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.05, 0.01, 0.0);
+        setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
+        setFuzzProperties(rnd);
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testWalApplyEjectsMultipleTables() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), getMaxWalSize(rnd), getMaxWalFdCache(rnd));
