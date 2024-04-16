@@ -42,6 +42,20 @@ public class InsertCastTest extends AbstractCairoTest {
             ddl("create table tab(ts timestamp) timestamp(ts)");
             try {
                 insert("insert into tab values(null::string)");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "designated timestamp column cannot be NULL");
+            }
+        });
+    }
+
+    @Test
+    public void testNullVarcharToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab(ts timestamp) timestamp(ts)");
+            try {
+                insert("insert into tab values(null::varchar)");
+                Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "designated timestamp column cannot be NULL");
             }
