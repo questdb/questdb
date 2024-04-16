@@ -332,11 +332,11 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testByteToVarcharCast() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t&\uDA1F\uDE98|\uD924\uDE04\n" +
-                        "138\t톬F\uD9E6\uDECD1Ѓَᯤ\\篸\n" +
-                        "468\t3\n" +
-                        "-352\t-\uDBED\uDC98\uDA30\uDEE01W씌\n" +
-                        "770\t3\n",
+                        "-920\t&BT+\n" +
+                        "363\t3\n" +
+                        "367\t3\n" +
+                        "895\t3\n" +
+                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -519,11 +519,11 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testCharToVarcharCast() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t&\uDA1F\uDE98|\uD924\uDE04\n" +
-                        "138\t톬F\uD9E6\uDECD1Ѓَᯤ\\篸\n" +
-                        "468\tf\n" +
-                        "-352\t-\uDBED\uDC98\uDA30\uDEE01W씌\n" +
-                        "770\tf\n",
+                        "-920\t&BT+\n" +
+                        "363\tf\n" +
+                        "367\tf\n" +
+                        "895\tf\n" +
+                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -727,11 +727,11 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testDoubleToVarcharCast() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t&\uDA1F\uDE98|\uD924\uDE04\n" +
-                        "138\t톬F\uD9E6\uDECD1Ѓَᯤ\\篸\n" +
-                        "468\t3.5\n" +
-                        "-352\t-\uDBED\uDC98\uDA30\uDEE01W씌\n" +
-                        "770\t3.5\n",
+                        "-920\t&BT+\n" +
+                        "363\t3.5\n" +
+                        "367\t3.5\n" +
+                        "895\t3.5\n" +
+                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -846,11 +846,11 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testFloatToVarcharCast() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t&\uDA1F\uDE98|\uD924\uDE04\n" +
-                        "138\t톬F\uD9E6\uDECD1Ѓَᯤ\\篸\n" +
-                        "468\t3.5\n" +
-                        "-352\t-\uDBED\uDC98\uDA30\uDEE01W씌\n" +
-                        "770\t3.5\n",
+                        "-920\t&BT+\n" +
+                        "363\t3.5\n" +
+                        "367\t3.5\n" +
+                        "895\t3.5\n" +
+                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1122,11 +1122,11 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testIntToVarcharCast() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t&\uDA1F\uDE98|\uD924\uDE04\n" +
-                        "138\t톬F\uD9E6\uDECD1Ѓَᯤ\\篸\n" +
-                        "468\t3\n" +
-                        "-352\t-\uDBED\uDC98\uDA30\uDEE01W씌\n" +
-                        "770\t3\n",
+                        "-920\t&BT+\n" +
+                        "363\t3\n" +
+                        "367\t3\n" +
+                        "895\t3\n" +
+                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1152,26 +1152,26 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testIntToVarcharCastOnBranch() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t&\uDA1F\uDE98|\uD924\uDE04\n" +
-                        "138\t10\n" +
-                        "468\t10\n" +
-                        "-352\t-\uDBED\uDC98\uDA30\uDEE01W씌\n" +
-                        "770\t\n" +
-                        "927\t\n" +
-                        "-537\tꋯɟ\uF6BE腠\n" +
-                        "71\t\n" +
-                        "121\t10\n" +
-                        "195\t10\n" +
-                        "432\t10\n" +
-                        "674\t\n" +
-                        "211\t10\n" +
-                        "478\t10\n" +
-                        "-294\tEǄZ҄+W!\uD9FE\uDC46Jz\n" +
-                        "-544\t\uDBD6\uDC55ﭙ@\n" +
-                        "-426\tm[<\n" +
-                        "935\t\n" +
-                        "-676\t➘`ؾ\uD9F5\uDF1D楣DB\uDAAD\uDE0A\uE916G\n" +
-                        "766\t\n",
+                        "-920\t&BT+\n" +
+                        "363\t10\n" +
+                        "367\t10\n" +
+                        "895\t\n" +
+                        "-6\t1W씌䒙\uD8F2\uDE8E>\n" +
+                        "-440\t:աf@ץ;윦\u0382\n" +
+                        "905\t\n" +
+                        "-212\t\uDB37\uDC95Qǜbȶ\u05EC˟\n" +
+                        "569\t\n" +
+                        "204\t10\n" +
+                        "-845\tMw1$c\n" +
+                        "768\t\n" +
+                        "343\t10\n" +
+                        "797\t\n" +
+                        "34\t\n" +
+                        "-365\tոҊG\uD9A6\uDD42\uDB48\uDC78{ϸ\uD9F4\uDFB9\uDA0A\uDC7A\uDA76\uDC87\n" +
+                        "895\t\n" +
+                        "416\t10\n" +
+                        "-765\t\uDBAF\uDD0Duh覌Ѫw租.ě\n" +
+                        "754\t\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1196,26 +1196,26 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testIpv4ToVarcharCast() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t&\uDA1F\uDE98|\uD924\uDE04\n" +
-                        "138\t톬F\uD9E6\uDECD1Ѓَᯤ\\篸\n" +
-                        "468\t127.0.0.1\n" +
-                        "-352\t-\uDBED\uDC98\uDA30\uDEE01W씌\n" +
-                        "770\t127.0.0.1\n" +
-                        "927\t127.0.0.1\n" +
-                        "-537\tꋯɟ\uF6BE腠\n" +
-                        "71\t127.0.0.1\n" +
-                        "121\t雑\uDB9C\uDCE1\uD9F6\uDF3D횝\uDB9A\uDF230pጙ锿\n" +
-                        "195\t\uE76C\uDBE3\uDCF2\uD981\uDF09۾芊,\uD931\uDF48ҽ\uDA01\uDE60E\n" +
-                        "432\t127.0.0.1\n" +
-                        "674\t127.0.0.1\n" +
-                        "211\t127.0.0.1\n" +
-                        "478\t127.0.0.1\n" +
-                        "-294\tEǄZ҄+W!\uD9FE\uDC46Jz\n" +
-                        "-544\t\uDBD6\uDC55ﭙ@\n" +
-                        "-426\tm[<\n" +
-                        "935\t127.0.0.1\n" +
-                        "-676\t➘`ؾ\uD9F5\uDF1D楣DB\uDAAD\uDE0A\uE916G\n" +
-                        "766\t127.0.0.1\n",
+                        "-920\t&BT+\n" +
+                        "363\t127.0.0.1\n" +
+                        "367\t127.0.0.1\n" +
+                        "895\t127.0.0.1\n" +
+                        "-6\t1W씌䒙\uD8F2\uDE8E>\n" +
+                        "-440\t:աf@ץ;윦\u0382\n" +
+                        "905\t127.0.0.1\n" +
+                        "-212\t\uDB37\uDC95Qǜbȶ\u05EC˟\n" +
+                        "569\t127.0.0.1\n" +
+                        "204\t127.0.0.1\n" +
+                        "-845\tMw1$c\n" +
+                        "768\t127.0.0.1\n" +
+                        "343\t127.0.0.1\n" +
+                        "797\t127.0.0.1\n" +
+                        "34\t127.0.0.1\n" +
+                        "-365\tոҊG\uD9A6\uDD42\uDB48\uDC78{ϸ\uD9F4\uDFB9\uDA0A\uDC7A\uDA76\uDC87\n" +
+                        "895\t127.0.0.1\n" +
+                        "416\t127.0.0.1\n" +
+                        "-765\t\uDBAF\uDD0Duh覌Ѫw租.ě\n" +
+                        "754\t127.0.0.1\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1439,11 +1439,11 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testLongToVarcharCast() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t&\uDA1F\uDE98|\uD924\uDE04\n" +
-                        "138\t톬F\uD9E6\uDECD1Ѓَᯤ\\篸\n" +
-                        "468\t3\n" +
-                        "-352\t-\uDBED\uDC98\uDA30\uDEE01W씌\n" +
-                        "770\t3\n",
+                        "-920\t&BT+\n" +
+                        "363\t3\n" +
+                        "367\t3\n" +
+                        "895\t3\n" +
+                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1580,11 +1580,11 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testShortToVarcharCast() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t&\uDA1F\uDE98|\uD924\uDE04\n" +
-                        "138\t톬F\uD9E6\uDECD1Ѓَᯤ\\篸\n" +
-                        "468\t42\n" +
-                        "-352\t-\uDBED\uDC98\uDA30\uDEE01W씌\n" +
-                        "770\t42\n",
+                        "-920\t&BT+\n" +
+                        "363\t42\n" +
+                        "367\t42\n" +
+                        "895\t42\n" +
+                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1729,11 +1729,11 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testStringToVarcharCast() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t&\uDA1F\uDE98|\uD924\uDE04\n" +
-                        "138\t톬F\uD9E6\uDECD1Ѓَᯤ\\篸\n" +
-                        "468\tfoo\n" +
-                        "-352\t-\uDBED\uDC98\uDA30\uDEE01W씌\n" +
-                        "770\tfoo\n",
+                        "-920\t&BT+\n" +
+                        "363\tfoo\n" +
+                        "367\tfoo\n" +
+                        "895\tfoo\n" +
+                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1848,11 +1848,11 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     public void testUuidToVarcharCast() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t&\uDA1F\uDE98|\uD924\uDE04\n" +
-                        "138\t톬F\uD9E6\uDECD1Ѓَᯤ\\篸\n" +
-                        "468\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n" +
-                        "-352\t-\uDBED\uDC98\uDA30\uDEE01W씌\n" +
-                        "770\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
+                        "-920\t&BT+\n" +
+                        "363\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n" +
+                        "367\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n" +
+                        "895\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n" +
+                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1879,10 +1879,10 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
         assertQuery(
                 "x\tswitch\n" +
                         "-920\t\n" +
-                        "97\tӄǈ2Lg\n" +
+                        "706\t\n" +
                         "-104\t\n" +
-                        "-194\t\n" +
-                        "416\t\n",
+                        "940\t\n" +
+                        "841\t\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +

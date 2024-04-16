@@ -182,6 +182,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
 
     @Override
     default Utf8Sink putAscii(char c) {
+        // todo: have function that accepts ascii byte
         return put((byte) c);
     }
 

@@ -133,7 +133,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
             record.jumpTo(frame.getPartitionIndex(), 0);
             for (long index = frame.getRowHi() - 1, lo = frame.getRowLo() - 1; index > lo; index--) {
                 record.setRecordIndex(index);
-                CursorPrinter.println(record, cursor.getTableReader().getMetadata(), sink);
+                TestUtils.println(record, cursor.getTableReader().getMetadata(), sink);
             }
         }
     }
