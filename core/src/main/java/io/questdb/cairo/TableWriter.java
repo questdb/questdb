@@ -7895,6 +7895,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putGeoStr(int columnIndex, CharSequence value);
 
+        default void putGeoVarchar(int columnIndex, Utf8Sequence value) {
+            putGeoStr(columnIndex, value.asAsciiCharSequence());
+        }
+
         void putIPv4(int columnIndex, int value);
 
         void putInt(int columnIndex, int value);
