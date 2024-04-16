@@ -149,7 +149,6 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
             return right;
         }
 
-
         @Override
         public boolean isReadThreadSafe() {
             return false;
