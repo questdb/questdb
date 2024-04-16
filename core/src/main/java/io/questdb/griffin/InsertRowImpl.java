@@ -50,7 +50,7 @@ public class InsertRowImpl {
         this.timestampFunction = timestampFunction;
         this.tupleIndex = tupleIndex;
         if (timestampFunction != null) {
-            if (!ColumnType.isString(timestampFunction.getType())) {
+            if (!ColumnType.isString(timestampFunction.getType()) && !ColumnType.isVarchar(timestampFunction.getType())) {
                 rowFactory = this::getRowWithTimestamp;
             } else {
                 rowFactory = this::getRowWithStringTimestamp;

@@ -648,6 +648,17 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastVarcharToDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab(d string, ts timestamp) timestamp(ts) partition by day");
+            insert("insert into tab values ('string', '2000'::string), ('varchar', '2000'::varchar);");
+            assertSql("d\tts\n" +
+                    "string\t2000-01-01T00:00:00.000000Z\n" +
+                    "varchar\t2000-01-01T00:00:00.000000Z\n", "select * from tab order by d");
+        });
+    }
+
+    @Test
     public void testCastIntToShortBind() throws Exception {
         assertIntBind(
                 "short",
