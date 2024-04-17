@@ -23,9 +23,9 @@ import java.util.Properties;
 import java.util.concurrent.atomic.AtomicReference;
 
 
-public class SteveServerConfiguration implements DynamicServerConfiguration {
+public class DynamicPropServerConfiguration implements DynamicServerConfiguration {
 
-    private final static Log LOG = LogFactory.getLog(SteveServerConfiguration.class);
+    private final static Log LOG = LogFactory.getLog(DynamicPropServerConfiguration.class);
     private AtomicReference<PropServerConfiguration> delegate;
 
     String root;
@@ -37,7 +37,7 @@ public class SteveServerConfiguration implements DynamicServerConfiguration {
     FactoryProviderFactory fpf;
     boolean loadAdditionalConfigurations;
 
-    public SteveServerConfiguration(
+    public DynamicPropServerConfiguration(
             String root,
             Properties properties,
             @Nullable Map<String, String> env,
@@ -71,7 +71,7 @@ public class SteveServerConfiguration implements DynamicServerConfiguration {
         this.delegate = new AtomicReference<>(serverConfig);
     }
 
-    public SteveServerConfiguration(
+    public DynamicPropServerConfiguration(
             String root,
             Properties properties,
             @Nullable Map<String, String> env,
@@ -94,7 +94,7 @@ public class SteveServerConfiguration implements DynamicServerConfiguration {
         );
     }
 
-    public SteveServerConfiguration(
+    public DynamicPropServerConfiguration(
             String root,
             Properties properties,
             @Nullable Map<String, String> env,

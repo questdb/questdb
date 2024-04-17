@@ -165,7 +165,7 @@ public class Bootstrap {
                 final Properties properties = loadProperties();
                 final FilesFacade ffOverride = bootstrapConfiguration.getFilesFacade();
                 if (ffOverride == null) {
-                    config = new SteveServerConfiguration(
+                    config = new DynamicPropServerConfiguration(
                             rootDirectory,
                             properties,
                             bootstrapConfiguration.getEnv(),
@@ -173,7 +173,7 @@ public class Bootstrap {
                             buildInformation
                     );
                 } else {
-                    config = new SteveServerConfiguration(
+                    config = new DynamicPropServerConfiguration(
                             rootDirectory,
                             properties,
                             bootstrapConfiguration.getEnv(),
