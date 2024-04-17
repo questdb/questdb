@@ -98,8 +98,17 @@ public class ConvertOperatorImpl implements Closeable {
                     }
 
                     LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen)).$(", column=").$(columnName).$(", from=").$(ColumnType.nameOf(existingType)).$(", to=").$(ColumnType.nameOf(newType)).I$();
-
-                    ColumnTypeConverter.convertColumn(maxRow - columnTop, srcFixFd, srcVarFd, dstFixFd, dstVarFd, existingType, newType, ff, appendPageSize);
+                    boolean ok = ColumnTypeConverter.convertColumn(maxRow - columnTop, srcFixFd, srcVarFd, dstFixFd, dstVarFd, existingType, newType, ff, appendPageSize);
+                    if (!ok) {
+                        closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
+                        LOG.critical().$("failed to convert column, column is corrupt [at=").$(path.trimTo(pathTrimToLen))
+                                .$(", column=").$(columnName)
+                                .$(", from=").$(ColumnType.nameOf(existingType))
+                                .$(", to=").$(ColumnType.nameOf(newType))
+                                .$(", srcFixFd=").$(srcFixFd)
+                                .$(", srcVarFd=").$(srcVarFd).I$();
+                        throw CairoException.nonCritical().put("Failed to convert column. Column data is corrupt [name=").put(columnName).put(']');
+                    }
 
                     long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);
                     purgingOperator.add(existingColIndex, existingColTxnVer, partitionTimestamp, partitionNameTxn);
@@ -121,6 +130,13 @@ public class ConvertOperatorImpl implements Closeable {
 
     private void clear() {
         purgingOperator.clear();
+    }
+
+    private void closeFds(int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd) {
+        ff.close(srcFixFd);
+        ff.close(srcVarFd);
+        ff.close(dstFixFd);
+        ff.close(dstVarFd);
     }
 
     private long openColumnsRO(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {

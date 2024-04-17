@@ -276,6 +276,56 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     /**
+     * Reads a UTF-8 value from a VARCHAR column checking for memory boundaries.
+     *
+     * @param rowNum  the row number to read
+     * @param dataMem base pointer of the data vector
+     * @param auxMem  base pointer of the auxiliary vector
+     * @param ab      whether to return the A or B flyweight
+     * @return a Utf8Sequence representing the value at rowNum
+     */
+    public static Utf8Sequence getValueChecked(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
+        final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
+        if (auxMem.size() < auxOffset + VARCHAR_AUX_WIDTH_BYTES) {
+            throw CairoException.nonCritical().put("cannot read varchar value at ").put(rowNum).put(". Aux vector is too small");
+        }
+
+        int raw = auxMem.getInt(auxOffset);
+        assert raw != 0;
+
+        if (hasNullFlag(raw)) {
+            return null;
+        }
+
+        boolean ascii = hasAsciiFlag(raw);
+
+        if (hasInlinedFlag(raw)) {
+            // inlined string
+            int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
+            return ab == 1 ? auxMem.getVarcharA(auxOffset + 1, size, ascii) : auxMem.getVarcharB(auxOffset + 1, size, ascii);
+        }
+
+        // string is split, prefix is duplicated in auxMem
+        long dataOffset = getDataOffset(auxMem, auxOffset);
+        int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
+        if (dataMem.size() < dataOffset + size) {
+            throw CairoException.nonCritical().put("cannot read varchar value at ").put(rowNum).put(". Data vector is too small");
+        }
+
+        return ab == 1 ? auxMem.getSplitVarcharA(
+                auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET),
+                dataMem.addressOf(dataOffset),
+                size,
+                ascii
+        ) : auxMem.getSplitVarcharB(
+                auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET),
+                dataMem.addressOf(dataOffset),
+                size,
+                ascii
+        );
+    }
+
+    /**
      * Reads a UTF-8 value from a VARCHAR column.
      *
      * @param auxAddr       base pointer of the auxiliary vector
@@ -283,7 +333,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param rowNum        the row number to read
      * @param utf8view      flyweight for the inlined string
      * @param utf8SplitView flyweight for the split string
-     * @return utf8view or utf8SplitView loaded with the read value
      */
     public static Utf8Sequence getValue(
             long auxAddr,

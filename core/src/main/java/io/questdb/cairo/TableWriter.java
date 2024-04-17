@@ -917,6 +917,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Column converted, add new one to the metadata and remove the existing
         addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, existingColIndex);
+        try {
+            // open _meta file
+            openMetaFile(ff, path, rootLen, metaMem);
+            // remove _todo
+            clearTodoLog();
+        } catch (CairoException e) {
+            throwDistressException(e);
+        }
+
         bumpMetadataAndColumnStructureVersion();
         metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey);
 

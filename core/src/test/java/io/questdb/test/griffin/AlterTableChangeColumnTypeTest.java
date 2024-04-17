@@ -51,6 +51,14 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             insert("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
             assertSql("c\nabc\n", "select c from x limit -1");
+
+            ddl("create table z as (select c from x)", sqlExecutionContext);
+            ddl("alter table x alter column c type string", sqlExecutionContext);
+
+            assertSqlCursorsConvertedStrings(
+                    "select c from x",
+                    "select c from z"
+            );
         });
     }
 
