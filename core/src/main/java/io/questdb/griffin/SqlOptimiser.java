@@ -2737,10 +2737,8 @@ public class SqlOptimiser implements Mutable {
     private boolean nonAggregateFunctionDependsOn(ExpressionNode node, CharSequence argument) {
         sqlNodeStack.clear();
         while (node != null) {
-            if (node.type != FUNCTION) {
-                if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, argument)) {
-                    return true;
-                }
+            if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, argument)) {
+                return true;
             }
 
             if (node.type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
@@ -2755,11 +2753,8 @@ public class SqlOptimiser implements Mutable {
                     }
                 } else {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
-                        if (node.args.getQuick(i) != null) {
-                            sqlNodeStack.push(node.args.getQuick(i));
-                        }
+                        sqlNodeStack.push(node.args.getQuick(i));
                     }
-
                     node = node.args.getQuick(0);
                     continue;
                 }
