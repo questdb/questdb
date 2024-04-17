@@ -23,11 +23,11 @@ public class ConfigReloader implements QuietCloseable, DirWatcherCallback {
             PropertyKey.PG_RO_USER,
             PropertyKey.PG_RO_PASSWORD
     ));
-    DynamicServerConfiguration config;
-    DirWatcher dirWatcher;
-    java.nio.file.Path confPath;
-    long lastModified;
-    Properties properties;
+    private final DynamicServerConfiguration config;
+    private final java.nio.file.Path confPath;
+    private long lastModified;
+    private Properties properties;
+    private DirWatcher dirWatcher;
     private boolean closed;
 
     public ConfigReloader(DynamicServerConfiguration config) {
@@ -68,6 +68,7 @@ public class ConfigReloader implements QuietCloseable, DirWatcherCallback {
         if (!closed) {
             this.dirWatcher = Misc.free(dirWatcher);
         }
+        closed = true;
     }
 
 

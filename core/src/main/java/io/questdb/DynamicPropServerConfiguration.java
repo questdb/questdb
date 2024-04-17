@@ -25,17 +25,15 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class DynamicPropServerConfiguration implements DynamicServerConfiguration {
 
-    private final static Log LOG = LogFactory.getLog(DynamicPropServerConfiguration.class);
-    private AtomicReference<PropServerConfiguration> delegate;
-
-    String root;
-    @Nullable Map<String, String> env;
-    Log log;
-    BuildInformation buildInformation;
-    FilesFacade filesFacade;
-    MicrosecondClock microsecondClock;
-    FactoryProviderFactory fpf;
-    boolean loadAdditionalConfigurations;
+    private final AtomicReference<PropServerConfiguration> delegate;
+    private final String root;
+    private final @Nullable Map<String, String> env;
+    private final Log log;
+    private final BuildInformation buildInformation;
+    private final FilesFacade filesFacade;
+    private final MicrosecondClock microsecondClock;
+    private final FactoryProviderFactory fpf;
+    private final boolean loadAdditionalConfigurations;
 
     public DynamicPropServerConfiguration(
             String root,

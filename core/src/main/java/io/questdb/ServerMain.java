@@ -360,7 +360,6 @@ public class ServerMain implements Closeable {
                             sharedPool.assign(telemetryJob);
                         }
                     }
-
                 } catch (Throwable thr) {
                     throw new Bootstrap.BootstrapException(thr);
                 }

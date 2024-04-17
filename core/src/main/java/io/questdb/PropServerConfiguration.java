@@ -65,6 +65,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 public class PropServerConfiguration implements ServerConfiguration {
+
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";

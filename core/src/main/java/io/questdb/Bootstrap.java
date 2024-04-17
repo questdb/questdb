@@ -454,20 +454,6 @@ public class Bootstrap {
         ff.remove(path);
     }
 
-    private void extractConfDir(byte[] buffer) throws IOException {
-        copyConfResource(rootDirectory, false, buffer, "conf/date.formats", log);
-        try {
-            copyConfResource(rootDirectory, true, buffer, "conf/mime.types", log);
-        } catch (IOException exception) {
-            // conf can be read-only, this is not critical
-            if (exception.getMessage() == null || (!exception.getMessage().contains("Read-only file system") && !exception.getMessage().contains("Permission denied"))) {
-                throw exception;
-            }
-        }
-        copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
-        copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
-    }
-
     private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
         try (final InputStream is = getResourceClass().getResourceAsStream(getPublicZipPath())) {
             if (is != null) {
@@ -487,6 +473,20 @@ public class Bootstrap {
         }
         setPublicVersion(publicDir, thisVersion);
         extractConfDir(buffer);
+    }
+
+    private void extractConfDir(byte[] buffer) throws IOException {
+        copyConfResource(rootDirectory, false, buffer, "conf/date.formats", log);
+        try {
+            copyConfResource(rootDirectory, true, buffer, "conf/mime.types", log);
+        } catch (IOException exception) {
+            // conf can be read-only, this is not critical
+            if (exception.getMessage() == null || (!exception.getMessage().contains("Read-only file system") && !exception.getMessage().contains("Permission denied"))) {
+                throw exception;
+            }
+        }
+        copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
+        copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
     }
 
     private void reportValidateConfig() {
