@@ -84,7 +84,9 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, 
         this.lock.readLock().lock();
 
         try {
-            // todo: handle empty username
+            if (username.length() == 0) {
+                return false;
+            }
             if (Chars.equals(username, this.pgwireConfiguration.getDefaultUsername())) {
                 return passwordLen == this.defaultUserPasswordLen &&  Vect.memeq(this.defaultUserPasswordSink.ptr(), passwordPtr, passwordLen);
             } else if (Chars.equals(username, this.pgwireConfiguration.getReadOnlyUsername())) {
