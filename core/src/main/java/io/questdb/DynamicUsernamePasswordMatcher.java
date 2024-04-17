@@ -35,7 +35,9 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher {
     private final ServerConfiguration serverConfiguration;
     private final SimpleReadWriteLock lock;
     private final DirectUtf8Sink defaultUserPasswordSink;
+    private int defaultUserPasswordLen;
     private final DirectUtf8Sink readOnlyUserPasswordSink;
+    private int readOnlyUserPasswordLen;
     private PGWireConfiguration pgwireConfiguration;
 
     public DynamicUsernamePasswordMatcher(ServerConfiguration serverConfiguration) {
@@ -44,8 +46,10 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher {
 
         this.defaultUserPasswordSink = new DirectUtf8Sink(4);
         this.defaultUserPasswordSink.put(this.pgwireConfiguration.getDefaultPassword());
+        this.defaultUserPasswordLen = this.pgwireConfiguration.getDefaultPassword().length();
         this.readOnlyUserPasswordSink = new DirectUtf8Sink(4);
         this.readOnlyUserPasswordSink.put(this.pgwireConfiguration.getReadOnlyPassword());
+        this.readOnlyUserPasswordLen = this.pgwireConfiguration.getReadOnlyPassword().length();
 
         lock = new SimpleReadWriteLock();
     }
@@ -61,8 +65,10 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher {
                 // Update the default and readonly user password sinks
                 this.defaultUserPasswordSink.clear();
                 this.defaultUserPasswordSink.put(this.pgwireConfiguration.getDefaultPassword());
+                this.defaultUserPasswordLen = this.pgwireConfiguration.getDefaultPassword().length();
                 this.readOnlyUserPasswordSink.clear();
                 this.readOnlyUserPasswordSink.put(this.pgwireConfiguration.getReadOnlyPassword());
+                this.readOnlyUserPasswordLen = this.pgwireConfiguration.getReadOnlyPassword().length();
 
                 this.lock.writeLock().unlock();
             }
@@ -71,13 +77,14 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher {
         this.lock.readLock().lock();
 
         try {
+            // todo: handle empty username
             if (Chars.equals(username, this.pgwireConfiguration.getDefaultUsername())) {
-                return Vect.memeq(this.defaultUserPasswordSink.ptr(), passwordPtr, passwordLen);
+                return passwordLen == this.defaultUserPasswordLen &&  Vect.memeq(this.defaultUserPasswordSink.ptr(), passwordPtr, passwordLen);
             } else if (Chars.equals(username, this.pgwireConfiguration.getReadOnlyUsername())) {
                 if (!this.pgwireConfiguration.isReadOnlyUserEnabled()) {
                     return false;
                 }
-                return Vect.memeq(this.readOnlyUserPasswordSink.ptr(), passwordPtr, passwordLen);
+                return passwordLen == this.readOnlyUserPasswordLen && Vect.memeq(this.readOnlyUserPasswordSink.ptr(), passwordPtr, passwordLen);
             } else {
                 return false;
             }
