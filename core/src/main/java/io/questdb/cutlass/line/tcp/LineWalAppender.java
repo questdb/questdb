@@ -320,7 +320,7 @@ public class LineWalAppender {
                             long geoHash;
                             try {
                                 DirectUtf8Sequence value = ent.getValue();
-                                geoHash = GeoHashes.fromStringTruncatingNl(value.lo(), value.hi(), geoHashBits);
+                                geoHash = GeoHashes.fromAsciiTruncatingNl(value.lo(), value.hi(), geoHashBits);
                             } catch (NumericException e) {
                                 geoHash = GeoHashes.NULL;
                             }

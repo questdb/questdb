@@ -276,7 +276,7 @@ public class GeoHashesTest {
     public void testFromStringTruncatingNlIgnoreQuotesTruncateBits2() {
         testUnsafeFromStringTruncatingNl("'sp052w92p1p'", (lo, hi) -> {
             try {
-                Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl(lo + 1, lo + 5, 20));
+                Assert.assertEquals(807941, GeoHashes.fromAsciiTruncatingNl(lo + 1, lo + 5, 20));
             } catch (NumericException e) {
                 Assert.fail();
             }
@@ -290,12 +290,12 @@ public class GeoHashesTest {
             testUnsafeFromStringTruncatingNl("123456789bcdezz", (lo1, hi1) -> {
                 try {
                     Assert.assertEquals(
-                            GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 4),
-                            GeoHashes.fromStringTruncatingNl(lo1 + 1, lo1 + 13, 4));
+                            GeoHashes.fromAsciiTruncatingNl(lo0, lo0 + 12, 4),
+                            GeoHashes.fromAsciiTruncatingNl(lo1 + 1, lo1 + 13, 4));
 
                     Assert.assertNotEquals(
-                            GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 20),
-                            GeoHashes.fromStringTruncatingNl(lo1 + 1, lo1 + 13, 25));
+                            GeoHashes.fromAsciiTruncatingNl(lo0, lo0 + 12, 20),
+                            GeoHashes.fromAsciiTruncatingNl(lo1 + 1, lo1 + 13, 25));
                 } catch (NumericException e) {
                     Assert.fail();
                 }
@@ -337,7 +337,7 @@ public class GeoHashesTest {
     public void testFromStringTruncatingNlShorterThanRequiredLength2() {
         testUnsafeFromStringTruncatingNl("123", (lo, hi) -> {
             try {
-                Assert.assertEquals(0, GeoHashes.fromStringTruncatingNl(lo, hi + 7, 1));
+                Assert.assertEquals(0, GeoHashes.fromAsciiTruncatingNl(lo, hi + 7, 1));
             } catch (NumericException expected) {
                 // beyond hi we will find whatever, very unlikely that it parses as a geohash char
             }

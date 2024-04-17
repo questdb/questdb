@@ -7891,9 +7891,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putGeoStr(int columnIndex, CharSequence value);
 
-        default void putGeoVarchar(int columnIndex, Utf8Sequence value) {
-            putGeoStr(columnIndex, value.asAsciiCharSequence());
-        }
+        void putGeoVarchar(int columnIndex, Utf8Sequence value);
 
         void putIPv4(int columnIndex, int value);
 
@@ -8018,6 +8016,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putGeoStr(int columnIndex, CharSequence value) {
+            // no-op
+        }
+
+        @Override
+        public void putGeoVarchar(int columnIndex, Utf8Sequence value) {
             // no-op
         }
 
@@ -8211,6 +8214,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         public void putGeoStr(int columnIndex, CharSequence hash) {
             final int type = metadata.getColumnType(columnIndex);
             WriterRowUtils.putGeoStr(columnIndex, hash, type, this);
+        }
+
+        @Override
+        public void putGeoVarchar(int columnIndex, Utf8Sequence hash) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoVarchar(columnIndex, hash, type, this);
         }
 
         @Override

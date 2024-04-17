@@ -1926,6 +1926,12 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void putGeoVarchar(int columnIndex, Utf8Sequence hash) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoVarchar(columnIndex, hash, type, this);
+        }
+
+        @Override
         public void putIPv4(int columnIndex, int value) {
             putInt(columnIndex, value);
         }
