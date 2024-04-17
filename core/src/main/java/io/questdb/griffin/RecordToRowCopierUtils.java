@@ -96,6 +96,7 @@ public class RecordToRowCopierUtils {
         int wPutIPv4 = asm.poolInterfaceMethod(TableWriter.Row.class, "putIPv4", "(II)V");
         int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
+        int wPutLong256Utf8 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256Utf8", "(ILio/questdb/std/str/DirectUtf8Sequence;)V");
         int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128", "(IJJ)V");
         int wPutUuidStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuid", "(ILjava/lang/CharSequence;)V");
         int wPutUuidUtf8 = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuidUtf8", "(ILio/questdb/std/str/Utf8Sequence;)V");
@@ -142,7 +143,6 @@ public class RecordToRowCopierUtils {
         int implicitCastVarcharAsChar = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsChar", "(Lio/questdb/std/str/Utf8Sequence;)C");
         int implicitCastVarcharAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsFloat", "(Lio/questdb/std/str/Utf8Sequence;)F");
         int implicitCastVarcharAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsDouble", "(Lio/questdb/std/str/Utf8Sequence;)D");
-        int implicitCastVarcharAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsLong256", "(Lio/questdb/std/str/Utf8Sequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
 
         int implicitCastIntAsShort = asm.poolMethod(SqlUtil.class, "implicitCastIntAsShort", "(I)S");
         int implicitCastLongAsShort = asm.poolMethod(SqlUtil.class, "implicitCastLongAsShort", "(J)S");
@@ -699,8 +699,7 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.LONG256:
                             asm.invokeInterface(rGetVarchar);
-                            asm.invokeStatic(implicitCastVarcharAsLong256);
-                            asm.invokeInterface(wPutLong256, 2);
+                            asm.invokeInterface(wPutLong256Utf8, 2);
                             break;
                         default:
                             assert false;
