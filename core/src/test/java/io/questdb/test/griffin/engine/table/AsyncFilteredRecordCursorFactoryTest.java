@@ -80,7 +80,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE,
-                JitUtil.isJitSupported() ? SqlJitMode.toString(SqlJitMode.JIT_MODE_ENABLED) :  SqlJitMode.toString(SqlJitMode.JIT_MODE_FORCE_SCALAR));
+                JitUtil.isJitSupported() ? SqlJitMode.toString(SqlJitMode.JIT_MODE_ENABLED) : SqlJitMode.toString(SqlJitMode.JIT_MODE_FORCE_SCALAR));
         super.setUp();
     }
 
@@ -689,9 +689,9 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     // We expect both cursors to be able to make progress even though only one of them
                     // occupies the reduce queue most of the time. The second one should be using a local task.
                     while (c1.hasNext()) {
-                        CursorPrinter.println(r1, f1.getMetadata(), sink1);
+                        TestUtils.println(r1, f1.getMetadata(), sink1);
                         if (c2.hasNext()) {
-                            CursorPrinter.println(r2, f2.getMetadata(), sink2);
+                            TestUtils.println(r2, f2.getMetadata(), sink2);
                         }
                     }
 
@@ -811,7 +811,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             final WorkerPool sharedPool = new TestWorkerPool("pool0", sharedPoolWorkerCount);
-
             TestUtils.setupWorkerPool(sharedPool, engine);
             sharedPool.start();
 

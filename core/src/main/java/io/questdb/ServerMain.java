@@ -24,7 +24,9 @@
 
 package io.questdb;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -40,13 +42,10 @@ import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
-import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
-import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
-import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
-import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
@@ -63,13 +62,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements Closeable {
-    private final String banner;
+    private final Bootstrap bootstrap;
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final ServerConfiguration config;
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
-    private final Log log;
-    private final Metrics metrics;
     private final AtomicBoolean running = new AtomicBoolean();
     private ConfigReloader configReloader;
     private HttpServer httpServer;
@@ -82,14 +78,11 @@ public class ServerMain implements Closeable {
     }
 
     public ServerMain(final Bootstrap bootstrap) {
-        this.config = bootstrap.getConfiguration();
-        this.log = bootstrap.getLog();
-        this.banner = bootstrap.getBanner();
-        this.metrics = bootstrap.getMetrics();
-
+        this.bootstrap = bootstrap;
         // create cairo engine
         engine = freeOnExit.register(bootstrap.newCairoEngine());
         try {
+            final ServerConfiguration config = bootstrap.getConfiguration();
             config.init(engine, freeOnExit);
             Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
             freeOnExit.register(config.getFactoryProvider());
@@ -236,7 +229,7 @@ public class ServerMain implements Closeable {
     }
 
     public ServerConfiguration getConfiguration() {
-        return config;
+        return bootstrap.getConfiguration();
     }
 
     public CairoEngine getEngine() {
@@ -279,10 +272,10 @@ public class ServerMain implements Closeable {
             if (addShutdownHook) {
                 addShutdownHook();
             }
-            workerPoolManager.start(log);
-            Bootstrap.logWebConsoleUrls(config, log, banner, webConsoleSchema());
+            workerPoolManager.start(bootstrap.getLog());
+            bootstrap.logBannerAndEndpoints(webConsoleSchema());
             System.gc(); // final GC
-            log.advisoryW().$("enjoy").$();
+            bootstrap.getLog().advisoryW().$("enjoy").$();
         }
     }
 
@@ -303,7 +296,8 @@ public class ServerMain implements Closeable {
 
     private synchronized void initialize() {
         initialized = true;
-
+        final ServerConfiguration config = bootstrap.getConfiguration();
+        final Metrics metrics = bootstrap.getMetrics();
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();
         final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
@@ -322,19 +316,14 @@ public class ServerMain implements Closeable {
                 try {
                     sharedPool.assign(engine.getEngineMaintenanceJob());
 
-                    final MessageBus messageBus = engine.getMessageBus();
-                    // register jobs that help parallel execution of queries and column indexing.
-                    sharedPool.assign(new ColumnIndexerJob(messageBus));
-                    sharedPool.assign(new GroupByVectorAggregateJob(messageBus));
-                    sharedPool.assign(new GroupByMergeShardJob(messageBus));
-                    sharedPool.assign(new LatestByAllIndexedJob(messageBus));
+                    WorkerPoolUtils.setupQueryJobs(
+                            sharedPool,
+                            engine,
+                            config.getCairoConfiguration().getCircuitBreakerConfiguration()
+                    );
 
                     if (!isReadOnly) {
-                        O3Utils.setupWorkerPool(
-                                sharedPool,
-                                engine,
-                                config.getCairoConfiguration().getCircuitBreakerConfiguration()
-                        );
+                        WorkerPoolUtils.setupWriterJobs(sharedPool, engine);
 
                         if (walSupported) {
                             sharedPool.assign(config.getFactoryProvider().getWalJobFactory().createCheckWalTransactionsJob(engine));
@@ -351,7 +340,7 @@ public class ServerMain implements Closeable {
                         }
 
                         // text import
-                        CopyJob.assignToPool(messageBus, sharedPool);
+                        CopyJob.assignToPool(engine.getMessageBus(), sharedPool);
                         if (cairoConfig.getSqlCopyInputRoot() != null) {
                             final CopyRequestJob copyRequestJob = new CopyRequestJob(
                                     engine,
@@ -429,7 +418,7 @@ public class ServerMain implements Closeable {
         }
 
         System.gc(); // GC 1
-        log.advisoryW().$("server is ready to be started").$();
+        bootstrap.getLog().advisoryW().$("server is ready to be started").$();
     }
 
     protected Services services() {
@@ -450,6 +439,6 @@ public class ServerMain implements Closeable {
     }
 
     protected String webConsoleSchema() {
-        return "http://";
+        return "http";
     }
 }

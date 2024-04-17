@@ -24,6 +24,9 @@
 
 package io.questdb.std;
 
+/**
+ * A collection of SWAR utilities inspired by <a href="https://github.com/ada-url/ada">Ada URL parser</a>.
+ */
 public final class SwarUtils {
 
     private SwarUtils() {
@@ -38,10 +41,10 @@ public final class SwarUtils {
 
     /**
      * Returns index of lowest (LE) non-zero byte in the input number
-     * or 7 in case if the number is zero.
+     * or 8 in case if the number is zero.
      */
-    public static long indexOfFirstMarkedByte(long w) {
-        return ((((w - 1) & 0x101010101010101L) * 0x101010101010101L) >> 56) - 1;
+    public static int indexOfFirstMarkedByte(long w) {
+        return Long.numberOfTrailingZeros(w) >>> 3;
     }
 
     /**
