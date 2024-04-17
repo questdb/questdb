@@ -1485,7 +1485,7 @@ public class WalWriter implements TableWriterAPI {
         auxMem.jumpTo(auxMemSize);
         if (rowCount > 0) {
             final long auxMemAddr = TableUtils.mapRW(ff, auxMem.getFd(), auxMemSize, MEM_TAG);
-            columnTypeDriver.setFullAuxVectorNull(auxMemAddr,  rowCount);
+            columnTypeDriver.setFullAuxVectorNull(auxMemAddr, rowCount);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
             }

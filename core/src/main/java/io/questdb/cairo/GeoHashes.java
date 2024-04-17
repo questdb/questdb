@@ -137,14 +137,40 @@ public class GeoHashes {
         return ((1L << count) - 1) << shift;
     }
 
+    public static byte encodeByte(byte b) {
+        // element at index 11 is -1
+        return base32Indexes[b > 47 && b < 123 ? b - 48 : 11];
+    }
+
     public static byte encodeChar(char c) {
         // element at index 11 is -1
         return base32Indexes[c > 47 && c < 123 ? c - 48 : 11];
     }
 
-    public static byte encodeByte(byte b) {
-        // element at index 11 is -1
-        return base32Indexes[b > 47 && b < 123 ? b - 48 : 11];
+    public static long fromAscii(Utf8Sequence hash, int start, int end) throws NumericException {
+        // no bounds/length/nullity checks
+        int size = hash.size();
+        long geohash = 0;
+        for (int i = start; i < end; ++i) {
+            geohash = appendByte(geohash, encodeByte(hash.byteAt(i)));
+        }
+        return geohash;
+    }
+
+    public static long fromAsciiTruncatingNl(long lo, long hi, int bits) throws NumericException {
+        if (lo == hi) {
+            return NULL;
+        }
+        final int byteCount = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
+        int actualBits = 5 * byteCount;
+        if (actualBits < bits || bits == 0) {
+            throw NumericException.INSTANCE;
+        }
+        long geohash = 0;
+        for (long p = lo, limit = p + byteCount; p < limit; p++) {
+            geohash = appendByte(geohash, encodeByte(Unsafe.getUnsafe().getByte(p))); // base32
+        }
+        return widen(geohash, actualBits, bits);
     }
 
     public static long fromBitString(CharSequence bits, int start) throws NumericException {
@@ -208,32 +234,6 @@ public class GeoHashes {
             throw NumericException.INSTANCE;
         }
         return widen(fromString(hash, start, start + chars), fromBits, toBits);
-    }
-
-    public static long fromAscii(Utf8Sequence hash, int start, int end) throws NumericException {
-        // no bounds/length/nullity checks
-        int size = hash.size();
-        long geohash = 0;
-        for (int i = start; i < end; ++i) {
-            geohash = appendByte(geohash, encodeByte(hash.byteAt(i)));
-        }
-        return geohash;
-    }
-
-    public static long fromAsciiTruncatingNl(long lo, long hi, int bits) throws NumericException {
-        if (lo == hi) {
-            return NULL;
-        }
-        final int byteCount = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
-        int actualBits = 5 * byteCount;
-        if (actualBits < bits || bits == 0) {
-            throw NumericException.INSTANCE;
-        }
-        long geohash = 0;
-        for (long p = lo, limit = p + byteCount; p < limit; p++) {
-            geohash = appendByte(geohash, encodeByte(Unsafe.getUnsafe().getByte(p))); // base32
-        }
-        return widen(geohash, actualBits, bits);
     }
 
     public static int getBitFlags(int columnType) {
@@ -302,7 +302,7 @@ public class GeoHashes {
         for (int i = start; i < limit; i++) {
             switch (bits.charAt(i)) {
                 case '0':
-                    result = result << 1;
+                    result <<= 1;
                     break;
                 case '1':
                     result = (result << 1) | 1;

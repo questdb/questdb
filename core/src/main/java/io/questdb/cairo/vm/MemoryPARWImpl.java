@@ -62,15 +62,15 @@ public class MemoryPARWImpl implements MemoryARW {
     private long roOffsetHi = 0;
     private long roOffsetLo = 0;
 
+    protected MemoryPARWImpl() {
+        maxPages = Integer.MAX_VALUE;
+        memoryTag = MemoryTag.MMAP_DEFAULT;
+    }
+
     public MemoryPARWImpl(long pageSize, int maxPages, int memoryTag) {
         setExtendSegmentSize(pageSize);
         this.maxPages = maxPages;
         this.memoryTag = memoryTag;
-    }
-
-    protected MemoryPARWImpl() {
-        maxPages = Integer.MAX_VALUE;
-        memoryTag = MemoryTag.MMAP_DEFAULT;
     }
 
     public long addressOf(long offset) {
@@ -372,10 +372,7 @@ public class MemoryPARWImpl implements MemoryARW {
     public boolean isMapped(long offset, long len) {
         int pageIndex = pageIndex(offset);
         int pageEndIndex = pageIndex(offset + len - 1);
-        if (pageIndex == pageEndIndex) {
-            return getPageAddress(pageIndex) > 0;
-        }
-        return false;
+        return pageIndex == pageEndIndex && getPageAddress(pageIndex) > 0;
     }
 
     /**

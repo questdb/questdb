@@ -27,7 +27,10 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8SplitString;
 
 public class NullMemoryMR implements MemoryMR {
 

@@ -27,8 +27,8 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -111,11 +111,11 @@ public class GeoHashesTest {
         Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("0011", 4));
         Assert.assertNotEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("0", 0));
         Assert.assertEquals(1, GeoHashes.fromBitStringNl( // same as empty string
-                "##000000000000000000000000000000000000000000000000000000000000" + "1", 60));
+                "##000000000000000000000000000000000000000000000000000000000000" + '1', 60));
         Assert.assertEquals(1, GeoHashes.fromBitStringNl(
-                "##000000000000000000000000000000000000000000000000000000000000" + "1", 59));
+                "##000000000000000000000000000000000000000000000000000000000000" + '1', 59));
         Assert.assertEquals(0, GeoHashes.fromBitStringNl( // truncates
-                "##000000000000000000000000000000000000000000000000000000000000" + "1", 2));
+                "##000000000000000000000000000000000000000000000000000000000000" + '1', 2));
     }
 
     @Test(expected = NumericException.class)
