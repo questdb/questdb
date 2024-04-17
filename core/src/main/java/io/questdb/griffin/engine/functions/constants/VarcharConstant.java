@@ -89,11 +89,6 @@ public class VarcharConstant extends VarcharFunction implements ConstantFunction
     }
 
     @Override
-    public boolean isNullConstant() {
-        return value == null;
-    }
-
-    @Override
     public CharSequence getStrB(Record rec) {
         return utf16Value;
     }
@@ -121,6 +116,11 @@ public class VarcharConstant extends VarcharFunction implements ConstantFunction
     @Override
     public int getVarcharSize(Record rec) {
         return value != null ? value.size() : TableUtils.NULL_LEN;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return value == null;
     }
 
     @Override

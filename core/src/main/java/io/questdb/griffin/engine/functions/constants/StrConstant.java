@@ -96,16 +96,16 @@ public class StrConstant extends StrFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean isNullConstant() {
+        return value == null;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         if (value == null) {
             sink.val("null");
         } else {
             sink.val('\'').val(value).val('\'');
         }
-    }
-
-    @Override
-    public boolean isNullConstant() {
-        return value == null;
     }
 }

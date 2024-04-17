@@ -42,13 +42,13 @@ public class GeoIntConstant extends GeoIntFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean isNullConstant() {
-        return hash == GeoHashes.INT_NULL;
+    public int getGeoInt(Record rec) {
+        return hash;
     }
 
     @Override
-    public int getGeoInt(Record rec) {
-        return hash;
+    public boolean isNullConstant() {
+        return hash == GeoHashes.INT_NULL;
     }
 
     @Override

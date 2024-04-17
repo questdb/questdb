@@ -45,11 +45,6 @@ public class UuidConstant extends UuidFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean isNullConstant() {
-        return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
-    }
-
-    @Override
     public long getLong128Hi(Record rec) {
         return hi;
     }
@@ -57,6 +52,11 @@ public class UuidConstant extends UuidFunction implements ConstantFunction {
     @Override
     public long getLong128Lo(Record rec) {
         return lo;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
     }
 
     public void toPlan(PlanSink sink) {

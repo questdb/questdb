@@ -42,13 +42,13 @@ public class GeoLongConstant extends GeoLongFunction implements ConstantFunction
     }
 
     @Override
-    public boolean isNullConstant() {
-        return hash == GeoHashes.NULL;
+    public long getGeoLong(Record rec) {
+        return hash;
     }
 
     @Override
-    public long getGeoLong(Record rec) {
-        return hash;
+    public boolean isNullConstant() {
+        return hash == GeoHashes.NULL;
     }
 
     @Override

@@ -73,11 +73,6 @@ public class Long256Constant extends Long256Function implements Long256, Constan
     }
 
     @Override
-    public boolean isNullConstant() {
-        return Long256Impl.NULL_LONG256.equals(value);
-    }
-
-    @Override
     public Long256 getLong256B(Record rec) {
         return value;
     }
@@ -85,6 +80,11 @@ public class Long256Constant extends Long256Function implements Long256, Constan
     @Override
     public long getLong3() {
         return value.getLong3();
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return Long256Impl.NULL_LONG256.equals(value);
     }
 
     @Override
