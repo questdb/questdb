@@ -33,11 +33,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -551,7 +547,13 @@ public final class Numbers {
         return i;
     }
 
+    public static final double DOUBLE_TOLERANCE = 0.0000000001;
+
     public static int compare(double a, double b) {
+        if (equals(a,b)) {
+            return 0;
+        }
+
         if (a < b) {
             return -1;
         }
@@ -560,30 +562,7 @@ public final class Numbers {
             return 1;
         }
 
-        // Cannot use doubleToRawLongBits because of possibility of NaNs.
-        long thisBits = Double.doubleToLongBits(a);
-        long anotherBits = Double.doubleToLongBits(b);
-
-        // Values are equal
-        // (-0.0, 0.0) or (!NaN, NaN)
-        return Long.compare(thisBits, anotherBits);
-    }
-
-    public static int compare(float a, float b) {
-        if (a < b) {
-            return -1;
-        }
-        if (a > b) {
-            return 1;
-        }
-
-        // Cannot use floatToRawIntBits because of possibility of NaNs.
-        int thisBits = Float.floatToIntBits(a);
-        int anotherBits = Float.floatToIntBits(b);
-
-        // Values are equal
-        // (-0.0, 0.0) or (!NaN, NaN)
-        return Integer.compare(thisBits, anotherBits); // (0.0, -0.0) or (NaN, !NaN)
+        return Boolean.compare(Double.isNaN(a), Double.isNaN(b));
     }
 
     public static int decodeHighInt(long val) {
@@ -610,8 +589,27 @@ public final class Numbers {
         return ((Short.toUnsignedInt(high)) << 16) | Short.toUnsignedInt(low);
     }
 
-    public static boolean equals(double l, double r) {
-        return (Double.isNaN(l) && Double.isNaN(r) || Math.abs(l - r) < 0.0000000001 || l == r);
+    public static int compare(float a, float b) {
+        if (equals(a,b)) {
+            return 0;
+        }
+
+        if (a < b) {
+            return -1;
+        }
+        if (a > b) {
+            return 1;
+        }
+
+        return Boolean.compare(Float.isNaN(a), Float.isNaN(b));
+    }
+
+    public static int compareUnsigned(byte a, byte b) {
+        return Byte.toUnsignedInt(a) - Byte.toUnsignedInt(b);
+    }
+
+    public static boolean equals(float l, float r) {
+        return Math.copySign(l - r, 1.0f) <= DOUBLE_TOLERANCE || l == r || (Float.isNaN(l) && Float.isNaN(r));
     }
 
     public static boolean extractLong256(@NotNull CharSequence value, @NotNull Long256Acceptor acceptor) {
@@ -892,65 +890,8 @@ public final class Numbers {
         return parseIPv4_0(sequence, 0, sequence.length());
     }
 
-    public static int parseIPv4_0(CharSequence sequence, final int p, int lim) throws NumericException {
-        if (lim == 0) {
-            throw NumericException.INSTANCE;
-        }
-
-        int hi;
-        int lo = p;
-        int num;
-        int ipv4 = 0;
-        int count = 0;
-
-        final char sign = sequence.charAt(lo);
-
-        // removes any leading dots
-        if (notDigit(sign)) {
-            if (sign == '.') {
-                lo++;
-                while (sequence.charAt(lo) == '.') {
-                    lo++;
-                }
-            } else {
-                throw NumericException.INSTANCE;
-            }
-        }
-
-        while ((hi = Chars.indexOf(sequence, lo, '.')) > -1 && count < 3) {
-            num = parseInt(sequence, lo, hi);
-            if (num > 255) {
-                throw NumericException.INSTANCE;
-            }
-            ipv4 = (ipv4 << 8) | num;
-            count++;
-            lo = hi + 1;
-        }
-
-        if (count != 3) {
-            throw NumericException.INSTANCE;
-        }
-
-        // removes any trailing dots
-        if ((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
-            num = parseInt(sequence, lo, hi);
-            hi++;
-            while (hi < lim) {
-                if (sequence.charAt(hi) == '.') {
-                    hi++;
-                } else {
-                    throw NumericException.INSTANCE;
-                }
-            }
-        } else {
-            num = parseInt(sequence, lo, lim);
-        }
-
-        if (num > 255) {
-            throw NumericException.INSTANCE;
-        }
-
-        return (ipv4 << 8) | num;
+    public static boolean equals(double l, double r) {
+        return Math.copySign(l - r, 1.0) <= DOUBLE_TOLERANCE || l == r || (Double.isNaN(l) && Double.isNaN(r));
     }
 
     public static int parseInt(Utf8Sequence sequence) throws NumericException {
@@ -2507,8 +2448,64 @@ public final class Numbers {
         sink.putAscii(hexDigit);
     }
 
-    public static int compareUnsigned(byte x, byte y) {
-        return Byte.toUnsignedInt(x) - Byte.toUnsignedInt(y);
+    public static int parseIPv4_0(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        int hi;
+        int lo = p;
+        int num;
+        int ipv4 = 0;
+        int count = 0;
+
+        final char sign = sequence.charAt(lo);
+
+        // removes any leading dots
+        if (notDigit(sign)) {
+            if (sign == '.') {
+                do {
+                    lo++;
+                }while(sequence.charAt(lo) == '.');
+            } else {
+                throw NumericException.INSTANCE;
+            }
+        }
+
+        while ((hi = Chars.indexOf(sequence, lo, '.')) > -1 && count < 3) {
+            num = parseInt(sequence, lo, hi);
+            if (num > 255) {
+                throw NumericException.INSTANCE;
+            }
+            ipv4 = (ipv4 << 8) | num;
+            count++;
+            lo = hi + 1;
+        }
+
+        if (count != 3) {
+            throw NumericException.INSTANCE;
+        }
+
+        // removes any trailing dots
+        if ((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
+            num = parseInt(sequence, lo, hi);
+            hi++;
+            while (hi < lim) {
+                if (sequence.charAt(hi) == '.') {
+                    hi++;
+                } else {
+                    throw NumericException.INSTANCE;
+                }
+            }
+        } else {
+            num = parseInt(sequence, lo, lim);
+        }
+
+        if (num > 255) {
+            throw NumericException.INSTANCE;
+        }
+
+        return (ipv4 << 8) | num;
     }
 
     private static int estimateDecExpDouble(long fractBits, int binExp) {
