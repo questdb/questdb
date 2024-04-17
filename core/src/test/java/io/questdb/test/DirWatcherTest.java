@@ -17,24 +17,24 @@ import java.nio.charset.StandardCharsets;
 
 public class DirWatcherTest extends AbstractTest {
 
+    private SOCountDownLatch threadLatch;
+
     @Test
     public void testDirWatcher() throws Exception {
 
         final File targetFile = temp.newFile();
+        SOCountDownLatch threadLatch = new SOCountDownLatch(1);
 
         try (final DirWatcher dw = DirWatcherFactory.getDirWatcher(temp.getRoot().getAbsolutePath())) {
             Assert.assertNotNull(dw);
-            FileChangedCallback callback = new FileChangedCallback(targetFile.getAbsolutePath());
-            SOCountDownLatch threadLatch = new SOCountDownLatch(1);
+            FileChangedCallback callback = new FileChangedCallback(threadLatch);
 
             Thread thread = new Thread(() -> {
                 try {
                     dw.waitForChange(callback);
+
                 } catch (DirWatcherException exc) {
                     Assert.fail(exc.getMessage());
-                }
-                finally {
-                    threadLatch.countDown();
                 }
             });
             thread.start();
@@ -43,43 +43,20 @@ public class DirWatcherTest extends AbstractTest {
                 writer.println("hello");
             }
             threadLatch.await();
-
-            Assert.assertTrue(callback.pollChanged());
         }
     }
 
     static class FileChangedCallback implements DirWatcherCallback {
 
-        boolean changed;
-        String fp;
-        long lastModified;
+        SOCountDownLatch latch;
 
-        public FileChangedCallback(String fp) {
-            this.fp = fp;
-            try (Path p = new Path()) {
-                p.of(this.fp);
-                this.lastModified = Files.getLastModified(p);
-            }
+        public FileChangedCallback(SOCountDownLatch latch) {
+            this.latch = latch;
         }
 
         @Override
         public void onDirChanged() {
-            try (Path p = new Path()) {
-                p.of(this.fp);
-                long lastModified = Files.getLastModified(p);
-                if (lastModified > this.lastModified) {
-                    this.lastModified = lastModified;
-                    this.changed = true;
-                }
-            }
-        }
-
-        public boolean pollChanged() {
-            if (changed) {
-                changed = false;
-                return true;
-            }
-            return false;
+            this.latch.countDown();
         }
     }
 

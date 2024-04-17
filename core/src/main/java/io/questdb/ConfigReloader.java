@@ -96,14 +96,14 @@ public class ConfigReloader implements QuietCloseable, DirWatcherCallback {
                     newProperties.forEach((k, v) -> {
                         String key = (String)k;
                         String oldVal = properties.getProperty(key);
-                        if (oldVal != v) {
+                        if (!oldVal.equals(newProperties.getProperty(key))) {
                             Optional<PropertyKey> prop = PropertyKey.getByString(key);
                             if (prop.isEmpty()) {
                                 return;
                             }
 
                             if (reloadableProps.contains(prop.get())) {
-                                LOG.info().$("new value of ").$(k).$(" = ").$(v).$();
+                                LOG.info().$("loaded new value of ").$(k).$();
                                 this.properties.setProperty(key, (String)v);
                                 changed.set(true);
                             } else {
