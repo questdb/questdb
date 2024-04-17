@@ -491,20 +491,6 @@ public class SqlUtil {
         return 0;
     }
 
-    public static byte implicitCastVarcharAsByte(Utf8Sequence value) {
-        if (value != null) {
-            try {
-                int res = Numbers.parseInt(value);
-                if (res >= Byte.MIN_VALUE && res <= Byte.MAX_VALUE) {
-                    return (byte) res;
-                }
-            } catch (NumericException ignore) {
-            }
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.BYTE);
-        }
-        return 0;
-    }
-
     public static char implicitCastStrAsChar(CharSequence value) {
         if (value == null || value.length() == 0) {
             return 0;
@@ -517,34 +503,8 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.CHAR);
     }
 
-    public static char implicitCastVarcharAsChar(Utf8Sequence value) {
-        if (value == null || value.size() == 0) {
-            return 0;
-        }
-
-        int encodedResult = Utf8s.utf8CharDecode(value);
-        short consumedBytes = Numbers.decodeLowShort(encodedResult);
-        if (consumedBytes == value.size()) {
-            return (char) Numbers.decodeHighShort(encodedResult);
-        }
-        throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.CHAR);
-    }
-
     public static long implicitCastStrAsDate(CharSequence value) {
         return implicitCastStrVarcharAsDate0(value, ColumnType.STRING);
-    }
-
-    public static long implicitCastVarcharAsDate(CharSequence value) {
-        return implicitCastStrVarcharAsDate0(value, ColumnType.VARCHAR);
-    }
-
-    private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {
-        assert columnType == ColumnType.VARCHAR || columnType == ColumnType.STRING;
-        try {
-            return DateFormatUtils.parseDate(value);
-        } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.DATE);
-        }
     }
 
     public static double implicitCastStrAsDouble(CharSequence value) {
@@ -558,35 +518,12 @@ public class SqlUtil {
         return Double.NaN;
     }
 
-    public static double implicitCastVarcharAsDouble(Utf8Sequence value) {
-        if (value != null) {
-            try {
-                return Numbers.parseDouble(value.asAsciiCharSequence());
-            } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.DOUBLE);
-            }
-        }
-        return Double.NaN;
-    }
-
     public static float implicitCastStrAsFloat(CharSequence value) {
         if (value != null) {
             try {
                 return FastFloatParser.parseFloat(value, 0, value.length(), true);
             } catch (NumericException ignored) {
                 throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.FLOAT);
-            }
-        }
-        return Float.NaN;
-    }
-
-    public static float implicitCastVarcharAsFloat(Utf8Sequence value) {
-        if (value != null) {
-            try {
-                CharSequence ascii = value.asAsciiCharSequence();
-                return FastFloatParser.parseFloat(ascii, 0, ascii.length(), true);
-            } catch (NumericException ignored) {
-                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.FLOAT);
             }
         }
         return Float.NaN;
@@ -625,34 +562,12 @@ public class SqlUtil {
         return Numbers.INT_NaN;
     }
 
-    public static int implicitCastVarcharAsInt(Utf8Sequence value) {
-        if (value != null) {
-            try {
-                return Numbers.parseInt(value);
-            } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.INT);
-            }
-        }
-        return Numbers.INT_NaN;
-    }
-
     public static long implicitCastStrAsLong(CharSequence value) {
         if (value != null) {
             try {
                 return Numbers.parseLong(value);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.LONG);
-            }
-        }
-        return Numbers.LONG_NaN;
-    }
-
-    public static long implicitCastVarcharAsLong(Utf8Sequence value) {
-        if (value != null) {
-            try {
-                return Numbers.parseLong(value);
-            } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.LONG);
             }
         }
         return Numbers.LONG_NaN;
@@ -693,49 +608,8 @@ public class SqlUtil {
         }
     }
 
-    public static short implicitCastVarcharAsShort(@Nullable Utf8Sequence value) {
-        try {
-            return value != null ? Numbers.parseShort(value) : 0;
-        } catch (NumericException ignore) {
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.SHORT);
-        }
-    }
-
     public static long implicitCastStrAsTimestamp(CharSequence value) {
         return implicitCastStrVarcharAsTimestamp0(value, ColumnType.STRING);
-    }
-
-    public static long implicitCastVarcharAsTimestamp(CharSequence value) {
-        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.VARCHAR);
-    }
-
-    private static long implicitCastStrVarcharAsTimestamp0(CharSequence value, int columnType) {
-        assert columnType == ColumnType.STRING || columnType == ColumnType.VARCHAR;
-
-        if (value != null) {
-            try {
-                return Numbers.parseLong(value);
-            } catch (NumericException ignore) {
-            }
-
-            // Parse as ISO with variable length.
-            try {
-                return IntervalUtils.parseFloorPartialTimestamp(value);
-            } catch (NumericException ignore) {
-            }
-
-            final int hi = value.length();
-            for (int i = 0; i < DATE_FORMATS_FOR_TIMESTAMP_SIZE; i++) {
-                try {
-                    //
-                    return DATE_FORMATS_FOR_TIMESTAMP[i].parse(value, 0, hi, EN_LOCALE) * 1000L;
-                } catch (NumericException ignore) {
-                }
-            }
-
-            throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
-        }
-        return Numbers.LONG_NaN;
     }
 
     public static void implicitCastStrAsUuid(CharSequence str, Uuid uuid) {
@@ -770,6 +644,98 @@ public class SqlUtil {
         return true;
     }
 
+    public static byte implicitCastVarcharAsByte(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                int res = Numbers.parseInt(value);
+                if (res >= Byte.MIN_VALUE && res <= Byte.MAX_VALUE) {
+                    return (byte) res;
+                }
+            } catch (NumericException ignore) {
+            }
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.BYTE);
+        }
+        return 0;
+    }
+
+    public static char implicitCastVarcharAsChar(Utf8Sequence value) {
+        if (value == null || value.size() == 0) {
+            return 0;
+        }
+
+        int encodedResult = Utf8s.utf8CharDecode(value);
+        short consumedBytes = Numbers.decodeLowShort(encodedResult);
+        if (consumedBytes == value.size()) {
+            return (char) Numbers.decodeHighShort(encodedResult);
+        }
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.CHAR);
+    }
+
+    public static long implicitCastVarcharAsDate(CharSequence value) {
+        return implicitCastStrVarcharAsDate0(value, ColumnType.VARCHAR);
+    }
+
+    public static double implicitCastVarcharAsDouble(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseDouble(value.asAsciiCharSequence());
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.DOUBLE);
+            }
+        }
+        return Double.NaN;
+    }
+
+    public static float implicitCastVarcharAsFloat(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                CharSequence ascii = value.asAsciiCharSequence();
+                return FastFloatParser.parseFloat(ascii, 0, ascii.length(), true);
+            } catch (NumericException ignored) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.FLOAT);
+            }
+        }
+        return Float.NaN;
+    }
+
+    public static int implicitCastVarcharAsInt(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseInt(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.INT);
+            }
+        }
+        return Numbers.INT_NaN;
+    }
+
+    public static long implicitCastVarcharAsLong(Utf8Sequence value) {
+        if (value != null) {
+            try {
+                return Numbers.parseLong(value);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.LONG);
+            }
+        }
+        return Numbers.LONG_NaN;
+    }
+
+    public static Long256Constant implicitCastVarcharAsLong256(Utf8Sequence value) {
+        return implicitCastStrAsLong256(value.asAsciiCharSequence());
+    }
+
+    public static short implicitCastVarcharAsShort(@Nullable Utf8Sequence value) {
+        try {
+            return value != null ? Numbers.parseShort(value) : 0;
+        } catch (NumericException ignore) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.SHORT);
+        }
+    }
+
+    public static long implicitCastVarcharAsTimestamp(CharSequence value) {
+        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.VARCHAR);
+    }
+
     public static boolean isParallelismSupported(ObjList<Function> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).supportsParallelism()) {
@@ -800,18 +766,60 @@ public class SqlUtil {
     /**
      * Parses partial representation of timestamp with time zone.
      *
-     * @param value      the characters representing timestamp
-     * @param tupleIndex the tuple index for insert SQL, which inserts multiple rows at once
-     * @param columnType the target column type, which might be different from timestamp
+     * @param value            the characters representing timestamp
+     * @param tupleIndex       the tuple index for insert SQL, which inserts multiple rows at once
+     * @param targetColumnType the target column type, which might be different from timestamp
      * @return epoch offset
      * @throws ImplicitCastException inconvertible type error.
      */
-    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int columnType) {
+    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int sourceColumnType, int targetColumnType) {
         try {
             return IntervalUtils.parseFloorPartialTimestamp(value);
         } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.STRING, columnType);
+            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, sourceColumnType, targetColumnType);
         }
+    }
+
+    private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {
+        assert columnType == ColumnType.VARCHAR || columnType == ColumnType.STRING;
+        try {
+            return DateFormatUtils.parseDate(value);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.DATE);
+        }
+    }
+
+    private static long implicitCastStrVarcharAsTimestamp0(CharSequence value, int columnType) {
+        assert columnType == ColumnType.STRING || columnType == ColumnType.VARCHAR;
+
+        if (value != null) {
+            try {
+                return Numbers.parseLong(value);
+            } catch (NumericException ignore) {
+            }
+
+            // Parse as ISO with variable length.
+            try {
+                return IntervalUtils.parseFloorPartialTimestamp(value);
+            } catch (NumericException ignore) {
+            }
+
+            final int hi = value.length();
+            for (int i = 0; i < DATE_FORMATS_FOR_TIMESTAMP_SIZE; i++) {
+                try {
+                    //
+                    return DATE_FORMATS_FOR_TIMESTAMP[i].parse(value, 0, hi, EN_LOCALE) * 1000L;
+                } catch (NumericException ignore) {
+                }
+            }
+
+            throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
+        }
+        return Numbers.LONG_NaN;
+    }
+
+    private static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
+        return pool.next().of(exprNodeType, token, 0, position);
     }
 
     static CharSequence createColumnAlias(
@@ -877,16 +885,12 @@ public class SqlUtil {
         return queryColumnPool.next().of(alias, nextLiteral(sqlNodePool, column, 0));
     }
 
-    static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
-        return nextExpr(pool, ExpressionNode.LITERAL, token, position);
-    }
-
     static ExpressionNode nextConstant(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
         return nextExpr(pool, ExpressionNode.CONSTANT, token, position);
     }
 
-    private static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
-        return pool.next().of(exprNodeType, token, 0, position);
+    static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
+        return nextExpr(pool, ExpressionNode.LITERAL, token, position);
     }
 
     private static class Long256ConstantFactory implements Long256Acceptor {

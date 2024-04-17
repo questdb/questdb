@@ -111,6 +111,7 @@ public class RecordToRowCopierUtils {
         int wPutSymChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(IC)V");
         int wPutStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
         int wPutGeoStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
+        int wPutGeoVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
         int wPutVarchar = asm.poolInterfaceMethod(TableWriter.Row.class, "putVarchar", "(ILio/questdb/std/str/Utf8Sequence;)V");
 
         int implicitCastCharAsByte = asm.poolMethod(SqlUtil.class, "implicitCastCharAsByte", "(CI)B");
@@ -141,6 +142,7 @@ public class RecordToRowCopierUtils {
         int implicitCastVarcharAsChar = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsChar", "(Lio/questdb/std/str/Utf8Sequence;)C");
         int implicitCastVarcharAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsFloat", "(Lio/questdb/std/str/Utf8Sequence;)F");
         int implicitCastVarcharAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsDouble", "(Lio/questdb/std/str/Utf8Sequence;)D");
+        int implicitCastVarcharAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsLong256", "(Lio/questdb/std/str/Utf8Sequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
 
         int implicitCastIntAsShort = asm.poolMethod(SqlUtil.class, "implicitCastIntAsShort", "(I)S");
         int implicitCastLongAsShort = asm.poolMethod(SqlUtil.class, "implicitCastLongAsShort", "(J)S");
@@ -687,6 +689,18 @@ public class RecordToRowCopierUtils {
                         case ColumnType.DATE:
                             asm.invokeInterface(rGetVarchar);
                             asm.invokeStatic(transferVarcharToDateCol);
+                            break;
+                        case ColumnType.GEOBYTE:
+                        case ColumnType.GEOSHORT:
+                        case ColumnType.GEOINT:
+                        case ColumnType.GEOLONG:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeInterface(wPutGeoVarchar, 2);
+                            break;
+                        case ColumnType.LONG256:
+                            asm.invokeInterface(rGetVarchar);
+                            asm.invokeStatic(implicitCastVarcharAsLong256);
+                            asm.invokeInterface(wPutLong256, 2);
                             break;
                         default:
                             assert false;

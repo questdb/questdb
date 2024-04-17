@@ -65,25 +65,12 @@ public class IntPriorityQueue {
         limit++;
     }
 
-    private int binSearch(int v) {
-        if (limit < 65) {
-            return scanSearch(v);
-        } else {
-            return binSearch0(v);
-        }
-    }
-
     @SuppressWarnings("StatementWithEmptyBody")
-    private int binSearch0(int v) {
+    private int binSearch(int v) {
         int low = 0;
         int high = limit;
 
-        while (low < high) {
-
-            if (high - low < 65) {
-                return scanSearch(v);
-            }
-
+        while (high - low > 65) {
             int mid = (low + high - 1) >>> 1;
             int midVal = buffer[mid];
 
@@ -97,7 +84,7 @@ public class IntPriorityQueue {
                 return mid;
             }
         }
-        return low;
+        return scanSearch(v, low);
     }
 
     private void resize() {
@@ -106,8 +93,8 @@ public class IntPriorityQueue {
         buffer = tmp;
     }
 
-    private int scanSearch(int v) {
-        for (int i = 0; i < limit; i++) {
+    private int scanSearch(int v, int low) {
+        for (int i = low; i < limit; i++) {
             if (buffer[i] > v) {
                 return i;
             }

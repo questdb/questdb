@@ -638,12 +638,23 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         Function fn = bindVariableService.getFunction(index);
         // If the function type is VARCHAR, there's no need to convert to UTF-16
         if (fn != null && fn.getType() == ColumnType.VARCHAR) {
-            if (Utf8s.validateUtf8(address, address + valueLen) != -1) {
-                bindVariableService.setVarchar(index, utf8String.of(address, address + valueLen));
-            } else {
-                LOG.error().$("invalid varchar bind variable type [index=").$(index).I$();
-                throw BadProtocolException.INSTANCE;
+            final int sequenceType = Utf8s.getUtf8SequenceType(address, address + valueLen);
+            boolean ascii;
+            switch (sequenceType) {
+                case 0:
+                    // ascii sequence
+                    ascii = true;
+                    break;
+                case 1:
+                    // non-ASCII sequence
+                    ascii = false;
+                    break;
+                default:
+                    LOG.error().$("invalid varchar bind variable type [index=").$(index).I$();
+                    throw BadProtocolException.INSTANCE;
             }
+            bindVariableService.setVarchar(index, utf8String.of(address, address + valueLen, ascii));
+
         } else {
             if (Utf8s.utf8ToUtf16(address, address + valueLen, e)) {
                 bindVariableService.setStr(index, characterStore.toImmutable());

@@ -47,6 +47,11 @@ public class GeoShortConstant extends GeoShortFunction implements ConstantFuncti
     }
 
     @Override
+    public boolean isNullConstant() {
+        return hash == GeoHashes.SHORT_NULL;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(hash, ColumnType.getGeoHashBits(type));
     }
