@@ -48,6 +48,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select c from x",
                     "select c from y"
             );
+
+            insert("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
+            assertSql("c\nabc\n", "select c from x limit -1");
         });
     }
 

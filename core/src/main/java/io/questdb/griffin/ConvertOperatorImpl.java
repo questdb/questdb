@@ -25,17 +25,12 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.vm.MemoryCMORImpl;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -47,18 +42,15 @@ import static io.questdb.cairo.TableUtils.iFile;
 
 public class ConvertOperatorImpl implements Closeable {
     private static final Log LOG = LogFactory.getLog(ConvertOperatorImpl.class);
+    private final long appendPageSize;
     private final FilesFacade ff;
     private final long fileOpenOpts;
     private final Path path;
     private final PurgingOperator purgingOperator;
     private final int rootLen;
     private final TableWriter tableWriter;
-    private MemoryCMARW dstFixMem;
-    private MemoryCMARW dstVarMem;
     private IndexBuilder indexBuilder;
     private int partitionUpdated;
-    private MemoryCMORImpl srcFixMem;
-    private MemoryCMORImpl srcVarMem;
 
     public ConvertOperatorImpl(CairoConfiguration configuration, TableWriter tableWriter, Path path, int rootLen, PurgingOperator purgingOperator) {
         this.tableWriter = tableWriter;
@@ -68,20 +60,13 @@ public class ConvertOperatorImpl implements Closeable {
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
         this.ff = configuration.getFilesFacade();
         this.path = path;
-        dstFixMem = Vm.getCMARWInstance();
-        dstVarMem = Vm.getCMARWInstance();
-        srcFixMem = new MemoryCMORImpl();
-        srcVarMem = new MemoryCMORImpl();
+        this.appendPageSize = configuration.getDataAppendPageSize();
 
     }
 
     @Override
     public void close() throws IOException {
         indexBuilder = Misc.free(indexBuilder);
-        dstFixMem = Misc.free(dstFixMem);
-        dstVarMem = Misc.free(dstVarMem);
-        srcFixMem = Misc.free(srcFixMem);
-        srcVarMem = Misc.free(srcVarMem);
     }
 
     public void convertColumn(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {
@@ -114,7 +99,7 @@ public class ConvertOperatorImpl implements Closeable {
 
                     LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen)).$(", column=").$(columnName).$(", from=").$(ColumnType.nameOf(existingType)).$(", to=").$(ColumnType.nameOf(newType)).I$();
 
-                    convertColumn(maxRow - columnTop, srcFixFd, srcVarFd, dstFixFd, dstVarFd, existingType, newType);
+                    ColumnTypeConverter.convertColumn(maxRow - columnTop, srcFixFd, srcVarFd, dstFixFd, dstVarFd, existingType, newType, ff, appendPageSize);
 
                     long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);
                     purgingOperator.add(existingColIndex, existingColTxnVer, partitionTimestamp, partitionNameTxn);
@@ -136,88 +121,6 @@ public class ConvertOperatorImpl implements Closeable {
 
     private void clear() {
         purgingOperator.clear();
-        Misc.free(dstFixMem);
-        Misc.free(dstVarMem);
-        Misc.free(srcFixMem);
-        Misc.free(srcVarMem);
-    }
-
-    private void convertColumn(long rowCount, int srcFixMem, int srcVarMem, int dstFixMem, int dstVarMem, int srcColumnType, int dstColumnType) {
-        if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
-            convertFixedToFixed(rowCount, srcFixMem, dstFixMem, srcColumnType, dstColumnType);
-        } else if (ColumnType.isVarSize(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
-            convertVarToVar(rowCount, srcFixMem, srcVarMem, dstFixMem, dstVarMem, srcColumnType, dstColumnType);
-        } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
-            convertFixedToVar(rowCount, srcFixMem, dstFixMem, dstVarMem, srcColumnType, dstColumnType);
-        } else {
-            convertVarToFixed(rowCount, srcFixMem, srcVarMem, dstFixMem, srcColumnType, dstColumnType);
-        }
-    }
-
-    private void convertFixedToFixed(long rowCount, int srcFixMem, int dstFixMem, int srcColumnType, int dstColumnType) {
-        throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
-    }
-
-    private void convertFixedToVar(long rowCount, int srcFixMem, int dstFixMem, int dstVarMem, int srcColumnType, int dstColumnType) {
-        throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
-    }
-
-    private void convertStringToVarchar(long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd) {
-        srcVarMem.ofOffset(ff, srcVarFd, null, 0, ff.length(srcVarFd), MemoryTag.MMAP_TABLE_WRITER, fileOpenOpts);
-        // Will not use fixed memory, enough data in var mem
-        ff.close(srcFixFd);
-
-        dstVarMem.of(ff, dstVarFd, null, ff.getMapPageSize(), srcVarMem.size(), MemoryTag.MMAP_TABLE_WRITER);
-        dstVarMem.jumpTo(0);
-        dstFixMem.of(ff, dstFixFd, null, ff.getMapPageSize(), rowCount * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES, MemoryTag.MMAP_TABLE_WRITER);
-        dstFixMem.jumpTo(0);
-
-        Utf8StringSink sink = new Utf8StringSink();
-
-        long offset = 0;
-        for (long i = 0; i < rowCount; i++) {
-            CharSequence str = srcVarMem.getStrA(offset);
-            offset += Vm.getStorageLength(str);
-
-            if (str != null) {
-                sink.clear();
-                sink.put(str);
-
-                VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, sink);
-            } else {
-                VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, null);
-            }
-        }
-        dstVarMem.close(true, Vm.TRUNCATE_TO_POINTER);
-        dstFixMem.close(true, Vm.TRUNCATE_TO_POINTER);
-    }
-
-    private void convertVarToFixed(long rowCount, int srcFixMem, int srcVarMem, int dstFixMem, int srcColumnType, int dstColumnType) {
-        throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
-    }
-
-    private void convertVarToVar(long rowCount, int srcFixMem, int srcVarMem, int dstFixMem, int dstVarMem, int srcColumnType, int dstColumnType) {
-        // Convert STRING to VARCHAR and back
-        // Binary column usage is rare, conversions can be delayed.
-        switch (ColumnType.tagOf(srcColumnType)) {
-            case ColumnType.STRING:
-                assert ColumnType.tagOf(dstColumnType) == ColumnType.VARCHAR;
-                convertStringToVarchar(rowCount, srcFixMem, srcVarMem, dstFixMem, dstVarMem);
-                break;
-            case ColumnType.VARCHAR:
-                assert ColumnType.tagOf(dstColumnType) == ColumnType.STRING;
-                convertVarcharToString(rowCount, srcFixMem, srcVarMem, dstFixMem, dstVarMem);
-                break;
-            default:
-                throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
-        }
-    }
-
-    private void convertVarcharToString(long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd) {
-        ff.close(srcFixFd);
-        ff.close(srcVarFd);
-        ff.close(dstFixFd);
-        ff.close(dstVarFd);
     }
 
     private long openColumnsRO(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
