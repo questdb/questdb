@@ -81,11 +81,6 @@ public class DefaultFactoryProvider implements FactoryProvider {
     }
 
     @Override
-    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
-        return DefaultPgWireAuthenticatorFactory.INSTANCE;
-    }
-
-    @Override
     public @NotNull SecurityContextFactory getSecurityContextFactory() {
         return AllowAllSecurityContextFactory.INSTANCE;
     }

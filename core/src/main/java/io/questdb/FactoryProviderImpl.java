@@ -99,11 +99,6 @@ public class FactoryProviderImpl implements FactoryProvider {
     }
 
     @Override
-    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
-        return pgWireAuthenticatorFactory;
-    }
-
-    @Override
     public @NotNull SecurityContextFactory getSecurityContextFactory() {
         return securityContextFactory;
     }

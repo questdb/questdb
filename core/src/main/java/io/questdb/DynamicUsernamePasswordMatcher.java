@@ -63,6 +63,8 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher {
                 this.defaultUserPasswordSink.put(this.pgwireConfiguration.getDefaultPassword());
                 this.readOnlyUserPasswordSink.clear();
                 this.readOnlyUserPasswordSink.put(this.pgwireConfiguration.getReadOnlyPassword());
+
+                this.lock.writeLock().unlock();
             }
         }
 

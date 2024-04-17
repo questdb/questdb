@@ -24,8 +24,10 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.DynamicUsernamePasswordMatcher;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
@@ -135,33 +137,36 @@ public class PGWireServer implements Closeable {
 
         public PGConnectionContextFactory(
                 CairoEngine engine,
-                PGWireConfiguration configuration,
+                ServerConfiguration configuration,
                 CircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
         ) {
             super(
                     () -> {
                         NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
-                                configuration.getCircuitBreakerConfiguration(),
+                                configuration.getPGWireConfiguration().getCircuitBreakerConfiguration(),
                                 MemoryTag.NATIVE_CB5
                         );
                         PGConnectionContext pgConnectionContext = new PGConnectionContext(
                                 engine,
-                                configuration,
+                                configuration.getPGWireConfiguration(),
                                 executionContextObjectFactory.newInstance(),
                                 circuitBreaker
                         );
-                        FactoryProvider factoryProvider = configuration.getFactoryProvider();
-                        Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(
-                                configuration,
+
+                        UsernamePasswordMatcher matcher = new DynamicUsernamePasswordMatcher(configuration);
+                        Authenticator authenticator = new CleartextPasswordPgWireAuthenticator(
+                                configuration.getPGWireConfiguration(),
                                 circuitBreaker,
                                 registry,
-                                pgConnectionContext
+                                pgConnectionContext,
+                                matcher,
+                                true
                         );
                         pgConnectionContext.setAuthenticator(authenticator);
                         return pgConnectionContext;
                     },
-                    configuration.getConnectionPoolInitialCapacity()
+                    configuration.getPGWireConfiguration().getConnectionPoolInitialCapacity()
             );
         }
     }

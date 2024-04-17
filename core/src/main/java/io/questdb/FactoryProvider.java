@@ -63,9 +63,6 @@ public interface FactoryProvider extends QuietCloseable {
     SocketFactory getPGWireSocketFactory();
 
     @NotNull
-    PgWireAuthenticatorFactory getPgWireAuthenticatorFactory();
-
-    @NotNull
     default RejectProcessorFactory getRejectProcessorFactory() {
         return DefaultRejectProcessorFactory.INSTANCE;
     }

@@ -25,6 +25,7 @@
 package io.questdb.cutlass;
 
 import io.questdb.Metrics;
+import io.questdb.ServerConfiguration;
 import io.questdb.WorkerPoolManager;
 import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
@@ -236,12 +237,12 @@ public class Services {
 
     @Nullable
     public PGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
+            ServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
             Metrics metrics
     ) {
-        if (!configuration.isEnabled()) {
+        if (!configuration.getPGWireConfiguration().isEnabled()) {
             return null;
         }
 
@@ -249,15 +250,15 @@ public class Services {
         // - DEDICATED when PropertyKey.PG_WORKER_COUNT is > 0
         // - SHARED otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
-                configuration,
+                configuration.getPGWireConfiguration(),
                 metrics,
                 Requester.PG_WIRE_SERVER
         );
 
-        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration.getPGWireConfiguration(), cairoEngine.getConfiguration());
 
         return new PGWireServer(
-                configuration,
+                configuration.getPGWireConfiguration(),
                 cairoEngine,
                 workerPool,
                 new PGWireServer.PGConnectionContextFactory(
