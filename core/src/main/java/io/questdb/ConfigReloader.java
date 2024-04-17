@@ -17,7 +17,11 @@ public class ConfigReloader implements QuietCloseable, DirWatcherCallback {
 
     private static final Log LOG = LogFactory.getLog(ConfigReloader.class);
     private final Set<PropertyKey> reloadableProps = new HashSet<>(List.of(
-            PropertyKey.QUERY_TIMEOUT_SEC
+            PropertyKey.PG_USER,
+            PropertyKey.PG_PASSWORD,
+            PropertyKey.PG_RO_USER_ENABLED,
+            PropertyKey.PG_RO_USER,
+            PropertyKey.PG_RO_PASSWORD
     ));
     DynamicServerConfiguration config;
     DirWatcher dirWatcher;
