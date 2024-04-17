@@ -1043,10 +1043,7 @@ public class OrderedMap implements Map, Reopenable {
         public void putVarchar(Utf8Sequence value) {
             int byteCount = VarcharTypeDriver.getSingleMemValueByteCount(value);
             checkCapacity(byteCount);
-            // ASCII flag is best-effort, so there is a chance that identical ASCII-only strings
-            // have different values of the flag. This would break hash table look-ups, so we always
-            // set the flag to false.
-            VarcharTypeDriver.appendPlainValue(appendAddress, value, true);
+            VarcharTypeDriver.appendPlainValue(appendAddress, value, false);
             appendAddress += byteCount;
         }
 

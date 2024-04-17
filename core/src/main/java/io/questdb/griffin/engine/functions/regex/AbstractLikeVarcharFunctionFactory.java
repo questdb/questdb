@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.regex;
 
-
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -227,11 +226,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" like ");
@@ -270,11 +264,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" like ");
@@ -305,11 +294,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" like ");
@@ -336,11 +320,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         public boolean getBool(Record rec) {
             Utf8Sequence us = value.getVarcharA(rec);
             return us != null && Utf8s.containsLowerCaseAscii(us, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
         }
 
         @Override
@@ -374,11 +353,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" ilike ");
@@ -408,11 +382,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" ilike ");
@@ -439,11 +408,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         public boolean getBool(Record rec) {
             Utf8Sequence us = value.getVarcharA(rec);
             return us != null && Utf8s.startsWith(us, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
         }
 
         @Override

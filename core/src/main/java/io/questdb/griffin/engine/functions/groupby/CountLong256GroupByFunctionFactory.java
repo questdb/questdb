@@ -64,6 +64,5 @@ public class CountLong256GroupByFunctionFactory implements FunctionFactory {
         } else {
             return new CountLong256GroupByFunction(arg);
         }
-
     }
 }
