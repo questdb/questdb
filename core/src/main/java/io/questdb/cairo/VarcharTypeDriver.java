@@ -253,26 +253,21 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return null;
         }
 
-        boolean ascii = hasAsciiFlag(raw);
+        boolean isAscii = hasAsciiFlag(raw);
 
         if (hasInlinedFlag(raw)) {
             // inlined string
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
-            return ab == 1 ? auxMem.getVarcharA(auxOffset + 1, size, ascii) : auxMem.getVarcharB(auxOffset + 1, size, ascii);
+            return ab == 1 ? auxMem.getVarcharA(auxOffset + 1, size, isAscii) : auxMem.getVarcharB(auxOffset + 1, size, isAscii);
         }
 
         // string is split, prefix is duplicated in auxMem
-        return ab == 1 ? auxMem.getSplitVarcharA(
-                auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET),
-                dataMem.addressOf(getDataOffset(auxMem, auxOffset)),
-                (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
-                ascii
-        ) : auxMem.getSplitVarcharB(
-                auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET),
-                dataMem.addressOf(getDataOffset(auxMem, auxOffset)),
-                (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
-                ascii
-        );
+        long auxLo = auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET);
+        long dataLo = dataMem.addressOf(getDataOffset(auxMem, auxOffset));
+        int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
+        return ab == 1
+                ? auxMem.getSplitVarcharA(auxLo, dataLo, size, isAscii)
+                : auxMem.getSplitVarcharB(auxLo, dataLo, size, isAscii);
     }
 
     /**
