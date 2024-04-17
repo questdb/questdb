@@ -128,13 +128,6 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        // group-by functions are not stateless when values are computed
-        // however, once values are calculated, the read becomes stateless
-        return false;
-    }
-
-    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
     }

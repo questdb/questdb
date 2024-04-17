@@ -655,11 +655,28 @@ public final class Utf8s {
     public static int strCpy(@NotNull Utf8Sequence seq, int charLo, int charHi, @NotNull Utf8Sink sink) {
         if (seq.isAscii()) {
             for (int i = charLo; i < charHi; i++) {
-                sink.put(seq.byteAt(i));
+                sink.putAscii((char) seq.byteAt(i));
             }
             return charHi - charLo;
         }
 
+        return strCpyNonAscii(seq, charLo, charHi, sink);
+    }
+
+    public static boolean isAscii(Utf8Sequence utf8) {
+        boolean ascii = true;
+        if (utf8 != null) {
+            for (int k = 0, kl = utf8.size(); k < kl; k++) {
+                if (utf8.byteAt(k) < 0) {
+                    ascii = false;
+                    break;
+                }
+            }
+        }
+        return ascii;
+    }
+
+    private static int strCpyNonAscii(@NotNull Utf8Sequence seq, int charLo, int charHi, @NotNull Utf8Sink sink) {
         int charPos = 0;
         int bytesCopied = 0;
         for (int i = 0, hi = seq.size(); i < hi && charPos < charHi; charPos++) {
@@ -680,7 +697,7 @@ public final class Utf8s {
                 i += n;
             } else {
                 if (charPos >= charLo) {
-                    sink.put(b);
+                    sink.putAscii((char) b);
                     bytesCopied++;
                 }
                 i++;
@@ -1031,13 +1048,13 @@ public final class Utf8s {
     }
 
     /**
-     * Validates bytes between lo,hi addresses.
+     * Validates if the bytes between lo,hi addresses belong to a valid UTF8 sequence.
      *
-     * @return string length if input is proper UTF-8 and -1 otherwise.
+     * @return -1 if bytes are not a UTF8 sequence, 0 if this is ASCII sequence and 1 if it is non-ascii UTF8 sequence.
      */
-    public static int validateUtf8(long lo, long hi) {
-        int len = 0;
+    public static int getUtf8SequenceType(long lo, long hi) {
         long p = lo;
+        int sequenceType = 0;
         while (p < hi) {
             byte b = Unsafe.getUnsafe().getByte(p);
             if (b < 0) {
@@ -1047,12 +1064,13 @@ public final class Utf8s {
                     return -1;
                 }
                 p += n;
+                // non-ASCII sequence
+                sequenceType = 1;
             } else {
                 ++p;
             }
-            ++len;
         }
-        return len;
+        return sequenceType;
     }
 
     public static int validateUtf8MultiByte(long lo, long hi, byte b) {

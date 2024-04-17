@@ -2271,16 +2271,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testUuidVarchar() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "7eb6d806-49d1-4fe3-8e4a-7f661df6c32b\n" +
-                        "9502128c-da08-47fe-bcdb-8640c107a692\n" +
-                        "a90c0466-3c80-4638-a011-214bad888a69\n" +
-                        "aec65e34-419d-4077-9b21-7d41156b2ee1\n" +
-                        "7b5dd2b8-513b-41e7-b20e-1900caff819a\n" +
-                        "핕\u05FA씎鈄۲ӄǈ2L\n" +
-                        "\uD95A\uDFD9唶鴙\uDAE2\uDC5E͛Ԉ\n" +
-                        "蝰L➤~2\uDAC6\uDED3ڎBH뤻\n" +
-                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46\n" +
-                        "Fг\uDBAE\uDD12ɜ|\\軦۽\n",
+                        "acb025f7-59cf-4bd0-9e9b-e4e331fe36e6\n" +
+                        "8fd449ba-3259-4a2b-9beb-329042090bb3\n" +
+                        "b482cff5-7e9c-4398-ac09-f1b4db297f07\n" +
+                        "dbd7587f-2077-4576-9b4b-ae41862e09cc\n" +
+                        "7ee6a03f-4f93-4fa3-9d6c-b7b4fbf1fa48\n" +
+                        "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\n" +
+                        "8#3TsZ\n" +
+                        "zV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
+                        "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\n" +
+                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\n",
                 "create table x as (select rnd_uuid4() a from long_sequence(5))",
                 "create table y as (select rnd_varchar() b from long_sequence(5))",
                 true
