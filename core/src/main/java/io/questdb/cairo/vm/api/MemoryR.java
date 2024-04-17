@@ -29,7 +29,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
 
 import java.io.Closeable;
