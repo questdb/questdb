@@ -24,10 +24,17 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.FactoryProvider;
+import io.questdb.ServerConfiguration;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
@@ -36,7 +43,9 @@ import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -96,6 +105,58 @@ public abstract class BasePGTest extends AbstractCairoTest {
             return null;
         }
 
+        ServerConfiguration serverConfiguration = new ServerConfiguration() {
+            @Override
+            public CairoConfiguration getCairoConfiguration() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public FactoryProvider getFactoryProvider() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public HttpServerConfiguration getHttpServerConfiguration() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public MetricsConfiguration getMetricsConfiguration() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public PGWireConfiguration getPGWireConfiguration() {
+                return configuration;
+            }
+
+            @Override
+            public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public WorkerPoolConfiguration getWorkerPoolConfiguration() {
+                throw new UnsupportedOperationException();
+            }
+        };
+
         CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
 
@@ -105,7 +166,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 workerPool,
                 new PGWireServer.PGConnectionContextFactory(
                         cairoEngine,
-                        configuration,
+                        serverConfiguration,
                         registry,
                         () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
                 ),

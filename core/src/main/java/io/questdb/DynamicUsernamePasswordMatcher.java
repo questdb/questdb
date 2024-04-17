@@ -27,11 +27,12 @@ package io.questdb;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.std.Chars;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sink;
 
-public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher {
+public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, QuietCloseable {
     private final ServerConfiguration serverConfiguration;
     private final SimpleReadWriteLock lock;
     private final DirectUtf8Sink defaultUserPasswordSink;
@@ -52,6 +53,12 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher {
         this.readOnlyUserPasswordLen = this.pgwireConfiguration.getReadOnlyPassword().length();
 
         lock = new SimpleReadWriteLock();
+    }
+
+    @Override
+    public void close() {
+        this.defaultUserPasswordSink.close();
+        this.readOnlyUserPasswordSink.close();
     }
 
     @Override

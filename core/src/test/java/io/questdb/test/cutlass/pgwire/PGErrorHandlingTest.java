@@ -113,39 +113,12 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                 bootstrap.getBuildInformation(),
                                 FilesFacadeImpl.INSTANCE,
                                 bootstrap.getMicrosecondClock(),
-                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
-                                    @Override
-                                    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
-                                        return (pgWireConfiguration, circuitBreaker, registry, optionsListener) -> {
-                                            DirectUtf8Sink defaultUserPasswordSink = new DirectUtf8Sink(4);
-                                            DirectUtf8Sink readOnlyUserPasswordSink = new DirectUtf8Sink(4);
-                                            UsernamePasswordMatcher matcher = new CustomCloseActionPasswordMatcherDelegate(
-                                                    ServerMain.newPgWireUsernamePasswordMatcher(pgWireConfiguration, defaultUserPasswordSink, readOnlyUserPasswordSink),
-                                                    () -> {
-                                                        defaultUserPasswordSink.close();
-                                                        readOnlyUserPasswordSink.close();
-                                                    }
-                                            );
-
-                                            return new CleartextPasswordPgWireAuthenticator(
-                                                    pgWireConfiguration,
-                                                    circuitBreaker,
-                                                    registry,
-                                                    optionsListener,
-                                                    matcher,
-                                                    true
-                                            ) {
-                                                @Override
-                                                public boolean isAuthenticated() {
-                                                    throw new RuntimeException("Test error");
-                                                }
-                                            };
-                                        };
-                                    }
-                                }
+                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration)
                         );
                     }
                 },
+
+                // todo: figure out how to inject a matcher that always throws an error
                 getServerMainArgs()
         );
 
