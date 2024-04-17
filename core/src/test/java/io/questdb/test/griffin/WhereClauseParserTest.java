@@ -175,52 +175,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVarcharTimestampParseBasic() throws SqlException {
-        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp = '2024-02-29'::varchar")));
-    }
-
-    @Test
-    public void testVarcharTimestampParseOperators() throws SqlException {
-        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp = '2024-02-29'::varchar")));
-        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]", intervalToString(modelOf("timestamp > '2024-02-29'::varchar")));
-        TestUtils.assertEquals("[{lo=, hi=2024-02-28T23:59:59.999999Z}]", intervalToString(modelOf("timestamp < '2024-02-29'::varchar")));
-        TestUtils.assertEquals("[{lo=, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp <= '2024-02-29'::varchar")));
-        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]", intervalToString(modelOf("timestamp >= '2024-02-29'::varchar")));
-        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-03-01T00:00:00.000000Z}]", intervalToString(modelOf("timestamp between '2024-02-29'::varchar and '2024-03-01'::varchar")));
-    }
-
-    @Test
-    public void testVarcharTimestampParseCompoundExpr() throws SqlException {
-        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp = '2024-02-29'::varchar and timestamp <= '2024-03-01'::varchar")));
-    }
-
-    @Test
-    public void testVarcharPracticalParsing() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table testVarcharPracticalParsing ( a varchar, ts timestamp) timestamp(ts)");
-            assertPlan(
-                    "select * from testVarcharPracticalParsing where\n" +
-                            "ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar",
-                    "Async Filter workers: 1\n" +
-                            "  filter: (ts='2024-02-29' or '2024-03-01'>=ts)\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: testVarcharPracticalParsing\n"
-            );
-
-            assertPlan(
-                    "select * from testVarcharPracticalParsing where\n" +
-                            "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar",
-                    "Async Filter workers: 1\n" +
-                            "  filter: ((ts='2024-02-29' or '2024-03-01'>=ts) or ts='2024-05-01')\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: testVarcharPracticalParsing\n"
-            );
-        });
-    }
-
-    @Test
     public void testAndBranchWithNonIndexedField() throws Exception {
         IntrinsicModel m = modelOf("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and bid > 100");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
@@ -1479,7 +1433,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         Assert.assertEquals("[a]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
-        assertFilter(m, "'$1' sym in");//either concrete values or bind variables have to be double checked  
+        assertFilter(m, "'$1' sym in");//either concrete values or bind variables have to be double checked
     }
 
     @Test//bind variable value is unknown so it can't be merged with any other value except the same in not IN set
@@ -2915,7 +2869,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("[]", intervalToString(m));
     }
 
-   @Test
+    @Test
     public void testTwoIntervalSourcesVarchar() throws Exception {
         IntrinsicModel m = modelOf("timestamp in '2014-06-20T13:25:00.000Z;10m;2d;5'::varchar and timestamp IN '2015-06-20T13:25:00.000Z;10m;2d;5'::varchar");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
@@ -3072,6 +3026,52 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharPracticalParsing() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table testVarcharPracticalParsing ( a string, ts timestamp) timestamp(ts)");
+            assertPlan(
+                    "select * from testVarcharPracticalParsing where\n" +
+                            "ts = '2024-02-29' or ts <= '2024-03-01'",
+                    "Async Filter workers: 1\n" +
+                            "  filter: (ts=1709164800000000 or 1709251200000000>=ts)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: testVarcharPracticalParsing\n"
+            );
+
+            assertPlan(
+                    "select * from testVarcharPracticalParsing where\n" +
+                            "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar",
+                    "Async Filter workers: 1\n" +
+                            "  filter: ((ts=1709164800000000 or 1709251200000000>=ts) or ts=1714521600000000)\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: testVarcharPracticalParsing\n"
+            );
+        });
+    }
+
+    @Test
+    public void testVarcharTimestampParseBasic() throws SqlException {
+        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp = '2024-02-29'::varchar")));
+    }
+
+    @Test
+    public void testVarcharTimestampParseCompoundExpr() throws SqlException {
+        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp = '2024-02-29'::varchar and timestamp <= '2024-03-01'::varchar")));
+    }
+
+    @Test
+    public void testVarcharTimestampParseOperators() throws SqlException {
+        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp = '2024-02-29'::varchar")));
+        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]", intervalToString(modelOf("timestamp > '2024-02-29'::varchar")));
+        TestUtils.assertEquals("[{lo=, hi=2024-02-28T23:59:59.999999Z}]", intervalToString(modelOf("timestamp < '2024-02-29'::varchar")));
+        TestUtils.assertEquals("[{lo=, hi=2024-02-29T00:00:00.000000Z}]", intervalToString(modelOf("timestamp <= '2024-02-29'::varchar")));
+        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]", intervalToString(modelOf("timestamp >= '2024-02-29'::varchar")));
+        TestUtils.assertEquals("[{lo=2024-02-29T00:00:00.000000Z, hi=2024-03-01T00:00:00.000000Z}]", intervalToString(modelOf("timestamp between '2024-02-29'::varchar and '2024-03-01'::varchar")));
+    }
+
+    @Test
     public void testWrongTypeConstFunctionDateGreater() {
         try {
             modelOf("timestamp > abs(1)");
@@ -3090,7 +3090,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             Assert.assertEquals(13, e.getPosition());
         }
     }
-
 
 
     private static void swap(String[] arr, int i, int j) {
