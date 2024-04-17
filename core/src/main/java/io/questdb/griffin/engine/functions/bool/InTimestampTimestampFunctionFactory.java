@@ -66,6 +66,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.INT:
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
+                case ColumnType.VARCHAR:
                     break;
                 default:
                     throw SqlException.position(0).put("cannot compare TIMESTAMP with type ").put(ColumnType.nameOf(func.getType()));
@@ -80,7 +81,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             return new InTimestampConstFunction(args.getQuick(0), parseToTs(args, argPositions));
         }
 
-        if (args.size() == 2 && ColumnType.isString(args.get(1).getType())) {
+        if (args.size() == 2 && (ColumnType.isString(args.get(1).getType()) || ColumnType.isVarchar(args.get(1).getType()))) {
             // special case - one argument and it a string
             return new InTimestampStrFunctionFactory.EqTimestampStrFunction(args.get(0), args.get(1));
         }
@@ -108,6 +109,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
+                case ColumnType.VARCHAR:
                     CharSequence tsValue = func.getStrA(null);
                     val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;
                     break;
@@ -176,6 +178,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                         break;
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
+                    case ColumnType.VARCHAR:
                         CharSequence str = func.getStrA(rec);
                         val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NaN;
                         break;
