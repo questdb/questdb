@@ -145,7 +145,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getDate(rec) == Numbers.LONG_NaN);
+            return negated != (arg.getDate(rec) == Numbers.LONG_NULL);
         }
     }
 
@@ -178,7 +178,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getInt(rec) == Numbers.INT_NaN);
+            return negated != (arg.getInt(rec) == Numbers.INT_NULL);
         }
     }
 
@@ -189,7 +189,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getLong(rec) == Numbers.LONG_NaN);
+            return negated != (arg.getLong(rec) == Numbers.LONG_NULL);
         }
     }
 
@@ -200,7 +200,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getTimestamp(rec) == Numbers.LONG_NaN);
+            return negated != (arg.getTimestamp(rec) == Numbers.LONG_NULL);
         }
     }
 }

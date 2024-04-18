@@ -117,7 +117,7 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     }
 
     public void setTimestamp(long value) {
-        isNull = value == Numbers.LONG_NaN;
+        isNull = value == Numbers.LONG_NULL;
         if (!isNull) {
             utf8Sink.clear();
             TimestampFormatUtils.appendDateTimeUSec(utf8Sink, value);
@@ -162,7 +162,7 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     }
 
     public void setValue(long value) {
-        isNull = value == Numbers.LONG_NaN;
+        isNull = value == Numbers.LONG_NULL;
         if (!isNull) {
             utf8Sink.clear();
             utf8Sink.put(value);
@@ -170,7 +170,7 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     }
 
     public void setValue(int value) {
-        isNull = value == Numbers.INT_NaN;
+        isNull = value == Numbers.INT_NULL;
         if (!isNull) {
             utf8Sink.clear();
             utf8Sink.put(value);

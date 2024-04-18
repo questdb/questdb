@@ -101,20 +101,20 @@ public class NullMemoryMR implements MemoryMR {
 
     @Override
     public int getInt(long offset) {
-        return Numbers.INT_NaN;
+        return Numbers.INT_NULL;
     }
 
     @Override
     public long getLong(long offset) {
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     public long getLong128Hi() {
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     public long getLong128Lo() {
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     @Override

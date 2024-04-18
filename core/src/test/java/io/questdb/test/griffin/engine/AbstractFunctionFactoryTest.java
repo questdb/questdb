@@ -265,9 +265,9 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         switch (ColumnType.tagOf(argType)) {
             case ColumnType.INT:
             case ColumnType.IPv4:
-                return (int) arg < 0 && (int) arg != Numbers.INT_NaN;
+                return (int) arg < 0 && (int) arg != Numbers.INT_NULL;
             case ColumnType.LONG:
-                return (long) arg < 0 && (long) arg != Numbers.LONG_NaN;
+                return (long) arg < 0 && (long) arg != Numbers.LONG_NULL;
             case ColumnType.SHORT:
             case ColumnType.BYTE:
                 // byte is passed as int

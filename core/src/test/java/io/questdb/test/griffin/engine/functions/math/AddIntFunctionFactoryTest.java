@@ -26,16 +26,16 @@ package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.AddIntFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testLeftNull() throws SqlException {
-        call(Numbers.INT_NaN, 10).andAssert(Numbers.INT_NaN);
+        call(Numbers.INT_NULL, 10).andAssert(Numbers.INT_NULL);
     }
 
     @Test
@@ -45,7 +45,7 @@ public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testRightNull() throws SqlException {
-        call(4, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+        call(4, Numbers.INT_NULL).andAssert(Numbers.INT_NULL);
     }
 
     @Test

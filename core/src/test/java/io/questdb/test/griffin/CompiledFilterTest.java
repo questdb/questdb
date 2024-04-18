@@ -585,11 +585,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " from long_sequence(1)) timestamp(ts)");
 
             bindVariableService.clear();
-            bindVariableService.setLong("l", Numbers.LONG_NaN);
+            bindVariableService.setLong("l", Numbers.LONG_NULL);
 
             // Here we expect a NULL value on the left side of the predicate,
             // so no rows should be returned
-            final String query = "select * from x where l + :l = " + (Numbers.LONG_NaN + value);
+            final String query = "select * from x where l + :l = " + (Numbers.LONG_NULL + value);
             final String expected = "l\tts\n";
 
             assertSql(expected, query);

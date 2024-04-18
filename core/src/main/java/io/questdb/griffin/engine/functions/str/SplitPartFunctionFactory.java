@@ -35,8 +35,8 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
 public class SplitPartFunctionFactory implements FunctionFactory {
@@ -54,7 +54,7 @@ public class SplitPartFunctionFactory implements FunctionFactory {
 
         if (indexFunc.isConstant()) {
             int index = indexFunc.getInt(null);
-            if (index == Numbers.INT_NaN) {
+            if (index == Numbers.INT_NULL) {
                 return StrConstant.NULL;
             } else if (index == 0) {
                 throw SqlException.$(indexPosition, "field position must not be zero");
@@ -133,7 +133,7 @@ public class SplitPartFunctionFactory implements FunctionFactory {
             CharSequence str = strFunc.getStrA(rec);
             CharSequence delimiter = delimiterFunc.getStrA(rec);
             int index = getIndex(rec);
-            if (str == null || delimiter == null || index == Numbers.INT_NaN) {
+            if (str == null || delimiter == null || index == Numbers.INT_NULL) {
                 return null;
             }
             if (index == 0) {

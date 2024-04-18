@@ -176,7 +176,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         // for constant expression this would generate
         // NaN = NaN the outcome will be false
         // however for col = NaN, where col is long this must be true
-        callCustomised(false, false, Double.NaN, Numbers.INT_NaN).andAssertOnlyColumnValues(true);
+        callCustomised(false, false, Double.NaN, Numbers.INT_NULL).andAssertOnlyColumnValues(true);
     }
 
     @Test
@@ -189,7 +189,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         // for constant expression this would generate
         // NaN = NaN the outcome will be false
         // however for col = NaN, where col is long this must be true
-        callCustomised(false, false, Double.NaN, Numbers.LONG_NaN).andAssertOnlyColumnValues(true);
+        callCustomised(false, false, Double.NaN, Numbers.LONG_NULL).andAssertOnlyColumnValues(true);
     }
 
     @Test
@@ -274,7 +274,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testRightNaNDateNaN() throws SqlException {
         FunctionFactory factory = getFunctionFactory();
         ObjList<Function> args = new ObjList<>();
-        args.add(new DateConstant(Numbers.LONG_NaN));
+        args.add(new DateConstant(Numbers.LONG_NULL));
         args.add(new DoubleConstant(Double.NaN));
 
         IntList argPositions = new IntList();
@@ -336,7 +336,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testRightNaNTimestampNaN() throws SqlException {
         FunctionFactory factory = getFunctionFactory();
         ObjList<Function> args = new ObjList<>();
-        args.add(new TimestampConstant(Numbers.LONG_NaN) {
+        args.add(new TimestampConstant(Numbers.LONG_NULL) {
             @Override
             public boolean isConstant() {
                 return false;

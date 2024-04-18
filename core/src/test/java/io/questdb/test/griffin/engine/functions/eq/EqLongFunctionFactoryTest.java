@@ -26,9 +26,9 @@ package io.questdb.test.griffin.engine.functions.eq;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class EqLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -40,7 +40,7 @@ public class EqLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testLeftNaN() throws SqlException {
-        call(Numbers.LONG_NaN, 77L).andAssert(false);
+        call(Numbers.LONG_NULL, 77L).andAssert(false);
     }
 
     @Test
@@ -50,12 +50,12 @@ public class EqLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNullEqualsNull() throws SqlException {
-        call(Numbers.LONG_NaN, Numbers.LONG_NaN).andAssert(true);
+        call(Numbers.LONG_NULL, Numbers.LONG_NULL).andAssert(true);
     }
 
     @Test
     public void testRightNaN() throws SqlException {
-        call(77L, Numbers.LONG_NaN).andAssert(false);
+        call(77L, Numbers.LONG_NULL).andAssert(false);
     }
 
     @Override

@@ -58,7 +58,7 @@ public class CastDoubleToLongFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             final double value = arg.getDouble(rec);
-            return Numbers.isNull(value) ? Numbers.LONG_NaN : (long) value;
+            return Numbers.isNull(value) ? Numbers.LONG_NULL : (long) value;
         }
     }
 }

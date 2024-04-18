@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions.date;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
@@ -35,18 +34,19 @@ import io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ToTimestampVCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testNonCompliantDate() throws SqlException {
-        call("2015 03/12 abc", "yyyy dd/MM").andAssertTimestamp(Numbers.LONG_NaN);
+        call("2015 03/12 abc", "yyyy dd/MM").andAssertTimestamp(Numbers.LONG_NULL);
     }
 
     @Test
     public void testNullDate() throws SqlException {
-        call(null, "yyyy dd/MM").andAssertTimestamp(Numbers.LONG_NaN);
+        call(null, "yyyy dd/MM").andAssertTimestamp(Numbers.LONG_NULL);
     }
 
     @Test

@@ -42,6 +42,6 @@ public final class BadDateAdapter extends DateAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
-        row.putDate(column, Numbers.LONG_NaN);
+        row.putDate(column, Numbers.LONG_NULL);
     }
 }

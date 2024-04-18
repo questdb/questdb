@@ -26,9 +26,9 @@ package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.RoundDoubleFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class RoundDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -111,7 +111,7 @@ public class RoundDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testRightNan() throws SqlException {
-        call(123.65, Numbers.INT_NaN).andAssert(Double.NaN, 0.0001);
+        call(123.65, Numbers.INT_NULL).andAssert(Double.NaN, 0.0001);
     }
 
     @Test

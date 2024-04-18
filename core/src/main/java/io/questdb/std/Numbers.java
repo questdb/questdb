@@ -33,11 +33,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -45,10 +41,10 @@ import java.util.Arrays;
 public final class Numbers {
     public static final int BAD_NETMASK = 1;
     public static final double DOUBLE_TOLERANCE = 0.0000000001;
-    public static final int INT_NaN = Integer.MIN_VALUE;
+    public static final int INT_NULL = Integer.MIN_VALUE;
     public static final int IPv4_NULL = 0;
     public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
-    public static final long LONG_NaN = Long.MIN_VALUE;
+    public static final long LONG_NULL = Long.MIN_VALUE;
     public static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     public static final int MAX_SCALE = 19;
     public static final int SIGNIFICAND_WIDTH = 53;
@@ -131,7 +127,7 @@ public final class Numbers {
     public static void append(CharSink<?> sink, final int value) {
         int i = value;
         if (i < 0) {
-            if (i == Numbers.INT_NaN) {
+            if (i == Numbers.INT_NULL) {
                 sink.putAscii("null");
                 return;
             }
@@ -468,7 +464,7 @@ public final class Numbers {
     }
 
     public static void appendLong256(long a, long b, long c, long d, CharSink<?> sink) {
-        if (a == Numbers.LONG_NaN && b == Numbers.LONG_NaN && c == Numbers.LONG_NaN && d == Numbers.LONG_NaN) {
+        if (a == Numbers.LONG_NULL && b == Numbers.LONG_NULL && c == Numbers.LONG_NULL && d == Numbers.LONG_NULL) {
             return;
         }
         sink.putAscii("0x");
@@ -714,14 +710,14 @@ public final class Numbers {
     }
 
     public static double intToDouble(int value) {
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             return value;
         }
         return Double.NaN;
     }
 
     public static float intToFloat(int value) {
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             return value;
         }
         return Float.NaN;
@@ -739,10 +735,10 @@ public final class Numbers {
     }
 
     public static long intToLong(int value) {
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             return value;
         }
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     public static long interleaveBits(long x, long y) {
@@ -779,7 +775,7 @@ public final class Numbers {
     }
 
     public static float longToFloat(long value) {
-        if (value != Numbers.LONG_NaN) {
+        if (value != Numbers.LONG_NULL) {
             return value;
         }
         return Float.NaN;
@@ -1051,11 +1047,11 @@ public final class Numbers {
     public static int parseIntQuiet(CharSequence sequence) {
         try {
             if (sequence == null || Chars.equals("NaN", sequence)) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             return parseInt0(sequence, 0, sequence.length());
         } catch (NumericException e) {
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
 
     }

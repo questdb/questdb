@@ -66,7 +66,7 @@ public class LineTcpParser {
     public static final byte ENTITY_UNIT_SECOND = ENTITY_UNIT_MILLI + 1;
     public static final byte ENTITY_UNIT_MINUTE = ENTITY_UNIT_SECOND + 1;
     public static final byte ENTITY_UNIT_HOUR = ENTITY_UNIT_MINUTE + 1;
-    public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
+    public static final long NULL_TIMESTAMP = Numbers.LONG_NULL;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
     public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_VARCHAR + 1;
     private static final byte ENTITY_HANDLER_NAME = 1;

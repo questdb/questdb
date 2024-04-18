@@ -653,7 +653,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // run indexer for the whole table
                     indexHistoricPartitions(indexer, columnName, indexValueBlockSize);
                     long timestamp = txWriter.getLastPartitionTimestamp();
-                    if (timestamp != Numbers.LONG_NaN) {
+                    if (timestamp != Numbers.LONG_NULL) {
                         path.trimTo(rootLen);
                         setStateForTimestamp(path, timestamp);
                         // create index in last partition
@@ -2330,7 +2330,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     nullers.add(() -> dataMem.putFloat(Float.NaN));
                     break;
                 case ColumnType.INT:
-                    nullers.add(() -> dataMem.putInt(Numbers.INT_NaN));
+                    nullers.add(() -> dataMem.putInt(Numbers.INT_NULL));
                     break;
                 case ColumnType.IPv4:
                     nullers.add(() -> dataMem.putInt(Numbers.IPv4_NULL));
@@ -2338,15 +2338,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 case ColumnType.LONG:
                 case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
-                    nullers.add(() -> dataMem.putLong(Numbers.LONG_NaN));
+                    nullers.add(() -> dataMem.putLong(Numbers.LONG_NULL));
                     break;
                 case ColumnType.LONG128:
                     // fall through
                 case ColumnType.UUID:
-                    nullers.add(() -> dataMem.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                    nullers.add(() -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL));
                     break;
                 case ColumnType.LONG256:
-                    nullers.add(() -> dataMem.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
+                    nullers.add(() -> dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL));
                     break;
                 case ColumnType.SHORT:
                     nullers.add(() -> dataMem.putShort((short) 0));
@@ -4668,7 +4668,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
         long ts = this.txWriter.getMaxTimestamp();
-        if (ts > Numbers.LONG_NaN) {
+        if (ts > Numbers.LONG_NULL) {
             final int columnIndex = metadata.getColumnIndex(columnName);
             try {
                 // Index last partition separately
@@ -6733,7 +6733,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long repairDataGaps(final long timestamp) {
-        if (txWriter.getMaxTimestamp() != Numbers.LONG_NaN && PartitionBy.isPartitioned(partitionBy)) {
+        if (txWriter.getMaxTimestamp() != Numbers.LONG_NULL && PartitionBy.isPartitioned(partitionBy)) {
             long fixedRowCount = 0;
             long lastTimestamp = -1;
             long transientRowCount = txWriter.getTransientRowCount();

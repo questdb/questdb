@@ -28,7 +28,10 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -69,9 +72,9 @@ public class VectTest {
                     @Override
                     void run(long ptr, long count) {
                         if (count == 0) {
-                            Assert.assertEquals("short sum, count: 0", Numbers.LONG_NaN, Vect.sumShort(ptr, 0));
-                            Assert.assertEquals("short min, count: 0", Numbers.INT_NaN, Vect.minShort(ptr, 0));
-                            Assert.assertEquals("short max, count: 0", Numbers.INT_NaN, Vect.maxShort(ptr, 0));
+                            Assert.assertEquals("short sum, count: 0", Numbers.LONG_NULL, Vect.sumShort(ptr, 0));
+                            Assert.assertEquals("short min, count: 0", Numbers.INT_NULL, Vect.minShort(ptr, 0));
+                            Assert.assertEquals("short max, count: 0", Numbers.INT_NULL, Vect.maxShort(ptr, 0));
                         } else {
                             Assert.assertEquals("short sum, count: " + count, 0, Vect.sumShort(ptr, count));
                             Assert.assertEquals("short min, count: " + count, 0, Vect.minShort(ptr, count));
@@ -83,9 +86,9 @@ public class VectTest {
                     @Override
                     void run(long ptr, long count) {
                         if (count == 0) {
-                            Assert.assertEquals("int sum, count: 0", Numbers.LONG_NaN, Vect.sumInt(ptr, 0));
-                            Assert.assertEquals("int min, count: 0", Numbers.INT_NaN, Vect.minInt(ptr, 0));
-                            Assert.assertEquals("int max, count: 0", Numbers.INT_NaN, Vect.maxInt(ptr, 0));
+                            Assert.assertEquals("int sum, count: 0", Numbers.LONG_NULL, Vect.sumInt(ptr, 0));
+                            Assert.assertEquals("int min, count: 0", Numbers.INT_NULL, Vect.minInt(ptr, 0));
+                            Assert.assertEquals("int max, count: 0", Numbers.INT_NULL, Vect.maxInt(ptr, 0));
                             Assert.assertEquals("int count, count: 0", 0, Vect.countInt(ptr, 0));
                         } else {
                             Assert.assertEquals("int sum, count: " + count, 0, Vect.sumInt(ptr, count));
@@ -99,9 +102,9 @@ public class VectTest {
                     @Override
                     void run(long ptr, long count) {
                         if (count == 0) {
-                            Assert.assertEquals("long sum, count: 0", Numbers.LONG_NaN, Vect.sumLong(ptr, 0));
-                            Assert.assertEquals("long min, count: 0", Numbers.LONG_NaN, Vect.minLong(ptr, 0));
-                            Assert.assertEquals("long max, count: 0", Numbers.LONG_NaN, Vect.maxLong(ptr, 0));
+                            Assert.assertEquals("long sum, count: 0", Numbers.LONG_NULL, Vect.sumLong(ptr, 0));
+                            Assert.assertEquals("long min, count: 0", Numbers.LONG_NULL, Vect.minLong(ptr, 0));
+                            Assert.assertEquals("long max, count: 0", Numbers.LONG_NULL, Vect.maxLong(ptr, 0));
                             Assert.assertEquals("long count, count: 0", 0, Vect.countLong(ptr, 0));
                         } else {
                             Assert.assertEquals("long sum, count: " + count, 0, Vect.sumLong(ptr, count));

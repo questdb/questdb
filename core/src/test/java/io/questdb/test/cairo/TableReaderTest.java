@@ -55,7 +55,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public static final int MUST_NOT_SWITCH = 2;
     public static final int MUST_SWITCH = 1;
     private static final RecordAssert BATCH2_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 12);
-    private static final RecordAssert BATCH3_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NaN, r.getInt(13));
+    private static final RecordAssert BATCH3_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(13));
     private static final RecordAssert BATCH4_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
         Assert.assertEquals(0, r.getShort(14));
         Assert.assertFalse(r.getBool(15));
@@ -63,8 +63,8 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertTrue(Float.isNaN(r.getFloat(17)));
         Assert.assertTrue(Double.isNaN(r.getDouble(18)));
         Assert.assertNull(r.getSymA(19));
-        Assert.assertEquals(Numbers.LONG_NaN, r.getLong(20));
-        Assert.assertEquals(Numbers.LONG_NaN, r.getDate(21));
+        Assert.assertEquals(Numbers.LONG_NULL, r.getLong(20));
+        Assert.assertEquals(Numbers.LONG_NULL, r.getDate(21));
         Assert.assertNull(r.getBin(22));
         Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(22));
     };
@@ -75,13 +75,13 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertTrue(Float.isNaN(r.getFloat(17)));
         Assert.assertTrue(Double.isNaN(r.getDouble(18)));
         Assert.assertNull(r.getSymA(19));
-        Assert.assertEquals(Numbers.LONG_NaN, r.getLong(20));
-        Assert.assertEquals(Numbers.LONG_NaN, r.getDate(21));
+        Assert.assertEquals(Numbers.LONG_NULL, r.getLong(20));
+        Assert.assertEquals(Numbers.LONG_NULL, r.getDate(21));
     };
     private static final RecordAssert BATCH_2_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 11);
     private static final RecordAssert BATCH_2_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 10);
-    private static final RecordAssert BATCH_3_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NaN, r.getInt(12));
-    private static final RecordAssert BATCH_3_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NaN, r.getInt(11));
+    private static final RecordAssert BATCH_3_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(12));
+    private static final RecordAssert BATCH_3_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(11));
     private static final RecordAssert BATCH_4_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
         Assert.assertEquals(0, r.getShort(13));
         Assert.assertFalse(r.getBool(14));
@@ -89,8 +89,8 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertTrue(Float.isNaN(r.getFloat(16)));
         Assert.assertTrue(Double.isNaN(r.getDouble(17)));
         Assert.assertNull(r.getSymA(18));
-        Assert.assertEquals(Numbers.LONG_NaN, r.getLong(19));
-        Assert.assertEquals(Numbers.LONG_NaN, r.getDate(20));
+        Assert.assertEquals(Numbers.LONG_NULL, r.getLong(19));
+        Assert.assertEquals(Numbers.LONG_NULL, r.getDate(20));
     };
     private static final RecordAssert BATCH_4_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
         Assert.assertEquals(0, r.getShort(12));
@@ -99,8 +99,8 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertTrue(Float.isNaN(r.getFloat(15)));
         Assert.assertTrue(Double.isNaN(r.getDouble(16)));
         Assert.assertNull(r.getSymA(17));
-        Assert.assertEquals(Numbers.LONG_NaN, r.getLong(18));
-        Assert.assertEquals(Numbers.LONG_NaN, r.getDate(19));
+        Assert.assertEquals(Numbers.LONG_NULL, r.getLong(18));
+        Assert.assertEquals(Numbers.LONG_NULL, r.getDate(19));
     };
     private static final int CANNOT_DELETE = -1;
     private static final int blobLen = 64 * 1024;
@@ -126,7 +126,7 @@ public class TableReaderTest extends AbstractCairoTest {
         if (exp.nextBoolean()) {
             Assert.assertEquals(exp.nextInt(), r.getInt(0));
         } else {
-            Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
+            Assert.assertEquals(Numbers.INT_NULL, r.getInt(0));
         }
 
         if (exp.nextBoolean()) {
@@ -144,13 +144,13 @@ public class TableReaderTest extends AbstractCairoTest {
         if (exp.nextBoolean()) {
             Assert.assertEquals(exp.nextLong(), r.getLong(5));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(5));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(5));
         }
 
         if (exp.nextBoolean()) {
             Assert.assertEquals(ts, r.getDate(10));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(10));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(10));
         }
 
         assertBin(r, exp, blob, 9);
@@ -222,13 +222,13 @@ public class TableReaderTest extends AbstractCairoTest {
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getLong(20));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(20));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(20));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getDate(21));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(21));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(21));
         }
 
         assertBin(r, rnd, blob, 22);
@@ -275,13 +275,13 @@ public class TableReaderTest extends AbstractCairoTest {
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getLong(20));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(20));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(20));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getDate(21));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(21));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(21));
         }
     };
     private static final RecordAssert BATCH5_ASSERTER = (r, rnd, ts, blob) -> {
@@ -330,13 +330,13 @@ public class TableReaderTest extends AbstractCairoTest {
         if (exp.nextBoolean()) {
             Assert.assertEquals(exp.nextLong(), r.getLong(4));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(4));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(4));
         }
 
         if (exp.nextBoolean()) {
             Assert.assertEquals(ts, r.getDate(9));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(9));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(9));
         }
 
         assertBin(r, exp, blob, 8);
@@ -353,7 +353,7 @@ public class TableReaderTest extends AbstractCairoTest {
             Assert.assertNull(r.getSymA(6));
         }
 
-        Assert.assertEquals(Numbers.INT_NaN, r.getInt(21));
+        Assert.assertEquals(Numbers.INT_NULL, r.getInt(21));
     };
     private static final RecordAssert BATCH2_7_ASSERTER = (r, rnd, ts, blob) -> {
         BATCH1_7_ASSERTER.assertRecord(r, rnd, ts, blob);
@@ -410,13 +410,13 @@ public class TableReaderTest extends AbstractCairoTest {
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getLong(19));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(19));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(19));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getDate(20));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(20));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(20));
         }
     };
     private static final RecordAssert BATCH5_7_ASSERTER = (r, rnd, ts, blob) -> {
@@ -465,13 +465,13 @@ public class TableReaderTest extends AbstractCairoTest {
         if (exp.nextBoolean()) {
             Assert.assertEquals(exp.nextLong(), r.getLong(4));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(4));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(4));
         }
 
         if (exp.nextBoolean()) {
             Assert.assertEquals(ts, r.getDate(8));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(8));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(8));
         }
 
         assertBin(r, exp, blob, 7);
@@ -486,7 +486,7 @@ public class TableReaderTest extends AbstractCairoTest {
         if (exp.nextBoolean()) {
             exp.nextChars(7);
         }
-        Assert.assertEquals(Numbers.INT_NaN, r.getInt(20));
+        Assert.assertEquals(Numbers.INT_NULL, r.getInt(20));
     };
     private static final RecordAssert BATCH2_9_ASSERTER = (r, rnd, ts, blob) -> {
         BATCH1_9_ASSERTER.assertRecord(r, rnd, ts, blob);
@@ -543,13 +543,13 @@ public class TableReaderTest extends AbstractCairoTest {
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getLong(18));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(18));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(18));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getDate(19));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(19));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(19));
         }
     };
     private static final RecordAssert BATCH5_9_ASSERTER = (r, rnd, ts, blob) -> {
@@ -729,13 +729,13 @@ public class TableReaderTest extends AbstractCairoTest {
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getLong(4));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(4));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(4));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(ts, r.getDate(9));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(9));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(9));
         }
 
         assertBin(r, rnd, blob, 8);
@@ -761,7 +761,7 @@ public class TableReaderTest extends AbstractCairoTest {
         if ((rnd.nextPositiveInt() & 3) == 0) {
             Assert.assertEquals(rnd.nextInt(), r.getInt(12));
         } else {
-            Assert.assertEquals(Numbers.INT_NaN, r.getInt(12));
+            Assert.assertEquals(Numbers.INT_NULL, r.getInt(12));
         }
 
         if (rnd.nextBoolean()) {
@@ -803,19 +803,19 @@ public class TableReaderTest extends AbstractCairoTest {
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getLong(19));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(19));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(19));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getDate(20));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(20));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(20));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextInt(), r.getInt(21));
         } else {
-            Assert.assertEquals(Numbers.INT_NaN, r.getInt(21));
+            Assert.assertEquals(Numbers.INT_NULL, r.getInt(21));
         }
     };
     private static final RecordAssert BATCH8_9_ASSERTER = (r, rnd, ts, blob) -> {
@@ -852,13 +852,13 @@ public class TableReaderTest extends AbstractCairoTest {
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getLong(4));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(4));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(4));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(ts, r.getDate(8));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(8));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(8));
         }
 
         assertBin(r, rnd, blob, 7);
@@ -882,7 +882,7 @@ public class TableReaderTest extends AbstractCairoTest {
         if ((rnd.nextPositiveInt() & 3) == 0) {
             Assert.assertEquals(rnd.nextInt(), r.getInt(11));
         } else {
-            Assert.assertEquals(Numbers.INT_NaN, r.getInt(11));
+            Assert.assertEquals(Numbers.INT_NULL, r.getInt(11));
         }
 
         if (rnd.nextBoolean()) {
@@ -924,19 +924,19 @@ public class TableReaderTest extends AbstractCairoTest {
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getLong(18));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(18));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(18));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getDate(19));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(19));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(19));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextInt(), r.getInt(20));
         } else {
-            Assert.assertEquals(Numbers.INT_NaN, r.getInt(20));
+            Assert.assertEquals(Numbers.INT_NULL, r.getInt(20));
         }
 
         Assert.assertNull(r.getSymA(21));
@@ -975,13 +975,13 @@ public class TableReaderTest extends AbstractCairoTest {
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getLong(4));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(4));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(4));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(ts, r.getDate(8));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(8));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(8));
         }
 
         assertBin(r, rnd, blob, 7);
@@ -1001,7 +1001,7 @@ public class TableReaderTest extends AbstractCairoTest {
         if ((rnd.nextPositiveInt() & 3) == 0) {
             Assert.assertEquals(rnd.nextInt(), r.getInt(11));
         } else {
-            Assert.assertEquals(Numbers.INT_NaN, r.getInt(11));
+            Assert.assertEquals(Numbers.INT_NULL, r.getInt(11));
         }
 
         if (rnd.nextBoolean()) {
@@ -1043,19 +1043,19 @@ public class TableReaderTest extends AbstractCairoTest {
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getLong(18));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(18));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getLong(18));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextLong(), r.getDate(19));
         } else {
-            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(19));
+            Assert.assertEquals(Numbers.LONG_NULL, r.getDate(19));
         }
 
         if (rnd.nextBoolean()) {
             Assert.assertEquals(rnd.nextInt(), r.getInt(20));
         } else {
-            Assert.assertEquals(Numbers.INT_NaN, r.getInt(20));
+            Assert.assertEquals(Numbers.INT_NULL, r.getInt(20));
         }
 
         if (rnd.nextBoolean()) {
@@ -1467,7 +1467,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (TableWriter w = newOffPoolWriter(configuration, "all", metrics)) {
-                TableWriter.Row r = w.newRow(Numbers.LONG_NaN);
+                TableWriter.Row r = w.newRow(Numbers.LONG_NULL);
                 r.putInt(0, 100);
                 r.append();
                 w.commit();

@@ -70,9 +70,9 @@ public class LtLongFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long left = this.left.getLong(rec);
-            if (left != Numbers.LONG_NaN) {
+            if (left != Numbers.LONG_NULL) {
                 long right = this.right.getLong(rec);
-                if (right != Numbers.LONG_NaN) {
+                if (right != Numbers.LONG_NULL) {
                     return negated == (left >= right);
                 }
             }

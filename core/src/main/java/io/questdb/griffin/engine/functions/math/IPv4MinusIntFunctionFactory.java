@@ -71,7 +71,7 @@ public class IPv4MinusIntFunctionFactory implements FunctionFactory {
                 return Numbers.IPv4_NULL;
             }
 
-            return (int) l != Numbers.IPv4_NULL && (int) r != Numbers.INT_NaN ? (int) (l - r) : Numbers.IPv4_NULL;
+            return (int) l != Numbers.IPv4_NULL && (int) r != Numbers.INT_NULL ? (int) (l - r) : Numbers.IPv4_NULL;
         }
 
         @Override

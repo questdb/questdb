@@ -25,14 +25,14 @@
 package io.questdb.test.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -145,9 +145,9 @@ public class BindVariableServiceImplTest {
         bindVariableService.setInt(0, 450);
         Assert.assertEquals(450, bindVariableService.getFunction(0).getDate(null));
 
-        bindVariableService.setInt(0, Numbers.INT_NaN);
+        bindVariableService.setInt(0, Numbers.INT_NULL);
         final long d = bindVariableService.getFunction(0).getDate(null);
-        Assert.assertEquals(Numbers.LONG_NaN, d);
+        Assert.assertEquals(Numbers.LONG_NULL, d);
     }
 
     @Test
@@ -159,9 +159,9 @@ public class BindVariableServiceImplTest {
         bindVariableService.setLong(0, 450);
         Assert.assertEquals(450, bindVariableService.getFunction(0).getDate(null));
 
-        bindVariableService.setLong(0, Numbers.LONG_NaN);
+        bindVariableService.setLong(0, Numbers.LONG_NULL);
         final long d = bindVariableService.getFunction(0).getDate(null);
-        Assert.assertEquals(Numbers.LONG_NaN, d);
+        Assert.assertEquals(Numbers.LONG_NULL, d);
     }
 
     @Test
@@ -170,9 +170,9 @@ public class BindVariableServiceImplTest {
         bindVariableService.setTimestamp(0, 99999001);
         Assert.assertEquals(99999, bindVariableService.getFunction(0).getDate(null));
 
-        bindVariableService.setTimestamp(0, Numbers.LONG_NaN);
+        bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
         final long d = bindVariableService.getFunction(0).getDate(null);
-        Assert.assertEquals(Numbers.LONG_NaN, d);
+        Assert.assertEquals(Numbers.LONG_NULL, d);
     }
 
     @Test
@@ -220,7 +220,7 @@ public class BindVariableServiceImplTest {
         bindVariableService.setInt(0, 450);
         Assert.assertEquals(450, bindVariableService.getFunction(0).getDouble(null), 0.000001);
 
-        bindVariableService.setInt(0, Numbers.INT_NaN);
+        bindVariableService.setInt(0, Numbers.INT_NULL);
         final double d = bindVariableService.getFunction(0).getDouble(null);
         Assert.assertTrue(d != d);
     }
@@ -234,7 +234,7 @@ public class BindVariableServiceImplTest {
         bindVariableService.setLong(0, 450);
         Assert.assertEquals(450, bindVariableService.getFunction(0).getDouble(null), 0.00001);
 
-        bindVariableService.setLong(0, Numbers.LONG_NaN);
+        bindVariableService.setLong(0, Numbers.LONG_NULL);
         final double f = bindVariableService.getFunction(0).getDouble(null);
         Assert.assertTrue(f != f);
     }
@@ -270,7 +270,7 @@ public class BindVariableServiceImplTest {
         bindVariableService.setInt(0, 450);
         Assert.assertEquals(450, bindVariableService.getFunction(0).getFloat(null), 0.000001);
 
-        bindVariableService.setInt(0, Numbers.INT_NaN);
+        bindVariableService.setInt(0, Numbers.INT_NULL);
         final float d = bindVariableService.getFunction(0).getFloat(null);
         Assert.assertTrue(d != d);
     }
@@ -284,7 +284,7 @@ public class BindVariableServiceImplTest {
         bindVariableService.setLong(0, 450);
         Assert.assertEquals(450, bindVariableService.getFunction(0).getFloat(null), 0.00001);
 
-        bindVariableService.setLong(0, Numbers.LONG_NaN);
+        bindVariableService.setLong(0, Numbers.LONG_NULL);
         final float f = bindVariableService.getFunction(0).getFloat(null);
         Assert.assertTrue(f != f);
     }
@@ -320,9 +320,9 @@ public class BindVariableServiceImplTest {
         bindVariableService.setInt(0, 450);
         Assert.assertEquals(450, bindVariableService.getFunction(0).getLong(null));
 
-        bindVariableService.setInt(0, Numbers.INT_NaN);
+        bindVariableService.setInt(0, Numbers.INT_NULL);
         final long d = bindVariableService.getFunction(0).getLong(null);
-        Assert.assertEquals(Numbers.LONG_NaN, d);
+        Assert.assertEquals(Numbers.LONG_NULL, d);
     }
 
     @Test
@@ -524,7 +524,7 @@ public class BindVariableServiceImplTest {
         bindVariableService.setStr(0, "21");
         Assert.assertEquals(21, bindVariableService.getFunction(0).getDate(null));
         bindVariableService.setStr(0, null);
-        Assert.assertEquals(Numbers.LONG_NaN, bindVariableService.getFunction(0).getDate(null));
+        Assert.assertEquals(Numbers.LONG_NULL, bindVariableService.getFunction(0).getDate(null));
     }
 
     @Test
@@ -621,7 +621,7 @@ public class BindVariableServiceImplTest {
         bindVariableService.setStr(0, "21");
         Assert.assertEquals(21, bindVariableService.getFunction(0).getInt(null));
         bindVariableService.setStr(0, null);
-        Assert.assertEquals(Numbers.INT_NaN, bindVariableService.getFunction(0).getInt(null));
+        Assert.assertEquals(Numbers.INT_NULL, bindVariableService.getFunction(0).getInt(null));
     }
 
     @Test
@@ -655,7 +655,7 @@ public class BindVariableServiceImplTest {
         bindVariableService.setStr(0, "21");
         Assert.assertEquals(21, bindVariableService.getFunction(0).getLong(null));
         bindVariableService.setStr(0, null);
-        Assert.assertEquals(Numbers.LONG_NaN, bindVariableService.getFunction(0).getLong(null));
+        Assert.assertEquals(Numbers.LONG_NULL, bindVariableService.getFunction(0).getLong(null));
     }
 
     @Test
@@ -745,7 +745,7 @@ public class BindVariableServiceImplTest {
         bindVariableService.setStr(0, "21");
         Assert.assertEquals(21, bindVariableService.getFunction(0).getTimestamp(null));
         bindVariableService.setStr(0, null);
-        Assert.assertEquals(Numbers.LONG_NaN, bindVariableService.getFunction(0).getTimestamp(null));
+        Assert.assertEquals(Numbers.LONG_NULL, bindVariableService.getFunction(0).getTimestamp(null));
         bindVariableService.setStr(0, "2019-10-31 15:05:22+08:00");
         Assert.assertEquals(1572505522000000L, bindVariableService.getFunction(0).getTimestamp(null));
     }
@@ -812,7 +812,7 @@ public class BindVariableServiceImplTest {
         bindVariableService.setLong(0, 450);
         TestUtils.assertEquals("450", bindVariableService.getFunction(0).getStrA(null));
 
-        bindVariableService.setLong(0, Numbers.LONG_NaN);
+        bindVariableService.setLong(0, Numbers.LONG_NULL);
         Assert.assertNull(bindVariableService.getFunction(0).getStrA(null));
     }
 
@@ -838,7 +838,7 @@ public class BindVariableServiceImplTest {
         bindVariableService.setInt(0, 450);
         TestUtils.assertEquals("450", bindVariableService.getFunction(0).getStrA(null));
 
-        bindVariableService.setInt(0, Numbers.INT_NaN);
+        bindVariableService.setInt(0, Numbers.INT_NULL);
         Assert.assertNull(bindVariableService.getFunction(0).getStrA(null));
     }
 
@@ -859,8 +859,8 @@ public class BindVariableServiceImplTest {
         bindVariableService.setInt(0, 450);
         Assert.assertEquals(450, bindVariableService.getFunction(0).getTimestamp(null));
 
-        bindVariableService.setInt(0, Numbers.INT_NaN);
+        bindVariableService.setInt(0, Numbers.INT_NULL);
         final long d = bindVariableService.getFunction(0).getTimestamp(null);
-        Assert.assertEquals(Numbers.LONG_NaN, d);
+        Assert.assertEquals(Numbers.LONG_NULL, d);
     }
 }

@@ -53,7 +53,7 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
+                Assert.assertEquals(Numbers.INT_NULL, record.getInt(0));
             }
         }
     }
@@ -78,7 +78,7 @@ public class FirstIntGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.INT_NaN, record.getInt(0));
+                Assert.assertEquals(Numbers.INT_NULL, record.getInt(0));
             }
         }
     }

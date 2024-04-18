@@ -26,16 +26,16 @@ package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class NegIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaN() throws SqlException {
-        call(Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+        call(Numbers.INT_NULL).andAssert(Numbers.INT_NULL);
     }
 
     @Test

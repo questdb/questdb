@@ -26,10 +26,10 @@ package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -48,7 +48,7 @@ public class SplitPartCharFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testNaNIndex() throws SqlException {
-        callCustomised(true, true, "abc,def,ghi,jkl", ',', Numbers.INT_NaN).andAssert(null);
+        callCustomised(true, true, "abc,def,ghi,jkl", ',', Numbers.INT_NULL).andAssert(null);
     }
 
     @Test

@@ -130,8 +130,8 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
             // all readers should be released. there should have a timestamp set >= timestamp when all readers were acquired
             assertReaderPool(readerAcquisitionCount * 2, eitherOf(
-                    recordValidator(allReadersAcquiredTime, "tab1", Numbers.LONG_NaN, 1),
-                    recordValidator(allReadersAcquiredTime, "tab2", Numbers.LONG_NaN, 1))
+                    recordValidator(allReadersAcquiredTime, "tab1", Numbers.LONG_NULL, 1),
+                    recordValidator(allReadersAcquiredTime, "tab2", Numbers.LONG_NULL, 1))
             );
         });
     }
@@ -188,7 +188,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
             });
 
             // all readers should be released. they should have a timestamp set >= timestamp when all readers were acquired
-            assertReaderPool(readerAcquisitionCount, recordValidator(allReadersAcquiredTime, tableName, Numbers.LONG_NaN, 4));
+            assertReaderPool(readerAcquisitionCount, recordValidator(allReadersAcquiredTime, tableName, Numbers.LONG_NULL, 4));
         });
     }
 
@@ -211,7 +211,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
             // check table reader timestamp was updated when it was returned to the pool
             assertTrue(allReadersAcquiredTime > startTime);
-            assertReaderPool(1, recordValidator(allReadersAcquiredTime, "tab1", Numbers.LONG_NaN, 1));
+            assertReaderPool(1, recordValidator(allReadersAcquiredTime, "tab1", Numbers.LONG_NULL, 1));
 
             // acquire again and check timestamp made progress
             // this is to make sure time is updated on re-acquisition too

@@ -76,7 +76,7 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
         }
 
         final long val = exprFunc.getLong(record);
-        if (val != Numbers.LONG_NaN) {
+        if (val != Numbers.LONG_NULL) {
             histogram.recordValue(val);
         }
         mapValue.putLong(valueIndex, histogramIndex++);
@@ -86,7 +86,7 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final PackedHistogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
         final long val = exprFunc.getLong(record);
-        if (val != Numbers.LONG_NaN) {
+        if (val != Numbers.LONG_NULL) {
             histogram.recordValue(val);
         }
     }
@@ -162,7 +162,7 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
     }
 
     @Override

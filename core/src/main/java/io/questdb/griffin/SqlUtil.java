@@ -67,7 +67,7 @@ public class SqlUtil {
     // used by Copier assembler
     @SuppressWarnings("unused")
     public static long dateToTimestamp(long millis) {
-        return millis != Numbers.LONG_NaN ? millis * 1000L : millis;
+        return millis != Numbers.LONG_NULL ? millis * 1000L : millis;
     }
 
     public static long expectMicros(CharSequence tok, int position) throws SqlException {
@@ -327,7 +327,7 @@ public class SqlUtil {
     // used by the row copier
     public static int implicitCastDoubleAsInt(double value) {
         if (Numbers.isNull(value)) {
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
         return implicitCastAsInt((long) value, ColumnType.LONG);
     }
@@ -340,7 +340,7 @@ public class SqlUtil {
         }
 
         if (Numbers.isNull(value)) {
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
 
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.DOUBLE, ColumnType.LONG);
@@ -377,7 +377,7 @@ public class SqlUtil {
         }
 
         if (Numbers.isNull(value)) {
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
 
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.INT);
@@ -391,7 +391,7 @@ public class SqlUtil {
         }
 
         if (Numbers.isNull(value)) {
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
 
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.LONG);
@@ -421,7 +421,7 @@ public class SqlUtil {
     @SuppressWarnings("unused")
     // used by the row copier
     public static byte implicitCastIntAsByte(int value) {
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             return implicitCastAsByte(value, ColumnType.INT);
         }
         return 0;
@@ -430,7 +430,7 @@ public class SqlUtil {
     @SuppressWarnings("unused")
     // used by the row copier
     public static short implicitCastIntAsShort(int value) {
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             return implicitCastAsShort(value, ColumnType.INT);
         }
         return 0;
@@ -447,7 +447,7 @@ public class SqlUtil {
     @SuppressWarnings("unused")
     // used by the row copier
     public static byte implicitCastLongAsByte(long value) {
-        if (value != Numbers.LONG_NaN) {
+        if (value != Numbers.LONG_NULL) {
             return implicitCastAsByte(value, ColumnType.LONG);
         }
         return 0;
@@ -456,16 +456,16 @@ public class SqlUtil {
     @SuppressWarnings("unused")
     // used by the row copier
     public static int implicitCastLongAsInt(long value) {
-        if (value != Numbers.LONG_NaN) {
+        if (value != Numbers.LONG_NULL) {
             return implicitCastAsInt(value, ColumnType.LONG);
         }
-        return Numbers.INT_NaN;
+        return Numbers.INT_NULL;
     }
 
     @SuppressWarnings("unused")
     // used by the row copier
     public static short implicitCastLongAsShort(long value) {
-        if (value != Numbers.LONG_NaN) {
+        if (value != Numbers.LONG_NULL) {
             return implicitCastAsShort(value, ColumnType.LONG);
         }
         return 0;
@@ -559,7 +559,7 @@ public class SqlUtil {
                 throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.INT);
             }
         }
-        return Numbers.INT_NaN;
+        return Numbers.INT_NULL;
     }
 
     public static long implicitCastStrAsLong(CharSequence value) {
@@ -570,7 +570,7 @@ public class SqlUtil {
                 throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.LONG);
             }
         }
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     public static Long256Constant implicitCastStrAsLong256(CharSequence value) {
@@ -706,7 +706,7 @@ public class SqlUtil {
                 throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.INT);
             }
         }
-        return Numbers.INT_NaN;
+        return Numbers.INT_NULL;
     }
 
     public static long implicitCastVarcharAsLong(Utf8Sequence value) {
@@ -717,7 +717,7 @@ public class SqlUtil {
                 throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.LONG);
             }
         }
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     public static Long256Constant implicitCastVarcharAsLong256(Utf8Sequence value) {
@@ -815,7 +815,7 @@ public class SqlUtil {
 
             throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
         }
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     private static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
@@ -848,7 +848,7 @@ public class SqlUtil {
         final CharacterStoreEntry characterStoreEntry = store.newEntry();
 
         if (indexOfDot == -1) {
-            if (disallowed || Numbers.parseIntQuiet(base) != Numbers.INT_NaN) {
+            if (disallowed || Numbers.parseIntQuiet(base) != Numbers.INT_NULL) {
                 characterStoreEntry.put("column");
             } else {
                 characterStoreEntry.put(base);

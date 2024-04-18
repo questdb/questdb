@@ -1948,17 +1948,17 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         engine.releaseInactive();
     }
 
-    private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampnullos) {
+    private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampNanos) {
         try (TableReader reader = newOffPoolReader(configuration, tableName)) {
-            Assert.assertEquals(maxExpectedTimestampnullos / 1000, reader.getMaxTimestamp());
+            Assert.assertEquals(maxExpectedTimestampNanos / 1000, reader.getMaxTimestamp());
             int timestampColIndex = reader.getMetadata().getTimestampIndex();
             TableReaderRecordCursor recordCursor = reader.getCursor();
             int nRows = 0;
-            long timestampinnullos = 1465839830100400200L;
+            long timestampinNanos = 1465839830100400200L;
             while (recordCursor.hasNext()) {
                 long actualTimestampInMicros = recordCursor.getRecord().getTimestamp(timestampColIndex);
-                Assert.assertEquals(timestampinnullos / 1000, actualTimestampInMicros);
-                timestampinnullos += 1000;
+                Assert.assertEquals(timestampinNanos / 1000, actualTimestampInMicros);
+                timestampinNanos += 1000;
                 nRows++;
             }
             Assert.assertEquals(nExpectedRows, nRows);
@@ -2039,9 +2039,9 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         Rnd rnd = new Rnd();
         int[] countByTable = new int[nTables];
         long[] maxTimestampByTable = new long[nTables];
-        final long initialTimestampnullos = 1465839830100400200L;
-        final long timestampIncrementInnullos = 1000;
-        Arrays.fill(maxTimestampByTable, initialTimestampnullos);
+        final long initialTimestampNanos = 1465839830100400200L;
+        final long timestampIncrementInNanos = 1000;
+        Arrays.fill(maxTimestampByTable, initialTimestampNanos);
         runInContext(() -> {
             int nTablesSelected = 0;
             int nTotalUpdates = 0;
@@ -2062,7 +2062,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                         }
                     }
                     long timestamp = maxTimestampByTable[nTable];
-                    maxTimestampByTable[nTable] += timestampIncrementInnullos;
+                    maxTimestampByTable[nTable] += timestampIncrementInNanos;
                     double temperature = 50.0 + (rnd.nextInt(500) / 10.0);
                     sink.put("weather").put(nTable)
                             .put(",location=us-midwest temperature=").put(temperature)
@@ -2089,7 +2089,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     .$(" threads. ")
                     .$();
             for (int nTable = 0; nTable < nTables; nTable++) {
-                assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable] - timestampIncrementInnullos);
+                assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable] - timestampIncrementInNanos);
             }
         });
     }

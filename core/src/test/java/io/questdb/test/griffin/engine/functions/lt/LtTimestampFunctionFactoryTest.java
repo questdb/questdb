@@ -26,10 +26,10 @@ package io.questdb.test.griffin.engine.functions.lt;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.parseUTCTimestamp;
@@ -39,7 +39,7 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
     @Test
     public void testGreaterOrEqThanNull() throws SqlException, NumericException {
         long t1 = parseUTCTimestamp("2020-12-31T23:59:59.000000Z");
-        long t2 = Numbers.LONG_NaN;
+        long t2 = Numbers.LONG_NULL;
         callBySignature(">=(NN)", t1, t1).andAssert(true);
         callBySignature(">=(NN)", t1, t2).andAssert(false);
         callBySignature(">=(NN)", t2, t1).andAssert(false);
@@ -58,7 +58,7 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
     @Test
     public void testGreaterThanNull() throws SqlException, NumericException {
         long t1 = parseUTCTimestamp("2020-12-31T23:59:59.000000Z");
-        long t2 = Numbers.LONG_NaN;
+        long t2 = Numbers.LONG_NULL;
         callBySignature(">(NN)", t1, t1).andAssert(false);
         callBySignature(">(NN)", t1, t2).andAssert(false);
         callBySignature(">(NN)", t2, t1).andAssert(false);
@@ -77,7 +77,7 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
     @Test
     public void testLessOrEqThanNull() throws SqlException, NumericException {
         long t1 = parseUTCTimestamp("2020-12-31T23:59:59.000000Z");
-        long t2 = Numbers.LONG_NaN;
+        long t2 = Numbers.LONG_NULL;
         callBySignature("<=(NN)", t1, t1).andAssert(true);
         callBySignature("<=(NN)", t1, t2).andAssert(false);
         callBySignature("<=(NN)", t2, t1).andAssert(false);

@@ -1421,7 +1421,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 bindVariableService.setInt(0, 3); // compatible with everything
                 insert.execute(sqlExecutionContext);
 
-                bindVariableService.setInt(0, Numbers.INT_NaN);
+                bindVariableService.setInt(0, Numbers.INT_NULL);
                 insert.execute(sqlExecutionContext);
 
                 try {
@@ -1447,7 +1447,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 bindVariableService.setLong(0, 8); // compatible with everything
                 insert.execute(sqlExecutionContext);
 
-                bindVariableService.setLong(0, Numbers.LONG_NaN);
+                bindVariableService.setLong(0, Numbers.LONG_NULL);
                 insert.execute(sqlExecutionContext);
 
                 try {
@@ -1562,7 +1562,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 bindVariableService.setTimestamp(0, 8); // compatible with everything
                 insert.execute(sqlExecutionContext);
 
-                bindVariableService.setTimestamp(0, Numbers.LONG_NaN);
+                bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
                 insert.execute(sqlExecutionContext);
 
                 try {
@@ -1588,7 +1588,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 bindVariableService.setTimestamp(0, 8); // compatible with everything
                 insert.execute(sqlExecutionContext);
 
-                bindVariableService.setTimestamp(0, Numbers.LONG_NaN);
+                bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
                 insert.execute(sqlExecutionContext);
 
                 bindVariableService.setTimestamp(0, 88990229990007L);

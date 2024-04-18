@@ -80,12 +80,12 @@ public class NullMemoryMRTest {
 
     @Test
     public void getInt() {
-        Assert.assertEquals(Numbers.INT_NaN, NullMemoryMR.INSTANCE.getInt(1234));
+        Assert.assertEquals(Numbers.INT_NULL, NullMemoryMR.INSTANCE.getInt(1234));
     }
 
     @Test
     public void getLong() {
-        Assert.assertEquals(Numbers.LONG_NaN, NullMemoryMR.INSTANCE.getLong(1234));
+        Assert.assertEquals(Numbers.LONG_NULL, NullMemoryMR.INSTANCE.getLong(1234));
     }
 
     @Test

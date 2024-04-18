@@ -162,7 +162,7 @@ public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction 
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
     }
 
     @Override
