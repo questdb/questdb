@@ -54,7 +54,6 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.test.AbstractCairoTest.sink;
 import static io.questdb.test.griffin.ShowPartitionsTest.replaceSizeToMatchOS;
 import static io.questdb.test.griffin.ShowPartitionsTest.testTableName;
 import static io.questdb.test.tools.TestUtils.*;
@@ -193,6 +192,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
 
     private static void waitForData(String tableName, SqlCompiler defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
         long time = System.currentTimeMillis();
+        StringSink sink = new StringSink();
         while (true) {
             try {
                 TestUtils.assertSql(defaultCompiler, defaultContext, "select count() from " + tableName, sink, "count\n" +
