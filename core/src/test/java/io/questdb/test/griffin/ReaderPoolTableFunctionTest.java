@@ -235,7 +235,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
                     "2020-01-01T00:00:00.000000Z\t2\n", "select * from tab1");
 
             assertSql("table_name\towner_thread_id\tcurrent_txn\n" +
-                    "tab1\tNaN\t1\n", "select table_name, owner_thread_id, current_txn from reader_pool");
+                    "tab1\tnull\t1\n", "select table_name, owner_thread_id, current_txn from reader_pool");
         });
     }
 

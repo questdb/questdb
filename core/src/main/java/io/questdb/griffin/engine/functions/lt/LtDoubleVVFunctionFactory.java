@@ -63,9 +63,10 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final double a = left.getDouble(rec);
-            final double b = right.getDouble(rec);
-            return negated != (!Numbers.equals(a, b) && a < b);
+            final double l = left.getDouble(rec);
+            final double r = right.getDouble(rec);
+            final boolean eq = Numbers.equals(l, r);
+            return negated ? (eq || l >= r) : (!eq && l < r);
         }
 
         @Override

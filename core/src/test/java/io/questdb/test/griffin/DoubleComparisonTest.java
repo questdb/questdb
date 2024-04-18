@@ -51,4 +51,30 @@ public class DoubleComparisonTest extends AbstractCairoTest {
                 "select 1 - 0.9875 > 0.0125, 100.0084375 - 99.9959375 > 0.0125, (1 + 100) - (0.9875 + 100) > 0.0125;\n"
         );
     }
+
+    @Test
+    public void testNullConsistency() throws SqlException {
+        assertSql(
+                "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\n" +
+                        "true\ttrue\ttrue\ttrue\ttrue\tnull\tnull\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\n",
+                "select \n" +
+                        "  a = b \"1\", \n" +
+                        "  a = cast(null as double) \"2\", \n" +
+                        "  cast(null as double) = cast(null as double) \"3\", \n" +
+                        "  b = cast(null as double) \"4\", \n" +
+                        "  a = cast(null as double) \"5\", \n" +
+                        "  a \"6\",  \n" +
+                        "  b \"7\", \n" +
+                        "  a >= b \"8\", \n" +
+                        "  b >= a \"9\", \n" +
+                        "  a >= cast(null as double) \"10\", \n" +
+                        "  b >= cast(null as double) \"11\", \n" +
+                        "  a = a \"12\", \n" +
+                        "  b = b \"13\", \n" +
+                        "from (\n" +
+                        "  select (1.0/0.0) a, cast(null as double) b\n" +
+                        "  from long_sequence(1)\n" +
+                        ");"
+        );
+    }
 }

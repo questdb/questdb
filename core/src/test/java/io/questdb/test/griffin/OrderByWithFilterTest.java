@@ -607,7 +607,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "10\t2022-01-03T13:00:00.000000Z\t100\t1000\n" +
                         "9\t2022-01-03T10:13:20.000000Z\t90\t900\n" +
                         "8\t2022-01-03T07:26:40.000000Z\t80\t800\n" +
-                        "10\t2022-01-02T01:00:00.000000Z\tNaN\t\n",
+                        "10\t2022-01-02T01:00:00.000000Z\tnull\t\n",
                 "select l as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
                 null, "ts###DESC", true, false
         );
@@ -616,14 +616,14 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "1010\t2022-01-03T13:00:00.000000Z\t100\t1000\n" +
                         "1009\t2022-01-03T10:13:20.000000Z\t90\t900\n" +
                         "1008\t2022-01-03T07:26:40.000000Z\t80\t800\n" +
-                        "1010\t2022-01-02T01:00:00.000000Z\tNaN\t\n",
+                        "1010\t2022-01-02T01:00:00.000000Z\tnull\t\n",
                 "select l + 1000 as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
                 null, "ts###DESC", true, false
         );
 
         assertQuery("l\tts\tcol1\tcol2\n" +
-                        "9\t2022-01-01T22:13:20.000000Z\tNaN\t\n" +
-                        "10\t2022-01-02T01:00:00.000000Z\tNaN\t\n" +
+                        "9\t2022-01-01T22:13:20.000000Z\tnull\t\n" +
+                        "10\t2022-01-02T01:00:00.000000Z\tnull\t\n" +
                         "9\t2022-01-03T10:13:20.000000Z\t90\t900\n" +
                         "10\t2022-01-03T13:00:00.000000Z\t100\t1000\n",
                 "select l, ts, col1, col2 from trips where l > 8 order by ts",
@@ -632,10 +632,10 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
         assertQuery("l\tts\tcol1\tcol2\n" +
                         "4\t2022-01-02T20:20:00.000000Z\t40\t400\n" +
-                        "10\t2022-01-02T01:00:00.000000Z\tNaN\t\n" +
-                        "9\t2022-01-01T22:13:20.000000Z\tNaN\t\n" +
-                        "8\t2022-01-01T19:26:40.000000Z\tNaN\t\n" +
-                        "7\t2022-01-01T16:40:00.000000Z\tNaN\t\n",
+                        "10\t2022-01-02T01:00:00.000000Z\tnull\t\n" +
+                        "9\t2022-01-01T22:13:20.000000Z\tnull\t\n" +
+                        "8\t2022-01-01T19:26:40.000000Z\tnull\t\n" +
+                        "7\t2022-01-01T16:40:00.000000Z\tnull\t\n",
                 "select l, ts, col1, col2 from trips where ts between '2022-01-01T14' and '2022-01-02T23' and l > 3 order by ts desc limit 5",
                 null, "ts###DESC", true, false
         );
@@ -924,17 +924,17 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
         if ("string".equals(type) || "symbol".equals(type)) {
             assertQuery(expectedResult,
-                    ("select x from test where x in ('1', '2', '3') and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
+                    ("select x from test where x in ('1', '2', '3') and y = null order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
                     null, null, true, false
             );
         } else if ("char".equals(type)) {
             assertQuery(expectedResult,
-                    ("select x from test where x in (cast(1 as char), cast(2 as char), cast(3 as char)) and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
+                    ("select x from test where x in (cast(1 as char), cast(2 as char), cast(3 as char)) and y = null order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
                     null, null, true, false
             );
         } else {
             assertQuery(expectedResult,
-                    ("select x from test where x <= 3 and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
+                    ("select x from test where x <= 3 and y = null order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
                     null, null, true, false
             );
         }

@@ -127,7 +127,7 @@ public class TableData {
     private String getDefaultValue(short colType) {
         switch (colType) {
             case DOUBLE:
-                return "NaN";
+                return "null";
             case STRING:
             case SYMBOL:
             case TIMESTAMP:

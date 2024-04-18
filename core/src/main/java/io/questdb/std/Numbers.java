@@ -127,8 +127,8 @@ public final class Numbers {
     public static void append(CharSink<?> sink, final int value) {
         int i = value;
         if (i < 0) {
-            if (i == Integer.MIN_VALUE) {
-                sink.putAscii("NaN");
+            if (i == Numbers.INT_NaN) {
+                sink.putAscii("null");
                 return;
             }
             sink.putAscii('-');
@@ -167,7 +167,7 @@ public final class Numbers {
         if (i < 0) {
             if (i == Long.MIN_VALUE) {
                 if (checkNaN) {
-                    sink.putAscii("NaN");
+                    sink.putAscii("null");
                 } else {
                     // we cannot negate Long.MIN_VALUE, so we have to special case it
                     sink.putAscii("-9223372036854775808");
@@ -607,12 +607,12 @@ public final class Numbers {
         return ((Short.toUnsignedInt(high)) << 16) | Short.toUnsignedInt(low);
     }
 
-    public static boolean equals(float a, float b) {
-        return (isNull(a) && isNull(b)) || Math.abs(a - b) <= DOUBLE_TOLERANCE;
+    public static boolean equals(float l, float r) {
+        return (isNull(l) && isNull(r)) || Math.abs(l - r) <= DOUBLE_TOLERANCE;
     }
 
-    public static boolean equals(double a, double b) {
-        return (isNull(a) && isNull(b)) || Math.abs(a - b) <= DOUBLE_TOLERANCE;
+    public static boolean equals(double l, double r) {
+        return (isNull(l) && isNull(r)) || Math.abs(l - r) <= DOUBLE_TOLERANCE;
     }
 
     public static boolean extractLong256(@NotNull CharSequence value, @NotNull Long256Acceptor acceptor) {

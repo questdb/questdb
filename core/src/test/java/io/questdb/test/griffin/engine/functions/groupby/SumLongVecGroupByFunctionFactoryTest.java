@@ -52,7 +52,7 @@ public class SumLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery("sum\n" +
-                        "NaN\n", "select sum(f) from tab", "create table tab as (select cast(null as long) f from long_sequence(33))", null, "insert into tab select 123L from long_sequence(1)", "sum\n" +
+                "null\n", "select sum(f) from tab", "create table tab as (select cast(null as long) f from long_sequence(33))", null, "insert into tab select 123L from long_sequence(1)", "sum\n" +
                         "123\n", false, true, false);
     }
 

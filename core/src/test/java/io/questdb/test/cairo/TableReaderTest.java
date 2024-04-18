@@ -1983,7 +1983,7 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testNullValueRecovery() throws Exception {
         final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\tvarchar\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\tabc\ttrue\t\t\t\n";
+                "null\t0\t0\tnull\tnull\tnull\t\tabc\ttrue\t\t\t\n";
 
         TestUtils.assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
@@ -2451,7 +2451,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         println(r.getMetadata(), r.getCursor());
                         TestUtils.assertEquals(
                                 "l\ttimestamp\txyz\n" +
-                                        "NaN\t2016-03-02T10:00:00.000000Z\t\n",
+                                        "null\t2016-03-02T10:00:00.000000Z\t\n",
                                 sink
                         );
                     }

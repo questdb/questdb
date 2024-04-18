@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -53,7 +54,7 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertTrue(Float.isNaN(record.getFloat(0)));
+                Assert.assertTrue(Numbers.isNull(record.getFloat(0)));
             }
         }
     }
@@ -75,7 +76,7 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testLastFloatNull() throws Exception {
         assertQuery(
                 "y\n" +
-                        "NaN\n",
+                        "null\n",
                 "select last(y) y from tab",
                 "create table tab as (select cast(x as float) x, cast(null as float) y from long_sequence(100))",
                 null,
@@ -164,8 +165,8 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.9459\t1970-01-03T00:00:00.000000Z\n" +
                         "UKLG\t3.9211\t1970-01-03T00:00:00.000000Z\n" +
                         "IMYF\t1.5957\t1970-01-03T00:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T00:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.9918\t1970-01-03T03:00:00.000000Z\n" +
                         "\t0.8222\t1970-01-03T03:00:00.000000Z\n" +
                         "CPSW\t0.1053\t1970-01-03T03:00:00.000000Z\n" +
@@ -175,8 +176,8 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.8404\t1970-01-03T03:00:00.000000Z\n" +
                         "UKLG\t3.5400\t1970-01-03T03:00:00.000000Z\n" +
                         "IMYF\t1.4828\t1970-01-03T03:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T03:00:00.000000Z\n" +
                         "VTJW\t0.8721\t1970-01-03T06:00:00.000000Z\n" +
                         "\t0.7216\t1970-01-03T06:00:00.000000Z\n" +
                         "CPSW\t0.7365\t1970-01-03T06:00:00.000000Z\n" +
@@ -186,8 +187,8 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.7350\t1970-01-03T06:00:00.000000Z\n" +
                         "UKLG\t3.1589\t1970-01-03T06:00:00.000000Z\n" +
                         "IMYF\t1.3699\t1970-01-03T06:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T06:00:00.000000Z\n" +
                         "RXGZ\t0.4835\t1970-01-03T09:00:00.000000Z\n" +
                         "\t0.7873\t1970-01-03T09:00:00.000000Z\n" +
                         "CPSW\t0.1195\t1970-01-03T09:00:00.000000Z\n" +
@@ -197,8 +198,8 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.6295\t1970-01-03T09:00:00.000000Z\n" +
                         "UKLG\t2.7779\t1970-01-03T09:00:00.000000Z\n" +
                         "IMYF\t1.2570\t1970-01-03T09:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T09:00:00.000000Z\n" +
                         "HYRX\t-0.4891\t1970-01-03T12:00:00.000000Z\n" +
                         "PEHN\t-0.3074\t1970-01-03T12:00:00.000000Z\n" +
                         "\t0.7816\t1970-01-03T12:00:00.000000Z\n" +
@@ -208,8 +209,8 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.5240\t1970-01-03T12:00:00.000000Z\n" +
                         "UKLG\t2.3968\t1970-01-03T12:00:00.000000Z\n" +
                         "IMYF\t1.1441\t1970-01-03T12:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T12:00:00.000000Z\n" +
                         "HYRX\t-1.0182\t1970-01-03T15:00:00.000000Z\n" +
                         "PEHN\t-0.8682\t1970-01-03T15:00:00.000000Z\n" +
                         "\t0.7759\t1970-01-03T15:00:00.000000Z\n" +
@@ -219,8 +220,8 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.4185\t1970-01-03T15:00:00.000000Z\n" +
                         "UKLG\t2.0158\t1970-01-03T15:00:00.000000Z\n" +
                         "IMYF\t1.0312\t1970-01-03T15:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T15:00:00.000000Z\n" +
                         "HYRX\t-1.5472\t1970-01-03T18:00:00.000000Z\n" +
                         "PEHN\t-1.4291\t1970-01-03T18:00:00.000000Z\n" +
                         "\t0.7702\t1970-01-03T18:00:00.000000Z\n" +
@@ -230,8 +231,8 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.3131\t1970-01-03T18:00:00.000000Z\n" +
                         "UKLG\t1.6347\t1970-01-03T18:00:00.000000Z\n" +
                         "IMYF\t0.9184\t1970-01-03T18:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T18:00:00.000000Z\n" +
                         "HYRX\t-2.0763\t1970-01-03T21:00:00.000000Z\n" +
                         "PEHN\t-1.9900\t1970-01-03T21:00:00.000000Z\n" +
                         "\t0.7645\t1970-01-03T21:00:00.000000Z\n" +
@@ -241,8 +242,8 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.2076\t1970-01-03T21:00:00.000000Z\n" +
                         "UKLG\t1.2537\t1970-01-03T21:00:00.000000Z\n" +
                         "IMYF\t0.8055\t1970-01-03T21:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T21:00:00.000000Z\n" +
                         "HYRX\t-2.6054\t1970-01-04T00:00:00.000000Z\n" +
                         "PEHN\t-2.5509\t1970-01-04T00:00:00.000000Z\n" +
                         "\t0.7588\t1970-01-04T00:00:00.000000Z\n" +
@@ -252,8 +253,8 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.1021\t1970-01-04T00:00:00.000000Z\n" +
                         "UKLG\t0.8726\t1970-01-04T00:00:00.000000Z\n" +
                         "IMYF\t0.6926\t1970-01-04T00:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-04T00:00:00.000000Z\n" +
                         "UQDY\t0.9966\t1970-01-04T03:00:00.000000Z\n" +
                         "\t0.7530\t1970-01-04T03:00:00.000000Z\n" +
                         "UKLG\t0.4915\t1970-01-04T03:00:00.000000Z\n" +
@@ -263,8 +264,8 @@ public class LastFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "VTJW\t0.0341\t1970-01-04T03:00:00.000000Z\n" +
                         "CPSW\t-3.5825\t1970-01-04T03:00:00.000000Z\n" +
                         "RXGZ\t-0.8542\t1970-01-04T03:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-04T03:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-04T03:00:00.000000Z\n" +
                         "\t0.0140\t1970-01-04T06:00:00.000000Z\n" +
                         "IMYF\t0.4668\t1970-01-04T06:00:00.000000Z\n" +
                         "OPHN\t0.7203\t1970-01-04T06:00:00.000000Z\n" +

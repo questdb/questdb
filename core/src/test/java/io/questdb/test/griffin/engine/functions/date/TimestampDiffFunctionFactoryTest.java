@@ -37,8 +37,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testDayConstantEndNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('d', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
                 true,
@@ -63,8 +63,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testDayConstantStartNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('d', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
                 true,
@@ -96,8 +96,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testHourConstantEndNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('h', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
                 true,
@@ -122,8 +122,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testHourConstantStartNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('h', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
                 true,
@@ -155,8 +155,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testMicroConstantEndNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('u', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
                 true,
@@ -181,8 +181,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testMicroConstantStartNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('u', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
                 true,
@@ -214,8 +214,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testMilliConstantEndNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('T', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
                 true,
@@ -240,8 +240,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testMilliConstantStartNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('T', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
                 true,
@@ -273,8 +273,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testMinuteConstantEndNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('m', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
                 true,
@@ -299,8 +299,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testMinuteConstantStartNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('m', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
                 true,
@@ -332,8 +332,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testMonthConstantEndNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('M', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
                 true,
@@ -358,8 +358,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testMonthConstantStartNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('M', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
                 true,
@@ -391,8 +391,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testSecondConstantEndNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('s', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
                 true,
@@ -417,8 +417,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testSecondConstantStartNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('s', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
                 true,
@@ -455,8 +455,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testWeekConstantEndNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('w', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
                 true,
@@ -481,8 +481,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testWeekConstantStartNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('w', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
                 true,
@@ -514,8 +514,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testYearConstantEndNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('y', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
                 true,
@@ -540,8 +540,8 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testYearConstantStartNaN() throws SqlException {
         assertQuery(
                 "datediff\n" +
-                        "NaN\n" +
-                        "NaN\n",
+                        "null\n" +
+                        "null\n",
                 "select datediff('y', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
                 true,
