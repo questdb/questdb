@@ -83,6 +83,11 @@ public class Long256Constant extends Long256Function implements Long256, Constan
     }
 
     @Override
+    public boolean isNullConstant() {
+        return Long256Impl.NULL_LONG256.equals(value);
+    }
+
+    @Override
     public void setAll(long l0, long l1, long l2, long l3) {
         throw new UnsupportedOperationException();
     }
