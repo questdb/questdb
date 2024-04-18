@@ -100,7 +100,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 // size is known to be at most 4 bits
                 auxMem.putByte((byte) ((size << HEADER_FLAGS_WIDTH) | flags));
                 auxMem.putVarchar(value, 0, size);
-                auxMem.skip(VARCHAR_MAX_BYTES_FULLY_INLINED - size);
+                for (int i = size; i < VARCHAR_MAX_BYTES_FULLY_INLINED; i++) {
+                    auxMem.putByte((byte) 0);
+                }
                 offset = dataMem.getAppendOffset();
             } else {
                 if (size >= LENGTH_LIMIT_BYTES) {
