@@ -230,7 +230,7 @@
                 <version>1.2.0</version>
                 <executions>
                     <execution>
-                        <id>qdb</id>
+                        <id>qdb-build</id>
                         <goals>
                             <goal>build</goal>
                         </goals>

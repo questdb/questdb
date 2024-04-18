@@ -1,0 +1,48 @@
+<project name="qdb" default="qdb-build" basedir="..">
+    <description>
+        IntelliJ integration to trigger maven steps to build "qdb" via Ant.
+
+        To build "qdb" from IntelliJ before every test run:
+        * Install the Ant plugin: https://plugins.jetbrains.com/plugin/23025-ant
+        * View -> Tool Windows -> Ant
+        * Right click on "qdb-build" and select "Execute on"
+        * Select "Before Compilation" to enable calling the "qdb-build" target as part of every build.
+
+        In case of build errors, run "mvn package" from the command line manually.
+
+        You can also run the maven target to build the `qdb-ent` library explicitly:
+
+        mvn -pl core org.questdb:rust-maven-plugin:build@qdb-build
+    </description>
+
+    <condition property="isWindows">
+        <os family="windows"/>
+    </condition>
+
+    <condition property="isUnix">
+        <os family="unix"/>
+    </condition>
+
+    <target name="set-mvn-path-windows" if="isWindows">
+        <property name="maven.executable" value="mvn.cmd"/>
+    </target>
+
+    <target name="set-mvn-path-unix" if="isUnix">
+        <property name="maven.executable" value="mvn"/>
+    </target>
+
+    <target name="qdb-build" depends="set-mvn-path-windows, set-mvn-path-unix">
+        <exec executable="${maven.executable}">
+<!--            <arg value="-pl=core"/>-->
+            <arg value="org.questdb:rust-maven-plugin:build@qdb-build"/>
+        </exec>
+    </target>
+
+    <target name="qdb-release-build" depends="set-mvn-path-windows, set-mvn-path-unix">
+        <exec executable="${maven.executable}">
+<!--            <arg value="-pl=core"/>-->
+            <arg value="org.questdb:rust-maven-plugin:build@qdb-build"/>
+            <arg value="-Dqdb.release=true"/>
+        </exec>
+    </target>
+</project>
