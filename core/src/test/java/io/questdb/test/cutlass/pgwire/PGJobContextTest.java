@@ -10099,7 +10099,6 @@ create table tab as (
             statement.setMaxRows(maxRows);
 
             for (int i = 0; i < 10; i++) {
-                sink.clear();
                 try (ResultSet rs = statement.executeQuery()) {
                     assertResultSet(expected, sink, rs);
                 }
