@@ -54,6 +54,11 @@ public class UuidConstant extends UuidFunction implements ConstantFunction {
         return lo;
     }
 
+    @Override
+    public boolean isNullConstant() {
+        return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
+    }
+
     public void toPlan(PlanSink sink) {
         sink.valUuid(hi, lo);
     }

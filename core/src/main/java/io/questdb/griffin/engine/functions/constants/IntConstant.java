@@ -50,6 +50,11 @@ public class IntConstant extends IntFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean isNullConstant() {
+        return value == Numbers.INT_NaN;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(value);
     }

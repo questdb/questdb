@@ -45,6 +45,11 @@ public final class NullBinConstant extends BinFunction implements ConstantFuncti
     }
 
     @Override
+    public boolean isNullConstant() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val("null::binary");
     }
