@@ -39,7 +39,7 @@
         <web.console.version>0.3.3</web.console.version>
 
         <!--
-        Skip building the Rust JNI bindings
+        Skip building the Rust JNI bindings with -Dqdb.skip=true
         -->
         <qdb.skip>false</qdb.skip>
 
@@ -222,6 +222,27 @@
                         </QDB_CLIENT_CONF>
                     </environmentVariables>
                 </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.questdb</groupId>
+                <artifactId>rust-maven-plugin</artifactId>
+                <version>1.2.0</version>
+                <executions>
+                    <execution>
+                        <id>qdb</id>
+                        <goals>
+                            <goal>build</goal>
+                        </goals>
+                        <configuration>
+                            <path>rust/qdb</path>
+                            <skip>${qdb.skip}</skip>
+                            <release>${qdb.release}</release>
+                            <copyTo>${project.build.directory}/classes/io/questdb/rust</copyTo>
+                            <copyWithPlatformDir>true</copyWithPlatformDir>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
         <resources>
@@ -653,42 +674,6 @@
                     <scope>provided</scope>
                 </dependency>
             </dependencies>
-        </profile>
-        <profile>
-            <!--
-            Build the Rust JNI bindings.
-            To skip building them use `mvn .. -Dqdb.skip=true`
-            -->
-            <id>qdb-build</id>
-            <activation>
-                <property>
-                    <name>qdb.skip</name>
-                    <value>!true</value>
-                </property>
-            </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.questdb</groupId>
-                        <artifactId>rust-maven-plugin</artifactId>
-                        <version>1.1.1</version>
-                        <executions>
-                            <execution>
-                                <id>qdb</id>
-                                <goals>
-                                    <goal>build</goal>
-                                </goals>
-                                <configuration>
-                                    <path>rust/qdb</path>
-                                    <release>${qdb.release}</release>
-                                    <copyTo>${project.build.directory}/classes/io/questdb/rust</copyTo>
-                                    <copyWithPlatformDir>true</copyWithPlatformDir>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
         </profile>
     </profiles>
 
