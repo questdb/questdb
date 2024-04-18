@@ -25,11 +25,13 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryCMORImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ThreadLocal;
@@ -55,16 +57,26 @@ public class ColumnTypeConverter {
             int srcColumnType,
             int dstColumnType,
             FilesFacade ff,
-            long appendPageSize
+            long appendPageSize,
+            SymbolMapWriterLite symbolMapWriter,
+            SymbolTable symbolMapReader
     ) {
         if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
             return convertFixedToFixed(rowCount, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, appendPageSize);
-        } else if (ColumnType.isVarSize(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
-            return convertVarToVar(rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, srcColumnType, dstColumnType, ff, appendPageSize);
-        } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
-            return convertFixedToVar(rowCount, srcFixFd, dstFixFd, dstVarFd, srcColumnType, dstColumnType, ff, appendPageSize);
+        } else if (ColumnType.isVarSize(srcColumnType)) {
+            switch (srcColumnType) {
+                case ColumnType.STRING:
+                    return convertFromString(rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter);
+                case ColumnType.VARCHAR:
+                    return convertFromVarchar(rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter);
+                default:
+                    closeFds(ff, srcFixFd, srcVarFd, dstFixFd, -1);
+                    throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
+
+            }
         } else {
-            return convertVarToFixed(rowCount, srcFixFd, srcVarFd, dstFixFd, srcColumnType, dstColumnType, ff, appendPageSize);
+            closeFds(ff, srcFixFd, srcVarFd, dstFixFd, dstVarFd);
+            throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
         }
     }
 
@@ -80,27 +92,7 @@ public class ColumnTypeConverter {
         throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
     }
 
-    private static boolean convertFixedToVar(long rowCount, int srcFixFd, int dstFixFd, int dstVarFd, int srcColumnType, int dstColumnType, FilesFacade ff, long appendPageSize) {
-        closeFds(ff, srcFixFd, dstFixFd, dstVarFd, dstVarFd);
-        throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
-    }
-
-    private static long convertStrToVarchar(MemoryCMORImpl srcVarMem, long offset, Utf8StringSink sink, MemoryCMARW dstVarMem, MemoryCMARW dstFixMem) {
-        CharSequence str = srcVarMem.getStrA(offset);
-        offset += Vm.getStorageLength(str);
-
-        if (str != null) {
-            sink.clear();
-            sink.put(str);
-
-            VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, sink);
-        } else {
-            VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, null);
-        }
-        return offset;
-    }
-
-    private static boolean convertStringToVarchar(long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize) {
+    private static boolean convertFromString(long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd, int dstColumnType, FilesFacade ff, long appendPageSize, SymbolMapWriterLite symbolMapWriter) {
         long dataSize;
         try {
             dataSize = StringTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, srcFixFd, rowCount - 1);
@@ -118,30 +110,128 @@ public class ColumnTypeConverter {
         }
 
         MemoryCMORImpl srcVarMem = srcVarMemTL.get();
-        MemoryCMARW dstVarMem = dstVarMemTL.get();
-        MemoryCMARW dstFixMem = dstFixMemTL.get();
-        Utf8StringSink sink = sinkUtf8TL.get();
 
         try {
             srcVarMem.ofOffset(ff, srcVarFd, null, 0, dataSize, MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE);
-            dstVarMem.of(ff, dstVarFd, null, appendPageSize, appendPageSize, MemoryTag.MMAP_TABLE_WRITER);
-            dstVarMem.jumpTo(0);
 
-            dstFixMem.of(ff, dstFixFd, null, appendPageSize, rowCount * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES, MemoryTag.MMAP_TABLE_WRITER);
-            dstFixMem.jumpTo(0);
-
-            long offset = 0;
-            for (long i = 0; i < rowCount; i++) {
-                offset = convertStrToVarchar(srcVarMem, offset, sink, dstVarMem, dstFixMem);
+            switch (dstColumnType) {
+                case ColumnType.SYMBOL:
+                    convertStringToSymbol(rowCount, dstFixFd, ff, symbolMapWriter, srcVarMem);
+                    break;
+                case ColumnType.VARCHAR:
+                    convertStringToVarchar(rowCount, dstFixFd, dstVarFd, ff, appendPageSize, srcVarMem);
             }
         } finally {
-            sink.clear();
-            sink.resetCapacity();
-            dstVarMem.close(true);
-            dstFixMem.close(true);
             srcVarMem.close();
         }
         return true;
+    }
+
+    private static boolean convertFromVarchar(long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd, int dstColumnType, FilesFacade ff, long appendPageSize, SymbolMapWriterLite symbolMapWriter) {
+        long dataSize;
+        try {
+            dataSize = VarcharTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, srcFixFd, rowCount - 1);
+        } catch (CairoException ex) {
+            LOG.error().$("cannot read VARCHAR column data vector size, column data is corrupt will fall back reading file sizes [srcFixFd=").$(srcFixFd).I$();
+            return false;
+        }
+
+        MemoryCMORImpl srcVarMem = srcVarMemTL.get();
+        MemoryCMORImpl srcFixMem = srcFixMemTL.get();
+
+        try {
+            srcVarMem.ofOffset(ff, srcVarFd, null, 0, dataSize, MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE);
+            srcFixMem.ofOffset(ff, srcFixFd, null, 0, VarcharTypeDriver.INSTANCE.getAuxVectorSize(rowCount), MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE);
+
+            switch (ColumnType.tagOf(dstColumnType)) {
+                case ColumnType.STRING:
+                    convertFromVarcharToString(rowCount, dstFixFd, dstVarFd, ff, appendPageSize, srcVarMem, srcFixMem);
+                    break;
+                case ColumnType.SYMBOL:
+                    convertFromVarcharToSymbol(rowCount, dstFixFd, ff, symbolMapWriter, srcVarMem, srcFixMem);
+                    break;
+                default:
+                    closeFds(ff, srcFixFd, srcVarFd, dstFixFd, dstVarFd);
+                    throw CairoException.critical(0).put("Unsupported conversion from VARCHAR to ").put(ColumnType.nameOf(dstColumnType));
+            }
+        } finally {
+            srcVarMem.close();
+            srcFixMem.close();
+        }
+        return true;
+    }
+
+    private static void convertFromVarcharToString(long rowCount, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize, MemoryCMORImpl srcVarMem, MemoryCMORImpl srcFixMem) {
+        MemoryCMARW dstFixMem = dstFixMemTL.get();
+        MemoryCMARW dstVarMem = dstVarMemTL.get();
+
+        dstVarMem.of(ff, dstVarFd, null, appendPageSize, appendPageSize, MemoryTag.MMAP_TABLE_WRITER);
+        dstVarMem.jumpTo(0);
+        dstFixMem.of(ff, dstFixFd, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), MemoryTag.MMAP_TABLE_WRITER);
+        dstFixMem.jumpTo(0);
+        dstFixMem.putLong(0L);
+        StringSink sink = sinkUtf16TL.get();
+
+        try {
+            for (long i = 0; i < rowCount; i++) {
+                Utf8Sequence utf8 = VarcharTypeDriver.getValue(i, srcVarMem, srcFixMem, 1);
+
+                if (utf8 != null) {
+                    sink.clear();
+                    sink.put(utf8);
+                    StringTypeDriver.appendValue(dstVarMem, dstFixMem, sink);
+                } else {
+                    StringTypeDriver.INSTANCE.appendNull(dstVarMem, dstFixMem);
+                }
+            }
+        } finally {
+            dstVarMem.close(true);
+            dstFixMem.close(true);
+        }
+    }
+
+    private static void convertFromVarcharToSymbol(long rowCount, int dstFixFd, FilesFacade ff, SymbolMapWriterLite symbolMapWriterLite, MemoryCMORImpl srcVarMem, MemoryCMORImpl srcFixMem) {
+        MemoryCMARW dstFixMem = dstFixMemTL.get();
+
+        dstFixMem.of(ff, dstFixFd, null, Files.PAGE_SIZE, rowCount * Integer.BYTES, MemoryTag.MMAP_TABLE_WRITER);
+        dstFixMem.jumpTo(0);
+        dstFixMem.putLong(0L);
+        StringSink sink = sinkUtf16TL.get();
+
+        try {
+            for (long i = 0; i < rowCount; i++) {
+                Utf8Sequence utf8 = VarcharTypeDriver.getValue(i, srcVarMem, srcFixMem, 1);
+
+                if (utf8 != null) {
+                    sink.clear();
+                    sink.put(utf8);
+                    int symbol = symbolMapWriterLite.resolveSymbol(sink);
+                    dstFixMem.putInt(symbol);
+                } else {
+                    int symbol = symbolMapWriterLite.resolveSymbol(null);
+                    dstFixMem.putInt(symbol);
+                }
+            }
+        } finally {
+            dstFixMem.close(true);
+        }
+    }
+
+    private static void convertStringToSymbol(long rowCount, int dstFixFd, FilesFacade ff, SymbolMapWriterLite symbolMapWriter, MemoryCMORImpl srcVarMem) {
+        MemoryCMARW dstFixMem = dstFixMemTL.get();
+        dstFixMem.of(ff, dstFixFd, null, Files.PAGE_SIZE, rowCount * Integer.BYTES, MemoryTag.MMAP_TABLE_WRITER);
+        dstFixMem.jumpTo(0);
+        try {
+            long offset = 0;
+            for (long i = 0; i < rowCount; i++) {
+                CharSequence str = srcVarMem.getStrA(offset);
+                offset += Vm.getStorageLength(str);
+                int symbolId = symbolMapWriter.resolveSymbol(str);
+                dstFixMem.putInt(symbolId);
+            }
+        } finally {
+            dstFixMem.close(true);
+        }
     }
 
 //    private static boolean convertStringToVarcharCorrupt(long rowCount, int srcVarFd, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize) {
@@ -202,72 +292,45 @@ public class ColumnTypeConverter {
 //        return corrupt;
 //    }
 
-    private static boolean convertVarToFixed(long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int srcColumnType, int dstColumnType, FilesFacade ff, long appendPageSize) {
-        throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
-    }
 
-    private static boolean convertVarToVar(long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd, int srcColumnType, int dstColumnType, FilesFacade ff, long appendPageSize) {
-        // Convert STRING to VARCHAR and back
-        // Binary column usage is rare, conversions can be delayed.
-        switch (ColumnType.tagOf(srcColumnType)) {
-            case ColumnType.STRING:
-                assert ColumnType.tagOf(dstColumnType) == ColumnType.VARCHAR;
-                return convertStringToVarchar(rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, ff, appendPageSize);
-            case ColumnType.VARCHAR:
-                assert ColumnType.tagOf(dstColumnType) == ColumnType.STRING;
-                return convertVarcharToString(rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, ff, appendPageSize);
-            default:
-                closeFds(ff, srcFixFd, srcVarFd, dstFixFd, dstVarFd);
-                throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
-        }
-    }
-
-    private static boolean convertVarcharToString(long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize) {
-        long dataSize;
-        try {
-            dataSize = VarcharTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, srcFixFd, rowCount - 1);
-        } catch (CairoException ex) {
-            LOG.error().$("cannot read VARCHAR column data vector size, column data is corrupt will fall back reading file sizes [srcFixFd=").$(srcFixFd).I$();
-            return false;
-        }
-
-        MemoryCMORImpl srcVarMem = srcVarMemTL.get();
-        MemoryCMORImpl srcFixMem = srcFixMemTL.get();
+    private static void convertStringToVarchar(long rowCount, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize, MemoryCMORImpl srcVarMem) {
         MemoryCMARW dstVarMem = dstVarMemTL.get();
         MemoryCMARW dstFixMem = dstFixMemTL.get();
-        StringSink sink = sinkUtf16TL.get();
+        Utf8StringSink sink = sinkUtf8TL.get();
 
         try {
-            srcVarMem.ofOffset(ff, srcVarFd, null, 0, dataSize, MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE);
-            srcFixMem.ofOffset(ff, srcFixFd, null, 0, VarcharTypeDriver.INSTANCE.getAuxVectorSize(rowCount), MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE);
-
             dstVarMem.of(ff, dstVarFd, null, appendPageSize, appendPageSize, MemoryTag.MMAP_TABLE_WRITER);
             dstVarMem.jumpTo(0);
-            dstFixMem.of(ff, dstFixFd, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), MemoryTag.MMAP_TABLE_WRITER);
+
+            dstFixMem.of(ff, dstFixFd, null, appendPageSize, rowCount * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES, MemoryTag.MMAP_TABLE_WRITER);
             dstFixMem.jumpTo(0);
-            dstFixMem.putLong(0L);
 
+            long offset = 0;
             for (long i = 0; i < rowCount; i++) {
-                Utf8Sequence utf8 = VarcharTypeDriver.getValue(i, srcVarMem, srcFixMem, 1);
+                long offset1 = offset;
+                CharSequence str = srcVarMem.getStrA(offset1);
+                offset1 += Vm.getStorageLength(str);
 
-                if (utf8 != null) {
+                if (str != null) {
                     sink.clear();
-                    sink.put(utf8);
-                    StringTypeDriver.appendValue(dstVarMem, dstFixMem, sink);
+                    sink.put(str);
+
+                    VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, sink);
                 } else {
-                    StringTypeDriver.INSTANCE.appendNull(dstVarMem, dstFixMem);
+                    VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, null);
                 }
+                offset = offset1;
             }
         } finally {
             sink.clear();
+            sink.resetCapacity();
             dstVarMem.close(true);
             dstFixMem.close(true);
             srcVarMem.close();
-            srcFixMem.close();
         }
-        return true;
     }
-//
+
+
 //    private static boolean convertVarcharToStringCorrupt(long rowCount, int srcVarFd, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize) {
 //        MemoryCMORImpl srcVarMem = srcVarMemTL.get();
 //        MemoryCMORImpl srcFixMem = srcFixMemTL.get();

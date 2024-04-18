@@ -913,10 +913,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Set txn number in the column version file to mark the transaction where the column is added
         columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getPartitionTimestampByIndex(0));
+
+        if (ColumnType.isSymbol(newType)) {
+            createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
+        } else {
+            // maintain sparse list of symbol writers
+            symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
+        }
         getConvertOperator().convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
 
         // Column converted, add new one to the metadata and remove the existing
         addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, existingColIndex);
+
         try {
             // open _meta file
             openMetaFile(ff, path, rootLen, metaMem);
@@ -2517,15 +2525,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // rename _meta.swp to _meta
         renameSwapMetaToMeta(columnName);
 
-        if (ColumnType.isSymbol(columnType)) {
-            try {
-                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
-            } catch (CairoException e) {
-                runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, columnName, e);
+        // don't create symbol writer when column conversion happens, it should be created before the conversion
+        if (replaceColumnIndex < 0) {
+            if (ColumnType.isSymbol(columnType)) {
+                try {
+                    createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
+                } catch (CairoException e) {
+                    runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, columnName, e);
+                }
+            } else {
+                // maintain sparse list of symbol writers
+                symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
             }
-        } else {
-            // maintain sparse list of symbol writers
-            symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
         }
 
         // add column objects

@@ -48,6 +48,7 @@ public class ConvertOperatorImpl implements Closeable {
     private final Path path;
     private final PurgingOperator purgingOperator;
     private final int rootLen;
+    private final SymbolMapper symbolMapper;
     private final TableWriter tableWriter;
     private IndexBuilder indexBuilder;
     private int partitionUpdated;
@@ -61,7 +62,7 @@ public class ConvertOperatorImpl implements Closeable {
         this.ff = configuration.getFilesFacade();
         this.path = path;
         this.appendPageSize = configuration.getDataAppendPageSize();
-
+        this.symbolMapper = new SymbolMapper();
     }
 
     @Override
@@ -72,7 +73,38 @@ public class ConvertOperatorImpl implements Closeable {
     public void convertColumn(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {
         clear();
         partitionUpdated = 0;
+        convertColumn0(columnName, existingColIndex, existingType, columnIndex, newType);
+    }
+
+    public void finishColumnConversion() {
+        if (partitionUpdated > -1) {
+            partitionUpdated = 0;
+            purgingOperator.purge(path.trimTo(rootLen), tableWriter.getTableToken(), tableWriter.getPartitionBy(), tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(), tableWriter.getMetadata(), tableWriter.getTruncateVersion(), tableWriter.getTxn());
+            clear();
+        }
+    }
+
+    private void clear() {
+        purgingOperator.clear();
+    }
+
+    private void closeFds(int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd) {
+        ff.close(srcFixFd);
+        ff.close(srcVarFd);
+        ff.close(dstFixFd);
+        ff.close(dstVarFd);
+    }
+
+    private void convertColumn0(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {
         try {
+            final SymbolMapper symbolMapperWriter;
+            if (ColumnType.isSymbol(newType)) {
+                symbolMapperWriter = this.symbolMapper;
+                symbolMapperWriter.of(tableWriter, columnIndex);
+            } else {
+                symbolMapperWriter = null;
+            }
+
             for (int partitionIndex = 0, n = tableWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
                 final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
                 final long maxRow = tableWriter.getPartitionSize(partitionIndex);
@@ -98,7 +130,7 @@ public class ConvertOperatorImpl implements Closeable {
                     }
 
                     LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen)).$(", column=").$(columnName).$(", from=").$(ColumnType.nameOf(existingType)).$(", to=").$(ColumnType.nameOf(newType)).I$();
-                    boolean ok = ColumnTypeConverter.convertColumn(maxRow - columnTop, srcFixFd, srcVarFd, dstFixFd, dstVarFd, existingType, newType, ff, appendPageSize);
+                    boolean ok = ColumnTypeConverter.convertColumn(maxRow - columnTop, srcFixFd, srcVarFd, dstFixFd, dstVarFd, existingType, newType, ff, appendPageSize, symbolMapperWriter, null);
                     if (!ok) {
                         closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
                         LOG.critical().$("failed to convert column, column is corrupt [at=").$(path.trimTo(pathTrimToLen))
@@ -118,25 +150,6 @@ public class ConvertOperatorImpl implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
-    }
-
-    public void finishColumnConversion() {
-        if (partitionUpdated > -1) {
-            partitionUpdated = 0;
-            purgingOperator.purge(path.trimTo(rootLen), tableWriter.getTableToken(), tableWriter.getPartitionBy(), tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(), tableWriter.getMetadata(), tableWriter.getTruncateVersion(), tableWriter.getTxn());
-            clear();
-        }
-    }
-
-    private void clear() {
-        purgingOperator.clear();
-    }
-
-    private void closeFds(int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd) {
-        ff.close(srcFixFd);
-        ff.close(srcVarFd);
-        ff.close(dstFixFd);
-        ff.close(dstVarFd);
     }
 
     private long openColumnsRO(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
@@ -160,6 +173,21 @@ public class ConvertOperatorImpl implements Closeable {
         } else {
             int fixedFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             return Numbers.encodeLowHighInts(fixedFd, -1);
+        }
+    }
+
+    private static class SymbolMapper implements SymbolMapWriterLite {
+        private int columnIndex;
+        private TableWriter tableWriter;
+
+        @Override
+        public int resolveSymbol(CharSequence value) {
+            return tableWriter.getSymbolIndexNoTransientCountUpdate(columnIndex, value);
+        }
+
+        void of(TableWriter tw, int columnIndex) {
+            this.tableWriter = tw;
+            this.columnIndex = columnIndex;
         }
     }
 }
