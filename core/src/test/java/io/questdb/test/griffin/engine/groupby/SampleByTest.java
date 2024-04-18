@@ -52,6 +52,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -602,6 +603,37 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByWithProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY;");
+            insert("insert into trades \n" +
+                    "select \n" +
+                    "rnd_symbol('a', 'b', 'c'),\n" +
+                    "rnd_double(),\n" +
+                    "rnd_double(),\n" +
+                    "timestamp_sequence('2022-02-24', 60* 1000000L)\n" +
+                    "from long_sequence(10)\n");
+
+            assertSql("symbol\tcolumn\tcolumn1\n" +
+                            "a\t1.3233848925042586\t1.6456500000000008E15\n" +
+                            "c\t0.8028725103024675\t1.6456500000000002E15\n" +
+                            "b\t1.5027086149682858\t1.6456500000000012E15\n" +
+                            "b\t1.0857787083950403\t1.6456503000000005E15\n" +
+                            "c\t3.250952528580461\t1.6456503000000022E15\n",
+                    "select symbol, sum(amount) + 2 * vwap(price, amount), " +
+                            "cast(to_timezone(dateadd('h', 2, timestamp),'EST') as double) + sum(amount)" +
+                            "from (" +
+                            "   select symbol, amount, price,  timestamp_floor('5m', timestamp) as timestamp from trades" +
+                            ")\n");
+        });
+    }
+
+    @Test
     public void testIndexSampleBy() throws Exception {
         assertQuery(
                 "k\ts\tlat\tlon\n" +
@@ -1105,7 +1137,6 @@ public class SampleByTest extends AbstractCairoTest {
                         "sample by 2h align to first observation"
         );
     }
-
 
     @Test
     public void testIndexSampleBy3e() throws Exception {
@@ -4713,6 +4744,106 @@ public class SampleByTest extends AbstractCairoTest {
                             "2022-12-01T01:33:00.000000Z\tB\t3\n" +
                             "2022-12-01T02:03:00.000000Z\tB\t6\n",
                     query, "ts", false
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByWithProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY;");
+            insert("insert into trades \n" +
+                    "select \n" +
+                    "rnd_symbol('a', 'b', 'c'),\n" +
+                    "rnd_double(),\n" +
+                    "rnd_double(),\n" +
+                    "timestamp_sequence('2022-02-24', 60* 1000000L)\n" +
+                    "from long_sequence(10)\n");
+
+            assertSampleByFlavours(
+                    "symbol\tsum\tvwap\tNYTime\n" +
+                            "a\t0.6390492980774742\t0.3421677972133922\t2022-02-23T19:00:00.000000Z\n" +
+                            "c\t0.20447441837877756\t0.299199045961845\t2022-02-23T19:00:00.000000Z\n" +
+                            "b\t1.2527510748803818\t0.12497877004395191\t2022-02-23T19:00:00.000000Z\n" +
+                            "b\t0.42215759939956354\t0.33181055449773833\t2022-02-23T19:05:00.000000Z\n" +
+                            "c\t2.1714261356369606\t0.5397631964717502\t2022-02-23T19:05:00.000000Z\n",
+                    "select symbol,sum(amount), vwap(price, amount), to_timezone(timestamp,'EST') NYTime\n" +
+                            "from trades\n" +
+                            "sample by 5m"
+            );
+
+            assertSampleByFlavours("symbol\tsum\tvwap\tNYTime\n" +
+                            "a\t0.6390492980774742\t0.3421677972133922\t2022-02-23T21:00:00.000000Z\n" +
+                            "c\t0.20447441837877756\t0.299199045961845\t2022-02-23T21:00:00.000000Z\n" +
+                            "b\t1.2527510748803818\t0.12497877004395191\t2022-02-23T21:00:00.000000Z\n" +
+                            "b\t0.42215759939956354\t0.33181055449773833\t2022-02-23T21:05:00.000000Z\n" +
+                            "c\t2.1714261356369606\t0.5397631964717502\t2022-02-23T21:05:00.000000Z\n",
+                    "select symbol,sum(amount), vwap(price, amount), dateadd('h', 2, to_timezone(timestamp,'EST')) NYTime\n" +
+                            "from trades\n" +
+                            "sample by 5m");
+
+            assertSampleByFlavours(
+                    "symbol\tsum\tvwap\tNYTime\n" +
+                            "a\t0.6390492980774742\t0.3421677972133922\t2022-02-23T21:00:01.000000Z\n" +
+                            "c\t0.20447441837877756\t0.299199045961845\t2022-02-23T21:00:01.000000Z\n" +
+                            "b\t1.2527510748803818\t0.12497877004395191\t2022-02-23T21:00:01.000000Z\n" +
+                            "b\t0.42215759939956354\t0.33181055449773833\t2022-02-23T21:05:01.000000Z\n" +
+                            "c\t2.1714261356369606\t0.5397631964717502\t2022-02-23T21:05:01.000000Z\n",
+                    "select symbol,sum(amount), vwap(price, amount), dateadd('h', 2, to_timezone(timestamp,'EST')) + 1000000L NYTime\n" +
+                            "from trades\n" +
+                            "sample by 5m"
+            );
+
+            assertSampleByFlavours(
+                    "symbol\tsum\tvwap\tNYTime\n" +
+                            "aabcd\t0.6390492980774742\t0.3421677972133922\t2022-02-23T21:00:01.000000Z\n" +
+                            "cabcd\t0.20447441837877756\t0.299199045961845\t2022-02-23T21:00:01.000000Z\n" +
+                            "babcd\t1.2527510748803818\t0.12497877004395191\t2022-02-23T21:00:01.000000Z\n" +
+                            "babcd\t0.42215759939956354\t0.33181055449773833\t2022-02-23T21:05:01.000000Z\n" +
+                            "cabcd\t2.1714261356369606\t0.5397631964717502\t2022-02-23T21:05:01.000000Z\n",
+                    "select symbol || 'abcd' as symbol, sum(amount), vwap(price, amount), dateadd('h', 2, to_timezone(timestamp,'EST')) + 1000000L NYTime\n" +
+                            "from trades\n" +
+                            "sample by 5m"
+            );
+        });
+    }
+
+    // TODO: fix it, it's a bug
+    @Test
+    @Ignore
+    public void testSampleByWithProjection2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY;");
+            insert("insert into trades \n" +
+                    "select \n" +
+                    "rnd_symbol('a', 'b', 'c'),\n" +
+                    "rnd_double(),\n" +
+                    "rnd_double(),\n" +
+                    "timestamp_sequence('2022-02-24', 60* 1000000L)\n" +
+                    "from long_sequence(10)\n");
+
+            assertSampleByFlavours(
+                    "symbol\tsum\tvwap\tts\tNYTime\n" +
+                            "aabcd\t0.6390492980774742\t0.3421677972133922\t1.64565E15\t1.6456500000000008E15\n" +
+                            "cabcd\t0.20447441837877756\t0.299199045961845\t1.64565E15\t1.6456500000000002E15\n" +
+                            "babcd\t1.2527510748803818\t0.12497877004395191\t1.64565E15\t1.6456500000000012E15\n" +
+                            "babcd\t0.42215759939956354\t0.33181055449773833\t1.6456503E15\t1.6456503000000005E15\n" +
+                            "cabcd\t2.1714261356369606\t0.5397631964717502\t1.6456503E15\t1.6456503000000022E15\n",
+                    "select symbol || 'abcd' as symbol, sum(amount), vwap(price, amount), " +
+                            "cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) as ts, " +
+                            "cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime\n" +
+                            "from trades\n" +
+                            "sample by 5m"
             );
         });
     }
@@ -12115,6 +12246,11 @@ public class SampleByTest extends AbstractCairoTest {
                 return ff;
             }
         };
+    }
+
+    private void assertSampleByFlavours(String expected, String sql) throws SqlException {
+        assertSql(expected, sql);
+        assertSql(expected, sql + " ALIGN TO FIRST OBSERVATION;");
     }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
