@@ -826,14 +826,14 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
-    public long putStrUtf8(DirectUtf8Sequence value, boolean hasNonAsciiChars) {
-        if (value != null && hasNonAsciiChars) {
-            return putStrUtf8AsUtf160(value);
-        }
+    public long putStrUtf8(DirectUtf8Sequence value) {
         if (value == null) {
             return putNullStr();
         }
-        return putStr(value.asAsciiCharSequence());
+        if (value.isAscii()) {
+            return putStr(value.asAsciiCharSequence());
+        }
+        return putStrUtf8AsUtf160(value);
     }
 
     @Override
@@ -1112,12 +1112,12 @@ public class MemoryPARWImpl implements MemoryARW {
         int estimatedLen = value.size() * 2;
         if (pageHi - appendPointer < estimatedLen + 4) {
             utf16Sink.clear();
-            CharSequence utf16 = Utf8s.utf8ToUtf16(value, utf16Sink, true);
+            CharSequence utf16 = Utf8s.utf8ToUtf16(value, utf16Sink);
             putInt(utf16.length());
             putStrSplit(utf16Sink, 0, utf16.length());
         } else {
             utf8FloatingSink.of(appendPointer + 4, appendPointer + estimatedLen + 4); // shifted by 4 bytes of length
-            CharSequence utf16 = Utf8s.utf8ToUtf16(value, utf8FloatingSink, true);
+            CharSequence utf16 = Utf8s.utf8ToUtf16(value, utf8FloatingSink);
             putInt(utf16.length());
             appendPointer = utf8FloatingSink.appendPtr();
         }

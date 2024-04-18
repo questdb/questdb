@@ -7923,13 +7923,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
          * Writes UTF8-encoded string to WAL. As the name of the function suggest the storage format is
          * expected to be UTF16. The function must re-encode string from UTF8 to UTF16 before storing.
          *
-         * @param columnIndex      index of the column we are writing to
-         * @param value            UTF8 bytes represented as CharSequence interface.
-         *                         On this interface getChar() returns a byte, not complete character.
-         * @param hasNonAsciiChars helper flag to indicate implementation if all bytes can be assumed as ASCII.
-         *                         "true" here indicates that UTF8 decoding is compulsory.
+         * @param columnIndex index of the column we are writing to
+         * @param value       UTF8 bytes represented as CharSequence interface.
+         *                    On this interface getChar() returns a byte, not complete character.
          */
-        void putStrUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars);
+        void putStrUtf8(int columnIndex, DirectUtf8Sequence value);
 
         void putSym(int columnIndex, CharSequence value);
 
@@ -7940,7 +7938,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         /**
          * Writes UTF8-encoded symbol to WAL. Supported for WAL tables only.
          */
-        void putSymUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars);
+        void putSymUtf8(int columnIndex, DirectUtf8Sequence value);
 
         void putTimestamp(int columnIndex, long value);
 
@@ -8090,7 +8088,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
             // no-op
         }
 
@@ -8110,7 +8108,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value) {
             // no-op
         }
 
@@ -8302,8 +8300,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value, hasNonAsciiChars));
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
             setRowValueNotNull(columnIndex);
         }
 
@@ -8325,7 +8323,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value) {
             throw new UnsupportedOperationException();
         }
 

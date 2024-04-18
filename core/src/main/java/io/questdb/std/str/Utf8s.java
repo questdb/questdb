@@ -824,14 +824,13 @@ public final class Utf8s {
 
     public static CharSequence utf8ToUtf16(
             @NotNull DirectUtf8Sequence utf8CharSeq,
-            @NotNull MutableUtf16Sink tempSink,
-            boolean hasNonAsciiChars
+            @NotNull MutableUtf16Sink tempSink
     ) {
-        if (hasNonAsciiChars) {
-            utf8ToUtf16Unchecked(utf8CharSeq, tempSink);
-            return tempSink;
+        if (utf8CharSeq.isAscii()) {
+            return utf8CharSeq.asAsciiCharSequence();
         }
-        return utf8CharSeq.asAsciiCharSequence();
+        utf8ToUtf16Unchecked(utf8CharSeq, tempSink);
+        return tempSink;
     }
 
     /**

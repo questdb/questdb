@@ -218,7 +218,7 @@ public class LineTcpEventBuffer {
             if (!hasNonAsciiChars) {
                 tempSink.put(value);
             } else {
-                Utf8s.utf8ToUtf16(value, tempSink, true);
+                Utf8s.utf8ToUtf16(value, tempSink);
             }
             final int length = tempSink.length();
             Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_TAG);

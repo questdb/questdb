@@ -2011,8 +2011,8 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value, hasNonAsciiChars));
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
             setRowValueNotNull(columnIndex);
         }
 
@@ -2038,7 +2038,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value) {
             // this method will write column name to the buffer if it has to be UTF-8 decoded
             // otherwise it will write nothing.
             final SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
@@ -2053,7 +2053,7 @@ public class WalWriter implements TableWriterAPI {
                     utf8Map.putAt(
                             index,
                             Utf8String.newInstance(value),
-                            putSymUtf8Slow(columnIndex, value, hasNonAsciiChars, symbolMapReader)
+                            putSymUtf8Slow(columnIndex, value, symbolMapReader)
                     );
                 }
             } else {
@@ -2143,12 +2143,11 @@ public class WalWriter implements TableWriterAPI {
         private int putSymUtf8Slow(
                 int columnIndex,
                 DirectUtf8Sequence utf8Value,
-                boolean hasNonAsciiChars,
                 SymbolMapReader symbolMapReader
         ) {
             return putSym0(
                     columnIndex,
-                    Utf8s.utf8ToUtf16(utf8Value, tempSink, hasNonAsciiChars),
+                    Utf8s.utf8ToUtf16(utf8Value, tempSink),
                     symbolMapReader
             );
         }

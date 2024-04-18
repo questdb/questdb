@@ -194,7 +194,7 @@ public class LineWalAppender {
                     case LineTcpParser.ENTITY_TYPE_SYMBOL: {
                         // parser would reject this condition based on config
                         if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
-                            r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                            r.putSymUtf8(columnIndex, ent.getValue());
                         } else {
                             throw castError(tud.getTableNameUtf16(), "TAG", colType, ent.getName());
                         }
@@ -251,7 +251,7 @@ public class LineWalAppender {
                                 r.putFloat(columnIndex, ent.getLongValue());
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                                r.putSymUtf8(columnIndex, ent.getValue());
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "INTEGER", colType, ent.getName());
@@ -267,7 +267,7 @@ public class LineWalAppender {
                                 r.putFloat(columnIndex, (float) ent.getFloatValue());
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                                r.putSymUtf8(columnIndex, ent.getValue());
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "FLOAT", colType, ent.getName());
@@ -291,7 +291,7 @@ public class LineWalAppender {
                                     r.putVarchar(columnIndex, entityValue);
                                     break;
                                 case ColumnType.STRING:
-                                    r.putStrUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());
+                                    r.putStrUtf8(columnIndex, entityValue);
                                     break;
                                 case ColumnType.CHAR:
                                     if (entityValue.size() == 1 && entityValue.byteAt(0) > -1) {
@@ -308,7 +308,7 @@ public class LineWalAppender {
                                     }
                                     break;
                                 case ColumnType.SYMBOL:
-                                    r.putSymUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());
+                                    r.putSymUtf8(columnIndex, entityValue);
                                     break;
                                 case ColumnType.UUID:
                                     r.putUuidUtf8(columnIndex, entityValue);
@@ -334,7 +334,7 @@ public class LineWalAppender {
                                 r.putLong256Utf8(columnIndex, ent.getValue());
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                                r.putSymUtf8(columnIndex, ent.getValue());
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "LONG256", colType, ent.getName());
@@ -365,7 +365,7 @@ public class LineWalAppender {
                                 r.putDouble(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                                r.putSymUtf8(columnIndex, ent.getValue());
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "BOOLEAN", colType, ent.getName());
@@ -383,7 +383,7 @@ public class LineWalAppender {
                                 r.putTimestamp(columnIndex, dateValue / 1000);
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                                r.putSymUtf8(columnIndex, ent.getValue());
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "TIMESTAMP", colType, ent.getName());
