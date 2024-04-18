@@ -127,9 +127,9 @@ public class NumbersTest {
         Assert.assertEquals(0, Numbers.compare(Double.MIN_VALUE, Double.MIN_VALUE));
         Assert.assertEquals(-1, Numbers.compare(Double.MIN_VALUE, Double.MAX_VALUE));
         Assert.assertEquals(0, Numbers.compare(Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY));
-        Assert.assertEquals(1, Numbers.compare(Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY));
+        Assert.assertEquals(0, Numbers.compare(Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY));
         Assert.assertEquals(0, Numbers.compare(Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY));
-        Assert.assertEquals(-1, Numbers.compare(Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY));
+        Assert.assertEquals(0, Numbers.compare(Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY));
         Assert.assertEquals(0, Numbers.compare(Double.NaN, Double.NaN));
         Assert.assertEquals(-1, Numbers.compare(1d, Double.NaN));
         Assert.assertEquals(-1, Numbers.compare(Double.MIN_VALUE, Double.NaN));
@@ -199,9 +199,9 @@ public class NumbersTest {
         Assert.assertEquals(0, Numbers.compare(Float.MIN_VALUE, Float.MIN_VALUE));
         Assert.assertEquals(-1, Numbers.compare(Float.MIN_VALUE, Float.MAX_VALUE));
         Assert.assertEquals(0, Numbers.compare(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY));
-        Assert.assertEquals(1, Numbers.compare(Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY));
+        Assert.assertEquals(0, Numbers.compare(Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY));
         Assert.assertEquals(0, Numbers.compare(Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY));
-        Assert.assertEquals(-1, Numbers.compare(Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY));
+        Assert.assertEquals(0, Numbers.compare(Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY));
         Assert.assertEquals(0, Numbers.compare(Float.NaN, Float.NaN));
     }
 

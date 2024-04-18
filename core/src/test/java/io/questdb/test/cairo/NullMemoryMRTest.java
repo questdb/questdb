@@ -65,7 +65,7 @@ public class NullMemoryMRTest {
 
     @Test
     public void getDouble() {
-        Assert.assertTrue(Double.isNaN(NullMemoryMR.INSTANCE.getDouble(1234)));
+        Assert.assertTrue(Numbers.isNull(NullMemoryMR.INSTANCE.getDouble(1234)));
     }
 
     @Test
@@ -75,7 +75,7 @@ public class NullMemoryMRTest {
 
     @Test
     public void getFloat() {
-        Assert.assertTrue(Float.isNaN(NullMemoryMR.INSTANCE.getFloat(123)));
+        Assert.assertTrue(Numbers.isNull(NullMemoryMR.INSTANCE.getFloat(123)));
     }
 
     @Test

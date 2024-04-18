@@ -697,7 +697,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         // Overload when arg is double NaN to func which accepts INT, LONG
                         overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
                                 arg.isConstant() &&
-                                Double.isNaN(arg.getDouble(null)) &&
+                                Numbers.isNull(arg.getDouble(null)) &&
                                 (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
 
                         // Implicit cast from CHAR to STRING
@@ -841,7 +841,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final short sigArgTypeTag = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
             final short argTypeTag = ColumnType.tagOf(arg.getType());
 
-            if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
+            if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
                 // substitute NaNs with appropriate types
                 if (sigArgTypeTag == ColumnType.LONG) {
                     args.setQuick(k, LongConstant.NULL);

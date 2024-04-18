@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction {
@@ -37,7 +38,7 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (!Double.isNaN(arg.getDouble(record))) {
+        if (Numbers.isFinite(arg.getDouble(record))) {
             computeFirst(mapValue, record, rowId);
         }
     }
@@ -50,7 +51,7 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcVal = srcValue.getDouble(valueIndex + 1);
-        if (Double.isNaN(srcVal)) {
+        if (Numbers.isNull(srcVal)) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);

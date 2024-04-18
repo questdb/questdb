@@ -178,7 +178,7 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     }
 
     public void setValue(double value) {
-        isNull = Double.isNaN(value);
+        isNull = Numbers.isNull(value);
         if (!isNull) {
             utf8Sink.clear();
             utf8Sink.put(value);
@@ -186,7 +186,7 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     }
 
     public void setValue(float value) {
-        isNull = Float.isNaN(value);
+        isNull = Numbers.isNull(value);
         if (!isNull) {
             utf8Sink.clear();
             utf8Sink.put(value, floatScale);

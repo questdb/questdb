@@ -589,6 +589,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             LOG.info().$("generated ").$(filters.size()).$(" filter expressions for base query: ").$(baseQuery).$();
             Assert.assertFalse(filters.isEmpty());
             for (String filter : filters) {
+                if (filter.equals("i8 + 3 + 42.5 + f32 > 1")) {
+                    System.out.println("ok");
+                }
                 long size = runQuery(baseQuery + " where " + filter);
                 maxSize = Math.max(maxSize, size);
 

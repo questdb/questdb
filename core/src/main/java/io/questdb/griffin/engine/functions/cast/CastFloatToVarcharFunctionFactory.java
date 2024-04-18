@@ -30,10 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
@@ -76,7 +73,7 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
             final float value = arg.getFloat(rec);
-            if (Float.isNaN(value)) {
+            if (Numbers.isNull(value)) {
                 return;
             }
             utf8Sink.put(value, scale);
@@ -85,7 +82,7 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final float value = arg.getFloat(rec);
-            if (!Float.isNaN(value)) {
+            if (!Numbers.isNull(value)) {
                 sinkA.clear();
                 sinkA.put(value, 4);
                 return sinkA;
@@ -96,7 +93,7 @@ public class CastFloatToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             final float value = arg.getFloat(rec);
-            if (!Float.isNaN(value)) {
+            if (!Numbers.isNull(value)) {
                 sinkB.clear();
                 sinkB.put(value, 4);
                 return sinkB;

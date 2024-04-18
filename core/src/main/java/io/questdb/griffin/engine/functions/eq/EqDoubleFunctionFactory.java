@@ -91,7 +91,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
     private static boolean isNullConstant(Function operand, int operandType) {
         return operand.isConstant() &&
-                (ColumnType.isDouble(operandType) && Double.isNaN(operand.getDouble(null))
+                (ColumnType.isDouble(operandType) && Numbers.isNull(operand.getDouble(null))
                         ||
                         operandType == ColumnType.NULL);
     }
@@ -156,7 +156,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (Double.isNaN(arg.getDouble(rec)));
+            return negated != (Numbers.isNull(arg.getDouble(rec)));
         }
     }
 
@@ -167,7 +167,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (Float.isNaN(arg.getFloat(rec)));
+            return negated != (Numbers.isNull(arg.getFloat(rec)));
         }
     }
 

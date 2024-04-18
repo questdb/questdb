@@ -33,28 +33,25 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
 public final class Numbers {
     public static final int BAD_NETMASK = 1;
+    public static final double DOUBLE_TOLERANCE = 0.0000000001;
     public static final int INT_NaN = Integer.MIN_VALUE;
     public static final int IPv4_NULL = 0;
     public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
     public static final long LONG_NaN = Long.MIN_VALUE;
+    public static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     public static final int MAX_SCALE = 19;
     public static final int SIGNIFICAND_WIDTH = 53;
     public static final long SIGN_BIT_MASK = 0x8000000000000000L;
     public static final int SIZE_1MB = 1024 * 1024;
     public static final long SIZE_1GB = 1024 * SIZE_1MB;
     public static final long SIZE_1TB = 1024L * SIZE_1GB;
-    public static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     public static final double TOLERANCE = 1E-15d;
     public static final char[] hexDigits = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     public final static int[] hexNumbers;
@@ -551,10 +548,8 @@ public final class Numbers {
         return i;
     }
 
-    public static final double DOUBLE_TOLERANCE = 0.0000000001;
-
     public static int compare(double a, double b) {
-        if (equals(a,b)) {
+        if (equals(a, b)) {
             return 0;
         }
 
@@ -566,7 +561,26 @@ public final class Numbers {
             return 1;
         }
 
-        return Boolean.compare(Double.isNaN(a), Double.isNaN(b));
+        return Boolean.compare(Numbers.isNull(a), Numbers.isNull(b));
+    }
+
+    public static int compare(float a, float b) {
+        if (equals(a,b)) {
+            return 0;
+        }
+
+        if (a < b) {
+            return -1;
+        }
+        if (a > b) {
+            return 1;
+        }
+
+        return Boolean.compare(isNull(a), isNull(b));
+    }
+
+    public static int compareUnsigned(byte a, byte b) {
+        return Byte.toUnsignedInt(a) - Byte.toUnsignedInt(b);
     }
 
     public static int decodeHighInt(long val) {
@@ -593,27 +607,12 @@ public final class Numbers {
         return ((Short.toUnsignedInt(high)) << 16) | Short.toUnsignedInt(low);
     }
 
-    public static int compare(float a, float b) {
-        if (equals(a,b)) {
-            return 0;
-        }
-
-        if (a < b) {
-            return -1;
-        }
-        if (a > b) {
-            return 1;
-        }
-
-        return Boolean.compare(Float.isNaN(a), Float.isNaN(b));
+    public static boolean equals(float a, float b) {
+        return (isNull(a) && isNull(b)) || Math.abs(a - b) <= DOUBLE_TOLERANCE;
     }
 
-    public static int compareUnsigned(byte a, byte b) {
-        return Byte.toUnsignedInt(a) - Byte.toUnsignedInt(b);
-    }
-
-    public static boolean equals(float l, float r) {
-        return Math.copySign(l - r, 1.0f) <= DOUBLE_TOLERANCE || l == r || (Float.isNaN(l) && Float.isNaN(r));
+    public static boolean equals(double a, double b) {
+        return (isNull(a) && isNull(b)) || Math.abs(a - b) <= DOUBLE_TOLERANCE;
     }
 
     public static boolean extractLong256(@NotNull CharSequence value, @NotNull Long256Acceptor acceptor) {
@@ -670,8 +669,8 @@ public final class Numbers {
         }
     }
 
-    // returns net addr + netmask in a single long value 
-    // throws NumericException on error 
+    // returns net addr + netmask in a single long value
+    // throws NumericException on error
     public static long getIPv4Subnet(CharSequence sequence) throws NumericException {
         int netmask = getIPv4Netmask(sequence);
         if (netmask == BAD_NETMASK) {
@@ -755,6 +754,22 @@ public final class Numbers {
         return ((Double.doubleToRawLongBits(d) & EXP_BIT_MASK) != EXP_BIT_MASK);
     }
 
+    /**
+     * Checks double value for NULL in database sense. NULL is anything that is
+     * not "finite". In this sense the return value is directly opposite of
+     * the return value of {@link #isFinite(double)}
+     *
+     * @param value to check
+     * @return true is value is "infinite", which includes {@link Double#isNaN(double)}, positive and negative
+     * infinities that arise from division by 0.
+     */
+    public static boolean isNull(double value) {
+        return (Double.doubleToRawLongBits(value) & EXP_BIT_MASK)==EXP_BIT_MASK;
+    }
+
+    public static boolean isNull(float value) {
+        return Float.isNaN(value) || Float.isInfinite(value);
+    }
     public static boolean isPow2(int value) {
         return (value & (value - 1)) == 0;
     }
@@ -894,8 +909,64 @@ public final class Numbers {
         return parseIPv4_0(sequence, 0, sequence.length());
     }
 
-    public static boolean equals(double l, double r) {
-        return Math.copySign(l - r, 1.0) <= DOUBLE_TOLERANCE || l == r || (Double.isNaN(l) && Double.isNaN(r));
+    public static int parseIPv4_0(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        int hi;
+        int lo = p;
+        int num;
+        int ipv4 = 0;
+        int count = 0;
+
+        final char sign = sequence.charAt(lo);
+
+        // removes any leading dots
+        if (notDigit(sign)) {
+            if (sign == '.') {
+                do {
+                    lo++;
+                }while(sequence.charAt(lo) == '.');
+            } else {
+                throw NumericException.INSTANCE;
+            }
+        }
+
+        while ((hi = Chars.indexOf(sequence, lo, '.')) > -1 && count < 3) {
+            num = parseInt(sequence, lo, hi);
+            if (num > 255) {
+                throw NumericException.INSTANCE;
+            }
+            ipv4 = (ipv4 << 8) | num;
+            count++;
+            lo = hi + 1;
+        }
+
+        if (count != 3) {
+            throw NumericException.INSTANCE;
+        }
+
+        // removes any trailing dots
+        if ((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
+            num = parseInt(sequence, lo, hi);
+            hi++;
+            while (hi < lim) {
+                if (sequence.charAt(hi) == '.') {
+                    hi++;
+                } else {
+                    throw NumericException.INSTANCE;
+                }
+            }
+        } else {
+            num = parseInt(sequence, lo, lim);
+        }
+
+        if (num > 255) {
+            throw NumericException.INSTANCE;
+        }
+
+        return (ipv4 << 8) | num;
     }
 
     public static int parseInt(Utf8Sequence sequence) throws NumericException {
@@ -1104,13 +1175,6 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return parseLong0(sequence.asAsciiCharSequence(), 0, sequence.size());
-    }
-
-    public static short parseShort(Utf8Sequence sequence) throws NumericException {
-        if (sequence == null) {
-            throw NumericException.INSTANCE;
-        }
-        return parseShort0(sequence.asAsciiCharSequence(), 0, sequence.size());
     }
 
     public static long parseLong(Utf8Sequence sequence, int p, int lim) throws NumericException {
@@ -1343,6 +1407,13 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
+    public static short parseShort(Utf8Sequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseShort0(sequence.asAsciiCharSequence(), 0, sequence.size());
+    }
+
     public static short parseShort(CharSequence sequence) throws NumericException {
         if (sequence == null) {
             throw NumericException.INSTANCE;
@@ -1368,7 +1439,7 @@ public final class Numbers {
     }
 
     // test whether the subnet matches the netmaskLength (according to postgres rules)
-    // throws NumericException if sequence is not a valid subnet OR the subnet doesn't match the netmaskLength 
+    // throws NumericException if sequence is not a valid subnet OR the subnet doesn't match the netmaskLength
     public static int parseSubnet0(CharSequence sequence, final int p, int lim, int netmaskLength) throws NumericException {
         int hi;
         int lo = p;
@@ -2450,66 +2521,6 @@ public final class Numbers {
     private static void appendLongHexPad(CharSink<?> sink, char hexDigit) {
         sink.putAscii('0');
         sink.putAscii(hexDigit);
-    }
-
-    public static int parseIPv4_0(CharSequence sequence, final int p, int lim) throws NumericException {
-        if (lim == 0) {
-            throw NumericException.INSTANCE;
-        }
-
-        int hi;
-        int lo = p;
-        int num;
-        int ipv4 = 0;
-        int count = 0;
-
-        final char sign = sequence.charAt(lo);
-
-        // removes any leading dots
-        if (notDigit(sign)) {
-            if (sign == '.') {
-                do {
-                    lo++;
-                }while(sequence.charAt(lo) == '.');
-            } else {
-                throw NumericException.INSTANCE;
-            }
-        }
-
-        while ((hi = Chars.indexOf(sequence, lo, '.')) > -1 && count < 3) {
-            num = parseInt(sequence, lo, hi);
-            if (num > 255) {
-                throw NumericException.INSTANCE;
-            }
-            ipv4 = (ipv4 << 8) | num;
-            count++;
-            lo = hi + 1;
-        }
-
-        if (count != 3) {
-            throw NumericException.INSTANCE;
-        }
-
-        // removes any trailing dots
-        if ((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
-            num = parseInt(sequence, lo, hi);
-            hi++;
-            while (hi < lim) {
-                if (sequence.charAt(hi) == '.') {
-                    hi++;
-                } else {
-                    throw NumericException.INSTANCE;
-                }
-            }
-        } else {
-            num = parseInt(sequence, lo, lim);
-        }
-
-        if (num > 255) {
-            throw NumericException.INSTANCE;
-        }
-
-        return (ipv4 << 8) | num;
     }
 
     private static int estimateDecExpDouble(long fractBits, int binExp) {

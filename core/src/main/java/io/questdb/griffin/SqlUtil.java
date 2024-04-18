@@ -244,7 +244,7 @@ public class SqlUtil {
     }
 
     public static float implicitCastAsFloat(double value, int fromType) {
-        if ((value >= Float.MIN_VALUE && value <= Float.MAX_VALUE) || Double.isNaN(value)) {
+        if ((value >= Float.MIN_VALUE && value <= Float.MAX_VALUE) || Numbers.isNull(value)) {
             return (float) value;
         }
         throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.FLOAT);
@@ -305,7 +305,7 @@ public class SqlUtil {
             return (byte) value;
         }
 
-        if (Double.isNaN(value)) {
+        if (Numbers.isNull(value)) {
             return 0;
         }
 
@@ -316,7 +316,7 @@ public class SqlUtil {
     // used by the row copier
     public static float implicitCastDoubleAsFloat(double value) {
         final double d = Math.abs(value);
-        if ((d >= Float.MIN_VALUE && d <= Float.MAX_VALUE) || (Double.isNaN(value) || Double.isInfinite(value) || d == 0.0)) {
+        if ((d >= Float.MIN_VALUE && d <= Float.MAX_VALUE) || (Numbers.isNull(value) || d == 0.0)) {
             return (float) value;
         }
 
@@ -326,7 +326,7 @@ public class SqlUtil {
     @SuppressWarnings("unused")
     // used by the row copier
     public static int implicitCastDoubleAsInt(double value) {
-        if (Double.isNaN(value)) {
+        if (Numbers.isNull(value)) {
             return Numbers.INT_NaN;
         }
         return implicitCastAsInt((long) value, ColumnType.LONG);
@@ -339,7 +339,7 @@ public class SqlUtil {
             return (long) value;
         }
 
-        if (Double.isNaN(value)) {
+        if (Numbers.isNull(value)) {
             return Numbers.LONG_NaN;
         }
 
@@ -349,7 +349,7 @@ public class SqlUtil {
     @SuppressWarnings("unused")
     // used by the row copier
     public static short implicitCastDoubleAsShort(double value) {
-        if (Double.isNaN(value)) {
+        if (Numbers.isNull(value)) {
             return 0;
         }
         return implicitCastAsShort((long) value, ColumnType.LONG);
@@ -362,7 +362,7 @@ public class SqlUtil {
             return (byte) value;
         }
 
-        if (Float.isNaN(value)) {
+        if (Numbers.isNull(value)) {
             return 0;
         }
 
@@ -376,7 +376,7 @@ public class SqlUtil {
             return (int) value;
         }
 
-        if (Float.isNaN(value)) {
+        if (Numbers.isNull(value)) {
             return Numbers.INT_NaN;
         }
 
@@ -390,7 +390,7 @@ public class SqlUtil {
             return (long) value;
         }
 
-        if (Float.isNaN(value)) {
+        if (Numbers.isNull(value)) {
             return Numbers.LONG_NaN;
         }
 
@@ -404,7 +404,7 @@ public class SqlUtil {
             return (short) value;
         }
 
-        if (Float.isNaN(value)) {
+        if (Numbers.isNull(value)) {
             return 0;
         }
 

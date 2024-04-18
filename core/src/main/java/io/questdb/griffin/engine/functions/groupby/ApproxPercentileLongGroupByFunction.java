@@ -129,7 +129,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
         BinaryFunction.super.init(symbolTableSource, executionContext);
 
         final double percentile = percentileFunc.getDouble(null);
-        if (Double.isNaN(percentile) || percentile < 0 || percentile > 1) {
+        if (Numbers.isNull(percentile) || percentile < 0 || percentile > 1) {
             throw SqlException.$(funcPosition, "percentile must be between 0.0 and 1.0");
         }
     }

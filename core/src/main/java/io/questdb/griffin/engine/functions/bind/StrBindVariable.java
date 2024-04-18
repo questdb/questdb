@@ -195,7 +195,7 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     public void setValue(double value) {
-        isNull = Double.isNaN(value);
+        isNull = Numbers.isNull(value);
         if (!isNull) {
             utf16Sink.clear();
             utf16Sink.put(value);
@@ -205,7 +205,7 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     public void setValue(float value) {
-        isNull = Float.isNaN(value);
+        isNull = Numbers.isNull(value);
         if (!isNull) {
             utf16Sink.clear();
             utf16Sink.put(value, floatScale);
