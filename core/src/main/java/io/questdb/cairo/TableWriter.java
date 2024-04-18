@@ -3871,7 +3871,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     colDataExtraSize = colDataMem.getAppendOffset() - colDataOffset;
-                    colAuxMem.jumpTo(columnTypeDriver.getAuxVectorOffset(committedRowCount));
+                    // we have to restore aux column size to its required size to hold "committedRowCount" row count.
+                    colAuxMem.jumpTo(columnTypeDriver.getAuxVectorSize(committedRowCount));
                 } else {
                     // Fixed size
                     final int shl = ColumnType.pow2SizeOf(columnType);
