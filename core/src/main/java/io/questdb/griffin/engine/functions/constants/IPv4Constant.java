@@ -50,6 +50,11 @@ public class IPv4Constant extends IPv4Function implements ConstantFunction {
     }
 
     @Override
+    public boolean isNullConstant() {
+        return value == Numbers.IPv4_NULL;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(value);
     }

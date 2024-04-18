@@ -1254,6 +1254,17 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastVarcharToDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab(d string, ts timestamp) timestamp(ts) partition by day");
+            insert("insert into tab values ('string', '2000'::string), ('varchar', '2000'::varchar);");
+            assertSql("d\tts\n" +
+                    "string\t2000-01-01T00:00:00.000000Z\n" +
+                    "varchar\t2000-01-01T00:00:00.000000Z\n", "select * from tab order by d");
+        });
+    }
+
+    @Test
     public void testInsertNullDateIntoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x(ts timestamp)");
@@ -1262,6 +1273,32 @@ public class InsertCastTest extends AbstractCairoTest {
                     "ts\n" +
                             "\n", "x"
             );
+        });
+    }
+
+    @Test
+    public void testNullStringToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab(ts timestamp) timestamp(ts)");
+            try {
+                insert("insert into tab values(null::string)");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "designated timestamp column cannot be NULL");
+            }
+        });
+    }
+
+    @Test
+    public void testNullVarcharToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab(ts timestamp) timestamp(ts)");
+            try {
+                insert("insert into tab values(null::varchar)");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "designated timestamp column cannot be NULL");
+            }
         });
     }
 
