@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -48,12 +49,15 @@ public class ConvertOperatorImpl implements Closeable {
     private final Path path;
     private final PurgingOperator purgingOperator;
     private final int rootLen;
-    private final SymbolMapper symbolMapper;
+    private final CairoConfiguration configuration;
+    private SymbolMapReaderImpl symbolMapReader;
     private final TableWriter tableWriter;
     private IndexBuilder indexBuilder;
     private int partitionUpdated;
+    private SymbolMapper symbolMapper;
 
     public ConvertOperatorImpl(CairoConfiguration configuration, TableWriter tableWriter, Path path, int rootLen, PurgingOperator purgingOperator) {
+        this.configuration = configuration;
         this.tableWriter = tableWriter;
         this.rootLen = rootLen;
         this.purgingOperator = purgingOperator;
@@ -62,7 +66,6 @@ public class ConvertOperatorImpl implements Closeable {
         this.ff = configuration.getFilesFacade();
         this.path = path;
         this.appendPageSize = configuration.getDataAppendPageSize();
-        this.symbolMapper = new SymbolMapper();
     }
 
     @Override
@@ -86,6 +89,7 @@ public class ConvertOperatorImpl implements Closeable {
 
     private void clear() {
         purgingOperator.clear();
+        Misc.free(symbolMapReader);
     }
 
     private void closeFds(int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd) {
@@ -99,10 +103,26 @@ public class ConvertOperatorImpl implements Closeable {
         try {
             final SymbolMapper symbolMapperWriter;
             if (ColumnType.isSymbol(newType)) {
-                symbolMapperWriter = this.symbolMapper;
+                if (symbolMapper == null) {
+                    symbolMapper = new SymbolMapper();
+                }
+                symbolMapperWriter = symbolMapper;
                 symbolMapperWriter.of(tableWriter, columnIndex);
             } else {
                 symbolMapperWriter = null;
+            }
+
+            final SymbolTable symbolTable;
+            if (ColumnType.isSymbol(existingType)) {
+                if (symbolMapReader == null) {
+                    symbolMapReader = new SymbolMapReaderImpl();
+                }
+                long existingColNameTxn = tableWriter.getDefaultColumnNameTxn(existingColIndex);
+                int symbolCount = tableWriter.getSymbolMapWriter(existingColIndex).getSymbolCount();
+                symbolMapReader.of(configuration, path, columnName, existingColNameTxn, symbolCount);
+                symbolTable = symbolMapReader;
+            } else {
+                symbolTable = null;
             }
 
             for (int partitionIndex = 0, n = tableWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
@@ -130,7 +150,7 @@ public class ConvertOperatorImpl implements Closeable {
                     }
 
                     LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen)).$(", column=").$(columnName).$(", from=").$(ColumnType.nameOf(existingType)).$(", to=").$(ColumnType.nameOf(newType)).I$();
-                    boolean ok = ColumnTypeConverter.convertColumn(maxRow - columnTop, srcFixFd, srcVarFd, dstFixFd, dstVarFd, existingType, newType, ff, appendPageSize, symbolMapperWriter, null);
+                    boolean ok = ColumnTypeConverter.convertColumn(maxRow - columnTop, existingType, srcFixFd, srcVarFd, symbolTable, newType, dstFixFd, dstVarFd, symbolMapperWriter, ff, appendPageSize);
                     if (!ok) {
                         closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
                         LOG.critical().$("failed to convert column, column is corrupt [at=").$(path.trimTo(pathTrimToLen))

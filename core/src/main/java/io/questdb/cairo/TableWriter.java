@@ -1393,6 +1393,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return dedupColumnCommitAddresses;
     }
 
+    public long getDefaultColumnNameTxn(int columnIndex) {
+        return columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
+    }
+
     @TestOnly
     public ObjList<MapWriter> getDenseSymbolMapWriters() {
         return denseSymbolMapWriters;
