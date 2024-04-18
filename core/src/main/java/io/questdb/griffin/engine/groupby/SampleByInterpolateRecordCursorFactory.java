@@ -241,15 +241,15 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private long prevSample = -1;
         private long rowId;
 
-        protected final Function offsetFunc;
-        protected final int offsetFuncPos;
-        protected final TimestampSampler timestampSampler;
-        protected final Function timezoneNameFunc;
-        protected final int timezoneNameFuncPos;
-        protected long fixedOffset;
-        protected long nextDstUtc;
-        protected TimeZoneRules rules;
-        protected long tzOffset;
+        private final Function offsetFunc;
+        private final int offsetFuncPos;
+        private final TimestampSampler timestampSampler;
+        private final Function timezoneNameFunc;
+        private final int timezoneNameFuncPos;
+        private long fixedOffset;
+        private long nextDstUtc;
+        private TimeZoneRules rules;
+        private long tzOffset;
 
 
         public SampleByInterpolateRecordCursor(
@@ -721,10 +721,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 return;
             }
 
-            if (!managedCursor.hasNext()) {
-                managedRecord = null;
-                return;
-            }
+            assert managedCursor.hasNext();
 
             final long timestamp = managedRecord.getTimestamp(timestampIndex);
             if (rules != null) {
