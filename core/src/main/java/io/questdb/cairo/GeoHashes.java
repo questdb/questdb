@@ -149,7 +149,6 @@ public class GeoHashes {
 
     public static long fromAscii(Utf8Sequence hash, int start, int end) throws NumericException {
         // no bounds/length/nullity checks
-        int size = hash.size();
         long geohash = 0;
         for (int i = start; i < end; ++i) {
             geohash = appendByte(geohash, encodeByte(hash.byteAt(i)));
