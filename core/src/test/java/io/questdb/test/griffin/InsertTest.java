@@ -33,7 +33,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -992,7 +995,15 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertTimestampWithTimeZone_varchar() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table t (timestamp timestamp) timestamp(timestamp);");
-            insert("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00'::varchar)");
+
+            // We cannot cast '2020-12-31 15:15:51.663+00:00'::varchar,
+            // because it will act as (timestamp with time zone '2020-12-31 15:15:51.663+00:00')::varchar
+            // This creates a varchar constant whose value is the string representation of the timestamp in microseconds
+            // since the epoch. And such string constants cannot be inserted as timestamps. Only actual string/varchar timestamps
+            // can be inserted into a timestamp column.
+            // If you cast '2020-12-31 15:15:51.663+00:00'::string then it fails too.
+            // thus Varchar behaves the same as String in this case.
+            insert("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00')");
 
             String expected1 = "timestamp\n" + "2020-12-31T15:15:51.663000Z\n";
 
