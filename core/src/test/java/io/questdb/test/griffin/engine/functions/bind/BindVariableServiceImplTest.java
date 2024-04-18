@@ -25,14 +25,14 @@
 package io.questdb.test.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;

@@ -40,8 +40,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class ToStrDateFunctionFactory implements FunctionFactory {

@@ -36,8 +36,8 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class SplitPartCharFunctionFactory implements FunctionFactory {
