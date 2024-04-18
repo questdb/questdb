@@ -155,7 +155,7 @@ public class TableStructureAdapter implements TableStructure {
         for (int i = 0; i < parser.getEntityCount(); i++) {
             final LineTcpParser.ProtoEntity entity = parser.getEntity(i);
             final DirectUtf8Sequence colNameUtf8 = entity.getName();
-            final CharSequence colNameUtf16 = Utf8s.utf8ToUtf16(colNameUtf8, tempSink.get());
+            final CharSequence colNameUtf16 = Utf8s.directUtf8ToUtf16(colNameUtf8, tempSink.get());
             int index = entityNamesUtf16.keyIndex(colNameUtf16);
             if (index > -1) {
                 entityNamesUtf16.addAt(index, colNameUtf16.toString());

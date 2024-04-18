@@ -140,7 +140,7 @@ public class LineHttpTudCache implements QuietCloseable {
         }
 
         tableNameUtf16.clear();
-        Utf8s.utf8ToUtf16(parser.getMeasurementName(), tableNameUtf16);
+        Utf8s.directUtf8ToUtf16(parser.getMeasurementName(), tableNameUtf16);
         TableToken tableToken = getOrCreateTable(securityContext, parser, tableNameUtf16);
         if (!engine.isWalTable(tableToken)) {
             throw parseException.of("cannot insert in non-WAL table", null);

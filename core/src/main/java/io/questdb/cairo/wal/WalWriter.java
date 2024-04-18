@@ -2147,7 +2147,7 @@ public class WalWriter implements TableWriterAPI {
         ) {
             return putSym0(
                     columnIndex,
-                    Utf8s.utf8ToUtf16(utf8Value, tempSink),
+                    Utf8s.directUtf8ToUtf16(utf8Value, tempSink),
                     symbolMapReader
             );
         }

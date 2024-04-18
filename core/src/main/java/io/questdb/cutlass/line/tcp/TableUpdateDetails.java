@@ -746,7 +746,7 @@ public class TableUpdateDetails implements Closeable {
         }
 
         CharSequence utf8ToUtf16(DirectUtf8Sequence colNameUtf8, boolean hasNonAsciiChars) {
-            return Utf8s.utf8ToUtf16(colNameUtf8, tempSink);
+            return Utf8s.directUtf8ToUtf16(colNameUtf8, tempSink);
         }
     }
 }

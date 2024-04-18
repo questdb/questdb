@@ -1112,12 +1112,12 @@ public class MemoryPARWImpl implements MemoryARW {
         int estimatedLen = value.size() * 2;
         if (pageHi - appendPointer < estimatedLen + 4) {
             utf16Sink.clear();
-            CharSequence utf16 = Utf8s.utf8ToUtf16(value, utf16Sink);
+            CharSequence utf16 = Utf8s.directUtf8ToUtf16(value, utf16Sink);
             putInt(utf16.length());
             putStrSplit(utf16Sink, 0, utf16.length());
         } else {
             utf8FloatingSink.of(appendPointer + 4, appendPointer + estimatedLen + 4); // shifted by 4 bytes of length
-            CharSequence utf16 = Utf8s.utf8ToUtf16(value, utf8FloatingSink);
+            CharSequence utf16 = Utf8s.directUtf8ToUtf16(value, utf8FloatingSink);
             putInt(utf16.length());
             appendPointer = utf8FloatingSink.appendPtr();
         }
