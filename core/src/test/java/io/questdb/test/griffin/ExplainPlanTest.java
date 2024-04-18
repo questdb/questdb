@@ -7118,7 +7118,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from t where d in (5, -1, 1, null)",
                     "Async Filter workers: 1\n" +
-                            "  filter: d in [-1.0,1.0,5.0,null]\n" +
+                            "  filter: d in [-1.0,1.0,5.0,NaN]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -7127,7 +7127,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from t where d not in (5, -1, 1, null)",
                     "Async Filter workers: 1\n" +
-                            "  filter: not (d in [-1.0,1.0,5.0,null])\n" +
+                            "  filter: not (d in [-1.0,1.0,5.0,NaN])\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
