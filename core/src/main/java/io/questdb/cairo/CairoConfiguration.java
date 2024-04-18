@@ -493,8 +493,6 @@ public interface CairoConfiguration {
 
     int getTxnScoreboardEntryCount();
 
-    String getType();
-
     int getVectorAggregateQueueCapacity();
 
     @NotNull

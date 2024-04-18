@@ -891,11 +891,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public String getType() {
-        return getDelegate().getType();
-    }
-
-    @Override
     public int getVectorAggregateQueueCapacity() {
         return getDelegate().getVectorAggregateQueueCapacity();
     }

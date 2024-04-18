@@ -73,8 +73,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String DB_DIRECTORY = "db";
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
-    private static final String QUESTDB_TYPE = "questdb.type";
-    private static final String QUESTDB_VERSION = "questdb.version";
+    private static final String RELEASE_TYPE = "release.type";
+    private static final String RELEASE_VERSION = "release.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
@@ -387,7 +387,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected HttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
     protected HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     protected JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
-    protected String questdbType = "OSS";
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
     private long cairoSqlCopyMaxIndexChunkSize;
@@ -2729,11 +2728,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public String getType() {
-            return questdbType;
-        }
-
-        @Override
         public int getVectorAggregateQueueCapacity() {
             return vectorAggregateQueueCapacity;
         }
@@ -2949,8 +2943,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-            settings.put(QUESTDB_TYPE, str(getType()));
-            settings.put(QUESTDB_VERSION, str(getBuildInformation().getSwVersion()));
+            settings.put(RELEASE_TYPE, str(getReleaseType()));
+            settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
         }
     }
 
