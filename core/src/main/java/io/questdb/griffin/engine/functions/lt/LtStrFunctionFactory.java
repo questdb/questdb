@@ -77,7 +77,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
         return new Func(a, b);
     }
 
-    private static class ConstOnLeftFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static class ConstOnLeftFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final CharSequence constant;
         private final Function right;
 
@@ -121,7 +121,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ConstOnRightFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static class ConstOnRightFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final CharSequence constant;
         private final Function left;
 
@@ -165,7 +165,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
+    static class Func extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 

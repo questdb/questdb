@@ -96,6 +96,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     public void toPlan(PlanSink sink) {
         sink.type("GroupBy");
         sink.meta("vectorized").val(true);
+        sink.meta("workers").val(workerCount);
         sink.optAttr("values", vafList, true);
         sink.child(base);
     }
@@ -165,7 +166,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public void close() {
-            Misc.free(pageFrameCursor);
+            pageFrameCursor = Misc.free(pageFrameCursor);
         }
 
         @Override
@@ -309,7 +310,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             LOG.info().$("done [total=").$(total)
                     .$(", ownCount=").$(ownCount)
                     .$(", reclaimed=").$(reclaimed)
-                    .$(", queuedCount=").$(queuedCount).I$();
+                    .$(", queuedCount=").$(queuedCount)
+                    .I$();
         }
     }
 }

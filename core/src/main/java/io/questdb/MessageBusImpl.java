@@ -39,6 +39,9 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence columnPurgePubSeq;
     private final RingQueue<ColumnPurgeTask> columnPurgeQueue;
     private final SCSequence columnPurgeSubSeq;
+    private final MPSequence columnTaskPubSeq;
+    private final RingQueue<ColumnTask> columnTaskQueue;
+    private final MCSequence columnTaskSubSeq;
     private final CairoConfiguration configuration;
     private final MPSequence groupByMergeShardPubSeq;
     private final RingQueue<GroupByMergeShardTask> groupByMergeShardQueue;
@@ -49,9 +52,6 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence latestByPubSeq;
     private final RingQueue<LatestByTask> latestByQueue;
     private final MCSequence latestBySubSeq;
-    private final MPSequence columnTaskPubSeq;
-    private final RingQueue<ColumnTask> columnTaskQueue;
-    private final MCSequence columnTaskSubSeq;
     private final MPSequence o3CopyPubSeq;
     private final RingQueue<O3CopyTask> o3CopyQueue;
     private final MCSequence o3CopySubSeq;
@@ -192,6 +192,28 @@ public class MessageBusImpl implements MessageBus {
         groupByMergeShardPubSeq.then(groupByMergeShardSubSeq).then(groupByMergeShardPubSeq);
     }
 
+    @TestOnly
+    public void clear() {
+        columnPurgeSubSeq.clear();
+        groupByMergeShardSubSeq.clear();
+        indexerSubSeq.clear();
+        latestBySubSeq.clear();
+        columnTaskSubSeq.clear();
+        o3CopySubSeq.clear();
+        o3OpenColumnSubSeq.clear();
+        o3PartitionSubSeq.clear();
+        o3PurgeDiscoverySubSeq.clear();
+        textImportColSeq.clear();
+        textImportRequestSubSeq.clear();
+        textImportSubSeq.clear();
+        vectorAggregateSubSeq.clear();
+        walTxnNotificationSubSequence.clear();
+        for (int i = 0, n = pageFrameReduceSubSeq.length; i < n; i++) {
+            pageFrameReduceSubSeq[i].clear();
+        }
+        walTxnNotificationSubSequence.clear();
+    }
+
     @Override
     public void close() {
         // We need to close only queues with native backing memory.
@@ -212,6 +234,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public SCSequence getColumnPurgeSubSeq() {
         return columnPurgeSubSeq;
+    }
+
+    @Override
+    public MPSequence getColumnTaskPubSeq() {
+        return columnTaskPubSeq;
+    }
+
+    @Override
+    public RingQueue<ColumnTask> getColumnTaskQueue() {
+        return columnTaskQueue;
+    }
+
+    @Override
+    public MCSequence getColumnTaskSubSeq() {
+        return columnTaskSubSeq;
     }
 
     @Override
@@ -267,21 +304,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getLatestBySubSeq() {
         return latestBySubSeq;
-    }
-
-    @Override
-    public MPSequence getColumnTaskPubSeq() {
-        return columnTaskPubSeq;
-    }
-
-    @Override
-    public RingQueue<ColumnTask> getColumnTaskQueue() {
-        return columnTaskQueue;
-    }
-
-    @Override
-    public MCSequence getColumnTaskSubSeq() {
-        return columnTaskSubSeq;
     }
 
     @Override
@@ -442,17 +464,5 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getWalTxnNotificationSubSequence() {
         return walTxnNotificationSubSequence;
-    }
-
-    @TestOnly
-    public void reset() {
-        clearQueue(walTxnNotificationSubSequence);
-    }
-
-    private void clearQueue(Sequence subSequence) {
-        long cursor;
-        while ((cursor = subSequence.next()) > -1) {
-            subSequence.done(cursor);
-        }
     }
 }

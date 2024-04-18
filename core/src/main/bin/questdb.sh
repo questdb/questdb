@@ -198,13 +198,15 @@ function start {
     fi
 
     DATE=`date +%Y-%m-%dT%H-%M-%S`
-
+    HELLO_FILE=${QDB_ROOT}/log/hello.txt
+    rm ${HELLO_FILE} 2> /dev/null
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
         ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1
     elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
         ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1 &
-        sleep 0.5
+        $BASE/print-hello.sh ${HELLO_FILE}
     else
+        $BASE/print-hello.sh ${HELLO_FILE} &
         ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1
     fi
 }
@@ -250,19 +252,6 @@ function stop {
         echo "Stopped ${OUR_PID}"
     fi
 }
-
-function banner {
-    echo ''
-    echo '  ___                  _   ____  ____'
-    echo ' / _ \ _   _  ___  ___| |_|  _ \| __ )'
-    echo '| | | | | | |/ _ \/ __| __| | | |  _ \'
-    echo '| |_| | |_| |  __/\__ \ |_| |_| | |_) |'
-    echo ' \__\_\\__,_|\___||___/\__|____/|____/'
-    echo -e "$QUESTDB_BANNER"
-    echo
-}
-
-banner
 
 if [[ $# -gt 0 ]]; then
     command=$1

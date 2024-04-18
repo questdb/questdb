@@ -26,7 +26,10 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cutlass.auth.AuthUtils;
@@ -37,6 +40,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -297,7 +301,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(ff, () -> {
             try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
-                O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
+                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 }

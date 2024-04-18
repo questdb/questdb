@@ -91,12 +91,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putTimestamp(rnd.nextLong());
                     key.putShort(rnd.nextShort());
                     Long256Impl long256 = new Long256Impl();
-                    long256.setAll(
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong()
-                    );
+                    long256.fromRnd(rnd);
                     key.putLong256(long256);
 
                     MapValue value = key.createValue();
@@ -133,12 +128,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putTimestamp(rnd.nextLong());
                     key.putShort(rnd.nextShort());
                     Long256Impl long256 = new Long256Impl();
-                    long256.setAll(
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong(),
-                            rnd.nextLong()
-                    );
+                    long256.fromRnd(rnd);
                     key.putLong256(long256);
 
                     MapValue value = key.createValue();
@@ -547,7 +537,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     Utf8Sequence varchar = record.getVarcharA(1);
                     Assert.assertNotNull(varchar);
                     TestUtils.assertEquals(utf8Sink, varchar);
-                    Assert.assertFalse(varchar.isAscii());
+                    TestUtils.assertAsciiCompliance(varchar);
                     Assert.assertEquals(rnd.nextLong(), record.getLong(0));
                 }
             }
@@ -2009,7 +1999,6 @@ public class OrderedMapTest extends AbstractCairoTest {
                 rnd.nextUtf8Str(rnd.nextPositiveInt() % 32, utf8Sink);
                 Utf8Sequence varchar = record.getVarcharA(col);
                 Assert.assertNotNull(varchar);
-                Assert.assertFalse(varchar.isAscii());
                 TestUtils.assertEquals(utf8Sink, varchar);
                 Assert.assertEquals(varchar.size(), record.getVarcharSize(col++));
             }
@@ -2019,12 +2008,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextLong(), record.getTimestamp(col++));
             Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
             Long256Impl long256 = new Long256Impl();
-            long256.setAll(
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong()
-            );
+            long256.fromRnd(rnd);
             Assert.assertEquals(long256, record.getLong256A(col++));
             Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
             Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));

@@ -476,7 +476,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    //returns list with N chunk boundaries
+    // returns list with N chunk boundaries
     public LongList phaseBoundaryCheck(long fileLength) throws TextImportException {
         phasePrologue(CopyTask.PHASE_BOUNDARY_CHECK);
         assert (workerCount > 0 && minChunkSize > 0);

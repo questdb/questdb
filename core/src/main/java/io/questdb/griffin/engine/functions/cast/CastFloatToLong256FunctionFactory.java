@@ -66,7 +66,7 @@ public class CastFloatToLong256FunctionFactory implements FunctionFactory {
             if (Float.isNaN(value)) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256a.setAll((long) value, 0, 0, 0);
+            long256a.setLow((long) value);
             return long256a;
         }
 
@@ -76,7 +76,7 @@ public class CastFloatToLong256FunctionFactory implements FunctionFactory {
             if (Float.isNaN(value)) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256b.setAll((long) value, 0, 0, 0);
+            long256b.setLow((long) value);
             return long256b;
         }
     }

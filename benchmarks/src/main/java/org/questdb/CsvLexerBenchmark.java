@@ -43,7 +43,6 @@ public class CsvLexerBenchmark {
         // https://github.com/CODAIT/redrock/blob/master/twitter-decahose/src/main/resources/Location/worldcitiespop.txt.gz
         final String pathToCsv = "/home/vlad/Downloads/worldcitiespop.txt";
 
-
         long buf = Unsafe.malloc(BUF_SIZE, MemoryTag.NATIVE_DEFAULT);
         try {
             try (Path path = new Path().of(pathToCsv).$()) {

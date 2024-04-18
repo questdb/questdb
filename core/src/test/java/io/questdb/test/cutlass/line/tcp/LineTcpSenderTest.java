@@ -131,6 +131,23 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testconfString_autoFlushBytes() throws Exception {
+        String confString = "tcp::addr=localhost:" + bindPort + ";auto_flush_bytes=1;"; // the minimal allowed buffer size
+        runInContext(r -> {
+            try (Sender sender = Sender.fromConfig(confString)) {
+                // just 2 rows must be enough to trigger flush
+                // why not 1? the first byte of the 2nd row will flush the last byte of the 1st row
+                sender.table("mytable").longColumn("my int field", 42).atNow();
+                sender.table("mytable").longColumn("my int field", 42).atNow();
+
+                // make sure to assert before closing the Sender
+                // since the Sender will always flush on close
+                assertTableExistsEventually(engine, "mytable");
+            }
+        });
+    }
+
+    @Test
     public void testBuilderPlainText_addressWithExplicitIpAndPort() throws Exception {
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)

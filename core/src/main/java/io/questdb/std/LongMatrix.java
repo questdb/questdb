@@ -50,11 +50,7 @@ public class LongMatrix {
         int low = 0;
         int high = pos;
 
-        while (low < high) {
-            if (high - low < 65) {
-                return scanSearch(v, index);
-            }
-
+        while (high - low > 65) {
             int mid = (low + high - 1) >>> 1;
             long midVal = get(mid, index);
 
@@ -65,7 +61,7 @@ public class LongMatrix {
             else
                 return mid;
         }
-        return -(low + 1);
+        return scanSearch(v, index, low);
     }
 
     public void deleteRow(int r) {
@@ -113,9 +109,9 @@ public class LongMatrix {
         return pos++;
     }
 
-    private int scanSearch(long v, int index) {
+    private int scanSearch(long v, int index, int low) {
         int sz = size();
-        for (int i = 0; i < sz; i++) {
+        for (int i = low; i < sz; i++) {
             long f = get(i, index);
             if (f == v) {
                 return i;
