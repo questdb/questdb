@@ -913,6 +913,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.TrimFunctionFactory,
             io.questdb.griffin.engine.functions.str.LTrimFunctionFactory,
             io.questdb.griffin.engine.functions.str.RTrimFunctionFactory,
+            io.questdb.griffin.engine.functions.str.TrimVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LTrimVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.str.RTrimVarcharFunctionFactory,
 
             // starts_with
             io.questdb.griffin.engine.functions.str.StartsWithStrFunctionFactory,
