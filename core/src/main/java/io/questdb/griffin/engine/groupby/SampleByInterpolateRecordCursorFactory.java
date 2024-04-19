@@ -247,10 +247,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private final Function timezoneNameFunc;
         private final int timezoneNameFuncPos;
         private long fixedOffset;
-        private long nextDstUtc;
         private TimeZoneRules rules;
         private long tzOffset;
-
 
         public SampleByInterpolateRecordCursor(
                 CairoConfiguration configuration,
@@ -691,20 +689,18 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     } else {
                         // here timezone is in numeric offset format
                         tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
-                        nextDstUtc = Long.MAX_VALUE;
                     }
                 } catch (NumericException e) {
                     throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
                 }
             } else {
                 tzOffset = 0;
-                nextDstUtc = Long.MAX_VALUE;
             }
 
             final CharSequence offset = offsetFunc.getStrA(null);
             if (offset != null) {
                 final long val = Timestamps.parseOffset(offset);
-                if (val == Numbers.LONG_NaN) {
+                if (val == Numbers.LONG_NULL) {
                     // bad value for offset
                     throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
                 }
@@ -726,7 +722,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             final long timestamp = managedRecord.getTimestamp(timestampIndex);
             if (rules != null) {
                 tzOffset = rules.getOffset(timestamp);
-                nextDstUtc = rules.getNextDST(timestamp);
             }
 
             if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
