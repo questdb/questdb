@@ -110,21 +110,21 @@ public interface CharSink<T extends CharSink<?>> {
     }
 
     /**
-     * Treats the input char as an ASCII one. If a UTF-8 char is provided instead,
-     * a corrupted char may be written into the sink depending on the implementation.
+     * Treats the input char as an ASCII one. If a non-ASCII char is provided instead,
+     * a corrupted char may be written into the sink, depending on the implementation.
      */
     T putAscii(char c);
 
     /**
-     * Treats the input char sequence as an ASCII-only one. If a sequence with UTF-8 chars
-     * is provided instead, corrupted chars may be written into the sink depending on
+     * Treats the input char sequence as ASCII-only. If a sequence with non-ASCII chars
+     * is provided instead, corrupted chars may be written into the sink, depending on
      * the implementation.
      */
     T putAscii(@Nullable CharSequence cs);
 
     /**
-     * Treats the input char array segment as an ASCII-only one. If an array with UTF-8 chars
-     * is provided instead, corrupted chars may be written into the sink depending on
+     * Treats the input char array segment as ASCII-only. If an array with non-ASCII chars
+     * is provided instead, corrupted chars may be written into the sink, depending on
      * the implementation.
      */
     default T putAscii(char @NotNull [] chars, int start, int len) {
@@ -135,9 +135,9 @@ public interface CharSink<T extends CharSink<?>> {
     }
 
     /**
-     * Treats the input char sequence segment as an ASCII-only one. If a sequence
-     * with UTF-8 chars is provided instead, corrupted chars may be written into
-     * the sink depending on the implementation.
+     * Treats the input char sequence segment as ASCII-only. If a sequence
+     * with non-ASCII chars is provided instead, corrupted chars may be written into
+     * the sink, depending on the implementation.
      */
     default T putAscii(@NotNull CharSequence cs, int start, int len) {
         for (int i = start; i < len; i++) {
