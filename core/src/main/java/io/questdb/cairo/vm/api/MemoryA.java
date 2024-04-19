@@ -90,7 +90,7 @@ public interface MemoryA extends Closeable {
 
     long putStr(CharSequence value, int pos, int len);
 
-    long putStrUtf8(DirectUtf8Sequence value, boolean hasNonAsciiChars);
+    long putStrUtf8(DirectUtf8Sequence value);
 
     /**
      * Appends UTF8 sequence bytes to the memory. The binary format is bytes

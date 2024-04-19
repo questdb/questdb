@@ -51,6 +51,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -1764,6 +1765,52 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHashAsVarcharInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertGeoVarchar("ooo", 15, GeoHashes.NULL);
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `ooo` [");
+                TestUtils.assertContains(e.getFlyweightMessage(), " -> GEOHASH(3c)]");
+            }
+        });
+    }
+
+    @Test
+    public void testGeoHashAsVarcharLongerThanType() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoVarchar("g912j", 15, 15649));
+    }
+
+    @Test
+    public void testGeoHashAsVarcharLongerThanTypeUneven() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoVarchar("g912j", 11, 978));
+    }
+
+    @Test
+    public void testGeoHashAsVarcharNull() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoVarchar(null, 15, GeoHashes.NULL));
+    }
+
+    @Test
+    public void testGeoHashAsVarcharShorterThanType() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertGeoVarchar("g912j", 44, GeoHashes.NULL);
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `g912j` [");
+                TestUtils.assertContains(e.getFlyweightMessage(), " -> GEOHASH(44b)]");
+            }
+        });
+    }
+
+    @Test
+    public void testGeoHashAsVarcharVanilla() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoVarchar("g9", 10, 489));
+    }
+
+    @Test
     public void testGetColumnIndex() {
         CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
         try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
@@ -3290,6 +3337,10 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void assertGeoStr(String hash, int tableBits, long expected) {
+        assertGeoStringy(hash, tableBits, expected, true);
+    }
+
+    private void assertGeoStringy(String hash, int tableBits, long expected, boolean isStr) {
         final String tableName = "geo1";
         TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE);
         model.col("g", ColumnType.getGeoHashTypeWithBits(tableBits));
@@ -3297,7 +3348,11 @@ public class TableWriterTest extends AbstractCairoTest {
 
         try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
             TableWriter.Row r = writer.newRow();
-            r.putGeoStr(0, hash);
+            if (isStr) {
+                r.putGeoStr(0, hash);
+            } else {
+                r.putGeoVarchar(0, hash != null ? new Utf8String(hash) : null);
+            }
             r.append();
             writer.commit();
         }
@@ -3325,6 +3380,10 @@ public class TableWriterTest extends AbstractCairoTest {
             }
             Assert.assertEquals(expected, actual);
         }
+    }
+
+    private void assertGeoVarchar(String hash, int tableBits, long expected) {
+        assertGeoStringy(hash, tableBits, expected, false);
     }
 
     private void assertIndex(TableReader reader, TableReaderRecord record, int columnIndex) {

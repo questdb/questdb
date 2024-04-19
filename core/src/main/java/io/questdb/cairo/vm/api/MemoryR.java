@@ -28,7 +28,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
 
 import java.io.Closeable;
@@ -95,9 +95,9 @@ public interface MemoryR extends Closeable {
 
     int getStrLen(long offset);
 
-    Utf8Sequence getVarcharA(long offset, int size, boolean ascii);
+    DirectUtf8Sequence getVarcharA(long offset, int size, boolean ascii);
 
-    Utf8Sequence getVarcharB(long offset, int size, boolean ascii);
+    DirectUtf8Sequence getVarcharB(long offset, int size, boolean ascii);
 
     long offsetInPage(long offset);
 
