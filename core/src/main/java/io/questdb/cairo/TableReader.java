@@ -694,7 +694,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return reader;
     }
 
-    private void createNewColumnList(int columnCount, long pTransitionIndex, int columnCountShl) {
+    private void createNewColumnList(int columnCount, TableReaderMetadata.TransitionIndex transitionIndex, int columnCountShl) {
         LOG.debug().$("resizing columns file list [table=").utf8(tableToken.getTableName()).I$();
         int capacity = partitionCount << columnCountShl;
         final ObjList<MemoryMR> toColumns = new ObjList<>(capacity + 2);
@@ -705,7 +705,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         toColumns.setQuick(1, NullMemoryMR.INSTANCE);
         toColumnTops.setPos(capacity / 2);
         toIndexReaders.setPos(capacity + 2);
-        final long pIndexBase = pTransitionIndex + 8;
         int iterateCount = Math.max(columnCount, this.columnCount);
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
@@ -716,8 +715,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
                 if (partitionRowCount > -1L && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, fromBase)) > -1L) {
                     for (int i = 0; i < iterateCount; i++) {
-                        final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
-                        final int fromColumnIndex = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4L);
+                        final int action = transitionIndex.getAction(i);// Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
+                        final int fromColumnIndex = transitionIndex.getCopyFromIndex(i);// Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4L);
 
                         if (action == -1) {
                             closePartitionColumnFile(fromBase, i);
@@ -1148,10 +1147,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         while (true) {
-            long pTransitionIndex;
+            TableReaderMetadata.TransitionIndex transitionIndex;
             try {
-                pTransitionIndex = metadata.createTransitionIndex(txnMetadataVersion);
-                if (pTransitionIndex < 0) {
+                transitionIndex = metadata.createTransitionIndex(txnMetadataVersion);
+                if (transitionIndex == null) {
                     if (clock.getTicks() < deadline) {
                         return false;
                     }
@@ -1164,31 +1163,27 @@ public class TableReader implements Closeable, SymbolTableSource {
                 continue;
             }
 
-            try {
-                assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
-                metadata.applyTransitionIndex();
-                if (reshuffleColumns) {
-                    final int columnCount = metadata.getColumnCount();
+            assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
+            metadata.applyTransitionIndex();
+            if (reshuffleColumns) {
+                final int columnCount = metadata.getColumnCount();
 
-                    int columnCountShl = getColumnBits(columnCount);
-                    // when a column is added we cannot easily reshuffle columns in-place
-                    // the reason is that we'd have to create gaps in columns list between
-                    // partitions. It is possible in theory, but this could be an algo for
-                    // another day.
-                    if (columnCountShl > this.columnCountShl) {
-                        createNewColumnList(columnCount, pTransitionIndex, columnCountShl);
-                    } else {
-                        reshuffleColumns(columnCount, pTransitionIndex);
-                    }
-                    // rearrange symbol map reader list
-                    reshuffleSymbolMapReaders(pTransitionIndex, columnCount);
-                    this.columnCount = columnCount;
-                    reloadSymbolMapCounts();
+                int columnCountShl = getColumnBits(columnCount);
+                // when a column is added we cannot easily reshuffle columns in-place
+                // the reason is that we'd have to create gaps in columns list between
+                // partitions. It is possible in theory, but this could be an algo for
+                // another day.
+                if (columnCountShl > this.columnCountShl) {
+                    createNewColumnList(columnCount, transitionIndex, columnCountShl);
+                } else {
+                    reshuffleColumns(columnCount, transitionIndex);
                 }
-                return true;
-            } finally {
-                TableUtils.freeTransitionIndex(pTransitionIndex);
+                // rearrange symbol map reader list
+                reshuffleSymbolMapReaders(transitionIndex, columnCount);
+                this.columnCount = columnCount;
+                reloadSymbolMapCounts();
             }
+            return true;
         }
     }
 
@@ -1290,9 +1285,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txPartitionNameTxn);
     }
 
-    private void reshuffleColumns(int columnCount, long pTransitionIndex) {
+    private void reshuffleColumns(int columnCount, TableReaderMetadata.TransitionIndex transitionIndex) {
         LOG.debug().$("reshuffling columns file list [table=").utf8(tableToken.getTableName()).I$();
-        final long pIndexBase = pTransitionIndex + 8;
         int iterateCount = Math.max(columnCount, this.columnCount);
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
@@ -1301,8 +1295,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
                 if (partitionRowCount > -1L && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, base)) > -1L) {
                     for (int i = 0; i < iterateCount; i++) {
-                        final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
-                        final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4L);
+                        final int action = transitionIndex.getAction(i); //Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
+                        final int copyFrom = transitionIndex.getCopyFromIndex(i);//Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4L);
 
                         if (action == -1) {
                             // This column is deleted (not moved).
@@ -1356,8 +1350,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void reshuffleSymbolMapReaders(long pTransitionIndex, int columnCount) {
-        final long pIndexBase = pTransitionIndex + Long.BYTES;
+    private void reshuffleSymbolMapReaders(TableReaderMetadata.TransitionIndex transitionIndex, int columnCount) {
         if (columnCount > this.columnCount) {
             symbolMapReaders.setPos(columnCount);
         }
@@ -1371,9 +1364,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         // "copy from" == Integer.MIN_VALUE  indicates that column is deleted for good and should not be re-added from any source
 
         for (int i = 0, n = Math.max(columnCount, this.columnCount); i < n; i++) {
-            long offset = pIndexBase + (long) i * Long.BYTES;
-            final int action = Unsafe.getUnsafe().getInt(offset);
-            final int copyFrom = Unsafe.getUnsafe().getInt(offset + 4L);
+            final int action = transitionIndex.getAction(i);//Unsafe.getUnsafe().getInt(offset);
+            final int copyFrom = transitionIndex.getCopyFromIndex(i);// Unsafe.getUnsafe().getInt(offset + 4L);
 
             if (action == -1) {
                 // deleted

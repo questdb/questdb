@@ -120,6 +120,20 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeTypePreservesColumnOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            ddl("create table y as (select * from x)", sqlExecutionContext);
+            ddl("alter table x alter column c type symbol", sqlExecutionContext);
+
+            assertSqlCursorsConvertedStrings(
+                    "select * from y limit 10",
+                    "select * from x limit 10"
+            );
+        });
+    }
+
+    @Test
     public void testChangeVarcharToSymbol() throws Exception {
         assertMemoryLeak(() -> {
             createX();

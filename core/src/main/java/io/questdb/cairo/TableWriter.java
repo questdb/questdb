@@ -2594,7 +2594,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putLong(flags);
             ddlMem.putInt(indexValueBlockCapacity);
             ddlMem.putLong(configuration.getRandom().nextLong());
-            ddlMem.skip(8);
+
+            // Write place where to put this column when reading the metadata.
+            // The column can be replaced multiple times, find the very original index of the column
+            if (replaceColumnIndex > -1) {
+                int originColumnIndex = TableUtils.getReplacingColumnIndex(metaMem, replaceColumnIndex);
+                if (originColumnIndex > -1) {
+                    replaceColumnIndex = originColumnIndex;
+                }
+            }
+
+            ddlMem.putInt(replaceColumnIndex > -1 ? replaceColumnIndex + 1 : 0);
+            ddlMem.skip(4);
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
@@ -7735,7 +7746,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long flags = getColumnFlags(metaMem, i);
         ddlMem.putLong(flags);
         ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
-        ddlMem.skip(16);
+        ddlMem.skip(8);
+        ddlMem.putInt(getReplacingColumnIndex(metaMem, i));
+        ddlMem.skip(4);
     }
 
     private void writeColumnEntryWithDedupFlag(int i, boolean changeToDedup) {
