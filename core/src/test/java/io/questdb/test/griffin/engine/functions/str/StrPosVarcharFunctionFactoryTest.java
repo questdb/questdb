@@ -107,6 +107,26 @@ public class StrPosVarcharFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPositionAlias() throws Exception {
+        assertQuery(
+                "str\tposition\n" +
+                        "ABC XYZ XYZ\t5\n" +
+                        "ABC XYZ XYZ\t5\n" +
+                        "XYZ\t1\n" +
+                        "XYW\t0\n" +
+                        "XYW\t0\n",
+                "select str,position(str,'XYZ') from x",
+                "create table x as (" +
+                        "select rnd_varchar('ABC XYZ XYZ','XYZ','XYW') as str\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testSplitColumn() throws Exception {
         assertQuery(
                 "str\tstr1\tstr2\n" +

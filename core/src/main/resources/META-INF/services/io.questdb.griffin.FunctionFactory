@@ -856,6 +856,7 @@ io.questdb.griffin.engine.functions.str.StrPosVarcharFunctionFactory
 
 # position()
 io.questdb.griffin.engine.functions.str.PositionFunctionFactory
+io.questdb.griffin.engine.functions.str.PositionVarcharFunctionFactory
 
 # ^
 io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory
