@@ -42,7 +42,9 @@ namespace questdb::x86 {
     }
 
     inline Gpd int32_or(Compiler &c, const Gpd &b1, const Gpd &b2) {
+        c.comment("int32_or_start");
         c.or_(b1, b2);
+        c.comment("int32_or_stop");
         return b1;
     }
 
@@ -70,7 +72,7 @@ namespace questdb::x86 {
         }
         Label l_null = c.newLabel();
         Label l_exit = c.newLabel();
-        Mem NaN = c.newInt32Const(asmjit::ConstPool::kScopeLocal, 0x7fc00000); // float NaN
+        Mem NaN = c.newInt32Const(asmjit::ConstPool::kScopeLocal, 0x7fffffff); // float NaN
 
         c.cmp(rhs, INT_NULL);
         c.je(l_null);
@@ -114,7 +116,7 @@ namespace questdb::x86 {
         }
         Label l_null = c.newLabel();
         Label l_exit = c.newLabel();
-        Mem NaN = c.newInt32Const(asmjit::ConstPool::kScopeLocal, 0x7fc00000); // float NaN
+        Mem NaN = c.newInt32Const(asmjit::ConstPool::kScopeLocal, 0x7fffffff); // float NaN
 
         Gp n = c.newGpq();
         c.movabs(n, LONG_NULL);
@@ -138,7 +140,7 @@ namespace questdb::x86 {
         }
         Label l_null = c.newLabel();
         Label l_exit = c.newLabel();
-        Mem NaN = c.newInt64Const(asmjit::ConstPool::kScopeLocal, 0x7ff8000000000000LL); // double NaN
+        Mem NaN = c.newInt64Const(asmjit::ConstPool::kScopeLocal, 0x7fffffffffffffffLL); // double NaN
 
         Gp n = c.newGpq();
         c.movabs(n, LONG_NULL);
@@ -705,10 +707,30 @@ namespace questdb::x86 {
     }
 
     inline Gpd float_ge(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+        c.comment("float_ge_start");
         Gp r = c.newInt32();
         c.cmpss(rhs, lhs, Predicate::kCmpLE);
         c.movd(r, rhs);
         c.neg(r);
+        c.comment("float_ge_stop");
+        return r.as<Gpd>();
+    }
+
+    inline Gpd is_float_null(Compiler &c, const Xmm &xmm) {
+        Gp r = c.newInt32();
+        c.movd(r, xmm);
+        c.and_(r, 0x7FF00000);
+        c.cmp(r, 0x7FF00000);
+        c.sete(r.r8Lo());
+        return r.as<Gpd>();
+    }
+
+    inline Gpd is_double_null(Compiler &c, const Xmm &xmm) {
+        Gp r = c.newInt64();
+        c.movq(r, xmm);
+        c.and_(r, 0x7FF0000000000000);
+        c.cmp(r, 0x7FF0000000000000);
+        c.sete(r.r8Lo());
         return r.as<Gpd>();
     }
 
@@ -722,11 +744,20 @@ namespace questdb::x86 {
         Gp r = c.newInt32();
         c.ucomisd(xmm0, xmm0);
         c.jnp(l_nan);
+        // Gp int_r = c.newInt64();
+        // c.movq(int_r, xmm0);
+        // c.and_(int_r, 0x7FF0000000000000LL);
+        // c.cmp(int_r, 0x7FF0000000000000LL);
+        // c.jne(l_nan);
         if (eq) {
             c.mov(r.r8Lo(), 1);
         } else {
             c.xor_(r, r);
         }
+        // c.movq(int_r, xmm1);
+        // c.and_(int_r, 0x7FF0000000000000LL);
+        // c.cmp(int_r, 0x7FF0000000000000LL);
+        // c.jne(l_nan);
         c.ucomisd(xmm1, xmm1);
         c.jnp(l_nan);
         c.jmp(l_exit);
@@ -759,14 +790,24 @@ namespace questdb::x86 {
         Mem d = c.newFloatConst(ConstPool::kScopeLocal, epsilon);
         Label l_nan = c.newLabel();
         Label l_exit = c.newLabel();
-        Gp r = c.newInt32();
+        c.comment("float_cmp_epsilon_start");
         c.ucomiss(xmm0, xmm0);
         c.jnp(l_nan);
+        Gp r = c.newInt32();
+        // Gp int_r = c.newInt32();
+        // c.movd(int_r, xmm0);
+        // c.and_(int_r, 0x7FF00000);
+        // c.cmp(int_r, 0x7FF00000);
+        // c.jne(l_nan);
         if (eq) {
-            c.mov(r.r8Lo(), 1);
+            c.mov(r, 1);
         } else {
             c.xor_(r, r);
         }
+        // c.movd(int_r, xmm1);
+        // c.and_(int_r, 0x7FF00000);
+        // c.cmp(int_r, 0x7FF00000);
+        // c.jne(l_nan);
         c.ucomiss(xmm1, xmm1);
         c.jnp(l_nan);
         c.jmp(l_exit);
@@ -782,6 +823,7 @@ namespace questdb::x86 {
             c.setbe(r.r8Lo());
         }
         c.bind(l_exit);
+        c.comment("float_cmp_epsilon_stop");
         return r.as<Gpd>();
     }
 

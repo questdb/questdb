@@ -392,10 +392,26 @@ namespace questdb::x86 {
                 return {int32_gt(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_gt(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
-            case data_type_t::f32:
-                return {float_gt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
-            case data_type_t::f64:
-                return {double_gt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            case data_type_t::f32: {
+                Xmm l = c.newXmmSs("lhs_copy");
+                c.movss(l, lhs.xmm());
+                Xmm r = c.newXmmSs("rhs_copy");
+                c.movss(r, rhs.xmm());
+                return { bin_and(c,
+                    {float_ne_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk},
+                    {float_gt(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
+            case data_type_t::f64: {
+                Xmm l = c.newXmmSd("lhs_copy");
+                c.movsd(l, lhs.xmm());
+                Xmm r = c.newXmmSd("rhs_copy");
+                c.movsd(r, rhs.xmm());
+                return { bin_and(c,
+                    {double_ne_epsilon(c, lhs.xmm(), rhs.xmm(), DOUBLE_EPSILON), data_type_t::i32, dk},
+                    {double_gt(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
             default:
                 __builtin_unreachable();
         }
@@ -411,10 +427,26 @@ namespace questdb::x86 {
                 return {int32_ge(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_ge(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
-            case data_type_t::f32:
-                return {float_ge(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
-            case data_type_t::f64:
-                return {double_ge(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            case data_type_t::f32: {
+                Xmm l = c.newXmmSs("lhs_copy");
+                c.movss(l, lhs.xmm());
+                Xmm r = c.newXmmSs("rhs_copy");
+                c.movss(r, rhs.xmm());
+                return { bin_or(c,
+                    {float_eq_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk},
+                    {float_ge(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
+            case data_type_t::f64: {
+                Xmm l = c.newXmmSd("lhs_copy");
+                c.movsd(l, lhs.xmm());
+                Xmm r = c.newXmmSd("rhs_copy");
+                c.movsd(r, rhs.xmm());
+                return { bin_or(c,
+                    {double_eq_epsilon(c, lhs.xmm(), rhs.xmm(), DOUBLE_EPSILON), data_type_t::i32, dk},
+                    {double_ge(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
             default:
                 __builtin_unreachable();
         }
@@ -430,10 +462,26 @@ namespace questdb::x86 {
                 return {int32_lt(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_lt(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
-            case data_type_t::f32:
-                return {float_lt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
-            case data_type_t::f64:
-                return {double_lt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            case data_type_t::f32: {
+                Xmm l = c.newXmmSs("lhs_copy");
+                c.movss(l, lhs.xmm());
+                Xmm r = c.newXmmSs("rhs_copy");
+                c.movss(r, rhs.xmm());
+                return { bin_and(c,
+                    {float_ne_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk},
+                    {float_lt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk})
+                }; 
+            }
+            case data_type_t::f64: {
+                Xmm l = c.newXmmSd("lhs_copy");
+                c.movsd(l, lhs.xmm());
+                Xmm r = c.newXmmSd("rhs_copy");
+                c.movsd(r, rhs.xmm());
+                return { bin_and(c,
+                    {double_ne_epsilon(c, lhs.xmm(), rhs.xmm(), DOUBLE_EPSILON), data_type_t::i32, dk},
+                    {double_lt(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
             default:
                 __builtin_unreachable();
         }
@@ -449,10 +497,26 @@ namespace questdb::x86 {
                 return {int32_le(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_le(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
-            case data_type_t::f32:
-                return {float_le(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
-            case data_type_t::f64:
-                return {double_le(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            case data_type_t::f32: {
+                Xmm l = c.newXmmSs("lhs_copy");
+                c.movss(l, lhs.xmm());
+                Xmm r = c.newXmmSs("rhs_copy");
+                c.movss(r, rhs.xmm());
+                return { bin_or(c,
+                    {float_eq_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk},
+                    {float_le(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
+            case data_type_t::f64: {
+                Xmm l = c.newXmmSd("lhs_copy");
+                c.movsd(l, lhs.xmm());
+                Xmm r = c.newXmmSd("rhs_copy");
+                c.movsd(r, rhs.xmm());
+                return { bin_or(c,
+                    {double_eq_epsilon(c, lhs.xmm(), rhs.xmm(), DOUBLE_EPSILON), data_type_t::i32, dk},
+                    {double_le(c, l, r), data_type_t::i32, dk})
+                }; 
+            }
             default:
                 __builtin_unreachable();
         }
