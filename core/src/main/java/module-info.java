@@ -877,6 +877,7 @@ open module io.questdb {
             // strpos
             io.questdb.griffin.engine.functions.str.StrPosFunctionFactory,
             io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory,
+            io.questdb.griffin.engine.functions.str.StrPosVarcharFunctionFactory,
             // position
             io.questdb.griffin.engine.functions.str.PositionFunctionFactory,
             // Change string case
