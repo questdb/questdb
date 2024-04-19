@@ -259,6 +259,40 @@ namespace questdb::avx2 {
         return mask_not(c, nulls_mask(c, type, lhs, rhs));
     }
 
+    inline Ymm cmp_eq_float(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
+        Ymm lhs_copy = c.newYmm();
+        Ymm rhs_copy = c.newYmm();
+        c.vmovaps(lhs_copy, lhs);
+        c.vmovaps(rhs_copy, rhs);
+        Ymm dst = c.newYmm();
+        Ymm nans = mask_and(c, is_nan(c, type, lhs_copy), is_nan(c, type, rhs_copy));
+        Mem sign_mask = vec_sign_mask(c, type);
+        c.vsubps(lhs_copy, lhs_copy, rhs_copy); //(lhs - rhs)
+        c.vpand(lhs_copy, lhs_copy, sign_mask); // abs(lhs - rhs)
+        float eps[8] = {FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON};
+        Mem epsilon = c.newConst(ConstPool::kScopeLocal, &eps, 32);
+        c.vcmpps(dst, lhs_copy, epsilon, Predicate::kCmpLT);
+        c.vpor(dst, dst, nans);
+        return dst;
+    }
+
+    inline Ymm cmp_eq_double(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
+        Ymm lhs_copy = c.newYmm();
+        Ymm rhs_copy = c.newYmm();
+        c.vmovapd(lhs_copy, lhs);
+        c.vmovapd(rhs_copy, rhs);
+        Ymm dst = c.newYmm();
+        Ymm nans = mask_and(c, is_nan(c, type, lhs_copy), is_nan(c, type, rhs_copy));
+        Mem sign_mask = vec_sign_mask(c, type);
+        c.vsubpd(lhs_copy, lhs_copy, rhs_copy); //(lhs - rhs)
+        c.vpand(lhs_copy, lhs_copy, sign_mask); // abs(lhs - rhs)
+        double eps[4] = {DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON};
+        Mem epsilon = c.newConst(ConstPool::kScopeLocal, &eps, 32);
+        c.vcmppd(dst, lhs_copy, epsilon, Predicate::kCmpLT);
+        c.vpor(dst, dst, nans);
+        return dst;
+    }
+
     inline Ymm cmp_eq(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
         Ymm dst = c.newYmm();
         switch (type) {
@@ -284,33 +318,10 @@ namespace questdb::avx2 {
                 c.vpand(dst, dst, lhs);
             }
                 break;
-            case data_type_t::f32: {
-                Ymm nans = mask_and(c, is_nan(c, data_type_t::f32, lhs), is_nan(c, data_type_t::f32, rhs));
-                //                c.vcmpps(dst, lhs, rhs, Predicate::kCmpEQ);
-                //                c.vpor(dst, dst, nans);
-
-                Mem sign_mask = vec_sign_mask(c, type);
-                c.vsubps(lhs, lhs, rhs); //(lhs - rhs)
-                c.vpand(lhs, lhs, sign_mask); // abs(lhs - rhs)
-                float eps[8] = {FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON};
-                Mem epsilon = c.newConst(ConstPool::kScopeLocal, &eps, 32);
-                c.vcmpps(dst, lhs, epsilon, Predicate::kCmpLT);
-                c.vpor(dst, dst, nans);
-            }
-                break;
-            case data_type_t::f64: {
-                Ymm nans = mask_and(c, is_nan(c, data_type_t::f64, lhs), is_nan(c, data_type_t::f64, rhs));
-                //                c.vcmppd(dst, lhs, rhs, Predicate::kCmpEQ);
-                //                c.vpor(dst, dst, nans);
-                Mem sign_mask = vec_sign_mask(c, type);
-                c.vsubpd(lhs, lhs, rhs); //(lhs - rhs)
-                c.vpand(lhs, lhs, sign_mask); // abs(lhs - rhs)
-                double eps[4] = {DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON};
-                Mem epsilon = c.newConst(ConstPool::kScopeLocal, &eps, 32);
-                c.vcmppd(dst, lhs, epsilon, Predicate::kCmpLT);
-                c.vpor(dst, dst, nans);
-            }
-                break;
+            case data_type_t::f32:
+                return cmp_eq_float(c, type, lhs, rhs);
+            case data_type_t::f64: 
+                return cmp_eq_double(c, type, lhs, rhs);
             default:
                 __builtin_unreachable();
         }
@@ -318,24 +329,7 @@ namespace questdb::avx2 {
     }
 
     inline Ymm cmp_ne(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
-        Ymm dst = c.newYmm();
-        switch (type) {
-            case data_type_t::f32: {
-                Ymm nans = mask_and(c, is_nan(c, data_type_t::f32, lhs), is_nan(c, data_type_t::f32, rhs));
-                c.vcmpps(dst, lhs, rhs, Predicate::kCmpNEQ);
-                c.vpand(dst, dst, mask_not(c,nans));
-            }
-                break;
-            case data_type_t::f64: {
-                Ymm nans = mask_and(c, is_nan(c, data_type_t::f64, lhs), is_nan(c, data_type_t::f64, rhs));
-                c.vcmppd(dst, lhs, rhs, Predicate::kCmpNEQ);
-                c.vpand(dst, dst, mask_not(c,nans));
-            }
-                break;
-            default:
-                return mask_not(c, cmp_eq(c, type, lhs, rhs));
-        }
-        return dst;
+        return mask_not(c, cmp_eq(c, type, lhs, rhs));
     }
 
     inline Ymm cmp_lt(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
@@ -353,12 +347,16 @@ namespace questdb::avx2 {
             case data_type_t::i64:
                 c.vpcmpgtq(dst, rhs, lhs);
                 break;
-            case data_type_t::f32:
+            case data_type_t::f32: {
+                Ymm neq = mask_not(c, cmp_eq_float(c, type, lhs, rhs));
                 c.vcmpps(dst, lhs, rhs, Predicate::kCmpLT);
-                break;
-            case data_type_t::f64:
+                return mask_and(c, dst, neq);
+            }
+            case data_type_t::f64: {
+                Ymm neq = mask_not(c, cmp_eq_double(c, type, lhs, rhs));
                 c.vcmppd(dst, lhs, rhs, Predicate::kCmpLT);
-                break;
+                return mask_and(c, dst, neq);
+            }
             default:
                 __builtin_unreachable();
         }
@@ -407,14 +405,16 @@ namespace questdb::avx2 {
     inline Ymm cmp_le(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
         switch (type) {
             case data_type_t::f32: {
+                Ymm eq = cmp_eq_float(c, type, lhs, rhs);
                 Ymm dst = c.newYmm();
                 c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), Predicate::kCmpLE);
-                return dst;
+                return mask_or(c, dst, eq);
             }
             case data_type_t::f64: {
+                Ymm eq = cmp_eq_double(c, type, lhs, rhs);
                 Ymm dst = c.newYmm();
                 c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), Predicate::kCmpLE);
-                return dst;
+                return mask_or(c, dst, eq);
             }
             default:
                 return cmp_ge(c, type, rhs, lhs, null_check);

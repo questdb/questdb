@@ -72,7 +72,7 @@ namespace questdb::x86 {
         }
         Label l_null = c.newLabel();
         Label l_exit = c.newLabel();
-        Mem NaN = c.newInt32Const(asmjit::ConstPool::kScopeLocal, 0x7fffffff); // float NaN
+        Mem NaN = c.newInt32Const(asmjit::ConstPool::kScopeLocal, 0x7fc00000); // float NaN
 
         c.cmp(rhs, INT_NULL);
         c.je(l_null);
@@ -116,7 +116,7 @@ namespace questdb::x86 {
         }
         Label l_null = c.newLabel();
         Label l_exit = c.newLabel();
-        Mem NaN = c.newInt32Const(asmjit::ConstPool::kScopeLocal, 0x7fffffff); // float NaN
+        Mem NaN = c.newInt32Const(asmjit::ConstPool::kScopeLocal, 0x7fc00000); // float NaN
 
         Gp n = c.newGpq();
         c.movabs(n, LONG_NULL);
@@ -140,7 +140,7 @@ namespace questdb::x86 {
         }
         Label l_null = c.newLabel();
         Label l_exit = c.newLabel();
-        Mem NaN = c.newInt64Const(asmjit::ConstPool::kScopeLocal, 0x7fffffffffffffffLL); // double NaN
+        Mem NaN = c.newInt64Const(asmjit::ConstPool::kScopeLocal, 0x7ff8000000000000LL); // double NaN
 
         Gp n = c.newGpq();
         c.movabs(n, LONG_NULL);
@@ -713,24 +713,6 @@ namespace questdb::x86 {
         c.movd(r, rhs);
         c.neg(r);
         c.comment("float_ge_stop");
-        return r.as<Gpd>();
-    }
-
-    inline Gpd is_float_null(Compiler &c, const Xmm &xmm) {
-        Gp r = c.newInt32();
-        c.movd(r, xmm);
-        c.and_(r, 0x7FF00000);
-        c.cmp(r, 0x7FF00000);
-        c.sete(r.r8Lo());
-        return r.as<Gpd>();
-    }
-
-    inline Gpd is_double_null(Compiler &c, const Xmm &xmm) {
-        Gp r = c.newInt64();
-        c.movq(r, xmm);
-        c.and_(r, 0x7FF0000000000000);
-        c.cmp(r, 0x7FF0000000000000);
-        c.sete(r.r8Lo());
         return r.as<Gpd>();
     }
 
