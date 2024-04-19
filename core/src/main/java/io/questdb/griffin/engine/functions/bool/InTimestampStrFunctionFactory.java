@@ -153,5 +153,14 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         public boolean isReadThreadSafe() {
             return false;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(right);
+        }
     }
 }

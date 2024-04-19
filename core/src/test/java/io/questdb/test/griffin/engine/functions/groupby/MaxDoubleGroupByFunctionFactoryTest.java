@@ -290,7 +290,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "VTJW\t0.7732229848518976\t1970-01-03T09:18:00.000000Z\n",
                 "select b, max(a), k from " +
                         " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
-                        "sample by 3h fill(linear) order by 3, 2, 1",
+                        "sample by 3h fill(linear) align to first observation order by 3, 2, 1",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -300,6 +300,24 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
+                "k",
+                true,
+                true
+        );
+
+        assertQuery(
+                "b\tmax\tk\n" +
+                        "PEHN\t0.8445258177211064\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t0.9125204540487346\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t0.7365115215570027\t1970-01-03T03:00:00.000000Z\n" +
+                        "VTJW\t0.8660879643164553\t1970-01-03T03:00:00.000000Z\n" +
+                        "PEHN\t0.4346135812930124\t1970-01-03T06:00:00.000000Z\n" +
+                        "VTJW\t0.8196554745841765\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t0.7732229848518976\t1970-01-03T09:00:00.000000Z\n",
+                "select b, max(a), k from " +
+                        " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
+                        "sample by 3h fill(linear) align to calendar order by 3, 2, 1",
                 "k",
                 true,
                 true

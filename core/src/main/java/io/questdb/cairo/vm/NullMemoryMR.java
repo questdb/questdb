@@ -28,8 +28,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
 
 public class NullMemoryMR implements MemoryMR {
@@ -177,12 +177,12 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
-    public Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
+    public DirectUtf8Sequence getVarcharA(long offset, int size, boolean ascii) {
         return null;
     }
 
     @Override
-    public Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
+    public DirectUtf8Sequence getVarcharB(long offset, int size, boolean ascii) {
         return null;
     }
 

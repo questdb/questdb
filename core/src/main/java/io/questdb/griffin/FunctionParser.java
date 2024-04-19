@@ -560,7 +560,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 && argCount == 2
                 && args.getQuick(0).isUndefined()
                 && args.getQuick(1).isConstant()
-        ) skipAssigningType: {
+        ) skipAssigningType:{
             final Function undefinedArg = args.getQuick(0);
             final int castToType = args.getQuick(1).getType();
             final int assignType;
@@ -848,7 +848,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else if (sigArgTypeTag == ColumnType.INT) {
                     args.setQuick(k, IntConstant.NULL);
                 }
-            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && arg.isConstant()) {
+            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL || argTypeTag == ColumnType.VARCHAR) && arg.isConstant()) {
                 if (sigArgTypeTag == ColumnType.TIMESTAMP) {
                     int position = argPositions.getQuick(k);
                     long timestamp = parseTimestamp(arg.getStrA(null), position);

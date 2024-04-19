@@ -266,7 +266,7 @@ public class MemoryCARWImplTest {
     public void testDeadCodeForUtf8() {
         try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
             try {
-                mem.putStrUtf8(null, true);
+                mem.putStrUtf8(null);
                 Assert.fail();
             } catch (UnsupportedOperationException ignored) {
             }

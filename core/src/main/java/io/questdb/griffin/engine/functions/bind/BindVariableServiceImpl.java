@@ -1228,7 +1228,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 } else {
                     StringSink sink = Misc.getThreadLocalSink();
                     sink.clear();
-                    if(!Utf8s.utf8ToUtf16(value, sink)) {
+                    if (!Utf8s.utf8ToUtf16(value, sink)) {
                         throw SqlException.position(0).put("Could not update bind variable. Invalid UTF-8 encoding.");
                     }
                     charSeq = sink;

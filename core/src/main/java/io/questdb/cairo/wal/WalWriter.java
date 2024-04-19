@@ -1485,7 +1485,7 @@ public class WalWriter implements TableWriterAPI {
         auxMem.jumpTo(auxMemSize);
         if (rowCount > 0) {
             final long auxMemAddr = TableUtils.mapRW(ff, auxMem.getFd(), auxMemSize, MEM_TAG);
-            columnTypeDriver.setFullAuxVectorNull(auxMemAddr,  rowCount);
+            columnTypeDriver.setFullAuxVectorNull(auxMemAddr, rowCount);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
             }
@@ -1926,6 +1926,12 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void putGeoVarchar(int columnIndex, Utf8Sequence hash) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoVarchar(columnIndex, hash, type, this);
+        }
+
+        @Override
         public void putIPv4(int columnIndex, int value) {
             putInt(columnIndex, value);
         }
@@ -2005,8 +2011,8 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value, hasNonAsciiChars));
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
             setRowValueNotNull(columnIndex);
         }
 
@@ -2032,7 +2038,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value) {
             // this method will write column name to the buffer if it has to be UTF-8 decoded
             // otherwise it will write nothing.
             final SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
@@ -2047,7 +2053,7 @@ public class WalWriter implements TableWriterAPI {
                     utf8Map.putAt(
                             index,
                             Utf8String.newInstance(value),
-                            putSymUtf8Slow(columnIndex, value, hasNonAsciiChars, symbolMapReader)
+                            putSymUtf8Slow(columnIndex, value, symbolMapReader)
                     );
                 }
             } else {
@@ -2137,12 +2143,11 @@ public class WalWriter implements TableWriterAPI {
         private int putSymUtf8Slow(
                 int columnIndex,
                 DirectUtf8Sequence utf8Value,
-                boolean hasNonAsciiChars,
                 SymbolMapReader symbolMapReader
         ) {
             return putSym0(
                     columnIndex,
-                    Utf8s.utf8ToUtf16(utf8Value, tempSink, hasNonAsciiChars),
+                    Utf8s.directUtf8ToUtf16(utf8Value, tempSink),
                     symbolMapReader
             );
         }
