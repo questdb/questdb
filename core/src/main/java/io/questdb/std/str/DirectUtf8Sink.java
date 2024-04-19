@@ -110,7 +110,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
 
     @Override
     public DirectUtf8Sink put(byte b) {
-        ascii = false;
+        ascii &= b >= 0;
         sink.put(b);
         return this;
     }
