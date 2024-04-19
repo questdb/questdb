@@ -720,10 +720,6 @@ public class SqlUtil {
         return Numbers.LONG_NaN;
     }
 
-    public static Long256Constant implicitCastVarcharAsLong256(Utf8Sequence value) {
-        return implicitCastStrAsLong256(value.asAsciiCharSequence());
-    }
-
     public static short implicitCastVarcharAsShort(@Nullable Utf8Sequence value) {
         try {
             return value != null ? Numbers.parseShort(value) : 0;

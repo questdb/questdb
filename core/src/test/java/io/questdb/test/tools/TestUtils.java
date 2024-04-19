@@ -1483,9 +1483,9 @@ public final class TestUtils {
             DirectUtf8String seq = new DirectUtf8String();
             seq.of(p, p + len);
             if (symbol) {
-                r.putSymUtf8(columnIndex, seq, true);
+                r.putSymUtf8(columnIndex, seq);
             } else {
-                r.putStrUtf8(columnIndex, seq, true);
+                r.putStrUtf8(columnIndex, seq);
             }
         } finally {
             Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
