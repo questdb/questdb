@@ -814,9 +814,7 @@ public final class Utf8s {
                 limit--;
             }
         }
-        for (int i = start; i < limit; i++) {
-            sink.put(source.byteAt(i));
-        }
+        sink.put(source, start, limit);
     }
 
     /**

@@ -155,6 +155,15 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         return this;
     }
 
+    default Utf8Sink put(Utf8Sequence seq, int lo, int hi) {
+        if (seq != null) {
+            for (int i = lo; i < hi; i++) {
+                put(seq.byteAt(i));
+            }
+        }
+        return this;
+    }
+
     /**
      * Encodes the given segment of a char sequence from UTF-16 to UTF-8 and writes it to the sink.
      */
