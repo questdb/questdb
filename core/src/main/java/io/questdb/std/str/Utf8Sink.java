@@ -123,6 +123,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     /**
      * Encodes the given char sequence from UTF-16 to UTF-8 and writes it to the sink.
      */
+    @Override
     default Utf8Sink put(@Nullable CharSequence cs) {
         if (cs != null) {
             put(cs, 0, cs.length());
@@ -133,6 +134,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     /**
      * Encodes the given UTF-16 char to UTF-8 and writes it to the sink.
      */
+    @Override
     default Utf8Sink put(char c) {
         if (c < 128) {
             putAscii(c);
@@ -156,6 +158,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     /**
      * Encodes the given segment of a char sequence from UTF-16 to UTF-8 and writes it to the sink.
      */
+    @Override
     default Utf8Sink put(@NotNull CharSequence cs, int lo, int hi) {
         int i = lo;
         while (i < hi) {
@@ -191,6 +194,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         return this;
     }
 
+    @Override
     default Utf8Sink putQuoted(@NotNull CharSequence cs) {
         putAscii('\"').put(cs).putAscii('\"');
         return this;
