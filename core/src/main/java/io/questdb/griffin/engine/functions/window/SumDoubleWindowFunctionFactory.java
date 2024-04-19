@@ -347,7 +347,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value.
-    static class SumOverPartitionRangeFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverPartitionRangeFrameFunction {
+    public static class SumOverPartitionRangeFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverPartitionRangeFrameFunction {
 
         public SumOverPartitionRangeFrameFunction(
                 Map map,
@@ -409,7 +409,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
     // Handles sum() over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value .
-    static class SumOverRangeFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverRangeFrameFunction {
+    public static class SumOverRangeFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverRangeFrameFunction {
         public SumOverRangeFrameFunction(
                 long rangeLo,
                 long rangeHi,
@@ -418,6 +418,17 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                 int timestampIdx
         ) {
             super(rangeLo, rangeHi, arg, configuration, timestampIdx);
+        }
+
+        public SumOverRangeFrameFunction(
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                long initialCapacity,
+                MemoryARW memory,
+                int timestampIdx
+        ) {
+            super(rangeLo, rangeHi, arg, initialCapacity, memory, timestampIdx);
         }
 
 
