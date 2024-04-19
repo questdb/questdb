@@ -22,36 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.bool;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.GeoByteFunction;
-
-public class GeoByteConstant extends GeoByteFunction implements ConstantFunction {
-
-    public static final GeoByteConstant NULL = new GeoByteConstant(GeoHashes.BYTE_NULL, ColumnType.GEOBYTE);
-
-    private final byte hash;
-
-    public GeoByteConstant(byte hash, int typep) {
-        super(typep);
-        this.hash = hash;
-    }
-
-    public byte getGeoByte(Record rec) {
-        return hash;
-    }
+public final class InTimestampVarcharFunctionFactory extends InTimestampStrFunctionFactory {
 
     @Override
-    public boolean isNullConstant() {
-        return hash == GeoHashes.BYTE_NULL;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val(hash, ColumnType.getGeoHashBits(type));
+    public String getSignature() {
+        // we have explicit in(NØ) otherwise the function parser would match in(NV) instead
+        return "in(NØ)";
     }
 }

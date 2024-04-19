@@ -55,6 +55,11 @@ public class LongConstant extends LongFunction implements ConstantFunction {
         return value;
     }
 
+    @Override
+    public boolean isNullConstant() {
+        return value == Numbers.LONG_NaN;
+    }
+
     public void toPlan(PlanSink sink) {
         sink.val(value).val('L');
     }

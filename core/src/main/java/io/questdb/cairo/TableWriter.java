@@ -3871,7 +3871,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     colDataExtraSize = colDataMem.getAppendOffset() - colDataOffset;
-                    colAuxMem.jumpTo(columnTypeDriver.getAuxVectorOffset(committedRowCount));
+                    // we have to restore aux column size to its required size to hold "committedRowCount" row count.
+                    colAuxMem.jumpTo(columnTypeDriver.getAuxVectorSize(committedRowCount));
                 } else {
                     // Fixed size
                     final int shl = ColumnType.pow2SizeOf(columnType);
@@ -7891,6 +7892,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putGeoStr(int columnIndex, CharSequence value);
 
+        void putGeoVarchar(int columnIndex, Utf8Sequence value);
+
         void putIPv4(int columnIndex, int value);
 
         void putInt(int columnIndex, int value);
@@ -7921,13 +7924,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
          * Writes UTF8-encoded string to WAL. As the name of the function suggest the storage format is
          * expected to be UTF16. The function must re-encode string from UTF8 to UTF16 before storing.
          *
-         * @param columnIndex      index of the column we are writing to
-         * @param value            UTF8 bytes represented as CharSequence interface.
-         *                         On this interface getChar() returns a byte, not complete character.
-         * @param hasNonAsciiChars helper flag to indicate implementation if all bytes can be assumed as ASCII.
-         *                         "true" here indicates that UTF8 decoding is compulsory.
+         * @param columnIndex index of the column we are writing to
+         * @param value       UTF8 bytes represented as CharSequence interface.
+         *                    On this interface getChar() returns a byte, not complete character.
          */
-        void putStrUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars);
+        void putStrUtf8(int columnIndex, DirectUtf8Sequence value);
 
         void putSym(int columnIndex, CharSequence value);
 
@@ -7938,7 +7939,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         /**
          * Writes UTF8-encoded symbol to WAL. Supported for WAL tables only.
          */
-        void putSymUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars);
+        void putSymUtf8(int columnIndex, DirectUtf8Sequence value);
 
         void putTimestamp(int columnIndex, long value);
 
@@ -8018,6 +8019,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putGeoVarchar(int columnIndex, Utf8Sequence value) {
+            // no-op
+        }
+
+        @Override
         public void putIPv4(int columnIndex, int value) {
             // no-op
         }
@@ -8083,7 +8089,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
             // no-op
         }
 
@@ -8103,7 +8109,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value) {
             // no-op
         }
 
@@ -8210,6 +8216,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putGeoVarchar(int columnIndex, Utf8Sequence hash) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoVarchar(columnIndex, hash, type, this);
+        }
+
+        @Override
         public void putIPv4(int columnIndex, int value) {
             putInt(columnIndex, value);
         }
@@ -8289,8 +8301,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value, hasNonAsciiChars));
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
             setRowValueNotNull(columnIndex);
         }
 
@@ -8312,7 +8324,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value) {
             throw new UnsupportedOperationException();
         }
 

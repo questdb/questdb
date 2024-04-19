@@ -47,6 +47,11 @@ public class GeoIntConstant extends GeoIntFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean isNullConstant() {
+        return hash == GeoHashes.INT_NULL;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(hash, ColumnType.getGeoHashBits(type));
     }

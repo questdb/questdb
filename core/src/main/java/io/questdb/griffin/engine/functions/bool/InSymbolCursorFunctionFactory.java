@@ -191,16 +191,10 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
     }
 
     private static class StrInNullCursorFunction extends BooleanFunction implements UnaryFunction {
-
         private final Function valueArg;
 
         public StrInNullCursorFunction(Function valueArg) {
             this.valueArg = valueArg;
-        }
-
-        @Override
-        public void close() {
-            UnaryFunction.super.close();
         }
 
         @Override
@@ -214,23 +208,12 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            valueArg.init(symbolTableSource, executionContext);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return valueArg.isReadThreadSafe();
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(valueArg).val(" in null");
         }
     }
 
     private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {
-
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
         private final IntHashSet symbolKeys = new IntHashSet();
@@ -313,16 +296,10 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
     }
 
     private static class SymbolInNullCursorFunction extends BooleanFunction implements UnaryFunction {
-
         private final Function valueArg;
 
         public SymbolInNullCursorFunction(Function valueArg) {
             this.valueArg = valueArg;
-        }
-
-        @Override
-        public void close() {
-            UnaryFunction.super.close();
         }
 
         @Override
@@ -333,16 +310,6 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return valueArg.getInt(rec) == SymbolTable.VALUE_IS_NULL;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            valueArg.init(symbolTableSource, executionContext);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return valueArg.isReadThreadSafe();
         }
 
         @Override

@@ -47,6 +47,11 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
     }
 
     @Override
+    public boolean isNullConstant() {
+        return value == Numbers.LONG_NaN;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(value);
     }

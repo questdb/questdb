@@ -52,6 +52,11 @@ public class Long128Constant extends Long128Function implements ConstantFunction
     }
 
     @Override
+    public boolean isNullConstant() {
+        return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(hi).val(lo);
     }

@@ -252,7 +252,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     }
 
     @Override
-    default long putStrUtf8(DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+    default long putStrUtf8(DirectUtf8Sequence value) {
         throw new UnsupportedOperationException();
     }
 

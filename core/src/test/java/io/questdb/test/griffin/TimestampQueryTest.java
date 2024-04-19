@@ -1222,6 +1222,75 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampStringComparisonInVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table
+            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
+            ddl(createStmt);
+
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            insert("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)");
+
+            String expected;
+            // not in period
+            expected = "min\tmax\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not in '2020-01-01'::varchar");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in '2020-01-01'::varchar");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not in cast(('2020-01' || '-02') as varchar)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in cast(('2020-01-' || rnd_str('01', '01')) as varchar)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in ('2020-01-01T12:00'::varchar, '2020-01-01'::varchar)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where dts in ('2020-01-01'::varchar, '2020-01-03'::varchar) ");
+
+            expected = "min\tmax\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in cast('2020-01' || '-02' as varchar)");
+
+            expected = "dts\tnts\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts in (NULL, cast('2020-01-05' as TIMESTAMP), '2020-01-02'::varchar, NULL)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in (now(),'2020-01-01'::varchar,1234567,1234567L,CAST('2020-01-01' as TIMESTAMP),NULL::varchar,nts)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in (now(),'2020-01-01'::varchar)");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where CAST(NULL as TIMESTAMP) in ('2020-01-02'::varchar, now())");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where CAST(NULL as TIMESTAMP) in ('2020-01-02'::varchar, '2020-01-01'::varchar)");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts in (now() || 'invalid'::varchar)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where  nts not in (now() || 'invalid'::varchar)");
+        });
+    }
+
+    @Test
     public void testTimestampStringComparisonInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
             // create table

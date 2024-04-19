@@ -95,6 +95,10 @@ public final class TestUtils {
         return true;
     }
 
+    public static void assertAsciiCompliance(@Nullable Utf8Sequence utf8Sequence) {
+        Assert.assertEquals(utf8Sequence == null || utf8Sequence.isAscii(), Utf8s.isAscii(utf8Sequence));
+    }
+
     public static void assertConnect(int fd, long sockAddr) {
         long rc = connect(fd, sockAddr);
         if (rc != 0) {
@@ -1434,7 +1438,13 @@ public final class TestUtils {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
-                CursorPrinter.println(cursor, metadata, sink);
+                sink.clear();
+                CursorPrinter.println(metadata, sink);
+
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    println(record, metadata, sink);
+                }
             }
         }
     }
@@ -1453,6 +1463,15 @@ public final class TestUtils {
         }
     }
 
+    public static void println(Record record, RecordMetadata metadata, CharSink<?> sink) {
+        CursorPrinter.println(record, metadata, sink);
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) == ColumnType.VARCHAR) {
+                assertAsciiCompliance(record.getVarcharA(i));
+            }
+        }
+    }
+
     public static void putUtf8(TableWriter.Row r, String s, int columnIndex, boolean symbol) {
         byte[] bytes = s.getBytes(Files.UTF_8);
         long len = bytes.length;
@@ -1464,9 +1483,9 @@ public final class TestUtils {
             DirectUtf8String seq = new DirectUtf8String();
             seq.of(p, p + len);
             if (symbol) {
-                r.putSymUtf8(columnIndex, seq, true);
+                r.putSymUtf8(columnIndex, seq);
             } else {
-                r.putStrUtf8(columnIndex, seq, true);
+                r.putStrUtf8(columnIndex, seq);
             }
         } finally {
             Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
