@@ -127,6 +127,25 @@ public class DirectUtf8SinkTest extends AbstractTest {
     }
 
     @Test
+    public void testIsAscii() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(4)) {
+            Assert.assertTrue(sink.isAscii());
+
+            sink.putAscii("foobar");
+            Assert.assertTrue(sink.isAscii());
+
+            sink.put("هذا النص غير أسكي تمامًا");
+            Assert.assertFalse(sink.isAscii());
+
+            sink.clear();
+            Assert.assertTrue(sink.isAscii());
+
+            sink.put("هذا النص غير أسكي تمامًا");
+            Assert.assertFalse(sink.isAscii());
+        }
+    }
+
+    @Test
     public void testPutUtf8Sequence() {
         try (DirectUtf8Sink sink = new DirectUtf8Sink(1)) {
             final String str = "こんにちは世界";
