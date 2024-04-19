@@ -32,6 +32,11 @@
 #define DECLARE_DISPATCHER(FUNCNAME)
 #define DECLARE_DISPATCHER_TYPE(FUNCNAME, ...)  void FUNCNAME(__VA_ARGS__);
 
+#elif defined(__loongarch64)
+
+#define DECLARE_DISPATCHER(FUNCNAME)
+#define  DECLARE_DISPATCHER_TYPE(FUNCNAME, ...)  void FUNCNAME(__VA_ARGS__);
+
 #else // __aarch64__
 
 #include "vcl/vectorclass.h"

@@ -55,6 +55,18 @@
 #endif
     }
 #define BITS_SHIFT 3
+#elif defined(__loongarch64)
+    static inline uint32_t bit_scan_forward(uint32_t a) {
+        uint32_t r;
+        __asm("ctz.w %0, %1;" : "=r"(r) : "r"(a) : );
+        return r;
+    }
+    static inline uint32_t bit_scan_forward(uint64_t a) {
+        uint64_t r;
+        __asm("ctz.d %0, %1;" : "=r"(r) : "r"(a) : );
+        return r;
+    }
+#define BITS_SHIFT 3
 #else
     #include "vcl/vectorclass.h"
     #define BITS_SHIFT 0
@@ -142,7 +154,7 @@ private:
     T mask_;
 };
 
-#if defined(_ARM64)
+#if defined(_ARM64) || defined(__loongarch64)
 inline uint64_t UnalignedLoad64(const void *p) {
     uint64_t t;
     memcpy(&t, p, sizeof t);
