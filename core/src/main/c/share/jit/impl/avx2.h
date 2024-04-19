@@ -174,13 +174,16 @@ namespace questdb::avx2 {
     }
 
     inline Ymm is_nan(Compiler &c, data_type_t type, const Ymm &x) {
+        Ymm sub = c.newYmm();
         Ymm dst = c.newYmm();
         switch (type) {
             case data_type_t::f32:
-                c.vcmpps(dst, x, x, Predicate::kCmpUNORD);
+                c.vsubps(sub, x, x); // x - x = 0.0, NaN - NaN = NaN, Inf - Inf = NaN, -Inf - -Inf = NaN
+                c.vcmpps(dst, sub, sub, Predicate::kCmpUNORD);
                 break;
             default:
-                c.vcmppd(dst, x, x, Predicate::kCmpUNORD);
+                c.vsubpd(sub, x, x);
+                c.vcmppd(dst, sub, sub, Predicate::kCmpUNORD);
                 break;
         }
         return dst;
