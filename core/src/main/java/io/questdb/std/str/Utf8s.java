@@ -25,6 +25,7 @@
 package io.questdb.std.str;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -376,37 +377,6 @@ public final class Utf8s {
         return ll > rl;
     }
 
-    /**
-     * Strictly less than (&lt;) comparison of two UTF8 sequences in lexicographical
-     * order. For example, for:
-     * l = aaaaa
-     * r = aaaaaaa
-     * the l &lt; r will produce "true", however for:
-     * l = bbbb
-     * r = aaaaaaa
-     * the l &lt; r will produce "false", because b &lt; a.
-     *
-     * @param l left sequence, can be null
-     * @param r right sequence, can be null
-     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
-     */
-    public static boolean lessThan(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
-        if (l == null || r == null) {
-            return false;
-        }
-
-        final int ll = l.size();
-        final int rl = r.size();
-        final int min = Math.min(ll, rl);
-        for (int i = 0; i < min; i++) {
-            final int k = Numbers.compareUnsigned(l.byteAt(i), r.byteAt(i));
-            if (k != 0) {
-                return k < 0;
-            }
-        }
-        return ll < rl;
-    }
-
     public static int hashCode(@NotNull Utf8Sequence value) {
         int size = value.size();
         if (size == 0) {
@@ -658,6 +628,37 @@ public final class Utf8s {
         return -1;
     }
 
+    /**
+     * Strictly less than (&lt;) comparison of two UTF8 sequences in lexicographical
+     * order. For example, for:
+     * l = aaaaa
+     * r = aaaaaaa
+     * the l &lt; r will produce "true", however for:
+     * l = bbbb
+     * r = aaaaaaa
+     * the l &lt; r will produce "false", because b &lt; a.
+     *
+     * @param l left sequence, can be null
+     * @param r right sequence, can be null
+     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     */
+    public static boolean lessThan(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
+        if (l == null || r == null) {
+            return false;
+        }
+
+        final int ll = l.size();
+        final int rl = r.size();
+        final int min = Math.min(ll, rl);
+        for (int i = 0; i < min; i++) {
+            final int k = Numbers.compareUnsigned(l.byteAt(i), r.byteAt(i));
+            if (k != 0) {
+                return k < 0;
+            }
+        }
+        return ll < rl;
+    }
+
     public static boolean lessThan(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r, boolean negated) {
         final boolean eq = Utf8s.equals(l, r);
         return negated ? (eq || Utf8s.greaterThan(l, r)) : (!eq && Utf8s.lessThan(l, r));
@@ -795,6 +796,27 @@ public final class Utf8s {
 
     public static Utf8String toUtf8String(@Nullable Utf8Sequence s) {
         return s == null ? null : Utf8String.newInstance(s);
+    }
+
+    public static void trim(TrimType type, Utf8Sequence source, Utf8Sink sink) {
+        if (source == null || source.size() == 0) {
+            return;
+        }
+        int start = 0;
+        int limit = source.size();
+        if (type != TrimType.RTRIM) {
+            while (start < limit && source.byteAt(start) == ' ') {
+                start++;
+            }
+        }
+        if (type != TrimType.LTRIM) {
+            while (limit > start && source.byteAt(limit - 1) == ' ') {
+                limit--;
+            }
+        }
+        for (int i = start; i < limit; i++) {
+            sink.put(source.byteAt(i));
+        }
     }
 
     /**
