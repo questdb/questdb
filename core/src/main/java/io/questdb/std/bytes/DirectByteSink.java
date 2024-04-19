@@ -93,6 +93,17 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         setImplPtr(getImplPtr() + written);
     }
 
+    @Override
+    public @NotNull NativeByteSink borrowDirectByteSink() {
+        lastCapacity = capacity();
+        return byteSink;
+    }
+
+    @TestOnly
+    public long capacity() {
+        return getImplHi() - getImplLo();
+    }
+
     /**
      * Low-level access to ensure that at least `required` bytes are available for writing.
      * Returns the address of the first writable byte.
@@ -120,17 +131,6 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             Unsafe.recordMemAlloc(newCapacity - initCapacity, memoryTag());
         }
         return p;
-    }
-
-    @Override
-    public @NotNull NativeByteSink borrowDirectByteSink() {
-        lastCapacity = capacity();
-        return byteSink;
-    }
-
-    @TestOnly
-    public long capacity() {
-        return getImplHi() - getImplLo();
     }
 
     @Override
