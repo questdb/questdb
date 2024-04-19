@@ -47,6 +47,13 @@ public class TrimVarcharFunction extends VarcharFunction implements UnaryFunctio
     }
 
     @Override
+    public void close() {
+        UnaryFunction.super.close();
+        sink1.close();
+        sink2.close();
+    }
+
+    @Override
     public Function getArg() {
         return arg;
     }
