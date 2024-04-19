@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions.bool;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bool.InVarcharFunctionFactory;
-import io.questdb.std.str.Utf8String;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,33 +35,33 @@ public class InVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testBadConstant() {
-        assertFailure(12, "VARCHAR constant expected", new Utf8String("xv"), new Utf8String("an"), 10);
+        assertFailure(12, "VARCHAR constant expected", utf8("xv"), utf8("an"), 10);
     }
 
     @Test
     public void testNoMatch() throws SqlException {
-        call(new Utf8String("xc"), new Utf8String("ae"), new Utf8String("bn")).andAssert(false);
+        call(utf8("xc"), utf8("ae"), utf8("bn")).andAssert(false);
     }
 
     @Test
     public void testNullConstant() throws SqlException {
-        call(new Utf8String("xp"), new Utf8String("aq"), null).andAssert(false);
+        call(utf8("xp"), utf8("aq"), null).andAssert(false);
     }
 
     @Test
     public void testTwoArgs() throws SqlException {
-        call(new Utf8String("xy"), new Utf8String("xy"), new Utf8String("yz")).andAssert(true);
+        call(utf8("xy"), utf8("xy"), utf8("yz")).andAssert(true);
     }
 
     @Test
     public void testTwoArgsOneChar() throws SqlException {
-        call(new Utf8String("xy"), new Utf8String("xy"), new Utf8String("yz"), new Utf8String("l")).andAssert(true);
+        call(utf8("xy"), utf8("xy"), utf8("yz"), utf8("l")).andAssert(true);
     }
 
     @Test
     public void testZeroArgs() {
         try {
-            call(new Utf8String("xx")).andAssert(false);
+            call(utf8("xx")).andAssert(false);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals("[3] too few arguments for 'in'", e.getMessage());

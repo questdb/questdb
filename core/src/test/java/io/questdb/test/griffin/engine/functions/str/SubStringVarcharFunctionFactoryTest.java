@@ -37,8 +37,8 @@ public class SubStringVarcharFunctionFactoryTest extends AbstractFunctionFactory
 
     @Test
     public void testNonPositiveStart() throws Exception {
-        call(new Utf8String("foo"), -3, 4).andAssert("");
-        call(new Utf8String("foo"), -3, 5).andAssert("f");
+        call(utf8("foo"), -3, 4).andAssert("");
+        call(utf8("foo"), -3, 5).andAssert("f");
         call(null, -3, 0).andAssert(null);
     }
 
@@ -77,20 +77,20 @@ public class SubStringVarcharFunctionFactoryTest extends AbstractFunctionFactory
 
     @Test
     public void testStartOrLenOutOfRange() throws Exception {
-        call(new Utf8String("foo"), 10, 1).andAssert("");
-        call(new Utf8String("foo"), 10, 10).andAssert("");
-        call(new Utf8String("foo"), 1, 10).andAssert("foo");
+        call(utf8("foo"), 10, 1).andAssert("");
+        call(utf8("foo"), 10, 10).andAssert("");
+        call(utf8("foo"), 1, 10).andAssert("foo");
         call(null, 2, 4).andAssert(null);
     }
 
     @Test
     public void testZeroOrInvalidLength() throws Exception {
-        call(new Utf8String("foo"), 3, 0).andAssert("");
+        call(utf8("foo"), 3, 0).andAssert("");
         call(null, 3, 0).andAssert(null);
-        call(new Utf8String("foo"), 3, Numbers.INT_NULL).andAssert(null);
+        call(utf8("foo"), 3, Numbers.INT_NULL).andAssert(null);
 
         try {
-            call(new Utf8String("foo"), 3, -1).andAssert(null);
+            call(utf8("foo"), 3, -1).andAssert(null);
             assertException("non-const negative len is not allowed");
         } catch (CairoException e) {
             // negative substring length is not allowed
