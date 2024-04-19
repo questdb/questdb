@@ -61,8 +61,9 @@ import org.jetbrains.annotations.Nullable;
  * </pre>
  */
 public class UnorderedVarcharMap implements Map, Reopenable {
-
     static final long KEY_HEADER_SIZE = 2 * Long.BYTES;
+    private static final byte FLAG_IS_ASCII = (byte) (1 << 7);
+    private static final byte FLAG_IS_NULL = (byte) (1 << 6);
     private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     private static final int MIN_KEY_CAPACITY = 16;
     private final UnorderedVarcharMapCursor cursor;
@@ -280,8 +281,13 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return key.init();
     }
 
-    private static long packHashSizeFlags(long hash, int size, boolean isAscii, boolean isNull) {
-        int sizeAndFlags = size | (isAscii ? 0x80000000 : 0) | (isNull ? 0x40000000 : 0);
+    private static long packHashSizeFlags(long hash, int size, byte flags) {
+        // size must be within 30 bits
+        assert size < (1 << 30);
+        // flags must have lower 6 bits clear
+        assert (flags & 0x3f) == 0;
+
+        int sizeAndFlags = size | (flags << 24);
         return ((long) sizeAndFlags << 32) | (hash & 0xffffffffL);
     }
 
@@ -432,8 +438,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
     class Key implements MapKey {
         // todo: probably better to keep all flags already packed in a byte
-        private boolean isAscii;
-        private boolean isNull;
+        private byte flags;
         private long ptr;
         private int size;
 
@@ -447,8 +452,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             Key srcVarcharKey = (Key) srcKey;
             ptr = srcVarcharKey.ptr;
             size = srcVarcharKey.size;
-            isAscii = srcVarcharKey.isAscii;
-            isNull = srcVarcharKey.isNull;
+            flags = srcVarcharKey.flags;
         }
 
         @Override
@@ -458,7 +462,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long startAddress = getStartAddress(index);
 
             long loadedHashSizeFlags = Unsafe.getUnsafe().getLong(startAddress);
-            long packedHashSizeFlags = packHashSizeFlags(hash, size, isAscii, isNull);
+            long packedHashSizeFlags = packHashSizeFlags(hash, size, flags);
             if (loadedHashSizeFlags == 0) {
                 return asNew(startAddress, hash, ptr, size, packedHashSizeFlags, value);
             }
@@ -477,7 +481,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long startAddress = getStartAddress(index);
 
             long loadedHashSizeFlags = Unsafe.getUnsafe().getLong(startAddress);
-            long currentHashSizeFlags = packHashSizeFlags(hashCode, size, isAscii, isNull);
+            long currentHashSizeFlags = packHashSizeFlags(hashCode, size, flags);
             if (loadedHashSizeFlags == 0) {
                 return asNew(startAddress, hashCode, ptr, size, currentHashSizeFlags, value);
             }
@@ -492,17 +496,17 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
         @Override
         public MapValue findValue() {
-            return findValue(ptr, size, isAscii, isNull, value);
+            return findValue(ptr, size, flags, value);
         }
 
         @Override
         public MapValue findValue2() {
-            return findValue(ptr, size, isAscii, isNull, value2);
+            return findValue(ptr, size, flags, value2);
         }
 
         @Override
         public MapValue findValue3() {
-            return findValue(ptr, size, isAscii, isNull, value3);
+            return findValue(ptr, size, flags, value3);
         }
 
         @Override
@@ -617,20 +621,19 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             if (value == null) {
                 size = 0;
                 ptr = 0;
-                isAscii = true;
-                isNull = true;
+                // set the 2 top bits to indicate null value (+ascii flag)
+                flags = FLAG_IS_NULL | FLAG_IS_ASCII;
             } else {
                 assert value.isStable(); // todo: support for unstable sequences
                 ptr = value.ptr();
                 size = value.size();
-                isAscii = value.isAscii();
-                isNull = false;
+                flags = value.isAscii() ? FLAG_IS_ASCII : 0;
             }
 
             // Empty string must have the ascii flag set to true, otherwise we won't be able to differentiate
             // between a missing entry and an empty string.
             // The flags are encoded into the high bits in the size field so an empty string will still have a non-zero size stored.
-            assert size > 0 || isAscii;
+            assert size > 0 || (flags & FLAG_IS_ASCII) != 0;
         }
 
         @Override
@@ -638,7 +641,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             // no-op
         }
 
-        private MapValue findValue(long ptr, int size, boolean isAscii, boolean isNull, UnorderedVarcharMapValue value) {
+        private MapValue findValue(long ptr, int size, byte flags, UnorderedVarcharMapValue value) {
             long hash = Hash.hashVarSizeMem64(ptr, size);
             long index = hash & mask;
             long startAddress = getStartAddress(index);
@@ -647,7 +650,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             if (loadedHashSizeFlags == 0) {
                 return null;
             }
-            long packedHashSizeFlags = packHashSizeFlags(hash, size, isAscii, isNull);
+            long packedHashSizeFlags = packHashSizeFlags(hash, size, flags);
             if (loadedHashSizeFlags == packedHashSizeFlags) {
                 long currentPtr = Unsafe.getUnsafe().getLong(startAddress + 8);
                 if (Vect.memeq(currentPtr, ptr, size)) {

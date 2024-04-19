@@ -27,8 +27,10 @@ package io.questdb.test.cairo.map;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.UnorderedVarcharMap;
+import io.questdb.std.Chars;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
@@ -51,6 +53,25 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
             map.clear();
             Assert.assertNull(findValue("foo", map));
             Assert.assertEquals(0, map.size());
+        }
+    }
+
+    @Test
+    public void testCursor() {
+        SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+        try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
+             UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
+        ) {
+            int keyCount = 1_000;
+            for (int i = 0; i < keyCount; i++) {
+                put("foo" + i, i + 1, map, sinkA, true);
+            }
+            put("", 0, map, sinkA, true);
+            put(null, -1, map, sinkA, true);
+
+            try (MapRecordCursor cursor = map.getCursor()) {
+
+            }
         }
     }
 
@@ -236,7 +257,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
             long lo = sink.hi();
             sink.put(stringKey);
             DirectUtf8String key = new DirectUtf8String(true);
-            key.of(lo, sink.hi(), sink.isAscii());
+            key.of(lo, sink.hi(), Chars.isAscii(stringKey));
             mapKey.putVarchar(key);
         }
         MapValue value = mapKey.createValue();
