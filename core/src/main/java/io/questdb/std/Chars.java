@@ -27,7 +27,10 @@ package io.questdb.std;
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.str.TrimType;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -83,19 +86,11 @@ public final class Chars {
         base64Decode(encoded, target, base64Inverted);
     }
 
-    public static void base64Decode(CharSequence encoded, @NotNull Utf8Sink target) {
-        base64Decode(encoded, target, base64Inverted);
-    }
-
     public static void base64Encode(@Nullable BinarySequence sequence, int maxLength, @NotNull CharSink<?> buffer) {
         int pad = base64Encode(sequence, maxLength, buffer, base64);
         for (int j = 0; j < pad; j++) {
             buffer.putAscii("=");
         }
-    }
-
-    public static void base64UrlDecode(@Nullable CharSequence encoded, @NotNull Utf8Sink target) {
-        base64Decode(encoded, target, base64UrlInverted);
     }
 
     /**
@@ -1005,60 +1000,6 @@ public final class Chars {
             inverted[letter] = (byte) i;
         }
         return inverted;
-    }
-
-    private static void base64Decode(@Nullable CharSequence encoded, @NotNull Utf8Sink target, int[] invertedAlphabet) {
-        if (encoded == null) {
-            return;
-        }
-
-        // skip trailing '=' they are just for padding and have no meaning
-        int length = encoded.length();
-        for (; length > 0; length--) {
-            if (encoded.charAt(length - 1) != '=') {
-                break;
-            }
-        }
-
-        int remainder = length % 4;
-        int sourcePos = 0;
-
-        // first decode all 4 byte chunks. this is *the* hot loop, be careful when changing it
-        for (int end = length - remainder; sourcePos < end; sourcePos += 4) {
-            int b0 = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
-            int b1 = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
-            int b2 = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 2)) << 6;
-            int b4 = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 3));
-
-            int wrk = b0 | b1 | b2 | b4;
-            // we use absolute positions to write to the byte buffer in the hot loop
-            // benchmarking shows that it is faster than using relative positions
-            target.put((byte) (wrk >>> 16));
-            target.put((byte) ((wrk >>> 8) & 0xFF));
-            target.put((byte) (wrk & 0xFF));
-        }
-        // now decode remainder
-        int wrk;
-        switch (remainder) {
-            case 0:
-                // nothing to do, yay!
-                break;
-            case 1:
-                // invalid encoding, we can't have 1 byte remainder as
-                // even 1 byte encodes to 2 chars
-                throw CairoException.nonCritical().put("invalid base64 encoding [string=").put(encoded).put(']');
-            case 2:
-                wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
-                wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
-                target.put((byte) (wrk >>> 16));
-                break;
-            case 3:
-                wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
-                wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
-                wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 2)) << 6;
-                target.put((byte) (wrk >>> 16));
-                target.put((byte) ((wrk >>> 8) & 0xFF));
-        }
     }
 
     private static void base64Decode(CharSequence encoded, ByteBuffer target, int[] invertedAlphabet) {
