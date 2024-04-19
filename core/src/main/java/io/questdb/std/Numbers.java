@@ -26,6 +26,7 @@ package io.questdb.std;
 
 // @formatter:off
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
@@ -33,17 +34,14 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
 public final class Numbers {
     public static final int BAD_NETMASK = 1;
+    public static final char CHAR_NULL = CharConstant.ZERO.getChar(null);
     public static final double DOUBLE_TOLERANCE = 0.0000000001;
     public static final int INT_NULL = Integer.MIN_VALUE;
     public static final int IPv4_NULL = 0;
@@ -776,6 +774,23 @@ public final class Numbers {
     }
     public static boolean isPow2(int value) {
         return (value & (value - 1)) == 0;
+    }
+
+    public static boolean lessThan(long a, long b, boolean negated) {
+        final boolean eq = a == b;
+        return (eq || (a != LONG_NULL && b != LONG_NULL)) && (negated ? (eq || a > b) : (!eq && a < b));
+    }
+
+    public static boolean lessThan(int a, int b, boolean negated) {
+        final boolean eq = a == b;
+        return (eq || (a != INT_NULL && b != INT_NULL)) && (negated ? (eq || a > b) : (!eq && a < b));
+    }
+
+    public static boolean lessThanIPv4(int a, int b, boolean negated) {
+        long a1 = ipv4ToLong(a);
+        long b1 = ipv4ToLong(b);
+        final boolean eq = a1 == b1;
+        return (eq || (a != IPv4_NULL && b != IPv4_NULL)) && (negated ? (eq || a1 > b1) : (!eq && a1 < b1));
     }
 
     public static float longToFloat(long value) {

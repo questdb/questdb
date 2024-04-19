@@ -153,50 +153,17 @@ public final class Utf8s {
         return !(seqSize == 0 || seqSize < size) && equalsAsciiLowerCase(asciiEnds, seq, seqSize - size, seqSize);
     }
 
-    public static boolean equals(@NotNull DirectUtf8String l, @NotNull Utf8String r) {
-        int size;
-        if ((size = l.size()) != r.size()) {
-            return false;
-        }
-        final long lo = l.lo();
-        int i = 0;
-        for (; i + 3 < size; i += 4) {
-            if (Unsafe.getUnsafe().getInt(lo + i) != r.intAt(i)) {
-                return false;
-            }
-        }
-        for (; i < size; i++) {
-            if (Unsafe.getUnsafe().getByte(lo + i) != r.byteAt(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    public static boolean equals(@NotNull Utf8String l, @NotNull Utf8String r) {
-        if (l == r) {
+    public static boolean equals(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
+        if (l == null && r == null) {
             return true;
         }
-        int size;
-        if ((size = l.size()) != r.size()) {
+
+        if (l == null || r == null) {
             return false;
         }
-        int i = 0;
-        for (; i + 3 < size; i += 4) {
-            if (l.intAt(i) != r.intAt(i)) {
-                return false;
-            }
-        }
-        for (; i < size; i++) {
-            if (l.byteAt(i) != r.byteAt(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
 
-    public static boolean equals(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r) {
-        return l.size() == r.size() && l.equalsAssumingSameSize(r);
+        final int size = l.size();
+        return (size == r.size() && l.equalsAssumingSameSize(r, size));
     }
 
     public static boolean equals(@NotNull Utf8Sequence l, int lLo, int lHi, @NotNull Utf8Sequence r, int rLo, int rHi) {
@@ -213,16 +180,6 @@ public final class Utf8s {
             }
         }
         return true;
-    }
-
-    public static boolean equals(@NotNull DirectUtf8Sequence l, @NotNull DirectUtf8Sequence r) {
-        if (l == r) {
-            return true;
-        }
-        if (l.ptr() == r.ptr() && l.size() == r.size()) {
-            return true;
-        }
-        return equals(l, (Utf8Sequence) r);
     }
 
     public static boolean equalsAscii(@NotNull CharSequence lAsciiSeq, int lLo, int lHi, @NotNull Utf8Sequence rSeq, int rLo, int rHi) {
@@ -386,6 +343,68 @@ public final class Utf8s {
             }
         }
         return sequenceType;
+    }
+
+    /**
+     * Strictly greater than (>) comparison of two UTF8 sequences in lexicographical
+     * order. For example, for:
+     * l = aaaaa
+     * r = aaaaaaa
+     * the l > r will produce "false", however for:
+     * l = bbbb
+     * r = aaaaaaa
+     * the l > r will produce "true", because b > a.
+     *
+     * @param l left sequence, can be null
+     * @param r right sequence, can be null
+     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     */
+    public static boolean greaterThan(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
+        if (l == null || r == null) {
+            return false;
+        }
+
+        final int ll = l.size();
+        final int rl = r.size();
+        final int min = Math.min(ll, rl);
+        for (int i = 0; i < min; i++) {
+            final int k = Numbers.compareUnsigned(l.byteAt(i), r.byteAt(i));
+            if (k != 0) {
+                return k > 0;
+            }
+        }
+        return ll > rl;
+    }
+
+    /**
+     * Strictly less than (<) comparison of two UTF8 sequences in lexicographical
+     * order. For example, for:
+     * l = aaaaa
+     * r = aaaaaaa
+     * the l > r will produce "true", however for:
+     * l = bbbb
+     * r = aaaaaaa
+     * the l > r will produce "false", because b > a.
+     *
+     * @param l left sequence, can be null
+     * @param r right sequence, can be null
+     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     */
+    public static boolean lessThan(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
+        if (l == null || r == null) {
+            return false;
+        }
+
+        final int ll = l.size();
+        final int rl = r.size();
+        final int min = Math.min(ll, rl);
+        for (int i = 0; i < min; i++) {
+            final int k = Numbers.compareUnsigned(l.byteAt(i), r.byteAt(i));
+            if (k != 0) {
+                return k < 0;
+            }
+        }
+        return ll < rl;
     }
 
     public static int hashCode(@NotNull Utf8Sequence value) {
@@ -637,6 +656,11 @@ public final class Utf8s {
             }
         }
         return -1;
+    }
+
+    public static boolean lessThan(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r, boolean negated) {
+        final boolean eq = Utf8s.equals(l, r);
+        return negated ? (eq || Utf8s.greaterThan(l, r)) : (!eq && Utf8s.lessThan(l, r));
     }
 
     public static int lowerCaseAsciiHashCode(@NotNull Utf8Sequence value) {

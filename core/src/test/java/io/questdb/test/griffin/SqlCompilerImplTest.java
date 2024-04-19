@@ -2025,13 +2025,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertSql("column\ntrue\n", "select cast('' as char) = null");
             assertSql("column\nfalse\n", "select cast('' as char) < null");
             assertSql("column\nfalse\n", "select cast('' as char) > null");
-            assertSql("column\nfalse\n", "select cast('' as char) <= null"); // inconsistent with = null
-            assertSql("column\nfalse\n", "select cast('' as char) >= null"); // inconsistent with = null
+            assertSql("column\ntrue\n", "select cast('' as char) <= null");
+            assertSql("column\ntrue\n", "select cast('' as char) >= null");
             assertSql("column\nfalse\n", "select cast('' as string) = null");
             assertSql("column\nfalse\n", "select cast('' as string) <= null");
             assertSql("column\ntrue\n", "select cast(null as string) = null");
-            assertSql("column\nfalse\n", "select cast(null as string) <= null");// inconsistent with = null
-            assertSql("column\nfalse\n", "select cast(null as string) >= null");// inconsistent with = null
+            assertSql("column\ntrue\n", "select cast(null as string) <= null");
+            assertSql("column\ntrue\n", "select cast(null as string) >= null");
 
 
             assertFailure(7, "", "select datediff('ma', 0::timestamp, 1::timestamp) ");
@@ -2167,7 +2167,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "column\n" +
                             "true\n" +
                             "false\n" +
-                            "false\n" +
+                            "true\n" +
                             "false\n" +
                             "true\n",
                     "select rnd_str('d', 'cd', null) >= rnd_str('d', 'cd', null) from long_sequence(5)"
@@ -2178,7 +2178,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "column\n" +
                             "true\n" +
                             "false\n" +
-                            "false\n" +
+                            "true\n" +
                             "false\n" +
                             "true\n",
                     "select rnd_varchar('d', 'cd', null) >= rnd_varchar('d', 'cd', null) from long_sequence(5)"
@@ -2305,13 +2305,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertSql("column\ntrue\n", "select cast('' as char) = null");
             assertSql("column\nfalse\n", "select cast('' as char) < null");
             assertSql("column\nfalse\n", "select cast('' as char) > null");
-            assertSql("column\nfalse\n", "select cast('' as char) <= null"); // inconsistent with = null
-            assertSql("column\nfalse\n", "select cast('' as char) >= null"); // inconsistent with = null
+            assertSql("column\ntrue\n", "select cast('' as char) <= null");
+            assertSql("column\ntrue\n", "select cast('' as char) >= null");
             assertSql("column\nfalse\n", "select cast('' as string) = null");
             assertSql("column\nfalse\n", "select cast('' as string) <= null");
             assertSql("column\ntrue\n", "select cast(null as string) = null");
-            assertSql("column\nfalse\n", "select cast(null as string) <= null");// inconsistent with = null
-            assertSql("column\nfalse\n", "select cast(null as string) >= null");// inconsistent with = null
+            assertSql("column\ntrue\n", "select cast(null as string) <= null");
+            assertSql("column\ntrue\n", "select cast(null as string) >= null");
 
             assertFailure(7, "", "select datediff('ma', 0::timestamp, 1::timestamp) ");
         });

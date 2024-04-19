@@ -98,7 +98,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNot().withAnyOf("f32 <= 0.34")
                 .withBooleanOperator()
                 .withOptionalNot().withAnyOf("f64 > 7.5");
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
@@ -127,7 +127,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withArithmeticOperator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
                 .withAnyOf(" = 1");
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
@@ -145,7 +145,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
                 .withAnyOf(" = ", " <> ")
                 .withAnyOf("null");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
+        assertGeneratedQueryNullable(ddl, gen);
     }
 
     @Test
@@ -161,7 +161,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
                 .withComparisonOperator()
                 .withAnyOf("-42.5", "0.0", "0.000", "42.5");
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
@@ -179,7 +179,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
                 .withComparisonOperator()
                 .withAnyOf("-50", "0", "50");
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
@@ -199,7 +199,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
                 .withComparisonOperator()
                 .withAnyOf(String.valueOf(boundary));
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
@@ -222,7 +222,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withArithmeticOperator()
                 .withOptionalNegation().withAnyOf("f32", "f64")
                 .withAnyOf(" > 1");
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
@@ -322,7 +322,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             }
             gen.withAnyOf("i64 != 0");
         }
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
@@ -342,7 +342,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withAnyOf(String.valueOf(boundary))
                 .withComparisonOperator()
                 .withAnyOf("i8", "i16", "i32", "i64", "f32", "f64");
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
@@ -360,7 +360,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
                 .withComparisonOperator()
                 .withOptionalNegation().withAnyOf("f32", "f64");
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull(ddl, gen);
     }
 
     @Test
@@ -376,7 +376,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("i32", "i64")
                 .withComparisonOperator()
                 .withOptionalNegation().withAnyOf("f32", "f64");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
+        assertGeneratedQueryNullable(ddl, gen);
     }
 
     @Test
@@ -406,7 +406,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("f32", "f64")
                 .withAnyOf(" = ", " <> ")
                 .withAnyOf("null");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
+        assertGeneratedQueryNullable(ddl, gen);
     }
 
     @Test
@@ -422,7 +422,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withAnyOf("i32", "i64", "f32", "f64")
                 .withComparisonOperator()
                 .withAnyOf("1");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
+        assertGeneratedQueryNullable(ddl, gen);
     }
 
     @Test
@@ -504,7 +504,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withAnyOf("uuid1", "uuid2")
                 .withEqualityOperator()
                 .withAnyOf("'22222222-2222-2222-2222-222222222222'", "'33333333-3333-3333-3333-333333333333'");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
+        assertGeneratedQueryNullable(ddl, gen);
     }
 
     @Test
@@ -523,7 +523,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withAnyOf("uuid")
                 .withEqualityOperator()
                 .withAnyOf("'22222222-2222-2222-2222-222222222222'", "null");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
+        assertGeneratedQueryNullable(ddl, gen);
     }
 
     @Test
@@ -541,7 +541,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withAnyOf("uuid1", "uuid2")
                 .withEqualityOperator()
                 .withAnyOf("null");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
+        assertGeneratedQueryNullable(ddl, gen);
     }
 
     @Test
@@ -561,7 +561,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withAnyOf("string_value", "varchar_value", "binary_value")
                 .withEqualityOperator()
                 .withAnyOf("null");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
+        assertGeneratedQueryNullable(ddl, gen);
     }
 
     @Test
@@ -575,10 +575,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withAnyOf("varchar_value")
                 .withEqualityOperator()
                 .withAnyOf("null");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
+        assertGeneratedQueryNullable(ddl, gen);
     }
 
-    private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen, boolean notNull) throws Exception {
+    private void assertGeneratedQuery(CharSequence ddl, FilterGenerator gen, boolean notNull) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
                 ddl(ddl);
@@ -586,27 +586,27 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
             long maxSize = 0;
             List<String> filters = gen.generate();
-            LOG.info().$("generated ").$(filters.size()).$(" filter expressions for base query: ").$(baseQuery).$();
+            LOG.info().$("generated ").$(filters.size()).$(" filter expressions for base query: ").$("select * from x").$();
             Assert.assertFalse(filters.isEmpty());
             for (String filter : filters) {
                 if (filter.equals("i8 + 3 + 42.5 + f32 > 1")) {
                     System.out.println("ok");
                 }
-                long size = runQuery(baseQuery + " where " + filter);
+                long size = runQuery("select * from x" + " where " + filter);
                 maxSize = Math.max(maxSize, size);
 
-                assertJitQuery(baseQuery + " where " + filter, notNull);
+                assertJitQuery("select * from x" + " where " + filter, notNull);
             }
             Assert.assertTrue("at least one query is expected to return rows", maxSize > 0);
         });
     }
 
-    private void assertGeneratedQueryNotNull(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
-        assertGeneratedQuery(baseQuery, ddl, gen, true);
+    private void assertGeneratedQueryNotNull(CharSequence ddl, FilterGenerator gen) throws Exception {
+        assertGeneratedQuery(ddl, gen, true);
     }
 
-    private void assertGeneratedQueryNullable(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
-        assertGeneratedQuery(baseQuery, ddl, gen, false);
+    private void assertGeneratedQueryNullable(CharSequence ddl, FilterGenerator gen) throws Exception {
+        assertGeneratedQuery(ddl, gen, false);
     }
 
     private void assertJitQuery(CharSequence query, boolean notNull) throws SqlException {

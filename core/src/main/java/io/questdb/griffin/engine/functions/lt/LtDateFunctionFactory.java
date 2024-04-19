@@ -63,14 +63,11 @@ public class LtDateFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long left = this.left.getDate(rec);
-            if (left != Numbers.LONG_NULL) {
-                long right = this.right.getDate(rec);
-                if (right != Numbers.LONG_NULL) {
-                    return negated == (left >= right);
-                }
-            }
-            return false;
+            return Numbers.lessThan(
+                    this.left.getDate(rec),
+                    this.right.getDate(rec),
+                    negated
+            );
         }
 
         @Override

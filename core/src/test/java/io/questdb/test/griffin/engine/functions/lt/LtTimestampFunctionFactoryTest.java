@@ -43,7 +43,7 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
         callBySignature(">=(NN)", t1, t1).andAssert(true);
         callBySignature(">=(NN)", t1, t2).andAssert(false);
         callBySignature(">=(NN)", t2, t1).andAssert(false);
-        callBySignature(">=(NN)", t2, t2).andAssert(false);
+        callBySignature(">=(NN)", t2, t2).andAssert(true);
     }
 
     @Test
@@ -81,7 +81,7 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
         callBySignature("<=(NN)", t1, t1).andAssert(true);
         callBySignature("<=(NN)", t1, t2).andAssert(false);
         callBySignature("<=(NN)", t2, t1).andAssert(false);
-        callBySignature("<=(NN)", t2, t2).andAssert(false);
+        callBySignature("<=(NN)", t2, t2).andAssert(true);
     }
 
     @Test

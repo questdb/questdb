@@ -77,4 +77,17 @@ public class DoubleComparisonTest extends AbstractCairoTest {
                         ");"
         );
     }
+
+    @Test
+    public void testNullLongInt() throws SqlException {
+        assertSql(
+                "column\tcolumn1\n" +
+                        "true\ttrue\n",
+                "select a >= b, b >= a\n" +
+                        "from (\n" +
+                        "  select cast(null as long) a, cast(null as int) b\n" +
+                        "  from long_sequence(1)\n" +
+                        ")"
+        );
+    }
 }

@@ -42,7 +42,7 @@ public class LtDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
         callBySignature(">=(MM)", t1, t1).andAssert(true);
         callBySignature(">=(MM)", t1, t2).andAssert(false);
         callBySignature(">=(MM)", t2, t1).andAssert(false);
-        callBySignature(">=(MM)", t2, t2).andAssert(false);
+        callBySignature(">=(MM)", t2, t2).andAssert(true);
     }
 
     @Test
@@ -80,7 +80,7 @@ public class LtDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
         callBySignature("<=(MM)", t1, t1).andAssert(true);
         callBySignature("<=(MM)", t1, t2).andAssert(false);
         callBySignature("<=(MM)", t2, t1).andAssert(false);
-        callBySignature("<=(MM)", t2, t2).andAssert(false);
+        callBySignature("<=(MM)", t2, t2).andAssert(true);
     }
 
     @Test

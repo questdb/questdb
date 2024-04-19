@@ -69,14 +69,11 @@ public class LtIntFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long left = this.left.getInt(rec);
-            if (left != Numbers.INT_NULL) {
-                long right = this.right.getInt(rec);
-                if (right != Numbers.INT_NULL) {
-                    return negated == (left >= right);
-                }
-            }
-            return false;
+            return Numbers.lessThan(
+                    this.left.getInt(rec),
+                    this.right.getInt(rec),
+                    negated
+            );
         }
 
         @Override
