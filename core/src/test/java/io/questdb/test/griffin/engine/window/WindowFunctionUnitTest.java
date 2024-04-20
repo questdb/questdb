@@ -28,6 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.BaseDoubleWindowFunction;
+import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -126,17 +128,14 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAggOverPartitionRangeFuzz() {
-        Rnd rnd = new Rnd();
-        for (int count = 1; count <= 512; count *= 2) {
-            System.out.println(count);
-            for (int attempt = 0; attempt <= 4096; attempt++) {
-                Record[] records = generateTestRecords(rnd, count, 1 + rnd.nextInt(32), 1 + rnd.nextLong(65536));
-                Arrays.sort(records, Comparator.comparingLong(a -> a.getLong(0)));
-                long rangeLo = rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(65536);
-                long rangeHi = -rnd.nextLong(65536);
-
-                try (SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction f = new SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction(
+    public void testAggOverPartitionRangeFuzz() throws Exception {
+        fuzzTestBase(
+                new Rnd(),
+                true,
+                false,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(65536),
+                rnd -> -rnd.nextLong(65536),
+                (rangeLo, rangeHi) -> new SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction(
                         TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_RANGE_COLUMN_TYPES),
                         TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                         TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
@@ -146,75 +145,161 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createMemoryCARW(),
                         2,
                         0
-                )) {
-                    for (int s = 0; s < records.length; s++) {
-                        f.computeNext(records[s]);
-                        double expected = Double.NaN;
-                        for (int q = s; q >= 0; q--) {
-                            if (records[q].getInt(1) != records[s].getInt(1)) {
-                                continue;
-                            }
-                            if ((rangeLo == Long.MIN_VALUE || records[q].getLong(0) >= records[s].getLong(0) + rangeLo) && records[q].getLong(0) <= records[s].getLong(0) + rangeHi) {
-                                if (Double.isNaN(expected)) {
-                                    expected = 0;
-                                }
-                                expected += records[q].getLong(2);
-                            }
-                            if (rangeLo != Long.MIN_VALUE && records[q].getLong(0) < records[s].getLong(0) + rangeLo) {
-                                break;
-                            }
-                        }
-                        if (Math.abs(expected - f.getDouble(null)) > 1e-6) {
-                            Assert.fail(String.format(
-                                    "count=%d, attempt=#%d, rangeLo=%d, rangeHi=%d, s=%d, expected=%f, actual=%f, data=[%s]",
-                                    count, attempt, rangeLo, rangeHi, s, expected, f.getDouble(null),
-                                    Arrays.stream(records).map(x -> String.format("%d:%d:%d", x.getLong(0), x.getInt(1), x.getLong(2))).collect(Collectors.joining(", "))
-                            ));
-                        }
-                    }
-                }
-            }
-        }
+                ),
+                Double::sum
+        );
     }
 
     @Test
-    public void testAggRangeFuzz() {
-        Rnd rnd = new Rnd();
-        for (int count = 1; count <= 512; count *= 2) {
-            System.out.println(count);
-            for (int attempt = 0; attempt <= 4096; attempt++) {
-                Record[] records = generateTestRecords(rnd, count, 1 + rnd.nextInt(32), 1 + rnd.nextLong(65536));
-                Arrays.sort(records, Comparator.comparingLong(a -> a.getLong(0)));
-                long rangeLo = rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(65536);
-                long rangeHi = -rnd.nextLong(65536);
-                if (rangeLo > rangeHi) {
-                    long tmp = rangeLo;
-                    rangeLo = rangeHi;
-                    rangeHi = tmp;
-                }
+    public void testAggOverPartitionRowsFuzz() throws Exception {
+        fuzzTestBase(
+                new Rnd(),
+                true,
+                true,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024) - 1,
+                (rangeLo, rangeHi) -> new SumDoubleWindowFunctionFactory.SumOverPartitionRowsFrameFunction(
+                        TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_ROWS_COLUMN_TYPES),
+                        TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
+                        TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
+                        rangeLo,
+                        rangeHi,
+                        TestDefaults.createLongFunction(x -> x.getLong(2)),
+                        TestDefaults.createMemoryCARW()
+                ),
+                Double::sum
+        );
+    }
 
-                try (SumDoubleWindowFunctionFactory.SumOverRangeFrameFunction f = new SumDoubleWindowFunctionFactory.SumOverRangeFrameFunction(
+    @Test
+    public void testAggOverRowsFuzz() throws Exception {
+        fuzzTestBase(
+                new Rnd(),
+                false,
+                true,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024),
+                (rangeLo, rangeHi) -> {
+                    if (rangeLo == Long.MIN_VALUE && rangeHi == 0) {
+                        return new SumDoubleWindowFunctionFactory.SumOverUnboundedRowsFrameFunction(
+                                TestDefaults.createLongFunction(x -> x.getLong(2))
+                        );
+                    }
+                    return new SumDoubleWindowFunctionFactory.SumOverRowsFrameFunction(
+                            TestDefaults.createLongFunction(x -> x.getLong(2)),
+                            rangeLo,
+                            rangeHi,
+                            TestDefaults.createMemoryCARW()
+                    );
+                },
+                Double::sum
+        );
+    }
+
+    @Test
+    public void testFirstOverRowsFuzz() throws Exception {
+        fuzzTestBase(
+                new Rnd(),
+                false,
+                true,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
+                rnd -> -rnd.nextLong(1024),
+                (rangeLo, rangeHi) -> {
+                    if (rangeLo == Long.MIN_VALUE && rangeHi == 0) {
+                        return new FirstValueDoubleWindowFunctionFactory.FirstValueOverWholeResultSetFunction(TestDefaults.createLongFunction(x -> x.getLong(2)));
+                    }
+                    return new FirstValueDoubleWindowFunctionFactory.FirstValueOverRowsFrameFunction(
+                            TestDefaults.createLongFunction(x -> x.getLong(2)),
+                            rangeLo,
+                            rangeHi,
+                            TestDefaults.createMemoryCARW()
+                    );
+                },
+                (a, b) -> b
+        );
+    }
+
+    @Test
+    public void testAggRangeFuzz() throws Exception {
+        fuzzTestBase(
+                new Rnd(),
+                false,
+                false,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(65536),
+                rnd -> -rnd.nextLong(65536),
+                (rangeLo, rangeHi) -> new SumDoubleWindowFunctionFactory.SumOverRangeFrameFunction(
                         rangeLo,
                         rangeHi,
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
                         64,
                         TestDefaults.createMemoryCARW(),
                         0
-                )) {
+                ),
+                Double::sum
+        );
+    }
 
+    public void fuzzTestBase(
+            Rnd rnd,
+            boolean partitioned,
+            boolean rows,
+            java.util.function.Function<Rnd, Long> rangeLoGen,
+            java.util.function.Function<Rnd, Long> rangeHiGen,
+            java.util.function.BiFunction<Long, Long, BaseDoubleWindowFunction> windowFunctionFactory,
+            java.util.function.BiFunction<Double, Double, Double> sum
+    ) throws Exception {
+        for (int count = 1; count <= 512; count *= 2) {
+            System.out.println(count);
+            for (int attempt = 0; attempt <= 4096; attempt++) {
+                Record[] records = generateTestRecords(rnd, count, 1 + rnd.nextInt(32), 1 + rnd.nextLong(65536));
+                Arrays.sort(records, Comparator.comparingLong(a -> a.getLong(0)));
+                long rangeLo = rangeLoGen.apply(rnd);
+                long rangeHi = rangeHiGen.apply(rnd);
+                if (rangeLo > rangeHi) {
+                    long tmp = rangeLo;
+                    rangeLo = rangeHi;
+                    rangeHi = tmp;
+                }
+
+                try (BaseDoubleWindowFunction f = windowFunctionFactory.apply(rangeLo, rangeHi)) {
                     for (int s = 0; s < records.length; s++) {
-                        f.computeNext(records[s]);
+                        try {
+                            f.computeNext(records[s]);
+                        } catch (Error e) {
+                            throw new Exception(String.format(
+                                    "count=%d, attempt=#%d, rangeLo=%d, rangeHi=%d, s=%d, data=[%s]",
+                                    count, attempt, rangeLo, rangeHi, s,
+                                    Arrays.stream(records).map(x -> String.format("%d:%d:%d", x.getLong(0), x.getInt(1), x.getLong(2))).collect(Collectors.joining(", "))
+                            ), e);
+                        }
                         double expected = Double.NaN;
+                        int row = 0;
                         for (int q = s; q >= 0; q--) {
-                            if ((rangeLo == Long.MIN_VALUE || records[q].getLong(0) >= records[s].getLong(0) + rangeLo) && records[q].getLong(0) <= records[s].getLong(0) + rangeHi) {
-                                if (Double.isNaN(expected)) {
-                                    expected = 0;
+                            if (partitioned && records[q].getInt(1) != records[s].getInt(1)) {
+                                continue;
+                            }
+                            if (!rows) {
+                                if ((rangeLo == Long.MIN_VALUE || records[q].getLong(0) >= records[s].getLong(0) + rangeLo) && records[q].getLong(0) <= records[s].getLong(0) + rangeHi) {
+                                    if (Double.isNaN(expected)) {
+                                        expected = 0;
+                                    }
+                                    expected = sum.apply(expected, (double) records[q].getLong(2));
                                 }
-                                expected += records[q].getLong(2);
+                                if (rangeLo != Long.MIN_VALUE && records[q].getLong(0) < records[s].getLong(0) + rangeLo) {
+                                    break;
+                                }
+                            } else {
+                                if (row >= rangeLo && row <= rangeHi) {
+                                    if (Double.isNaN(expected)) {
+                                        expected = 0;
+                                    }
+                                    expected = sum.apply(expected, (double) records[q].getLong(2));
+                                }
+                                if (row < rangeLo) {
+                                    break;
+                                }
                             }
-                            if (rangeLo != Long.MIN_VALUE && records[q].getLong(0) < records[s].getLong(0) + rangeLo) {
-                                break;
-                            }
+                            row--;
                         }
                         if (Math.abs(expected - f.getDouble(null)) > 1e-6) {
                             Assert.fail(String.format(

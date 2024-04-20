@@ -376,7 +376,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
 
     // handles sum() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    static class SumOverPartitionRowsFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverPartitionRowsFrameFunction {
+    public static class SumOverPartitionRowsFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverPartitionRowsFrameFunction {
         public SumOverPartitionRowsFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
@@ -445,7 +445,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
 
     // Handles sum() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    static class SumOverRowsFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverRowsFrameFunction {
+    public static class SumOverRowsFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverRowsFrameFunction {
 
         public SumOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
             super(arg, rowsLo, rowsHi, memory);
@@ -549,7 +549,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     // Handles sum() over (rows between unbounded preceding and current row); there's no partition by.
-    static class SumOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
+    public static class SumOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
 
         private long count = 0;
         private double externalSum;

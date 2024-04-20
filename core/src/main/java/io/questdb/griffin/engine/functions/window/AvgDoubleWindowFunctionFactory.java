@@ -1143,6 +1143,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
         public AvgOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
             super(arg);
 
+            assert rowsLo != Long.MIN_VALUE || rowsHi != 0; // use AvgOverUnboundedRowsFrameFunction in case of (Long.MIN_VALUE, 0) range
             if (rowsLo > Long.MIN_VALUE) {
                 frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
                 bufferSize = (int) Math.abs(rowsLo);//number of values we need to keep to compute over frame
@@ -1169,7 +1170,12 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             double d = arg.getDouble(record);
 
             //compute value using top frame element (that could be current or previous row)
-            double hiValue = frameIncludesCurrentValue ? d : buffer.getDouble((long) ((loIdx + frameSize - 1) % bufferSize) * Double.BYTES);
+            double hiValue = d;
+            if (frameLoBounded && !frameIncludesCurrentValue) {
+                hiValue = buffer.getDouble((long) ((loIdx + frameSize - 1) % bufferSize) * Double.BYTES);
+            } else if (!frameLoBounded && !frameIncludesCurrentValue) {
+                hiValue = buffer.getDouble((long) (loIdx % bufferSize) * Double.BYTES);
+            }
             if (Numbers.isFinite(hiValue)) {
                 sum += hiValue;
                 count++;
