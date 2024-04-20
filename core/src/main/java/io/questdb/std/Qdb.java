@@ -34,8 +34,18 @@ public class Qdb {
     public static void init() {
     }
 
-    // Java_io_questdb_std_Qdb_libInit
-    private static native void libInit();
+    // Java_io_questdb_std_Qdb_initQdb
+    protected static native void initQdb();
+
+    // Java_io_questdb_std_Qdb_isReleaseBuild
+    public static native boolean isReleaseBuild();
+
+    /**
+     * Adds `a` and `b` and returns the result.
+     * Smoke test function to check that the lib is loaded and working.
+     */
+    @SuppressWarnings("unused")
+    public static native long smokeTest(long a, long b);
 
     private static boolean loadQdbSkip() {
         try {
@@ -46,7 +56,8 @@ public class Qdb {
                     throw new RuntimeException("missing resource: " + path);
                 }
                 props.load(is);
-                return Boolean.parseBoolean(props.getProperty("qdb.skip"));
+                final String qdbSkip = props.getProperty("qdb.skip");
+                return Boolean.parseBoolean(qdbSkip);
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -65,7 +76,7 @@ public class Qdb {
                     "qdb"
             );
 
-            libInit();
+            initQdb();
         }
     }
 }

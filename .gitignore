@@ -30,3 +30,4 @@ core/CMakeCache.txt
 **/CMakeFiles
 .envrc
 .vscode
+core/rust/qdb-core/Cargo.lock
