@@ -413,18 +413,18 @@ public final class Chars {
     }
 
     /**
-     * Strictly greater than (>) comparison of two UTF16 sequences in lexicographical
+     * Strictly greater than (&gt;) comparison of two UTF16 sequences in lexicographical
      * order. For example, for:
      * l = aaaaa
      * r = aaaaaaa
-     * the l > r will produce "false", however for:
+     * the l &gt; r will produce "false", however for:
      * l = bbbb
      * r = aaaaaaa
-     * the l > r will produce "true", because b > a.
+     * the l &gt; r will produce "true", because b &gt; a.
      *
      * @param l left sequence, can be null
      * @param r right sequence, can be null
-     * @return rf either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
      */
     public static boolean greaterThan(@Nullable CharSequence l, @Nullable CharSequence r) {
         if (l == null || r == null) {
@@ -443,6 +443,20 @@ public final class Chars {
         return ll > rl;
     }
 
+    /**
+     * Strictly greater than (&lt;) comparison of two UTF16 sequences in lexicographical
+     * order. For example, for:
+     * l = aaaaa
+     * r = aaaaaaa
+     * the l &gt; r will produce "false", however for:
+     * l = bbbb
+     * r = aaaaaaa
+     * the l &lt; r will produce "true", because b &lt; a.
+     *
+     * @param l left sequence, can be null
+     * @param r right sequence, can be null
+     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     */
     public static boolean lessThan(@Nullable CharSequence l, @Nullable CharSequence r) {
         if (l == null || r == null) {
             return false;
