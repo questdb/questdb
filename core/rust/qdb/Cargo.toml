@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 name = "qdb"
-crate-type = ["dylib", "rlib"]
+crate-type = ["dylib"]
 
 [profile.dev]
 panic = 'abort'
@@ -14,4 +14,4 @@ panic = 'abort'
 panic = 'abort'
 
 [dependencies]
-jni = "0.21.0"
+qdb-core = { path = "../qdb-core" }

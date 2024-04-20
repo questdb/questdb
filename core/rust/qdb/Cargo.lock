@@ -77,6 +77,13 @@ dependencies = [
 name = "qdb"
 version = "0.1.0"
 dependencies = [
+ "qdb-core",
+]
+
+[[package]]
+name = "qdb-core"
+version = "0.1.0"
+dependencies = [
  "jni",
 ]
 

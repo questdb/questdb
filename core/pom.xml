@@ -37,12 +37,6 @@
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
         <web.console.version>0.3.3</web.console.version>
-
-        <!--
-        Skip building the Rust JNI bindings with -Dqdb.skip=true
-        -->
-        <qdb.skip>false</qdb.skip>
-
         <!--
         For production builds, use -P qdb-release to compile optimized Rust binaries.
         -->
@@ -675,13 +669,26 @@
                 </dependency>
             </dependencies>
         </profile>
+        <profile>
+            <!-- Profile enabled when this project is built within another Maven project. -->
+            <id>within-parent</id>
+            <activation>
+                <file>
+                    <exists>${basedir}/../../pom.xml</exists>
+                </file>
+            </activation>
+            <properties>
+                <!-- Skip building the Rust binaries. -->
+                <qdb.skip>true</qdb.skip>
+            </properties>
+        </profile>
     </profiles>
 
     <dependencies>
         <dependency>
             <groupId>org.questdb</groupId>
             <artifactId>jar-jni</artifactId>
-            <version>1.1.1</version>
+            <version>1.2.0</version>
         </dependency>
 
         <!-- test dependencies -->
