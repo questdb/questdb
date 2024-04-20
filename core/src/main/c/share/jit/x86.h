@@ -469,7 +469,7 @@ namespace questdb::x86 {
                 c.movss(r, rhs.xmm());
                 return { bin_and(c,
                     {float_ne_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk},
-                    {float_lt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk})
+                    {float_lt(c, l.xmm(), r.xmm()), data_type_t::i32, dk})
                 }; 
             }
             case data_type_t::f64: {
