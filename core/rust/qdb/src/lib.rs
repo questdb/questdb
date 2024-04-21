@@ -27,10 +27,13 @@
 pub use qdb_core::*;
 use jni::{objects::JClass, JNIEnv};
 
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Os_rustTest(
-    _env: JNIEnv,
-    _class: JClass
-)-> i64 {
-    return 0xabc;
-}
+/*
+    ===================== IMPORTANT =====================
+
+    DO NOT PUT ANY IMPLEMENTATION CODE HERE EVER.
+
+    ALL IMPLEMENTATION CODE MUST BE IN `qdb-core` CRATE.
+
+    THIS CRATE IS PURELY A WRAPPER CRATE THAT BUILDS A
+    DYNAMIC LIBRARY THAT CAN BE LOADED BY JAVA.
+*/
