@@ -82,7 +82,7 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             if ((rnd.nextInt() % nanRate) == 1) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
             return lo + rnd.nextPositiveLong() % range;
         }

@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class CeilingFunctionFactoryTest extends AbstractCairoTest {
@@ -83,7 +83,7 @@ public class CeilingFunctionFactoryTest extends AbstractCairoTest {
     public void testNaN() throws SqlException {
         assertQuery(
                 "ceiling\n" +
-                        "NaN\n",
+                        "null\n",
                 "select ceiling(NaN)",
                 null,
                 true,

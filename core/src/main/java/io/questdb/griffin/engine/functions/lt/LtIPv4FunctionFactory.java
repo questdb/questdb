@@ -59,45 +59,38 @@ public class LtIPv4FunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function leftFunc;
-        private final Function rightFunc;
+        private final Function left;
+        private final Function right;
 
-        public Func(Function leftFunc, Function rightFunc) {
-            this.leftFunc = leftFunc;
-            this.rightFunc = rightFunc;
+        public Func(Function left, Function right) {
+            this.left = left;
+            this.right = right;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            long left = Numbers.ipv4ToLong(leftFunc.getIPv4(rec));
-            if (left != Numbers.IPv4_NULL) {
-                long right = Numbers.ipv4ToLong(rightFunc.getIPv4(rec));
-                if (right != Numbers.IPv4_NULL) {
-                    return negated == (left >= right);
-                }
-            }
-            return false;
+            return Numbers.lessThanIPv4(left.getIPv4(rec), right.getIPv4(rec), negated);
         }
 
         @Override
         public Function getLeft() {
-            return leftFunc;
+            return left;
         }
 
         @Override
         public Function getRight() {
-            return rightFunc;
+            return right;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(leftFunc);
+            sink.val(left);
             if (negated) {
                 sink.val(">=");
             } else {
                 sink.val('<');
             }
-            sink.val(rightFunc);
+            sink.val(right);
         }
     }
 }

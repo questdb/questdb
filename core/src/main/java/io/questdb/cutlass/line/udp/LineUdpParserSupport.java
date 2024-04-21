@@ -272,10 +272,10 @@ public class LineUdpParserSupport {
                 row.putFloat(columnIndex, Float.NaN);
                 break;
             case ColumnType.LONG:
-                row.putLong(columnIndex, Numbers.LONG_NaN);
+                row.putLong(columnIndex, Numbers.LONG_NULL);
                 break;
             case ColumnType.INT:
-                row.putInt(columnIndex, Numbers.INT_NaN);
+                row.putInt(columnIndex, Numbers.INT_NULL);
                 break;
             case ColumnType.IPv4:
                 row.putIPv4(columnIndex, Numbers.IPv4_NULL);
@@ -289,10 +289,10 @@ public class LineUdpParserSupport {
                 row.putChar(columnIndex, (char) 0);
                 break;
             case ColumnType.DATE:
-                row.putDate(columnIndex, Numbers.LONG_NaN);
+                row.putDate(columnIndex, Numbers.LONG_NULL);
                 break;
             case ColumnType.TIMESTAMP:
-                row.putTimestamp(columnIndex, Numbers.LONG_NaN);
+                row.putTimestamp(columnIndex, Numbers.LONG_NULL);
                 break;
             case ColumnType.LONG256:
                 row.putLong256(columnIndex, "");

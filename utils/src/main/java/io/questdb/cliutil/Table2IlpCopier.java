@@ -143,7 +143,7 @@ public class Table2IlpCopier {
             }
             return microEpoch;
         }
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     private static int getTimestampIndex(String[] columnNames, int[] columnTypes, String sourceTimestampColumnName) {
@@ -209,7 +209,7 @@ public class Table2IlpCopier {
                     case Types.TIMESTAMP:
                         if (i != timestampIndex) {
                             long microEpoch = getMicroEpoch(resultSet, i + 1);
-                            if (microEpoch != Numbers.LONG_NaN && !resultSet.wasNull()) {
+                            if (microEpoch != Numbers.LONG_NULL && !resultSet.wasNull()) {
                                 sender.timestampColumn(columnName, microEpoch, ChronoUnit.MICROS);
                             }
                         }

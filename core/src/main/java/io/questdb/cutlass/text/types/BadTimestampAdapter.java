@@ -37,7 +37,7 @@ public final class BadTimestampAdapter extends TimestampAdapter {
 
     @Override
     public long getTimestamp(DirectUtf8Sequence value) {
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     @Override
@@ -47,6 +47,6 @@ public final class BadTimestampAdapter extends TimestampAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
-        row.putTimestamp(column, Numbers.LONG_NaN);
+        row.putTimestamp(column, Numbers.LONG_NULL);
     }
 }

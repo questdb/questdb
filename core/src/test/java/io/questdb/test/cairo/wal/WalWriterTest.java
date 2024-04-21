@@ -720,7 +720,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
 
             assertSql("a\tb\tts\tc\n" +
-                    "1\t\t1970-01-01T00:00:00.000000Z\tNaN\n", tableToken.getTableName());
+                    "1\t\t1970-01-01T00:00:00.000000Z\tnull\n", tableToken.getTableName());
         });
     }
 

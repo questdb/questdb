@@ -99,7 +99,7 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final CharSequence str = this.strFunc.getStrA(rec);
             if (str == null) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             return strpos(str, substr);
         }
@@ -124,11 +124,11 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final CharSequence str = this.strFunc.getStrA(rec);
             if (str == null) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             final char substr = this.substrFunc.getChar(rec);
             if (substr == CharConstant.ZERO.getChar(null)) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             return strpos(str, substr);
         }

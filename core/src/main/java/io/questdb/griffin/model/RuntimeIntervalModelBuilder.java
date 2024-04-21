@@ -73,7 +73,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     public void clearBetweenParsing() {
         betweenBoundarySet = false;
         betweenBoundaryFunc = null;
-        betweenBoundary = Numbers.LONG_NaN;
+        betweenBoundary = Numbers.LONG_NULL;
     }
 
     public boolean hasIntervalFilters() {
@@ -193,7 +193,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 // Constant interval
                 long lo = Math.min(timestamp, betweenBoundary);
                 long hi = Math.max(timestamp, betweenBoundary);
-                if (hi == Numbers.LONG_NaN || lo == Numbers.LONG_NaN) {
+                if (hi == Numbers.LONG_NULL || lo == Numbers.LONG_NULL) {
                     if (!betweenNegated) {
                         intersectEmpty();
                     }
@@ -323,7 +323,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     private void intersectBetweenSemiDynamic(Function funcValue, long constValue) {
-        if (constValue == Numbers.LONG_NaN) {
+        if (constValue == Numbers.LONG_NULL) {
             if (!betweenNegated) {
                 intersectEmpty();
             }

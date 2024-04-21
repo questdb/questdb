@@ -52,7 +52,7 @@ public class CastIntToDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             final int value = arg.getInt(rec);
-            return value != Numbers.INT_NaN ? value : Double.NaN;
+            return value != Numbers.INT_NULL ? value : Double.NaN;
         }
     }
 }

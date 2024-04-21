@@ -45,7 +45,7 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
     private final LongAccumulator accumulator = new LongAccumulator(
-            MAX, Numbers.INT_NaN
+            MAX, Numbers.INT_NULL
     );
     private int valueOffset;
 
@@ -65,7 +65,7 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
             final long value = Vect.maxShort(address, addressSize / Short.BYTES);
-            if (value != Numbers.INT_NaN) {
+            if (value != Numbers.INT_NULL) {
                 accumulator.accumulate(value);
             }
         }

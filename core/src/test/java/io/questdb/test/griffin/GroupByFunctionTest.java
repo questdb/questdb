@@ -150,8 +150,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedAvgDoubleAllNaN() throws Exception {
         assertQuery("s\tsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, avg(d) sum from x order by s",
                 "create table x as " +
                         "(" +
@@ -247,8 +247,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedKSumDoubleAllNaN() throws Exception {
         assertQuery("s\tksum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, ksum(d) ksum from x order by s",
                 "create table x as " +
                         "(" +
@@ -367,8 +367,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMaxDoubleAllNaN() throws Exception {
         assertQuery("s\tmax\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
@@ -387,8 +387,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMaxIntAllNaN() throws Exception {
         assertQueryExpectSize("s\tmax\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
@@ -421,8 +421,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMaxLongAllNaN() throws Exception {
         assertQueryExpectSize("s\tmax\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
@@ -535,8 +535,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMinDoubleAllNaN() throws Exception {
         assertQuery("s\tmin\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
@@ -555,8 +555,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMinIntAllNaN() throws Exception {
         assertQueryExpectSize("s\tmin\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
@@ -592,8 +592,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMinLongAllNaN() throws Exception {
         assertQuery("s\tmin\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
@@ -652,8 +652,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedNSumDoubleAllNaN() throws Exception {
         assertQuery("s\tnsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, nsum(d) nsum from x order by s",
                 "create table x as " +
                         "(" +
@@ -692,8 +692,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedSumDoubleAllNaN() throws Exception {
         assertQueryExpectSize("s\tsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, sum(d) sum from x order by s",
                 "create table x as " +
                         "(" +
@@ -729,8 +729,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedSumIntAllNaN() throws Exception {
         assertQuery("s\tsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, sum(d) sum from x order by s",
                 "create table x as " +
                         "(" +
@@ -769,8 +769,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedSumLongAllNaN() throws Exception {
         assertQuery("s\tsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, sum(d) sum from x order by s",
                 "create table x as " +
                         "(" +
@@ -874,7 +874,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testVectorKSumDoubleAllNaN() throws Exception {
         assertQuery("sum\n" +
-                        "NaN\n",
+                        "null\n",
                 "select ksum(d) sum from x",
                 "create table x as " +
                         "(" +
@@ -2976,7 +2976,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testVectorNSumDoubleAllNaN() throws Exception {
         assertQuery("sum\n" +
-                        "NaN\n",
+                        "null\n",
                 "select nsum(d) sum from x",
                 "create table x as " +
                         "(" +

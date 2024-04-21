@@ -52,7 +52,7 @@ public class MaxIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery("max\n" +
-                        "NaN\n", "select max(f) from tab", "create table tab as (select cast(null as int) f from long_sequence(33))", null, "insert into tab select 4567866 from long_sequence(1)", "max\n" +
+                "null\n", "select max(f) from tab", "create table tab as (select cast(null as int) f from long_sequence(33))", null, "insert into tab select 4567866 from long_sequence(1)", "max\n" +
                         "4567866\n", false, true, false);
     }
 

@@ -107,7 +107,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "127\t1970-01-01T00:00:05.000000Z\n" +
                         "-2147483648\t1970-01-01T00:00:06.000000Z\n" +
                         "-127\t1970-01-01T00:00:07.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:13.000000Z\n",
+                        "null\t1970-01-01T00:00:13.000000Z\n",
                 new String[]{
                         "0i", // valid, taken as long, no way to make a short
                         "100i", // valid
@@ -120,7 +120,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "null", // discarded bad type symbol
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
-                        "NaN", // discarded bad type symbol
+                        "null", // discarded bad type symbol
                         "", // valid null
                         "0t", // discarded bad type timestamp
                 });
@@ -150,7 +150,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "null", // discarded bad type symbol
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
-                        "NaN", // discarded bad type symbol
+                        "null", // discarded bad type symbol
                         "", // valid null
                         "0t", // discarded bad type timestamp
                 });
@@ -197,11 +197,11 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "\"1970-01-01T00:00:05.000000Z", // discarded bad string value
                         "1970-01-01T00:00:05.000000Z\"", // discarded bad string value
                         "0i", // valid
-                        "-9223372036854775808i", // valid NaN, same as null
+                        "-9223372036854775808i", // valid null, same as null
                         "", // valid null
                         "-0i", // valid
                         "9223372036854775807i", // valid
-                        "NaN", // discarded bad type symbol
+                        "null", // discarded bad type symbol
                         "null", // discarded bad type symbol
                         "1970-01-01T00:00:05.000000Z", // discarded bad type symbol
                         "0t", // discarded bad type timestamp
@@ -221,13 +221,13 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-3.5\t1970-01-01T00:00:10.000000Z\n" +
                         "3.141592653589793\t1970-01-01T00:00:11.000000Z\n" +
                         "1.7976931348623151E308\t1970-01-01T00:00:12.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:13.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:14.000000Z\n" +
+                        "null\t1970-01-01T00:00:13.000000Z\n" +
+                        "null\t1970-01-01T00:00:14.000000Z\n" +
                         "-3.01E-43\t1970-01-01T00:00:15.000000Z\n" +
                         "123.0\t1970-01-01T00:00:16.000000Z\n" +
                         "-123.0\t1970-01-01T00:00:17.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:18.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:19.000000Z\n",
+                        "null\t1970-01-01T00:00:18.000000Z\n" +
+                        "null\t1970-01-01T00:00:19.000000Z\n",
                 new String[]{
                         "1.7976931348623156E308", // valid
                         "0.425667788123", // valid
@@ -260,8 +260,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "3.141592653589793\t1970-01-01T00:00:04.000000Z\n" +
                         "1.7976931348623155E308\t1970-01-01T00:00:05.000000Z\n" +
                         "1.7976931348623151E308\t1970-01-01T00:00:06.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:07.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:08.000000Z\n" +
+                        "null\t1970-01-01T00:00:07.000000Z\n" +
+                        "null\t1970-01-01T00:00:08.000000Z\n" +
                         "1.35E-12\t1970-01-01T00:00:09.000000Z\n" +
                         "1.35E-12\t1970-01-01T00:00:10.000000Z\n" +
                         "1.35E12\t1970-01-01T00:00:11.000000Z\n" +
@@ -270,8 +270,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-3.01E-43\t1970-01-01T00:00:15.000000Z\n" +
                         "123.0\t1970-01-01T00:00:16.000000Z\n" +
                         "-123.0\t1970-01-01T00:00:17.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:18.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:19.000000Z\n",
+                        "null\t1970-01-01T00:00:18.000000Z\n" +
+                        "null\t1970-01-01T00:00:19.000000Z\n",
                 new String[]{
                         "1.6x", // discarded bad type symbol
                         "1.7976931348623157E308", // valid
@@ -311,8 +311,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-3.01E-43\t1970-01-01T00:00:12.000000Z\n" +
                         "123.0\t1970-01-01T00:00:13.000000Z\n" +
                         "-123.0\t1970-01-01T00:00:14.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:15.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:16.000000Z\n",
+                        "null\t1970-01-01T00:00:15.000000Z\n" +
+                        "null\t1970-01-01T00:00:16.000000Z\n",
                 new String[]{
                         "0.425667788123", // valid, but interpreted as double, cannot make float columns
                         "3.14159265358979323846", // valid
@@ -345,15 +345,15 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "1.35000005E12\t1970-01-01T00:00:05.000000Z\n" +
                         "1.35000005E12\t1970-01-01T00:00:06.000000Z\n" +
                         "3.4028235E38\t1970-01-01T00:00:08.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:09.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:10.000000Z\n" +
+                        "null\t1970-01-01T00:00:09.000000Z\n" +
+                        "null\t1970-01-01T00:00:10.000000Z\n" +
                         "-3.5000\t1970-01-01T00:00:11.000000Z\n" +
                         "-0.0000\t1970-01-01T00:00:12.000000Z\n" +
                         "123.0000\t1970-01-01T00:00:13.000000Z\n" +
                         "-123.0000\t1970-01-01T00:00:14.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:15.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:16.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:17.000000Z\n",
+                        "null\t1970-01-01T00:00:15.000000Z\n" +
+                        "null\t1970-01-01T00:00:16.000000Z\n" +
+                        "null\t1970-01-01T00:00:17.000000Z\n",
                 new String[]{
                         "0.425667788123", // valid
                         "3.14159265358979323846", // valid
@@ -388,7 +388,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "2147483647\t1970-01-01T00:00:07.000000Z\n" +
                         "-2147483647\t1970-01-01T00:00:08.000000Z\n" +
                         "-2147483648\t1970-01-01T00:00:11.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:19.000000Z\n",
+                        "null\t1970-01-01T00:00:19.000000Z\n",
                 new String[]{
                         "0i", // valid
                         "100i", // valid
@@ -400,7 +400,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-2147483647i", // valid
                         "0", // discarded bad type double
                         "100", // discarded bad type double
-                        "-2147483648i", // valid NaN same as null
+                        "-2147483648i", // valid null same as null
                         "-2147483648", // discarded bad type double
                         "null", // discarded bad type symbol
                         "-0", // discarded bad type double
@@ -421,19 +421,19 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "100\t1970-01-01T00:00:02.000000Z\n" +
                         "0\t1970-01-01T00:00:03.000000Z\n" +
                         "-100\t1970-01-01T00:00:04.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:05.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:06.000000Z\n" +
+                        "null\t1970-01-01T00:00:05.000000Z\n" +
+                        "null\t1970-01-01T00:00:06.000000Z\n" +
                         "2147483647\t1970-01-01T00:00:07.000000Z\n" +
                         "-2147483647\t1970-01-01T00:00:08.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:11.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:19.000000Z\n",
+                        "null\t1970-01-01T00:00:11.000000Z\n" +
+                        "null\t1970-01-01T00:00:19.000000Z\n",
                 new String[]{
                         "0i", // valid
                         "100i", // valid
                         "-0i", // valid equals 0
                         "-100i", // valid
-                        "9223372036854775808i", // valid NaN, same as null (unlike TCP: discarded bad value == Long.MIN_VALUE with no - sign, taken as symbol)
-                        "-9223372036854775808i", // valid NaN, same as null
+                        "9223372036854775808i", // valid null, same as null (unlike TCP: discarded bad value == Long.MIN_VALUE with no - sign, taken as symbol)
+                        "-9223372036854775808i", // valid null, same as null
                         "2147483647i", // valid
                         "-2147483647i", // valid
                         "0", // discarded bad type double
@@ -499,8 +499,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-100\t1970-01-01T00:00:04.000000Z\n" +
                         "9223372036854775807\t1970-01-01T00:00:05.000000Z\n" +
                         "-9223372036854775807\t1970-01-01T00:00:06.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:07.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:20.000000Z\n",
+                        "null\t1970-01-01T00:00:07.000000Z\n" +
+                        "null\t1970-01-01T00:00:20.000000Z\n",
                 new String[]{
                         "0i", // valid
                         "100i", // valid
@@ -508,10 +508,10 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-100i", // valid
                         "9223372036854775807i", // valid
                         "-9223372036854775807i", // valid
-                        "-9223372036854775808i", // valid NaN, same as null
+                        "-9223372036854775808i", // valid null, same as null
                         "\"-9223372036854775808i and joy=yes\"", // discarded bad type string
                         "\"-9223372036854775808i and joy=yes", // discarded broken string
-                        "-9223372036854775808i \\\nand joy=yes\"", // discarded broken string
+                        "-9223372036854775808i \\\nulld joy=yes\"", // discarded broken string
                         "-9223372036854775808i and joy=yes\"", // discarded broken string
                         "-92233720368\"54775808i \"and joy=yes", // discarded bad type symbol
                         "0x12i", // discarded bad type long256
@@ -536,8 +536,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-100\t1970-01-01T00:00:04.000000Z\n" +
                         "9223372036854775807\t1970-01-01T00:00:05.000000Z\n" +
                         "-9223372036854775807\t1970-01-01T00:00:06.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:07.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:19.000000Z\n",
+                        "null\t1970-01-01T00:00:07.000000Z\n" +
+                        "null\t1970-01-01T00:00:19.000000Z\n",
                 new String[]{
                         "0i", // valid
                         "100i", // valid
@@ -545,10 +545,10 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-100i", // valid
                         "9223372036854775807i", // valid
                         "-9223372036854775807i", // valid
-                        "-9223372036854775808i", // valid NaN, same as null
+                        "-9223372036854775808i", // valid null, same as null
                         "\"-9223372036854775808i and joy=yes\"", // discarded bad type string
                         "\"-9223372036854775808i and joy=yes", // discarded broken string
-                        "-9223372036854775808i \\\nand joy=yes\"", // discarded broken string
+                        "-9223372036854775808i \\\nulld joy=yes\"", // discarded broken string
                         "-92233720368\"54775808i \"and joy=yes", // discarded bad type symbol
                         "0x12i", // discarded bad type long256
                         "0", // discarded bad type double
@@ -573,7 +573,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-32767\t1970-01-01T00:00:06.000000Z\n" +
                         "-2147483648\t1970-01-01T00:00:08.000000Z\n" +
                         "2147483648\t1970-01-01T00:00:09.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:15.000000Z\n",
+                        "null\t1970-01-01T00:00:15.000000Z\n",
                 new String[]{
                         "0i", // valid, taken as long, no way to make a short
                         "100i", // valid
@@ -588,7 +588,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "0", // discarded bad type double
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
-                        "NaN", // discarded bad type symbol
+                        "null", // discarded bad type symbol
                         "", // valid null
                         "0t", // discarded bad type timestamp
                 });
@@ -618,18 +618,18 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-100i", // valid
                         "32767i", // valid
                         "-32767i", // valid
-                        "9223372036854775808i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded bad value == Long.MIN_VALUE with no - sign, taken as symbol)
-                        "-9223372036854775808i", // valid NaN, same as null, a short value of 0
-                        "2147483647i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded out of range)
-                        "-2147483647i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded out of range)
-                        "-2147483648i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded out of range)
-                        "2147483648i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded out of range)
+                        "9223372036854775808i", // valid null, same as null, a short value of 0 (unlike TCP: discarded bad value == Long.MIN_VALUE with no - sign, taken as symbol)
+                        "-9223372036854775808i", // valid null, same as null, a short value of 0
+                        "2147483647i", // valid null, same as null, a short value of 0 (unlike TCP: discarded out of range)
+                        "-2147483647i", // valid null, same as null, a short value of 0 (unlike TCP: discarded out of range)
+                        "-2147483648i", // valid null, same as null, a short value of 0 (unlike TCP: discarded out of range)
+                        "2147483648i", // valid null, same as null, a short value of 0 (unlike TCP: discarded out of range)
                         "2147483648", // discarded bad type double
                         "null", // discarded bad type symbol
                         "0", // discarded bad type double
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
-                        "NaN", // discarded bad type symbol
+                        "null", // discarded bad type symbol
                         "", // valid null
                         "0t", // discarded bad type timestamp
                 });
@@ -725,12 +725,12 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "1970-01-01T00:00:05.000000Z\"", // discarded bad string value
                         "0i", // valid
                         "0t", // valid
-                        "-9223372036854775808i", // valid NaN, same as null
+                        "-9223372036854775808i", // valid null, same as null
                         "", // valid null
                         "-0i", // valid
                         "-0t", // valid
                         "9223372036854775807i", // valid
-                        "NaN", // discarded bad type symbol
+                        "null", // discarded bad type symbol
                         "null", // discarded bad type symbol
                         "1970-01-01T00:00:05.000000Z", // discarded bad type symbol
                         "t", // discarded bad type boolean

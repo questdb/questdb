@@ -116,7 +116,7 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     public void setTimestamp(long value) {
-        isNull = value == Numbers.LONG_NaN;
+        isNull = value == Numbers.LONG_NULL;
         if (!isNull) {
             utf16Sink.clear();
             TimestampFormatUtils.appendDateTimeUSec(utf16Sink, value);
@@ -175,7 +175,7 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     public void setValue(long value) {
-        isNull = value == Numbers.LONG_NaN;
+        isNull = value == Numbers.LONG_NULL;
         if (!isNull) {
             utf16Sink.clear();
             utf16Sink.put(value);
@@ -185,7 +185,7 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     public void setValue(int value) {
-        isNull = value == Numbers.INT_NaN;
+        isNull = value == Numbers.INT_NULL;
         if (!isNull) {
             utf16Sink.clear();
             utf16Sink.put(value);
@@ -195,7 +195,7 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     public void setValue(double value) {
-        isNull = Double.isNaN(value);
+        isNull = Numbers.isNull(value);
         if (!isNull) {
             utf16Sink.clear();
             utf16Sink.put(value);
@@ -205,7 +205,7 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     public void setValue(float value) {
-        isNull = Float.isNaN(value);
+        isNull = Numbers.isNull(value);
         if (!isNull) {
             utf16Sink.clear();
             utf16Sink.put(value, floatScale);

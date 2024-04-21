@@ -30,16 +30,9 @@ import org.junit.Test;
 public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testCorrOneColumnAllNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "corr\nNaN\n", "select corr(x, y) from (select cast(null as double) x, x as y from long_sequence(100))"
-        ));
-    }
-
-    @Test
     public void testCorrAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "corr\nNaN\n", "select corr(x, y) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))"
+                "corr\nnull\n", "select corr(x, y) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))"
         ));
     }
 
@@ -48,7 +41,17 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
             assertSql(
-                    "corr\nNaN\n", "select corr(x, y) from tbl1"
+                    "corr\nnull\n", "select corr(x, y) from tbl1"
+            );
+        });
+    }
+
+    @Test
+    public void testCorrNoValues() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tbl1(x int, y int)");
+            assertSql(
+                    "corr\nnull\n", "select corr(x, y) from tbl1"
             );
         });
     }
@@ -96,13 +99,10 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCorrNoValues() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tbl1(x int, y int)");
-            assertSql(
-                    "corr\nNaN\n", "select corr(x, y) from tbl1"
-            );
-        });
+    public void testCorrOneColumnAllNull() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "corr\nnull\n", "select corr(x, y) from (select cast(null as double) x, x as y from long_sequence(100))"
+        ));
     }
 
     @Test
@@ -112,7 +112,7 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
             insert("insert into 'tbl1' VALUES " +
                     "(1, 1)");
             assertSql(
-                    "corr\nNaN\n", "select corr(x, y) from tbl1"
+                    "corr\nnull\n", "select corr(x, y) from tbl1"
             );
         });
     }
@@ -134,7 +134,7 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select 100000000 x, 100000000 y from long_sequence(1000000))");
             assertSql(
-                    "corr\nNaN\n", "select corr(x, y) from tbl1"
+                    "corr\nnull\n", "select corr(x, y) from tbl1"
             );
         });
     }

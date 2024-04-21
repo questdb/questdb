@@ -35,7 +35,7 @@ public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testAllNull() throws Exception {
         assertQuery(
                 "a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\n" +
-                        "\t\tNaN\tNaN\tNaN\tNaN\t\t\t\t\t\t\t\t\t\n",
+                        "\t\tnull\tnull\tnull\tnull\t\t\t\t\t\t\t\t\t\n",
                 "select last_not_null(a0) a0," +
                         "     last_not_null(a1) a1," +
                         "     last_not_null(a2) a2," +

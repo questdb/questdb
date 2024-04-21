@@ -69,10 +69,10 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
             long l3 = l256.getLong3();
             // Remap zero since it's used as the no entry key.
             if (l0 == 0 && l1 == 0 && l2 == 0 && l3 == 0) {
-                l0 = Numbers.LONG_NaN;
-                l1 = Numbers.LONG_NaN;
-                l2 = Numbers.LONG_NaN;
-                l3 = Numbers.LONG_NaN;
+                l0 = Numbers.LONG_NULL;
+                l1 = Numbers.LONG_NULL;
+                l2 = Numbers.LONG_NULL;
+                l3 = Numbers.LONG_NULL;
             }
             setA.of(0).add(l0, l1, l2, l3);
             mapValue.putLong(valueIndex + 1, setA.ptr());
@@ -95,10 +95,10 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
             long ptr = mapValue.getLong(valueIndex + 1);
             // Remap zero since it's used as the no entry key.
             if (l0 == 0 && l1 == 0 && l2 == 0 && l3 == 0) {
-                l0 = Numbers.LONG_NaN;
-                l1 = Numbers.LONG_NaN;
-                l2 = Numbers.LONG_NaN;
-                l3 = Numbers.LONG_NaN;
+                l0 = Numbers.LONG_NULL;
+                l1 = Numbers.LONG_NULL;
+                l2 = Numbers.LONG_NULL;
+                l3 = Numbers.LONG_NULL;
             }
             final long index = setA.of(ptr).keyIndex(l0, l1, l2, l3);
             if (index >= 0) {
@@ -154,13 +154,13 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcCount = srcValue.getLong(valueIndex);
-        if (srcCount == 0 || srcCount == Numbers.LONG_NaN) {
+        if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
             return;
         }
         long srcPtr = srcValue.getLong(valueIndex + 1);
 
         long destCount = destValue.getLong(valueIndex);
-        if (destCount == 0 || destCount == Numbers.LONG_NaN) {
+        if (destCount == 0 || destCount == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcCount);
             destValue.putLong(valueIndex + 1, srcPtr);
             return;
@@ -202,7 +202,7 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
     }
 
@@ -218,9 +218,9 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
 
     private static boolean isNotNull(Long256 value) {
         return value != null &&
-                value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NaN ||
-                value.getLong1() != Numbers.LONG_NaN ||
-                value.getLong2() != Numbers.LONG_NaN ||
-                value.getLong3() != Numbers.LONG_NaN);
+                value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NULL ||
+                value.getLong1() != Numbers.LONG_NULL ||
+                value.getLong2() != Numbers.LONG_NULL ||
+                value.getLong3() != Numbers.LONG_NULL);
     }
 }

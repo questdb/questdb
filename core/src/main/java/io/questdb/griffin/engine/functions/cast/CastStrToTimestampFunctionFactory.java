@@ -55,9 +55,9 @@ public class CastStrToTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final CharSequence value = arg.getStrA(rec);
             try {
-                return value == null ? Numbers.LONG_NaN : IntervalUtils.parseFloorPartialTimestamp(value);
+                return value == null ? Numbers.LONG_NULL : IntervalUtils.parseFloorPartialTimestamp(value);
             } catch (NumericException e) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
         }
     }

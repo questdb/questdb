@@ -64,9 +64,9 @@ public class CastVarcharToDateFunctionFactory implements FunctionFactory {
             // Date literal may contain non-ascii characters, for example hyphens, days of the week etc.
             final CharSequence value = arg.getStrA(rec);
             try {
-                return value == null ? Numbers.LONG_NaN : DateFormatUtils.parseDate(value);
+                return value == null ? Numbers.LONG_NULL : DateFormatUtils.parseDate(value);
             } catch (NumericException e) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
         }
     }

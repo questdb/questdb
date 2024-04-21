@@ -155,7 +155,7 @@ public class LeftVarcharFunctionFactoryTest extends AbstractCairoTest {
                 "k\tn\tleft\n" +
                         "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2Lg\uD95A\uDFD9唶鴙\uDAE2\uDC5E͛Ԉ\t16\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2Lg\uD95A\uDFD9唶鴙\uDAE2\uDC5E͛Ԉ\n" +
                         "0\uDA89\uDFA4~2\uDAC6\uDED3ڎBH뤻䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\\t6\t0\uDA89\uDFA4~2\uDAC6\uDED3ڎ\n" +
-                        "j䇜\"ŸO(OFг\uDBAE\uDD12ɜ|\\軦۽\tNaN\t\n" +
+                        "j䇜\"ŸO(OFг\uDBAE\uDD12ɜ|\\軦۽\tnull\t\n" +
                         "\t19\t\n" +
                         "\"+zMKZ 4xL?49Mqqp\t19\t\"+zMKZ 4xL?49Mqqp\n" +
                         "5+wG`'{h)`qqjbzK.kq\t0\t\n" +

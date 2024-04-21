@@ -35,7 +35,7 @@ public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testLeftNull() throws SqlException {
-        call(Numbers.INT_NaN, 10).andAssert(Numbers.INT_NaN);
+        call(Numbers.INT_NULL, 10).andAssert(Numbers.INT_NULL);
     }
 
     @Test
@@ -45,7 +45,7 @@ public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testRightNull() throws SqlException {
-        call(4, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+        call(4, Numbers.INT_NULL).andAssert(Numbers.INT_NULL);
     }
 
     @Test
