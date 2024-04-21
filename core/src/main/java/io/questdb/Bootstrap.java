@@ -76,6 +76,13 @@ public class Bootstrap {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
+
+        // ensure we can load libraries
+        Os.init();
+        if (Os.rustTest() != 0xabc) {
+            throw new BootstrapException("rust libraries are not found");
+        }
+
         banner = bootstrapConfiguration.getBanner();
         microsecondClock = bootstrapConfiguration.getMicrosecondClock();
         buildInformation = new BuildInformationHolder(bootstrapConfiguration.getClass());
