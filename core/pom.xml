@@ -232,8 +232,7 @@
                             <path>rust/qdb</path>
                             <skip>${qdb.skip}</skip>
                             <release>${qdb.release}</release>
-                            <copyTo>${project.build.directory}/classes/io/questdb/rust</copyTo>
-                            <copyWithPlatformDir>true</copyWithPlatformDir>
+                            <copyTo>${project.build.directory}/classes/io/questdb/bin/rust</copyTo>
                         </configuration>
                     </execution>
                 </executions>
