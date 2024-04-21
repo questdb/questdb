@@ -25,7 +25,6 @@
 
 // See README.md
 pub use qdb_core::*;
-use jni::{objects::JClass, JNIEnv};
 
 /*
     ===================== IMPORTANT =====================
@@ -36,4 +35,6 @@ use jni::{objects::JClass, JNIEnv};
 
     THIS CRATE IS PURELY A WRAPPER CRATE THAT BUILDS A
     DYNAMIC LIBRARY THAT CAN BE LOADED BY JAVA.
+
+    ===================== IMPORTANT =====================
 */
