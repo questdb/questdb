@@ -15,3 +15,4 @@ panic = 'abort'
 
 [dependencies]
 qdb-core = { path = "../qdb-core" }
+fail = "0.5.1"
