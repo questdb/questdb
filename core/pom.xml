@@ -43,7 +43,6 @@
         -->
         <qdb.release>false</qdb.release>
         <qdb.failpoints>fail/failpoints</qdb.failpoints>
-        <qdb.rustflags>["-D", "warnings"]</qdb.rustflags>
     </properties>
 
     <version>7.4.1-SNAPSHOT</version>
@@ -239,10 +238,6 @@
                             <features>
                                 <feature>${qdb.failpoints}</feature>
                             </features>
-                            <extraArgs>
-                                <extraArg>--config</extraArg>
-                                <extraArg>build.rustflags=${qdb.rustflags}</extraArg>
-                            </extraArgs>
                         </configuration>
                     </execution>
                 </executions>
@@ -690,13 +685,6 @@
             <properties>
                 <qdb.release>true</qdb.release>
                 <qdb.failpoints/>
-            </properties>
-        </profile>
-        <profile>
-            <id>qdb-coverage</id>
-            <properties>
-                <qdb.release>false</qdb.release>
-                <qdb.rustflags>["-D", "warnings", "-C", "instrument-coverage"]</qdb.rustflags>
             </properties>
         </profile>
     </profiles>
