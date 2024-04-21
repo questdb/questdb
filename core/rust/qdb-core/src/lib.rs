@@ -1,5 +1,8 @@
 pub extern crate jni;
 
+pub mod jlog;
+pub mod failpoints;
+
 use jni::sys::jlong;
 use jni::{objects::JClass, JNIEnv, JavaVM};
 

@@ -31,3 +31,4 @@ core/CMakeCache.txt
 .envrc
 .vscode
 core/rust/qdb-core/Cargo.lock
+*.profraw

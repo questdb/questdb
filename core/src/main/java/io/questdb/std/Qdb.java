@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 import io.questdb.jar.jni.JarJniLoader;
+import io.questdb.log.RustLogging;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -47,36 +48,16 @@ public class Qdb {
     @SuppressWarnings("unused")
     public static native long smokeTest(long a, long b);
 
-    private static boolean loadQdbSkip() {
-        try {
-            final Properties props = new Properties();
-            final String path = "/io/questdb/rust/qdb.properties";
-            try (InputStream is = Qdb.class.getResourceAsStream(path)) {
-                if (is == null) {
-                    throw new RuntimeException("missing resource: " + path);
-                }
-                props.load(is);
-                final String qdbSkip = props.getProperty("qdb.skip");
-                return Boolean.parseBoolean(qdbSkip);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
     static {
-        final boolean qdbSkip = loadQdbSkip();
-        if (!qdbSkip) {
-            // Rust lib built via rust-maven-plugin.
-            // If this fails to load, ensure you've run `mvn compile` (or `mvn package`) from the command line.
-            // Integration with IntelliJ requires setting up an Ant script that runs the Maven goal.
-            JarJniLoader.loadLib(
-                    Qdb.class,
-                    "/io/questdb/rust/",
-                    "qdb"
-            );
-
-            initQdb();
-        }
+        // Rust lib built via rust-maven-plugin.
+        // If this fails to load, ensure you've run `mvn compile` (or `mvn package`) from the command line.
+        // Integration with IntelliJ requires setting up an Ant script that runs the Maven goal.
+        JarJniLoader.loadLib(
+                Qdb.class,
+                "/io/questdb/rust/",
+                "qdb"
+        );
+        initQdb();
+        RustLogging.init();
     }
 }

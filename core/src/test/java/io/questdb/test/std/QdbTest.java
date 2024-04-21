@@ -25,13 +25,17 @@
 package io.questdb.test.std;
 
 import io.questdb.std.Qdb;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class QdbTest {
     @Test
-    public void testLibLoading()  {
-        // Just checking the lib can be loaded.
-        // This should not throw any exception if it works.
+    public void testLoading() {
+        long result = Qdb.smokeTest(1, 2);
+        Assert.assertEquals(3, result);
+    }
+
+    static {
         Qdb.init();
     }
 }

@@ -5,3 +5,6 @@ edition = "2021"
 
 [dependencies]
 jni = "0.21.1"
+log = "0.4.21"
+dashmap = { version = "5.5.3", features = ["raw-api"] }
+fail = "0.5.1"
