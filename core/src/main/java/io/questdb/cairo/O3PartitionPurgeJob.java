@@ -279,7 +279,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         assert partitionList.size() % 2 == 0;
         Vect.sort128BitAscInPlace(partitionList.getAddress(), partitionList.size() / 2);
 
-        long partitionTimestamp = Numbers.LONG_NaN;
+        long partitionTimestamp = Numbers.LONG_NULL;
         int lo = 0;
         int n = (int) partitionList.size();
 

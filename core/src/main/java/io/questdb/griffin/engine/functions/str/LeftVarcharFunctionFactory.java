@@ -62,7 +62,7 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
         final Function countFunc = args.getQuick(1);
         if (countFunc.isConstant()) {
             int count = countFunc.getInt(null);
-            if (count != Numbers.INT_NaN) {
+            if (count != Numbers.INT_NULL) {
                 return new ConstCountFunc(varcharFunc, count);
             } else {
                 return VarcharConstant.NULL;
@@ -174,7 +174,7 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
             final Utf8Sequence value = varcharFunc.getVarcharA(rec);
             final int count = countFunc.getInt(rec);
-            if (value != null && count != Numbers.INT_NaN) {
+            if (value != null && count != Numbers.INT_NULL) {
                 final int len = Utf8s.validateUtf8(value);
                 if (len == -1) {
                     // Invalid UTF-8.
@@ -199,7 +199,7 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
         private Utf8StringSink getVarchar0(Record rec, Utf8StringSink sink) {
             final Utf8Sequence value = varcharFunc.getVarcharA(rec);
             final int count = countFunc.getInt(rec);
-            if (value != null && count != Numbers.INT_NaN) {
+            if (value != null && count != Numbers.INT_NULL) {
                 final int len = Utf8s.validateUtf8(value);
                 if (len == -1) {
                     // Invalid UTF-8.

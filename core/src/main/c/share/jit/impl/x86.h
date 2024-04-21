@@ -42,7 +42,9 @@ namespace questdb::x86 {
     }
 
     inline Gpd int32_or(Compiler &c, const Gpd &b1, const Gpd &b2) {
+        c.comment("int32_or_start");
         c.or_(b1, b2);
+        c.comment("int32_or_stop");
         return b1;
     }
 
@@ -705,30 +707,39 @@ namespace questdb::x86 {
     }
 
     inline Gpd float_ge(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+        c.comment("float_ge_start");
         Gp r = c.newInt32();
         c.cmpss(rhs, lhs, Predicate::kCmpLE);
         c.movd(r, rhs);
         c.neg(r);
+        c.comment("float_ge_stop");
         return r.as<Gpd>();
     }
 
     // (isnan(lhs) && isnan(rhs) || fabs(l - r) < 0.0000000001);
     inline Gpd double_cmp_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, double epsilon, bool eq) {
+        c.comment("float_cmp_epsilon_start");
         int64_t nans[] = {0x7fffffffffffffff, 0x7fffffffffffffff}; // double NaN
         Mem nans_memory = c.newConst(ConstPool::kScopeLocal, &nans, 32);
         Mem d = c.newDoubleConst(ConstPool::kScopeLocal, epsilon);
+        Mem inf_memory = c.newInt64Const(ConstPool::kScopeLocal, 0x7FF0000000000000LL);
         Label l_nan = c.newLabel();
         Label l_exit = c.newLabel();
         Gp r = c.newInt32();
-        c.ucomisd(xmm0, xmm0);
-        c.jnp(l_nan);
+        Gp int_r = c.newInt64();
+        c.movq(int_r, xmm0);
+        c.and_(int_r, inf_memory);
+        c.cmp(int_r, inf_memory);
+        c.jne(l_nan);
         if (eq) {
             c.mov(r.r8Lo(), 1);
         } else {
             c.xor_(r, r);
         }
-        c.ucomisd(xmm1, xmm1);
-        c.jnp(l_nan);
+        c.movq(int_r, xmm1);
+        c.and_(int_r, inf_memory);
+        c.cmp(int_r, inf_memory);
+        c.jne(l_nan);
         c.jmp(l_exit);
 
         c.bind(l_nan);
@@ -756,19 +767,26 @@ namespace questdb::x86 {
     inline Gpd float_cmp_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, float epsilon, bool eq) {
         int32_t nans[] = {0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff}; // float NaN
         Mem nans_memory = c.newConst(ConstPool::kScopeLocal, &nans, 16);
+        Mem inf_memory = c.newFloatConst(ConstPool::kScopeLocal, 0x7F800000);
         Mem d = c.newFloatConst(ConstPool::kScopeLocal, epsilon);
         Label l_nan = c.newLabel();
         Label l_exit = c.newLabel();
+        c.comment("float_cmp_epsilon_start");
+        Gp int_r = c.newInt32("tmp_int_r");
+        c.movd(int_r, xmm0);
+        c.and_(int_r, 0x7FF00000);
+        c.cmp(int_r,  0x7FF00000);
+        c.jne(l_nan);
         Gp r = c.newInt32();
-        c.ucomiss(xmm0, xmm0);
-        c.jnp(l_nan);
         if (eq) {
-            c.mov(r.r8Lo(), 1);
+            c.mov(r, 1);
         } else {
             c.xor_(r, r);
         }
-        c.ucomiss(xmm1, xmm1);
-        c.jnp(l_nan);
+        c.movd(int_r, xmm1);
+        c.and_(int_r, 0x7FF00000);
+        c.cmp(int_r,  0x7FF00000);
+        c.jne(l_nan);
         c.jmp(l_exit);
 
         c.bind(l_nan);
@@ -782,6 +800,7 @@ namespace questdb::x86 {
             c.setbe(r.r8Lo());
         }
         c.bind(l_exit);
+        c.comment("float_cmp_epsilon_stop");
         return r.as<Gpd>();
     }
 

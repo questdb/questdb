@@ -2093,7 +2093,7 @@ public class SqlOptimiser implements Mutable {
                     value = loFunc.getLong(null);
                 } else {
                     long tmp = (byte) (loFunc.getChar(null) - '0');
-                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NaN;
+                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
                 }
 
                 if (value < 0) {

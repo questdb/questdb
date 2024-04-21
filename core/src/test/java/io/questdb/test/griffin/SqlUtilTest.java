@@ -162,11 +162,11 @@ public class SqlUtilTest {
 
     @Test
     public void testNaNCast() {
-        Assert.assertEquals(0, SqlUtil.implicitCastIntAsByte(Numbers.INT_NaN));
-        Assert.assertEquals(0, SqlUtil.implicitCastIntAsShort(Numbers.INT_NaN));
-        Assert.assertEquals(0, SqlUtil.implicitCastLongAsByte(Numbers.LONG_NaN));
-        Assert.assertEquals(Numbers.INT_NaN, SqlUtil.implicitCastLongAsInt(Numbers.LONG_NaN));
-        Assert.assertEquals(0, SqlUtil.implicitCastLongAsShort(Numbers.LONG_NaN));
+        Assert.assertEquals(0, SqlUtil.implicitCastIntAsByte(Numbers.INT_NULL));
+        Assert.assertEquals(0, SqlUtil.implicitCastIntAsShort(Numbers.INT_NULL));
+        Assert.assertEquals(0, SqlUtil.implicitCastLongAsByte(Numbers.LONG_NULL));
+        Assert.assertEquals(Numbers.INT_NULL, SqlUtil.implicitCastLongAsInt(Numbers.LONG_NULL));
+        Assert.assertEquals(0, SqlUtil.implicitCastLongAsShort(Numbers.LONG_NULL));
     }
 
     @Test
@@ -327,7 +327,7 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrDate() {
-        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsDate(null));
+        Assert.assertEquals(Numbers.LONG_NULL, SqlUtil.implicitCastStrAsDate(null));
         Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20T10:30:55.123Z")));
         Assert.assertEquals("2022-11-20T10:30:55.000Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20 10:30:55Z")));
         Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(SqlUtil.implicitCastStrAsDate("2022-11-20 Z")));
@@ -347,7 +347,7 @@ public class SqlUtilTest {
 
     @Test
     public void testParseVarcharDate() {
-        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastVarcharAsDate(null));
+        Assert.assertEquals(Numbers.LONG_NULL, SqlUtil.implicitCastVarcharAsDate(null));
         Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20T10:30:55.123Z")));
         Assert.assertEquals("2022-11-20T10:30:55.000Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20 10:30:55Z")));
         Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20 Z")));
@@ -478,7 +478,7 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrInt() {
-        Assert.assertEquals(Numbers.INT_NaN, SqlUtil.implicitCastStrAsInt(null));
+        Assert.assertEquals(Numbers.INT_NULL, SqlUtil.implicitCastStrAsInt(null));
         Assert.assertEquals(22222123, SqlUtil.implicitCastStrAsInt("22222123"));
         Assert.assertEquals(-2222232, SqlUtil.implicitCastStrAsInt("-2222232"));
 
@@ -502,7 +502,7 @@ public class SqlUtilTest {
     @Test
     public void testParseVarcharInt() {
         Utf8StringSink sink = new Utf8StringSink();
-        Assert.assertEquals(Numbers.INT_NaN, SqlUtil.implicitCastVarcharAsInt(null));
+        Assert.assertEquals(Numbers.INT_NULL, SqlUtil.implicitCastVarcharAsInt(null));
 
         sink.put("22222123");
         Assert.assertEquals(22222123, SqlUtil.implicitCastVarcharAsInt(sink));
@@ -534,7 +534,7 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrLong() {
-        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsLong(null));
+        Assert.assertEquals(Numbers.LONG_NULL, SqlUtil.implicitCastStrAsLong(null));
         Assert.assertEquals(222221211212123L, SqlUtil.implicitCastStrAsLong("222221211212123"));
         Assert.assertEquals(222221211212123L, SqlUtil.implicitCastStrAsLong("222221211212123L"));
         Assert.assertEquals(-222221211212123L, SqlUtil.implicitCastStrAsLong("-222221211212123"));
@@ -559,7 +559,7 @@ public class SqlUtilTest {
 
     @Test
     public void testParseVarcharLong() {
-        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsLong(null));
+        Assert.assertEquals(Numbers.LONG_NULL, SqlUtil.implicitCastStrAsLong(null));
         Utf8StringSink sink = new Utf8StringSink();
         sink.put("222221211212123");
         Assert.assertEquals(222221211212123L, SqlUtil.implicitCastVarcharAsLong(sink));
@@ -653,7 +653,7 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrTimestamp() {
-        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastStrAsTimestamp(null));
+        Assert.assertEquals(Numbers.LONG_NULL, SqlUtil.implicitCastStrAsTimestamp(null));
         Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20T10:30:55.123999Z")));
         Assert.assertEquals("2022-11-20T10:30:55.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 10:30:55Z")));
         Assert.assertEquals("2022-11-20T00:00:00.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 Z")));
@@ -672,7 +672,7 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrVarcharAsTimestamp0() {
-        Assert.assertEquals(Numbers.LONG_NaN, SqlUtil.implicitCastVarcharAsTimestamp(null));
+        Assert.assertEquals(Numbers.LONG_NULL, SqlUtil.implicitCastVarcharAsTimestamp(null));
         Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20T10:30:55.123999Z")));
         Assert.assertEquals("2022-11-20T10:30:55.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 10:30:55Z")));
         Assert.assertEquals("2022-11-20T00:00:00.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 Z")));

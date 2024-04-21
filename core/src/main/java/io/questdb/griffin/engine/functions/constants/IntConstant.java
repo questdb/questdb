@@ -31,7 +31,7 @@ import io.questdb.std.Numbers;
 
 public class IntConstant extends IntFunction implements ConstantFunction {
 
-    public static final IntConstant NULL = new IntConstant(Numbers.INT_NaN);
+    public static final IntConstant NULL = new IntConstant(Numbers.INT_NULL);
 
     private final int value;
 
@@ -41,7 +41,7 @@ public class IntConstant extends IntFunction implements ConstantFunction {
     }
 
     public static IntConstant newInstance(int value) {
-        return value != Numbers.INT_NaN ? new IntConstant(value) : NULL;
+        return value != Numbers.INT_NULL ? new IntConstant(value) : NULL;
     }
 
     @Override
@@ -51,7 +51,7 @@ public class IntConstant extends IntFunction implements ConstantFunction {
 
     @Override
     public boolean isNullConstant() {
-        return value == Numbers.INT_NaN;
+        return value == Numbers.INT_NULL;
     }
 
     @Override

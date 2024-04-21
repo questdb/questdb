@@ -72,7 +72,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         Function var = args.getQuick(0);
         if (var.isConstant()) {
             long value = var.getDate(null);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return StrConstant.NULL;
             }
 
@@ -115,7 +115,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
             long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return;
             }
             toSink(value, utf16Sink);
@@ -129,7 +129,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         @Override
         public int getStrLen(Record rec) {
             long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return -1;
             }
             sink1.clear();
@@ -145,7 +145,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
             final long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return null;
             }
             sink.clear();

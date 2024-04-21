@@ -46,7 +46,7 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NaN) {
+        if (value != Numbers.LONG_NULL) {
             mapValue.putLong(valueIndex, value);
             mapValue.putLong(valueIndex + 1, 1);
         } else {
@@ -58,7 +58,7 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NaN) {
+        if (value != Numbers.LONG_NULL) {
             mapValue.addLong(valueIndex, value);
             mapValue.addLong(valueIndex + 1, 1);
         }
@@ -71,7 +71,7 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public long getLong(Record rec) {
-        return rec.getLong(valueIndex + 1) > 0 ? rec.getLong(valueIndex) : Numbers.LONG_NaN;
+        return rec.getLong(valueIndex + 1) > 0 ? rec.getLong(valueIndex) : Numbers.LONG_NULL;
     }
 
     @Override
@@ -122,7 +122,7 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
     }
 

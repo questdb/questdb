@@ -52,7 +52,7 @@ public class CastIntToCharFunctionFactory implements FunctionFactory {
         @Override
         public char getChar(Record rec) {
             final int value = arg.getInt(rec);
-            return value != Numbers.INT_NaN ? (char) value : 0;
+            return value != Numbers.INT_NULL ? (char) value : 0;
         }
     }
 }

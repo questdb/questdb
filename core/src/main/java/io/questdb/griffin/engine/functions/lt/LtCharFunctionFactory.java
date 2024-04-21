@@ -32,13 +32,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
-import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtCharFunctionFactory implements FunctionFactory {
-
-    private static final char CHAR_NULL = CharConstant.ZERO.getChar(null);
 
     @Override
     public String getSignature() {
@@ -73,12 +71,9 @@ public class LtCharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final char left = this.left.getChar(rec);
-            final char right = this.right.getChar(rec);
-            if (left == CHAR_NULL || right == CHAR_NULL) {
-                return false;
-            }
-            return negated == (left >= right);
+            char a = left.getChar(rec);
+            char b = right.getChar(rec);
+            return a != Numbers.CHAR_NULL && b != Numbers.CHAR_NULL && negated == (a >= b);
         }
 
         @Override

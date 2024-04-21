@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CotDoubleFunctionFactory implements FunctionFactory {
@@ -69,7 +70,7 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             double angle = angleRad.getDouble(rec);
-            if (Double.isNaN(angle) || Double.isInfinite(angle)) {
+            if (Numbers.isNull(angle)) {
                 return Double.NaN;
             }
             return 1.0 / Math.tan(angle);

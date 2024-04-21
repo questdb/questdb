@@ -40,9 +40,9 @@ public class LtLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call(-7L, 7L).andAssert(true);
         call(1L, -1L).andAssert(false);
         call(-10L, -10L).andAssert(false);
-        call(Numbers.LONG_NaN, 7L).andAssert(false);
-        call(42L, Numbers.LONG_NaN).andAssert(false);
-        call(Numbers.LONG_NaN, Numbers.LONG_NaN).andAssert(false);
+        call(Numbers.LONG_NULL, 7L).andAssert(false);
+        call(42L, Numbers.LONG_NULL).andAssert(false);
+        call(Numbers.LONG_NULL, Numbers.LONG_NULL).andAssert(false);
     }
 
     @Override

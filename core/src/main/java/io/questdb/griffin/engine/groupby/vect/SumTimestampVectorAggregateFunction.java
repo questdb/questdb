@@ -60,7 +60,7 @@ public class SumTimestampVectorAggregateFunction extends TimestampFunction imple
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
             final long value = Vect.sumLong(address, addressSize / Long.BYTES);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 sum.add(value);
                 this.count.increment();
             }
@@ -97,7 +97,7 @@ public class SumTimestampVectorAggregateFunction extends TimestampFunction imple
         if (count.sum() > 0) {
             return sum.sum();
         }
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     @Override

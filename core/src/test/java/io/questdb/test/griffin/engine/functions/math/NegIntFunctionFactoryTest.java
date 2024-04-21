@@ -35,7 +35,7 @@ public class NegIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaN() throws SqlException {
-        call(Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+        call(Numbers.INT_NULL).andAssert(Numbers.INT_NULL);
     }
 
     @Test

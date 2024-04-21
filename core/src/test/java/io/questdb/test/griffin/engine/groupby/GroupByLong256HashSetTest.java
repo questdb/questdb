@@ -41,7 +41,7 @@ public class GroupByLong256HashSetTest extends AbstractCairoTest {
 
     @Test
     public void testFuzzWithLongNullAsNoKeyValue() throws Exception {
-        testFuzz(Numbers.LONG_NaN);
+        testFuzz(Numbers.LONG_NULL);
     }
 
     @Test

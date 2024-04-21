@@ -611,7 +611,7 @@ public class WalWriter implements TableWriterAPI {
                     nullers.add(() -> dataMem.putFloat(Float.NaN));
                     break;
                 case ColumnType.INT:
-                    nullers.add(() -> dataMem.putInt(Numbers.INT_NaN));
+                    nullers.add(() -> dataMem.putInt(Numbers.INT_NULL));
                     break;
                 case ColumnType.IPv4:
                     nullers.add(() -> dataMem.putInt(Numbers.IPv4_NULL));
@@ -619,10 +619,10 @@ public class WalWriter implements TableWriterAPI {
                 case ColumnType.LONG:
                 case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
-                    nullers.add(() -> dataMem.putLong(Numbers.LONG_NaN));
+                    nullers.add(() -> dataMem.putLong(Numbers.LONG_NULL));
                     break;
                 case ColumnType.LONG256:
-                    nullers.add(() -> dataMem.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
+                    nullers.add(() -> dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL));
                     break;
                 case ColumnType.SHORT:
                     nullers.add(() -> dataMem.putShort((short) 0));
@@ -648,7 +648,7 @@ public class WalWriter implements TableWriterAPI {
                 case ColumnType.LONG128:
                     // fall through
                 case ColumnType.UUID:
-                    nullers.add(() -> dataMem.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                    nullers.add(() -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL));
                     break;
                 default:
                     throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));

@@ -32,7 +32,7 @@ public class SecondOfMinuteFunctionFactoryTest extends AbstractCairoTest {
     public void testNull() throws Exception {
         assertQuery(
                 "second\n" +
-                        "NaN\n",
+                        "null\n",
                 "select second(null)",
                 null,
                 null,

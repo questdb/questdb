@@ -130,7 +130,7 @@ public class JsonPlanSinkTest {
             sink.attr("ipv4");
             sink.valIPv4(1);
             sink.attr("uuid_null");
-            sink.valUuid(Numbers.LONG_NaN, Numbers.LONG_NaN);
+            sink.valUuid(Numbers.LONG_NULL, Numbers.LONG_NULL);
         }
     }
 }

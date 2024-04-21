@@ -66,10 +66,52 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDoubleNonConstant() throws Exception {
+        assertQuery(
+                "nullif\n" +
+                        "5.0\n" +
+                        "null\n" +
+                        "4.0\n",
+
+                "select nullif(five, four) from x \n" +
+                        "UNION \n" +
+                        "select nullif(five, five) from x \n" +
+                        "UNION \n" +
+                        "select nullif(four, five) from x \n",
+                "create table x as (" +
+                        "SELECT 5::double as five, 4::double as four" +
+                        ")",
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testDoubleSimple() throws Exception {
+        assertQuery(
+                "double\tnullif\n" +
+                        "0.1\t0.1\n" +
+                        "0.2\t0.2\n" +
+                        "0.3\tnull\n" +
+                        "0.4\t0.4\n" +
+                        "0.5\t0.5\n",
+                "select double,nullif(double,0.3) from x",
+                "create table x as (" +
+                        "select x / 10.0 as double\n" +
+                        "from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testIntConstNull() throws Exception {
         assertQuery(
                 "nullif1\tnullif2\n" +
-                        "NaN\t5\n",
+                        "null\t5\n",
                 "select nullif(null,5) nullif1, nullif(5,null) nullif2",
                 null,
                 null,
@@ -83,7 +125,7 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
         assertQuery(
                 "nullif\n" +
                         "5\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "4\n",
 
                 "select nullif(five, four) from x \n" +
@@ -106,7 +148,7 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
                 "int\tnullif\n" +
                         "4\t4\n" +
                         "2\t2\n" +
-                        "5\tNaN\n" +
+                        "5\tnull\n" +
                         "2\t2\n" +
                         "4\t4\n",
                 "select int,nullif(int,5) from x",
@@ -124,52 +166,9 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
     public void testLongConstNull() throws Exception {
         assertQuery(
                 "nullif1\tnullif2\n" +
-                        "NaN\t5\n",
+                        "null\t5\n",
                 "select nullif(null,5::long) nullif1, nullif(5::long,null) nullif2",
                 null,
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testLongNonConstant() throws Exception {
-        assertQuery(
-                "nullif\n" +
-                        "5\n" +
-                        "NaN\n" +
-                        "4\n",
-
-                "select nullif(five, four) from x \n" +
-                        "UNION \n" +
-                        "select nullif(five, five) from x \n" +
-                        "UNION \n" +
-                        "select nullif(four, five) from x \n",
-                "create table x as (" +
-                        "SELECT 5::long as five, 4::long as four" +
-                        ")",
-                null,
-                false,
-                false
-        );
-    }
-
-
-    @Test
-    public void testLongSimple() throws Exception {
-        assertQuery(
-                "long\tnullif\n" +
-                        "1\t1\n" +
-                        "2\t2\n" +
-                        "3\tNaN\n" +
-                        "4\t4\n" +
-                        "5\t5\n",
-                "select long,nullif(long,3) from x",
-                "create table x as (" +
-                        "select x as long\n" +
-                        "from long_sequence(5)" +
-                        ")",
                 null,
                 true,
                 true
@@ -203,12 +202,12 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDoubleNonConstant() throws Exception {
+    public void testLongNonConstant() throws Exception {
         assertQuery(
                 "nullif\n" +
-                        "5.0\n" +
-                        "NaN\n" +
-                        "4.0\n",
+                        "5\n" +
+                        "null\n" +
+                        "4\n",
 
                 "select nullif(five, four) from x \n" +
                         "UNION \n" +
@@ -216,7 +215,7 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
                         "UNION \n" +
                         "select nullif(four, five) from x \n",
                 "create table x as (" +
-                        "SELECT 5::double as five, 4::double as four" +
+                        "SELECT 5::long as five, 4::long as four" +
                         ")",
                 null,
                 false,
@@ -224,19 +223,18 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
         );
     }
 
-
     @Test
-    public void testDoubleSimple() throws Exception {
+    public void testLongSimple() throws Exception {
         assertQuery(
-                "double\tnullif\n" +
-                        "0.1\t0.1\n" +
-                        "0.2\t0.2\n" +
-                        "0.3\tNaN\n" +
-                        "0.4\t0.4\n" +
-                        "0.5\t0.5\n",
-                "select double,nullif(double,0.3) from x",
+                "long\tnullif\n" +
+                        "1\t1\n" +
+                        "2\t2\n" +
+                        "3\tnull\n" +
+                        "4\t4\n" +
+                        "5\t5\n",
+                "select long,nullif(long,3) from x",
                 "create table x as (" +
-                        "select x / 10.0 as double\n" +
+                        "select x as long\n" +
                         "from long_sequence(5)" +
                         ")",
                 null,

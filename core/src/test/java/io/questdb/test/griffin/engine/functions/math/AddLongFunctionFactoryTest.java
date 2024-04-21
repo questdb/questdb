@@ -35,7 +35,7 @@ public class AddLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testLeftNan() throws SqlException {
-        call(10L, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN);
+        call(10L, Numbers.LONG_NULL).andAssert(Numbers.LONG_NULL);
     }
 
     @Test
@@ -45,7 +45,7 @@ public class AddLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testRightNan() throws SqlException {
-        call(Numbers.LONG_NaN, 10L).andAssert(Numbers.LONG_NaN);
+        call(Numbers.LONG_NULL, 10L).andAssert(Numbers.LONG_NULL);
     }
 
     @Test

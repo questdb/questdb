@@ -54,7 +54,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.LONG_NaN, record.getTimestamp(0));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getTimestamp(0));
             }
         }
     }
@@ -80,7 +80,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractCairoTest 
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.LONG_NaN, record.getTimestamp(0));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getTimestamp(0));
             }
         }
     }

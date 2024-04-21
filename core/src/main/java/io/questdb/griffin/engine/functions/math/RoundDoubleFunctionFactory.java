@@ -51,7 +51,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
         final Function scale = args.getQuick(1);
         if (scale.isConstant()) {
             int scaleValue = scale.getInt(null);
-            if (scaleValue != Numbers.INT_NaN) {
+            if (scaleValue != Numbers.INT_NULL) {
                 if (scaleValue == 0) {
                     return new RoundDoubleZeroScaleFunctionFactory.RoundDoubleZeroScaleFunction(arg);
                 }
@@ -84,7 +84,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
             }
 
             final int r = right.getInt(rec);
-            if (r == Numbers.INT_NaN) {
+            if (r == Numbers.INT_NULL) {
                 return Double.NaN;
             }
 
