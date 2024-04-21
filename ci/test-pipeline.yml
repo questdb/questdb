@@ -66,6 +66,13 @@ stages:
     jobs:
       - template: templates/hosted-compat-jobs.yml
 
+  - stage: RustTestAndLint
+    displayName: "Rust Test and Lint"
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/rust-test-and-lint.yml
+
   - stage: CoverageReports
     displayName: "Coverage Report"
     dependsOn:

@@ -12,6 +12,7 @@ pub extern "system" fn Java_io_questdb_RustCodeFailScenario_setup<'a>(
     Box::into_raw(Box::new(fail::FailScenario::setup()))
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_RustCodeFailScenario_teardown(
     _env: JNIEnv,
@@ -20,7 +21,7 @@ pub extern "system" fn Java_io_questdb_RustCodeFailScenario_teardown(
 ) {
     if !ptr.is_null() {
         unsafe {
-            let _ = Box::from_raw(ptr);
+            drop(Box::from_raw(ptr));
         }
     }
 }
