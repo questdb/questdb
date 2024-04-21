@@ -118,8 +118,6 @@ public final class Os {
 
     public static native int getPid();
 
-    public static native long rustTest();
-
     /**
      * Returns physical memory used by this process (Resident Set Size/Working Set Size).
      *
@@ -228,11 +226,9 @@ public final class Os {
                 if ("aarch64".equals(System.getProperty("os.arch"))) {
                     type = LINUX_ARM64;
                     loadLib("/io/questdb/bin/armlinux/libquestdb.so");
-                    loadLib("/io/questdb/bin/rust/libqdb.so");
                 } else {
                     type = LINUX_AMD64;
                     loadLib("/io/questdb/bin/linux/libquestdb.so");
-                    loadLib("/io/questdb/bin/rust/libqdb.so");
                 }
             } else if (osName.contains("Mac")) {
                 if ("aarch64".equals(System.getProperty("os.arch"))) {
@@ -242,15 +238,12 @@ public final class Os {
                     type = OSX_AMD64; // darwin
                     loadLib("/io/questdb/bin/osx/libquestdb.dylib");
                 }
-                loadLib("/io/questdb/bin/rust/libqdb.dylib");
             } else if (osName.contains("Windows")) {
                 type = WINDOWS;
                 loadLib("/io/questdb/bin/windows/libquestdb.dll");
-                loadLib("/io/questdb/bin/rust/libqdb.dll");
             } else if (osName.contains("FreeBSD")) {
                 type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
                 loadLib("/io/questdb/bin/freebsd/libquestdb.so");
-                loadLib("/io/questdb/bin/rust/libqdb.so");
             } else {
                 throw new Error("Unsupported OS: " + osName);
             }

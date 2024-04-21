@@ -79,9 +79,7 @@ public class Bootstrap {
 
         // ensure we can load libraries
         Os.init();
-        if (Os.rustTest() != 0xabc) {
-            throw new BootstrapException("rust libraries are not found");
-        }
+        Qdb.init();
 
         banner = bootstrapConfiguration.getBanner();
         microsecondClock = bootstrapConfiguration.getMicrosecondClock();

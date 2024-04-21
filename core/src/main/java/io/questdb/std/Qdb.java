@@ -26,10 +26,6 @@ package io.questdb.std;
 import io.questdb.jar.jni.JarJniLoader;
 import io.questdb.log.RustLogging;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.Properties;
-
 public class Qdb {
     @SuppressWarnings("EmptyMethod")
     public static void init() {
@@ -38,6 +34,7 @@ public class Qdb {
     // Java_io_questdb_std_Qdb_initQdb
     protected static native void initQdb();
 
+    @SuppressWarnings("unused")
     // Java_io_questdb_std_Qdb_isReleaseBuild
     public static native boolean isReleaseBuild();
 
