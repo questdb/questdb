@@ -40,6 +40,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class ReplaceVarcharFunctionFactory implements FunctionFactory {
 
@@ -75,9 +76,73 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
                 return value;
             }
         }
-
         final int maxLength = configuration.getStrFunctionMaxBufferLength();
+
+        if (value.isConstant() && lookFor.isConstant() && replaceWith.isConstant()) {
+
+        }
+
         return new Func(value, lookFor, replaceWith, maxLength);
+    }
+
+    static void checkSizeLimit(int size, int maxSize) {
+        if (size > maxSize) {
+            throw CairoException.nonCritical()
+                    .put("breached memory limit set for ").put(SIGNATURE)
+                    .put(" [maxSize=").put(maxSize)
+                    .put(", requiredSize=").put(size).put(']');
+        }
+    }
+
+    // if result is null, return null; otherwise return sink
+    static <T extends Utf8Sink> @Nullable T replace(
+            @NotNull Utf8Sequence value, Utf8Sequence lookFor, Utf8Sequence replaceWith, T sink, int maxSize
+    ) throws CairoException {
+        int valueSize = value.size();
+        if (valueSize < 1) {
+            return sink;
+        }
+        if (lookFor == null || replaceWith == null) {
+            return null;
+        }
+        checkSizeLimit(valueSize, maxSize);
+        final int lookForSize = lookFor.size();
+        if (lookForSize < 1) {
+            sink.putAny(value);
+            return sink;
+        }
+        final int replaceWithSize = replaceWith.size();
+
+        int i = 0;
+        int curLen = 0;
+        OUTER:
+        while (i <= valueSize - lookForSize) {
+            final byte bi = value.byteAt(i);
+            int k = 0;
+            byte bk = bi;
+            while (true) {
+                if (bk != lookFor.byteAt(k)) {
+                    i++;
+                    curLen++;
+                    checkSizeLimit(curLen, maxSize);
+                    sink.putAny(bi);
+                    continue OUTER;
+                }
+                k++;
+                if (k == lookForSize) {
+                    break;
+                }
+                bk = value.byteAt(i + k);
+            }
+            i += lookForSize;
+            curLen += replaceWithSize;
+            checkSizeLimit(curLen, maxSize);
+            sink.putAny(replaceWith);
+        }
+        curLen++;
+        checkSizeLimit(curLen, maxSize);
+        sink.putAny(value, i, valueSize);
+        return sink;
     }
 
     private static class Func extends VarcharFunction implements TernaryFunction {
@@ -89,7 +154,7 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
         private final Utf8StringSink sinkB = new Utf8StringSink();
         private final Function value;
 
-        public Func(Function value, Function lookFor, Function replaceWith, int maxSize) {
+        Func(Function value, Function lookFor, Function replaceWith, int maxSize) {
             this.value = value;
             this.lookFor = lookFor;
             this.replaceWith = replaceWith;
@@ -115,7 +180,7 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
         public void getVarchar(Record rec, Utf8Sink sink) {
             final Utf8Sequence value = this.value.getVarcharA(rec);
             if (value != null) {
-                replace(value, lookFor.getVarcharA(rec), replaceWith.getVarcharA(rec), sink);
+                replace(value, lookFor.getVarcharA(rec), replaceWith.getVarcharA(rec), sink, maxSize);
             }
         }
 
@@ -124,7 +189,7 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
             final Utf8Sequence value = this.value.getVarcharA(rec);
             if (value != null) {
                 sink.clear();
-                return replace(value, lookFor.getVarcharA(rec), replaceWith.getVarcharA(rec), sink);
+                return replace(value, lookFor.getVarcharA(rec), replaceWith.getVarcharA(rec), sink, maxSize);
             }
             return null;
         }
@@ -134,7 +199,7 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
             final Utf8Sequence value = this.value.getVarcharB(rec);
             if (value != null) {
                 sinkB.clear();
-                return replace(value, lookFor.getVarcharB(rec), replaceWith.getVarcharB(rec), sinkB);
+                return replace(value, lookFor.getVarcharB(rec), replaceWith.getVarcharB(rec), sinkB, maxSize);
             }
             return null;
         }
@@ -145,68 +210,14 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("replace(").val(value).val(',').val(lookFor).val(',').val(replaceWith).val(')');
         }
 
-        private void checkSizeLimit(int size) {
-            if (size > maxSize) {
-                throw CairoException.nonCritical()
-                        .put("breached memory limit set for ").put(SIGNATURE)
-                        .put(" [maxSize=").put(maxSize)
-                        .put(", requiredSize=").put(size).put(']');
-            }
-        }
-
-        // if result is null, return null; otherwise return sink
-        private <T extends Utf8Sink> T replace(
-                @NotNull Utf8Sequence value, Utf8Sequence lookFor, Utf8Sequence replaceWith, T sink
-        ) throws CairoException {
-            int valueSize = value.size();
-            if (valueSize < 1) {
-                return sink;
-            }
-            if (lookFor == null || replaceWith == null) {
-                return null;
-            }
-            checkSizeLimit(valueSize);
-            final int lookForSize = lookFor.size();
-            if (lookForSize < 1) {
-                sink.put(value);
-                return sink;
-            }
-            final int replaceWithSize = replaceWith.size();
-
-            int i = 0;
-            int curLen = 0;
-            OUTER:
-            while (i <= valueSize - lookForSize) {
-                final byte bi = value.byteAt(i);
-                int k = 0;
-                byte bk = bi;
-                while (true) {
-                    if (bk != lookFor.byteAt(k)) {
-                        i++;
-                        curLen++;
-                        checkSizeLimit(curLen);
-                        sink.put(bi);
-                        continue OUTER;
-                    }
-                    k++;
-                    if (k == lookForSize) {
-                        break;
-                    }
-                    bk = value.byteAt(i + k);
-                }
-                i += lookForSize;
-                curLen += replaceWithSize;
-                checkSizeLimit(curLen);
-                sink.put(replaceWith);
-            }
-            curLen++;
-            checkSizeLimit(curLen);
-            sink.put(value, i, valueSize);
-            return sink;
-        }
     }
 }

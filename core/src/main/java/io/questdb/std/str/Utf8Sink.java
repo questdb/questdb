@@ -112,8 +112,8 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     }
 
     /**
-     * Writes out bytes (8bits) to physical storage verbatim. This method is not commonly implemented on
-     * {@link CharSink}. For writing ASCII (8-byte) characters please see {@link #putAscii(char)}
+     * Put a non-ASCII byte. This method is not commonly implemented on
+     * {@link CharSink}. To write a known-ASCII (8-byte) char, call {@link #putAscii(char)}
      *
      * @param b byte value
      * @return this sink for daisy-chaining
@@ -178,6 +178,14 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
                 i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
             }
         }
+        return this;
+    }
+
+    default Utf8Sink putAny(byte b) {
+        return this;
+    }
+
+    default Utf8Sink putAny(Utf8Sequence seq, int lo, int hi) {
         return this;
     }
 

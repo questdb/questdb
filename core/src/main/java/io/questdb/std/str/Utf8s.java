@@ -848,7 +848,7 @@ public final class Utf8s {
                 limit--;
             }
         }
-        sink.put(source, start, limit);
+        sink.putAny(source, start, limit);
     }
 
     /**

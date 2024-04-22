@@ -109,6 +109,18 @@ public interface CharSink<T extends CharSink<?>> {
         return putAscii(value ? "true" : "false");
     }
 
+    default T putAny(char c) {
+        return (T) this;
+    }
+
+    default T putAny(@Nullable Utf8Sequence us) {
+        return (T) this;
+    }
+
+    default T putAny(@Nullable CharSequence cs) {
+        return (T) this;
+    }
+
     /**
      * Treats the input char as an ASCII one. If a non-ASCII char is provided instead,
      * a corrupted char may be written into the sink, depending on the implementation.
