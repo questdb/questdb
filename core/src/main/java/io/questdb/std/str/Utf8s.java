@@ -777,6 +777,40 @@ public final class Utf8s {
         return b.toString();
     }
 
+    /**
+     * Implements strpos() with SQL semantics. Returns the 1-based position of a non-null
+     * needle within a non-null haystack, and 0 if needle doesn't occur within haystack. An
+     * empty needle is specified to occur at position 1 of any haystack (even an empty one).
+     */
+    public static int strpos(@NotNull Utf8Sequence haystack, @NotNull Utf8Sequence needle) {
+        final int substrSize = needle.size();
+        if (substrSize < 1) {
+            return 1;
+        }
+        final int strSize = haystack.size();
+        if (strSize < 1) {
+            return 0;
+        }
+
+        OUTER:
+        for (int i = 0, strPos = 0, n = strSize - substrSize + 1; i < n; i++) {
+            final byte c = haystack.byteAt(i);
+            // Only advance strPos if c is not a continuation byte
+            if ((c & 0b1100_0000) != 0b1000_0000) {
+                strPos++;
+            }
+            if (c == needle.byteAt(0)) {
+                for (int k = 1; k < substrSize; k++) {
+                    if (haystack.byteAt(i + k) != needle.byteAt(k)) {
+                        continue OUTER;
+                    }
+                }
+                return strPos;
+            }
+        }
+        return 0;
+    }
+
     public static String toString(@NotNull Utf8Sequence us, int start, int end, byte unescapeAscii) {
         final Utf8Sink sink = Misc.getThreadLocalUtf8Sink();
         final int lastChar = end - 1;

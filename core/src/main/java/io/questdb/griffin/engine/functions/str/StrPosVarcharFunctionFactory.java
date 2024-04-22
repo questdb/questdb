@@ -38,7 +38,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.str.Utf8s;
 
 public class StrPosVarcharFunctionFactory implements FunctionFactory {
 
@@ -66,36 +66,7 @@ public class StrPosVarcharFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), substrFunc);
     }
 
-    private static int strpos(@NotNull Utf8Sequence str, @NotNull Utf8Sequence substr) {
-        final int substrSize = substr.size();
-        if (substrSize < 1) {
-            return 1;
-        }
-        final int strSize = str.size();
-        if (strSize < 1) {
-            return 0;
-        }
-
-        OUTER:
-        for (int i = 0, strPos = 0, n = strSize - substrSize + 1; i < n; i++) {
-            final byte c = str.byteAt(i);
-            // Only advance strPos if c is not a continuation byte
-            if ((c & 0b1100_0000) != 0b1000_0000) {
-                strPos++;
-            }
-            if (c == substr.byteAt(0)) {
-                for (int k = 1; k < substrSize; k++) {
-                    if (str.byteAt(i + k) != substr.byteAt(k)) {
-                        continue OUTER;
-                    }
-                }
-                return strPos;
-            }
-        }
-        return 0;
-    }
-
-    public static class ConstFunc extends IntFunction implements UnaryFunction {
+    private static class ConstFunc extends IntFunction implements UnaryFunction {
 
         private final Utf8Sequence substr;
         private final Function varcharFunc;
@@ -116,7 +87,7 @@ public class StrPosVarcharFunctionFactory implements FunctionFactory {
             if (str == null) {
                 return Numbers.INT_NULL;
             }
-            return strpos(str, substr);
+            return Utf8s.strpos(str, substr);
         }
 
         @Override
@@ -125,7 +96,7 @@ public class StrPosVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class Func extends IntFunction implements BinaryFunction {
+    private static class Func extends IntFunction implements BinaryFunction {
 
         private final Function strFunc;
         private final Function substrFunc;
@@ -145,7 +116,7 @@ public class StrPosVarcharFunctionFactory implements FunctionFactory {
             if (substr == null) {
                 return Numbers.INT_NULL;
             }
-            return strpos(str, substr);
+            return Utf8s.strpos(str, substr);
         }
 
         @Override
