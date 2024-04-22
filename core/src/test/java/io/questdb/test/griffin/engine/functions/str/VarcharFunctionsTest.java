@@ -27,7 +27,7 @@ package io.questdb.test.griffin.engine.functions.str;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class TrimVarcharTest extends AbstractCairoTest {
+public class VarcharFunctionsTest extends AbstractCairoTest {
 
     @Test
     public void testLtrim() throws Exception {
@@ -40,12 +40,23 @@ public class TrimVarcharTest extends AbstractCairoTest {
                         "   \t\n",
                 "select k, ltrim(k) from x",
                 "create table x as (select rnd_varchar('  abc', 'abc  ', '   ') k from long_sequence(5))",
-                null,
-                true,
-                true
+                null, true, true
         );
     }
 
+    @Test
+    public void testPosition() throws Exception {
+        assertQuery(
+                "k\tposition\n" +
+                        "xa\t2\n" +
+                        "aax\t1\n" +
+                        "xx\t0\n" +
+                        "\t0\n" +
+                        "xx\t0\n",
+                "select k, position(k, 'a') from x",
+                "create table x as (select rnd_varchar('xa', 'xx', 'aax', '') k from long_sequence(5))",
+                null, true, true);
+    }
     @Test
     public void testRtrim() throws Exception {
         assertQuery(
@@ -57,10 +68,22 @@ public class TrimVarcharTest extends AbstractCairoTest {
                         "   \t\n",
                 "select k, rtrim(k) from x",
                 "create table x as (select rnd_varchar('  abc', 'abc  ', '   ') k from long_sequence(5))",
-                null,
-                true,
-                true
+                null, true, true
         );
+    }
+
+    @Test
+    public void testStrpos() throws Exception {
+        assertQuery(
+                "k\tstrpos\n" +
+                        "xa\t2\n" +
+                        "aax\t1\n" +
+                        "xx\t0\n" +
+                        "\t0\n" +
+                        "xx\t0\n",
+                "select k, strpos(k, 'a') from x",
+                "create table x as (select rnd_varchar('xa', 'xx', 'aax', '') k from long_sequence(5))",
+                null, true, true);
     }
 
     @Test
@@ -74,9 +97,7 @@ public class TrimVarcharTest extends AbstractCairoTest {
                         "abc  \tabc\n",
                 "select k, trim(k) from x",
                 "create table x as (select rnd_varchar('  abc', 'abc  ', '  abc  ', '   ') k from long_sequence(5))",
-                null,
-                true,
-                true
+                null, true, true
         );
     }
 }
