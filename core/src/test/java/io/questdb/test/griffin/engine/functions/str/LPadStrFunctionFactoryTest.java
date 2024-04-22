@@ -60,8 +60,8 @@ public class LPadStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaNLength() throws SqlException {
-        call("abc", Numbers.INT_NaN, "xyz").andAssert(null);
-        call("pqrs", Numbers.INT_NaN, "xyz").andAssert(null);
+        call("abc", Numbers.INT_NULL, "xyz").andAssert(null);
+        call("pqrs", Numbers.INT_NULL, "xyz").andAssert(null);
     }
 
     @Test

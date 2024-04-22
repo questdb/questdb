@@ -776,12 +776,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         putOperand(offset, IMM, typeCode, Numbers.IPv4_NULL);
                         break;
                     default:
-                        putOperand(offset, IMM, typeCode, Numbers.INT_NaN);
+                        putOperand(offset, IMM, typeCode, Numbers.INT_NULL);
                         break;
                 }
                 break;
             case I8_TYPE:
-                putOperand(offset, IMM, typeCode, predicateType == PredicateType.GEO_HASH ? GeoHashes.NULL : Numbers.LONG_NaN);
+                putOperand(offset, IMM, typeCode, predicateType == PredicateType.GEO_HASH ? GeoHashes.NULL : Numbers.LONG_NULL);
                 break;
             case F4_TYPE:
                 putDoubleOperand(offset, typeCode, Float.NaN);
@@ -790,7 +790,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 putDoubleOperand(offset, typeCode, Double.NaN);
                 break;
             case I16_TYPE:
-                putOperand(offset, IMM, typeCode, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                putOperand(offset, IMM, typeCode, Numbers.LONG_NULL, Numbers.LONG_NULL);
                 break;
             case STRING_HEADER_TYPE:
                 putOperand(offset, IMM, I4_TYPE, TableUtils.NULL_LEN);

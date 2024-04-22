@@ -50,16 +50,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     assertQueryPlain(
                             "c\tmycol\tmycol2\n" +
-                                    "XYZ\tNaN\tNaN\n" +
-                                    "ABC\tNaN\tNaN\n" +
-                                    "ABC\tNaN\tNaN\n" +
-                                    "XYZ\tNaN\tNaN\n" +
-                                    "\tNaN\tNaN\n" +
-                                    "CDE\tNaN\tNaN\n" +
-                                    "CDE\tNaN\tNaN\n" +
-                                    "ABC\tNaN\tNaN\n" +
-                                    "\tNaN\tNaN\n" +
-                                    "XYZ\tNaN\tNaN\n",
+                                    "XYZ\tnull\tnull\n" +
+                                    "ABC\tnull\tnull\n" +
+                                    "ABC\tnull\tnull\n" +
+                                    "XYZ\tnull\tnull\n" +
+                                    "\tnull\tnull\n" +
+                                    "CDE\tnull\tnull\n" +
+                                    "CDE\tnull\tnull\n" +
+                                    "ABC\tnull\tnull\n" +
+                                    "\tnull\tnull\n" +
+                                    "XYZ\tnull\tnull\n",
                             "select c, mycol, mycol2 from x"
                     );
                 }
@@ -138,16 +138,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     assertQueryPlain(
                             "c\tmycol\n" +
-                                    "XYZ\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "XYZ\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "XYZ\tNaN\n",
+                                    "XYZ\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "XYZ\tnull\n" +
+                                    "\tnull\n" +
+                                    "CDE\tnull\n" +
+                                    "CDE\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "\tnull\n" +
+                                    "XYZ\tnull\n",
                             "select c, mycol from x"
                     );
                 }
@@ -180,16 +180,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     assertQueryPlain(
                             "c\tmycol\n" +
-                                    "XYZ\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "XYZ\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "XYZ\tNaN\n",
+                                    "XYZ\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "XYZ\tnull\n" +
+                                    "\tnull\n" +
+                                    "CDE\tnull\n" +
+                                    "CDE\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "\tnull\n" +
+                                    "XYZ\tnull\n",
                             "select c, mycol from x"
                     );
                 }
@@ -206,16 +206,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     assertQueryPlain(
                             "c\tmycol\n" +
-                                    "XYZ\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "XYZ\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "XYZ\tNaN\n",
+                                    "XYZ\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "XYZ\tnull\n" +
+                                    "\tnull\n" +
+                                    "CDE\tnull\n" +
+                                    "CDE\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "\tnull\n" +
+                                    "XYZ\tnull\n",
                             "select c, mycol from x"
                     );
                 }
@@ -258,16 +258,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     assertQueryPlain(
                             "c\tmycol\n" +
-                                    "XYZ\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "XYZ\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "XYZ\tNaN\n",
+                                    "XYZ\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "XYZ\tnull\n" +
+                                    "\tnull\n" +
+                                    "CDE\tnull\n" +
+                                    "CDE\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "\tnull\n" +
+                                    "XYZ\tnull\n",
                             "select c, mycol from x"
                     );
                 }
@@ -284,16 +284,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     assertQueryPlain(
                             "c\tmycol\n" +
-                                    "XYZ\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "XYZ\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "XYZ\tNaN\n",
+                                    "XYZ\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "XYZ\tnull\n" +
+                                    "\tnull\n" +
+                                    "CDE\tnull\n" +
+                                    "CDE\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "\tnull\n" +
+                                    "XYZ\tnull\n",
                             "select c, mycol from x"
                     );
                 }
@@ -310,16 +310,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     assertQueryPlain(
                             "c\tmycol\n" +
-                                    "XYZ\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "XYZ\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "XYZ\tNaN\n",
+                                    "XYZ\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "XYZ\tnull\n" +
+                                    "\tnull\n" +
+                                    "CDE\tnull\n" +
+                                    "CDE\tnull\n" +
+                                    "ABC\tnull\n" +
+                                    "\tnull\n" +
+                                    "XYZ\tnull\n",
                             "select c, mycol from x"
                     );
                 }
@@ -599,16 +599,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     ddl("alter table x add column mycol int, second symbol");
                     assertQueryPlain(
                             "c\tmycol\tsecond\n" +
-                                    "XYZ\tNaN\t\n" +
-                                    "ABC\tNaN\t\n" +
-                                    "ABC\tNaN\t\n" +
-                                    "XYZ\tNaN\t\n" +
-                                    "\tNaN\t\n" +
-                                    "CDE\tNaN\t\n" +
-                                    "CDE\tNaN\t\n" +
-                                    "ABC\tNaN\t\n" +
-                                    "\tNaN\t\n" +
-                                    "XYZ\tNaN\t\n",
+                                    "XYZ\tnull\t\n" +
+                                    "ABC\tnull\t\n" +
+                                    "ABC\tnull\t\n" +
+                                    "XYZ\tnull\t\n" +
+                                    "\tnull\t\n" +
+                                    "CDE\tnull\t\n" +
+                                    "CDE\tnull\t\n" +
+                                    "ABC\tnull\t\n" +
+                                    "\tnull\t\n" +
+                                    "XYZ\tnull\t\n",
                             "select c, mycol, second from x"
                     );
                 }
@@ -630,16 +630,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     ddl("alter table x add column second symbol;");
                     assertQueryPlain(
                             "c\tmycol\tsecond\n" +
-                                    "XYZ\tNaN\t\n" +
-                                    "ABC\tNaN\t\n" +
-                                    "ABC\tNaN\t\n" +
-                                    "XYZ\tNaN\t\n" +
-                                    "\tNaN\t\n" +
-                                    "CDE\tNaN\t\n" +
-                                    "CDE\tNaN\t\n" +
-                                    "ABC\tNaN\t\n" +
-                                    "\tNaN\t\n" +
-                                    "XYZ\tNaN\t\n",
+                                    "XYZ\tnull\t\n" +
+                                    "ABC\tnull\t\n" +
+                                    "ABC\tnull\t\n" +
+                                    "XYZ\tnull\t\n" +
+                                    "\tnull\t\n" +
+                                    "CDE\tnull\t\n" +
+                                    "CDE\tnull\t\n" +
+                                    "ABC\tnull\t\n" +
+                                    "\tnull\t\n" +
+                                    "XYZ\tnull\t\n",
                             "select c, mycol, second from x"
                     );
                 }

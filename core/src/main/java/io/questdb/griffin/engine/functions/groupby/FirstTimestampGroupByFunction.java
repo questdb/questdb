@@ -95,7 +95,7 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putTimestamp(valueIndex + 1, srcValue.getTimestamp(valueIndex + 1));
         }
@@ -103,8 +103,8 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-        mapValue.putTimestamp(valueIndex + 1, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putTimestamp(valueIndex + 1, Numbers.LONG_NULL);
     }
 
     @Override

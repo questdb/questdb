@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -51,7 +52,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         double min = mapValue.getDouble(valueIndex);
         double next = arg.getDouble(record);
-        if (next < min || Double.isNaN(min)) {
+        if (next < min || Numbers.isNull(min)) {
             mapValue.putDouble(valueIndex, next);
         }
     }
@@ -101,7 +102,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcMin = srcValue.getDouble(valueIndex);
         double destMin = destValue.getDouble(valueIndex);
-        if (srcMin < destMin || Double.isNaN(destMin)) {
+        if (srcMin < destMin || Numbers.isNull(destMin)) {
             destValue.putDouble(valueIndex, srcMin);
         }
     }

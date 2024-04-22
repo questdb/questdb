@@ -1140,7 +1140,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableReader rdr = newOffPoolReader(configuration, PRODUCT)) {
                 String expected = "productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
                         "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:00:00.000000Z\n" +
-                        "NaN\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z\n";
+                        "null\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z\n";
                 assertCursor(expected, rdr.getCursor(), rdr.getMetadata(), true);
             }
         });
@@ -2790,22 +2790,25 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            assertTable("productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
-                    "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:01:00.000000Z\n" +
-                    "761275053\tHBHFOWL\tPDXY\tSBEOUOJSHRU\t0.6761934857077543\tf\t6js\tu0x8u6\twc8jw257kp8b\t2013-03-04T00:02:00.000000Z\n" +
-                    "2034804966\tYRFBVTM\tHGOO\tZZVDZJMYICC\t0.2282233596526786\tp\tp16\t5ehgu7\tn5f7bnz2wzkr\t2013-03-04T00:03:00.000000Z\n" +
-                    "1775935667\tEDYYCTG\tQOLY\tXWCKYLSUWDS\t0.2820020716674768\tr\t2q2\tcsded1\tvqnqb4qjen3k\t2013-03-04T00:04:00.000000Z\n" +
-                    "68027832\tKJSMSSU\tQSRL\tTKVVSJOJIPH\t0.13006100084163252\t2\t06j\tuxnz7u\tpp3dqy3z5fzc\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n", PRODUCT);
+            assertTable(
+                    "productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
+                            "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:01:00.000000Z\n" +
+                            "761275053\tHBHFOWL\tPDXY\tSBEOUOJSHRU\t0.6761934857077543\tf\t6js\tu0x8u6\twc8jw257kp8b\t2013-03-04T00:02:00.000000Z\n" +
+                            "2034804966\tYRFBVTM\tHGOO\tZZVDZJMYICC\t0.2282233596526786\tp\tp16\t5ehgu7\tn5f7bnz2wzkr\t2013-03-04T00:03:00.000000Z\n" +
+                            "1775935667\tEDYYCTG\tQOLY\tXWCKYLSUWDS\t0.2820020716674768\tr\t2q2\tcsded1\tvqnqb4qjen3k\t2013-03-04T00:04:00.000000Z\n" +
+                            "68027832\tKJSMSSU\tQSRL\tTKVVSJOJIPH\t0.13006100084163252\t2\t06j\tuxnz7u\tpp3dqy3z5fzc\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n",
+                    PRODUCT
+            );
         });
     }
 

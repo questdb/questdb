@@ -1367,16 +1367,16 @@ public class O3MaxLagTest extends AbstractO3Test {
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
                     "str\tts\tx\tstr2\ty\n" +
-                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
-                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
+                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
+                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n");
 
             appendRowsWithDroppedColumn(tw, appendCount - halfCount, rnd);
             tw.ic(Timestamps.HOUR_MICROS);
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
                     "str\tts\tx\tstr2\ty\n" +
-                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
-                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
+                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
+                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n");
 
             if (iteration % 2 == 0) {
                 tw.commit();
@@ -1389,7 +1389,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
                 "str\tts\tx\tstr2\ty\n" +
-                        "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
-                        "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
+                        "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
+                        "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n");
     }
 }

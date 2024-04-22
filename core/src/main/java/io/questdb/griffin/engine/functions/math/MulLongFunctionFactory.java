@@ -66,8 +66,8 @@ public class MulLongFunctionFactory implements FunctionFactory {
             final long l = left.getLong(rec);
             final long r = right.getLong(rec);
 
-            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
             }
             return l * r;
         }

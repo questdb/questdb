@@ -61,14 +61,14 @@ public interface Utf8Sequence {
      * both not inlined, which means the same `Utf8Sequence` implementation is on
      * both sides.
      */
-    default boolean equalsAssumingSameSize(Utf8Sequence other) {
+    default boolean equalsAssumingSameSize(Utf8Sequence other, int size) {
         int i = 0;
-        for (int n = size() - 7; i < n; i += 8) {
+        for (int n = size - 7; i < n; i += 8) {
             if (longAt(i) != other.longAt(i)) {
                 return false;
             }
         }
-        for (int n = size(); i < n; i++) {
+        for (; i < size; i++) {
             if (byteAt(i) != other.byteAt(i)) {
                 return false;
             }

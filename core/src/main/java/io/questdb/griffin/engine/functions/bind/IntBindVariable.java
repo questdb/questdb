@@ -40,7 +40,7 @@ class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
 
     @Override
     public void clear() {
-        this.value = Numbers.INT_NaN;
+        this.value = Numbers.INT_NULL;
     }
 
     @Override

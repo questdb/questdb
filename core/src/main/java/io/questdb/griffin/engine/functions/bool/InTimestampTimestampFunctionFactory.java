@@ -96,11 +96,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
-            long val = Numbers.LONG_NaN;
+            long val = Numbers.LONG_NULL;
             switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.DATE:
                     val = func.getDate(null);
-                    val = (val == Numbers.LONG_NaN) ? val : val * 1000L;
+                    val = (val == Numbers.LONG_NULL) ? val : val * 1000L;
                     break;
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
@@ -111,7 +111,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.SYMBOL:
                 case ColumnType.VARCHAR:
                     CharSequence tsValue = func.getStrA(null);
-                    val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;
+                    val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NULL;
                     break;
             }
             res.setQuick(i - 1, val);
@@ -169,7 +169,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);
-                long val = Numbers.LONG_NaN;
+                long val = Numbers.LONG_NULL;
                 switch (ColumnType.tagOf(func.getType())) {
                     case ColumnType.TIMESTAMP:
                     case ColumnType.LONG:
@@ -180,7 +180,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     case ColumnType.SYMBOL:
                     case ColumnType.VARCHAR:
                         CharSequence str = func.getStrA(rec);
-                        val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NaN;
+                        val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NULL;
                         break;
                 }
                 if (val == ts) {

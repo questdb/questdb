@@ -264,7 +264,7 @@ public final class WhereClauseParser implements Mutable {
             if (!isNullKeyword(lo.token)) {
                 return IntervalUtils.parseFloorPartialTimestamp(lo.token, 1, lo.token.length() - 1);
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         } catch (NumericException e1) {
             try {
                 return Numbers.parseLong(lo.token);
@@ -605,9 +605,9 @@ public final class WhereClauseParser implements Mutable {
             if (inArg.type == ExpressionNode.CONSTANT) {
                 if (isNullKeyword(inArg.token)) {
                     if (!isNegated) {
-                        model.intersectIntervals(Numbers.LONG_NaN, Numbers.LONG_NaN);
+                        model.intersectIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
                     } else {
-                        model.subtractIntervals(Numbers.LONG_NaN, Numbers.LONG_NaN);
+                        model.subtractIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
                     }
                 } else {
                     if (!isNegated) {
@@ -1245,7 +1245,7 @@ public final class WhereClauseParser implements Mutable {
     ) throws SqlException {
         if (function.isConstant()) {
             long value = getTimestampFromConstFunction(function, functionPosition);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 // make it empty set
                 model.intersectEmpty();
             } else {
@@ -1290,7 +1290,7 @@ public final class WhereClauseParser implements Mutable {
 
             if (function.isConstant()) {
                 lo = getTimestampFromConstFunction(function, compareWithNode.position);
-                if (lo == Numbers.LONG_NaN) {
+                if (lo == Numbers.LONG_NULL) {
                     // make it empty set
                     model.intersectEmpty();
                 } else {
@@ -1336,7 +1336,7 @@ public final class WhereClauseParser implements Mutable {
 
             if (function.isConstant()) {
                 long hi = getTimestampFromConstFunction(function, compareWithNode.position);
-                if (hi == Numbers.LONG_NaN) {
+                if (hi == Numbers.LONG_NULL) {
                     model.intersectEmpty();
                 } else {
                     model.intersectIntervals(Long.MIN_VALUE, hi + adjustComparison(equalsTo, false));

@@ -32,7 +32,7 @@ public class MicrosOfSecondFunctionFactoryTest extends AbstractCairoTest {
     public void testNull() throws Exception {
         assertQuery(
                 "micros\n" +
-                        "NaN\n",
+                        "null\n",
                 "select micros(null)",
                 null,
                 null,

@@ -2734,7 +2734,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampWithBindNullVariable() throws SqlException {
-        runWhereIntervalTest0("timestamp >= $1", "[]", bv -> bv.setTimestamp(0, Numbers.LONG_NaN));
+        runWhereIntervalTest0("timestamp >= $1", "[]", bv -> bv.setTimestamp(0, Numbers.LONG_NULL));
     }
 
     @Test

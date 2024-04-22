@@ -52,14 +52,14 @@ public class ExpFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testExpDoubleNaN() throws Exception {
         assertSql("exp\n" +
-                        "NaN\n",
+                        "null\n",
                 "select exp(NaN)");
     }
 
     @Test
     public void testExpDoubleNull() throws Exception {
         assertSql("exp\n" +
-                        "NaN\n",
+                        "null\n",
                 "select exp(null)");
     }
 }

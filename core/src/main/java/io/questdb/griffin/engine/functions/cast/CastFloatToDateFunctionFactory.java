@@ -53,7 +53,7 @@ public class CastFloatToDateFunctionFactory implements FunctionFactory {
         @Override
         public long getDate(Record rec) {
             final float value = arg.getFloat(rec);
-            return value == value ? (long) value : Numbers.LONG_NaN;
+            return value == value ? (long) value : Numbers.LONG_NULL;
         }
     }
 }

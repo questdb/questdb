@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -202,8 +202,8 @@ public class FirstAndLastVarcharGroupByFunctionFactoryTest extends AbstractCairo
                     "from test";
 
             String expected = "ts\tdevice\tfirst_str\tfirst_value\tfirst_nn_str\tfirst_nn_value\tlast_str\tlast_value\tlast_nn_str\tlast_nn_value\n" +
-                    "2023-12-18T18:00:00.000000Z\tA\t\tNaN\thot_1\t150.0\t\tNaN\thot_2\t151.0\n" +
-                    "2023-12-18T18:00:00.000000Z\tB\t\tNaN\tcold_1\t3.0\t\tNaN\tcold_2\t4.0\n";
+                    "2023-12-18T18:00:00.000000Z\tA\t\tnull\thot_1\t150.0\t\tnull\thot_2\t151.0\n" +
+                    "2023-12-18T18:00:00.000000Z\tB\t\tnull\tcold_1\t3.0\t\tnull\tcold_2\t4.0\n";
 
             assertSql(expected, query + " order by ts, device");
             assertSql(expected, query + " sample by 1h fill(prev) order by ts, device");

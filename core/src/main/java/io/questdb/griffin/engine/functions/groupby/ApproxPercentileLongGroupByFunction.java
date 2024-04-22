@@ -76,7 +76,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
         }
 
         final long val = exprFunc.getLong(record);
-        if (val != Numbers.LONG_NaN) {
+        if (val != Numbers.LONG_NULL) {
             histogram.recordValue(val);
         }
         mapValue.putLong(valueIndex, histogramIndex++);
@@ -86,7 +86,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final Histogram histogram = histograms.getQuick(mapValue.getInt(valueIndex));
         final long val = exprFunc.getLong(record);
-        if (val != Numbers.LONG_NaN) {
+        if (val != Numbers.LONG_NULL) {
             histogram.recordValue(val);
         }
     }
@@ -129,7 +129,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
         BinaryFunction.super.init(symbolTableSource, executionContext);
 
         final double percentile = percentileFunc.getDouble(null);
-        if (Double.isNaN(percentile) || percentile < 0 || percentile > 1) {
+        if (Numbers.isNull(percentile) || percentile < 0 || percentile > 1) {
             throw SqlException.$(funcPosition, "percentile must be between 0.0 and 1.0");
         }
     }
@@ -162,7 +162,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
     }
 
     @Override
