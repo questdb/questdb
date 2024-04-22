@@ -119,7 +119,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     }
 
     @Override
-    public Utf8Sink putUtf8(long lo, long hi) {
+    public Utf8Sink putNonAscii(long lo, long hi) {
         throw new UnsupportedOperationException("not implemented");
     }
 

@@ -193,7 +193,7 @@ public class PathTest {
         final long src = 0;
         try {
             try (Path p0 = new Path()) {
-                p0.putUtf8(src, src + threeGiB);
+                p0.putNonAscii(src, src + threeGiB);
                 Assert.fail("Expected exception");
             }
         } catch (IllegalArgumentException iae) {

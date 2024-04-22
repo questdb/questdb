@@ -145,7 +145,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     }
 
     @Override
-    public DirectUtf8Sink putUtf8(long lo, long hi) {
+    public DirectUtf8Sink putNonAscii(long lo, long hi) {
         ascii = false;
         sink.put(lo, hi);
         return this;

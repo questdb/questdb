@@ -109,12 +109,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $size(long memoryBytes) {
-        sink().putSize(memoryBytes);
-        return this;
-    }
-
-    @Override
     public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
         if (sequence == null) {
             sink().putAscii("null");
@@ -262,6 +256,12 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $size(long memoryBytes) {
+        sink().putSize(memoryBytes);
+        return this;
+    }
+
+    @Override
     public LogRecord $ts(long x) {
         sink().putISODate(x);
         return this;
@@ -269,7 +269,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     @Override
     public LogRecord $utf8(long lo, long hi) {
-        sink().putUtf8(lo, hi);
+        sink().putNonAscii(lo, hi);
         return this;
     }
 
@@ -345,8 +345,8 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
-    public Utf8Sink putUtf8(long lo, long hi) {
-        sink().putUtf8(lo, hi);
+    public Utf8Sink putNonAscii(long lo, long hi) {
+        sink().putNonAscii(lo, hi);
         return this;
     }
 

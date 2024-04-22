@@ -177,6 +177,18 @@ public interface CharSink<T extends CharSink<?>> {
         return (T) this;
     }
 
+    /**
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * Put a block of non-ASCII bytes, dropping the `isAscii()` status.
+     * <br/>
+     * For impls that don't care about the ASCII/non-ASCII distinction:
+     * Put a block of any bytes.
+     *
+     * @param lo address of the first byte
+     * @param hi address beyond the last byte
+     */
+    T putNonAscii(long lo, long hi);
+
     default T putQuoted(@NotNull CharSequence cs) {
         putAscii('\"').put(cs).putAscii('\"');
         return (T) this;
@@ -192,6 +204,4 @@ public interface CharSink<T extends CharSink<?>> {
                 : b <= 0xfffccccccccccccL ? put(Math.round((bytes >> 10) / 0x1p40 * 1000.0) / 1000.0).put(" PiB")
                 : put(Math.round((bytes >> 20) / 0x1p40 * 1000.0) / 1000.0).put(" EiB");
     }
-
-    T putUtf8(long lo, long hi);
 }

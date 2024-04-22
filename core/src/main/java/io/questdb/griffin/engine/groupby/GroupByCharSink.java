@@ -126,7 +126,7 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
     }
 
     @Override
-    public GroupByCharSink putUtf8(long lo, long hi) {
+    public GroupByCharSink putNonAscii(long lo, long hi) {
         throw new UnsupportedOperationException();
     }
 

@@ -996,7 +996,7 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord putUtf8(long lo, long hi) {
+        public LogRecord putNonAscii(long lo, long hi) {
             return this;
         }
 

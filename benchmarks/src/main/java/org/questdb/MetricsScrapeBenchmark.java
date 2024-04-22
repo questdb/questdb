@@ -99,17 +99,17 @@ public class MetricsScrapeBenchmark {
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
-            return this;
-        }
-
-        @Override
         public Utf8Sink put(Utf8Sequence us) {
             return this;
         }
 
         @Override
         public Utf8Sink put(byte b) {
+            return this;
+        }
+
+        @Override
+        public Utf8Sink putNonAscii(long lo, long hi) {
             return this;
         }
     }

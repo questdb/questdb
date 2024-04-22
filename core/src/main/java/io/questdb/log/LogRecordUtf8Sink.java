@@ -159,7 +159,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
     }
 
     @Override
-    public Utf8Sink putUtf8(long lo, long hi) {
+    public Utf8Sink putNonAscii(long lo, long hi) {
         final long rem = (lim - _wptr - EOL_LENGTH);
         final long size = hi - lo;
         if (rem >= size) {
@@ -200,7 +200,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
     public void toSink(@NotNull CharSink<?> sink) {
         switch (sink.getEncoding()) {
             case CharSinkEncoding.UTF8:
-                sink.putUtf8(address, _wptr);
+                sink.putNonAscii(address, _wptr);
                 break;
             case CharSinkEncoding.UTF16:
                 Utf8s.utf8ToUtf16(address, _wptr, (Utf16Sink) sink);

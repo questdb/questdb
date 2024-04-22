@@ -363,7 +363,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     @Override
-    public Path putUtf8(long lo, long hi) {
+    public Path putNonAscii(long lo, long hi) {
         ascii = false;
         final int size = Bytes.checkedLoHiSize(lo, hi, this.size());
         checkExtend(size);

@@ -55,24 +55,6 @@ public final class StdoutSink implements Utf8Sink, Closeable {
     }
 
     @Override
-    public Utf8Sink putUtf8(long lo, long hi) {
-        long remaining = hi - lo;
-        while (remaining > 0) {
-            final long avail = limit - ptr;
-            if (avail > 0) {
-                final long chunkSize = Math.min(avail, remaining);
-                Vect.memcpy(ptr, hi - remaining, chunkSize);
-                ptr += chunkSize;
-                remaining -= chunkSize;
-            }
-            if (remaining > 0) {
-                flush();
-            }
-        }
-        return this;
-    }
-
-    @Override
     public Utf8Sink put(@Nullable Utf8Sequence us) {
         if (us != null) {
             for (int i = 0, size = us.size(); i < size; i++) {
@@ -88,6 +70,24 @@ public final class StdoutSink implements Utf8Sink, Closeable {
             flush();
         }
         Unsafe.getUnsafe().putByte(ptr++, b);
+        return this;
+    }
+
+    @Override
+    public Utf8Sink putNonAscii(long lo, long hi) {
+        long remaining = hi - lo;
+        while (remaining > 0) {
+            final long avail = limit - ptr;
+            if (avail > 0) {
+                final long chunkSize = Math.min(avail, remaining);
+                Vect.memcpy(ptr, hi - remaining, chunkSize);
+                ptr += chunkSize;
+                remaining -= chunkSize;
+            }
+            if (remaining > 0) {
+                flush();
+            }
+        }
         return this;
     }
 }

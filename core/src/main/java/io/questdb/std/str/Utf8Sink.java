@@ -113,7 +113,8 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
 
     /**
      * For impls that care about the distinction between ASCII and non-ASCII:
-     * Put a non-ASCII byte. To write a known-ASCII char, call {@link #putAscii(char)}.
+     * Put a non-ASCII byte, dropping the `isAscii()` status.
+     * To put a known-ASCII byte, call {@link #putAscii(char)}.
      * <br/>
      * For impls that don't care about the ASCII/non-ASCII distinction:
      * Put any kind of byte.
@@ -153,7 +154,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
 
     default Utf8Sink put(@Nullable DirectUtf8Sequence dus) {
         if (dus != null) {
-            putUtf8(dus.lo(), dus.hi());
+            putNonAscii(dus.lo(), dus.hi());
         }
         return this;
     }

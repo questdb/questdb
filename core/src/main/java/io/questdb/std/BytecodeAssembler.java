@@ -841,15 +841,6 @@ public class BytecodeAssembler {
         }
 
         @Override
-        public Utf8Appender putUtf8(long lo, long hi) {
-            Bytes.checkedLoHiSize(lo, hi, BytecodeAssembler.this.position());
-            for (long p = lo; p < hi; p++) {
-                BytecodeAssembler.this.putByte(Unsafe.getUnsafe().getByte(p));
-            }
-            return this;
-        }
-
-        @Override
         public Utf8Appender put(@Nullable CharSequence cs) {
             Utf8Sink.super.put(cs);
             return this;
@@ -869,6 +860,15 @@ public class BytecodeAssembler {
                     BytecodeAssembler.this.putByte(cs.charAt(i));
                 }
                 utf8len += len;
+            }
+            return this;
+        }
+
+        @Override
+        public Utf8Appender putNonAscii(long lo, long hi) {
+            Bytes.checkedLoHiSize(lo, hi, BytecodeAssembler.this.position());
+            for (long p = lo; p < hi; p++) {
+                BytecodeAssembler.this.putByte(Unsafe.getUnsafe().getByte(p));
             }
             return this;
         }
