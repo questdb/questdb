@@ -714,9 +714,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 return;
             }
 
-            if (!managedCursor.hasNext()) {
-                throw new AssertionError();
-            }
+            final boolean good = managedCursor.hasNext();
+            assert good;
 
             final long timestamp = managedRecord.getTimestamp(timestampIndex);
             if (rules != null) {
