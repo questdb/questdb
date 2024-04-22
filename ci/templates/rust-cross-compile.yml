@@ -1,0 +1,37 @@
+jobs:
+  - job: RunOn
+    displayName: "on"
+    strategy:
+      matrix:
+        linux-jdk17:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.17"
+          testset: "all"
+    pool:
+      vmImage: $(imageName)
+      name: $(poolName)
+    timeoutInMinutes: 60
+    steps:
+      - checkout: self
+        fetchDepth: 1
+        lfs: false
+        submodules: true
+      - script: |
+          python3 ci/prepare_rust_env.py --export-cargo-install-env --components rustfmt clippy
+        displayName: "Ensure Rust is installed"
+        # Note, the `prepare_rust_env.py` script exports a number of variables.
+      - script: |
+          cargo install cross
+        displayName: "Install cross"
+      - script: |
+          cd core/rust/qdb-core
+          cross build --target aarch64-unknown-linux-gnu --target-dir target/cross/aarch64-unknown-linux-gnu
+        displayName: "cross build x86_64-unknown-linux-gnu"
+      - task: PublishBuildArtifacts@1
+        inputs:
+          PathtoPublish: target/cross
+          ArtifactName: cross
+          publishLocation: Container
+        displayName: "Publish cross build artifacts"
