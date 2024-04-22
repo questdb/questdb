@@ -585,7 +585,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             if (expected == null) {
                 Assert.assertNull(func.getVarcharA(record));
                 Assert.assertNull(func.getVarcharB(record));
-                sink.clear();
+                utf8Sink.clear();
                 func.getVarchar(record, utf8Sink);
                 Assert.assertEquals(0, utf8Sink.size());
             } else {
