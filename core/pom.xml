@@ -493,6 +493,33 @@
             </build>
         </profile>
         <profile>
+            <id>all-rust-binaries</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.0.0</version>
+                        <executions>
+                            <execution>
+                                <id>compile-all-rust-binaries</id>
+                                <phase>compile</phase>
+                                <goals>
+                                    <goal>java</goal>
+                                </goals>
+                                <configuration>
+                                    <mainClass>io.questdb.std.CompileAllRustBinaries</mainClass>
+                                    <arguments>
+                                        <argument>${project.build.directory}/classes/io/questdb/rust</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
             <id>platform-windows-amd64</id>
             <activation>
                 <os>
