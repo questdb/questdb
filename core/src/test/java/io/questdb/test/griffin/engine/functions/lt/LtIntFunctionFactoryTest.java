@@ -37,9 +37,9 @@ public class LtIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call(1024, 4560).andAssert(true);
         call(-13, -1).andAssert(true);
         call(77, 77).andAssert(false);
-        call(Numbers.INT_NaN, 7).andAssert(false);
-        call(42, Numbers.INT_NaN).andAssert(false);
-        call(Numbers.INT_NaN, Numbers.INT_NaN).andAssert(false);
+        call(Numbers.INT_NULL, 7).andAssert(false);
+        call(42, Numbers.INT_NULL).andAssert(false);
+        call(Numbers.INT_NULL, Numbers.INT_NULL).andAssert(false);
     }
 
     @Override

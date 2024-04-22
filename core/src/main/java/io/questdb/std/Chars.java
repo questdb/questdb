@@ -390,6 +390,85 @@ public final class Chars {
         return l != null && equals(l, r, rLo, rHi);
     }
 
+    public static boolean equalsNullable(@Nullable CharSequence l, @Nullable CharSequence r) {
+        if (l == null && r == null) {
+            return true;
+        }
+
+        if (l == null || r == null) {
+            return false;
+        }
+
+        int ll;
+        if ((ll = l.length()) != r.length()) {
+            return false;
+        }
+
+        return equalsChars(l, r, ll);
+    }
+
+    /**
+     * Strictly greater than (&gt;) comparison of two UTF16 sequences in lexicographical
+     * order. For example, for:
+     * l = aaaaa
+     * r = aaaaaaa
+     * the l &gt; r will produce "false", however for:
+     * l = bbbb
+     * r = aaaaaaa
+     * the l &gt; r will produce "true", because b &gt; a.
+     *
+     * @param l left sequence, can be null
+     * @param r right sequence, can be null
+     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     */
+    public static boolean greaterThan(@Nullable CharSequence l, @Nullable CharSequence r) {
+        if (l == null || r == null) {
+            return false;
+        }
+        final int ll = l.length();
+        final int rl = r.length();
+        final int min = Math.min(ll, rl);
+
+        for (int i = 0; i < min; i++) {
+            final int k = l.charAt(i) - r.charAt(i);
+            if (k != 0) {
+                return k > 0;
+            }
+        }
+        return ll > rl;
+    }
+
+    /**
+     * Strictly greater than (&lt;) comparison of two UTF16 sequences in lexicographical
+     * order. For example, for:
+     * l = aaaaa
+     * r = aaaaaaa
+     * the l &gt; r will produce "false", however for:
+     * l = bbbb
+     * r = aaaaaaa
+     * the l &lt; r will produce "true", because b &lt; a.
+     *
+     * @param l left sequence, can be null
+     * @param r right sequence, can be null
+     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     */
+    public static boolean lessThan(@Nullable CharSequence l, @Nullable CharSequence r) {
+        if (l == null || r == null) {
+            return false;
+        }
+        final int ll = l.length();
+        final int rl = r.length();
+        final int min = Math.min(ll, rl);
+
+        for (int i = 0; i < min; i++) {
+            final int k = l.charAt(i) - r.charAt(i);
+            if (k != 0) {
+                return k < 0;
+            }
+        }
+        return ll < rl;
+    }
+
     public static int hashCode(@NotNull CharSequence value, int lo, int hi) {
         if (hi == lo) {
             return 0;
@@ -682,6 +761,11 @@ public final class Chars {
 
     public static int lastIndexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
         return indexOf(sequence, sequenceLo, sequenceHi, term, -1);
+    }
+
+    public static boolean lessThan(@Nullable CharSequence l, @Nullable CharSequence r, boolean negated) {
+        final boolean eq = Chars.equalsNullable(l, r);
+        return negated ? (eq || Chars.greaterThan(l, r)) : (!eq && Chars.lessThan(l, r));
     }
 
     public static int lowerCaseAsciiHashCode(CharSequence value, int lo, int hi) {

@@ -87,6 +87,6 @@ public class OrderedMapAggregateBenchmark {
         MapKey key = map.withKey();
         key.putLong(rnd.nextLong(nKeys));
         MapValue values = key.createValue();
-        values.minLong(0, Numbers.LONG_NaN + rnd.nextLong() & 1);
+        values.minLong(0, Numbers.LONG_NULL + rnd.nextLong() & 1);
     }
 }

@@ -36,7 +36,7 @@ import org.junit.Test;
 public class ToCharDateVCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testNaN() throws SqlException {
-        call(Numbers.LONG_NaN, "dd/MM/yyyy hh:mm:ss").andAssert(null);
+        call(Numbers.LONG_NULL, "dd/MM/yyyy hh:mm:ss").andAssert(null);
     }
 
     @Test

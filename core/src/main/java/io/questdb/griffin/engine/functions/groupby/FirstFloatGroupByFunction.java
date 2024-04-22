@@ -95,7 +95,7 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putFloat(valueIndex + 1, srcValue.getFloat(valueIndex + 1));
         }
@@ -105,7 +105,7 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
     public void setFloat(MapValue mapValue, float value) {
         // This method is used to define interpolated points and to init
         // an empty value, so it's ok to reset the row id field here.
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putFloat(valueIndex + 1, value);
     }
 

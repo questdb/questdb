@@ -27,17 +27,17 @@ package io.questdb.std;
 public class Long256Util {
 
     public static void add(Long256 dst, long v0, long v1, long v2, long v3) {
-        boolean isNull = v0 == Numbers.LONG_NaN
-                && v1 == Numbers.LONG_NaN
-                && v2 == Numbers.LONG_NaN
-                && v3 == Numbers.LONG_NaN;
+        boolean isNull = v0 == Numbers.LONG_NULL
+                && v1 == Numbers.LONG_NULL
+                && v2 == Numbers.LONG_NULL
+                && v3 == Numbers.LONG_NULL;
 
         if (isNull) {
             dst.setAll(
-                    Numbers.LONG_NaN,
-                    Numbers.LONG_NaN,
-                    Numbers.LONG_NaN,
-                    Numbers.LONG_NaN
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL
             );
         } else {
             // The sum will overflow if both top bits are set (x & y) or if one of them

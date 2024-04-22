@@ -52,7 +52,7 @@ public class NegFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNegIntNull() throws Exception {
-        assertNeg("select -x, typeOf(-x) from (select cast(null as int) x)", "NaN\tINT\n");
+        assertNeg("select -x, typeOf(-x) from (select cast(null as int) x)", "null\tINT\n");
     }
 
     @Test
@@ -62,7 +62,7 @@ public class NegFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNegLongNull() throws Exception {
-        assertNeg("select -x, typeOf(-x) from (select cast(null as long) x)", "NaN\tLONG\n");
+        assertNeg("select -x, typeOf(-x) from (select cast(null as long) x)", "null\tLONG\n");
     }
 
     @Test

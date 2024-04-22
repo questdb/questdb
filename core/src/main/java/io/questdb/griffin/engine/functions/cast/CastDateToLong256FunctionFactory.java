@@ -54,7 +54,7 @@ public class CastDateToLong256FunctionFactory implements FunctionFactory {
         @Override
         public void getLong256(Record rec, CharSink<?> sink) {
             final long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return;
             }
             Numbers.appendLong256(value, 0, 0, 0, sink);
@@ -63,7 +63,7 @@ public class CastDateToLong256FunctionFactory implements FunctionFactory {
         @Override
         public Long256 getLong256A(Record rec) {
             final long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return Long256Impl.NULL_LONG256;
             }
             long256a.setLow(value);
@@ -73,7 +73,7 @@ public class CastDateToLong256FunctionFactory implements FunctionFactory {
         @Override
         public Long256 getLong256B(Record rec) {
             final long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return Long256Impl.NULL_LONG256;
             }
             long256b.setLow(value);

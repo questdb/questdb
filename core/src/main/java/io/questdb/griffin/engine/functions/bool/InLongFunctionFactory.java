@@ -98,7 +98,7 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
-            long val = Numbers.LONG_NaN;
+            long val = Numbers.LONG_NULL;
             switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
@@ -110,11 +110,11 @@ public class InLongFunctionFactory implements FunctionFactory {
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
                     CharSequence tsValue = func.getStrA(null);
-                    val = (tsValue != null) ? tryParseLong(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;
+                    val = (tsValue != null) ? tryParseLong(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NULL;
                     break;
                 case ColumnType.VARCHAR:
                     Utf8Sequence seq = func.getVarcharA(null);
-                    val = (seq != null) ? tryParseLong(seq.asAsciiCharSequence(), argPositions.getQuick(i)) : Numbers.LONG_NaN;
+                    val = (seq != null) ? tryParseLong(seq.asAsciiCharSequence(), argPositions.getQuick(i)) : Numbers.LONG_NULL;
                     break;
             }
             res.setQuick(i - 1, val);
@@ -234,7 +234,7 @@ public class InLongFunctionFactory implements FunctionFactory {
 
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);
-                long inVal = Numbers.LONG_NaN;
+                long inVal = Numbers.LONG_NULL;
                 switch (ColumnType.tagOf(func.getType())) {
                     case ColumnType.BYTE:
                     case ColumnType.SHORT:

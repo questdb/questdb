@@ -30,10 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 
@@ -66,29 +63,28 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrA(Record rec) {
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
             final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
-                return null;
+            if (Numbers.isFinite(value)) {
+                utf16Sink.put(value, scale);
             }
-            sinkA.clear();
-            sinkA.put(value, scale);
-            return sinkA;
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
+        public CharSequence getStrA(Record rec) {
             final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
-                return;
+            if (Numbers.isFinite(value)) {
+                sinkA.clear();
+                sinkA.put(value, scale);
+                return sinkA;
             }
-            utf16Sink.put(value, scale);
+            return null;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
+            if (Numbers.isNull(value)) {
                 return null;
             }
             sinkB.clear();

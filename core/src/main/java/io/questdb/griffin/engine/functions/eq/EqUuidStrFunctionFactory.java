@@ -64,8 +64,8 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
             long lo;
             long hi;
             if (uuidStr == null) {
-                lo = Numbers.LONG_NaN;
-                hi = Numbers.LONG_NaN;
+                lo = Numbers.LONG_NULL;
+                hi = Numbers.LONG_NULL;
             } else {
                 try {
                     Uuid.checkDashesAndLength(uuidStr);
@@ -147,7 +147,7 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             CharSequence uuidStr = fun.getStrA(rec);
             if (uuidStr == null) {
-                return negated != (constUuidHi == Numbers.LONG_NaN && constUuidLo == Numbers.LONG_NaN);
+                return negated != (constUuidHi == Numbers.LONG_NULL && constUuidLo == Numbers.LONG_NULL);
             }
             try {
                 Uuid.checkDashesAndLength(uuidStr);
@@ -234,8 +234,8 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
             validUuidStr = true;
             CharSequence uuidStr = strFunc.getStrA(null);
             if (uuidStr == null) {
-                constStrLo = Numbers.LONG_NaN;
-                constStrHi = Numbers.LONG_NaN;
+                constStrLo = Numbers.LONG_NULL;
+                constStrHi = Numbers.LONG_NULL;
             } else {
                 try {
                     Uuid.checkDashesAndLength(uuidStr);

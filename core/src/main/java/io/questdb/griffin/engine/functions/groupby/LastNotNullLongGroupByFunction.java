@@ -38,7 +38,7 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (arg.getLong(record) != Numbers.LONG_NaN) {
+        if (arg.getLong(record) != Numbers.LONG_NULL) {
             computeFirst(mapValue, record, rowId);
         }
     }
@@ -51,7 +51,7 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcVal = srcValue.getLong(valueIndex + 1);
-        if (srcVal == Numbers.LONG_NaN) {
+        if (srcVal == Numbers.LONG_NULL) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);

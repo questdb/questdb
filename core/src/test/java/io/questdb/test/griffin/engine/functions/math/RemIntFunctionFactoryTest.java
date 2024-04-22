@@ -34,17 +34,17 @@ import org.junit.Test;
 public class RemIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testDivByZero() throws SqlException {
-        call(10, 0).andAssert(Numbers.INT_NaN);
+        call(10, 0).andAssert(Numbers.INT_NULL);
     }
 
     @Test
     public void testLeftNan() throws SqlException {
-        call(Numbers.INT_NaN, 5).andAssert(Numbers.INT_NaN);
+        call(Numbers.INT_NULL, 5).andAssert(Numbers.INT_NULL);
     }
 
     @Test
     public void testRightNan() throws SqlException {
-        call(123, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+        call(123, Numbers.INT_NULL).andAssert(Numbers.INT_NULL);
     }
 
     @Test

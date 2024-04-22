@@ -38,7 +38,7 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Float.isNaN(mapValue.getFloat(valueIndex + 1))) {
+        if (Numbers.isNull(mapValue.getFloat(valueIndex + 1))) {
             computeFirst(mapValue, record, rowId);
         }
     }
@@ -51,13 +51,13 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         float srcVal = srcValue.getFloat(valueIndex + 1);
-        if (Float.isNaN(srcVal)) {
+        if (Numbers.isNull(srcVal)) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putFloat(valueIndex + 1, srcVal);
         }

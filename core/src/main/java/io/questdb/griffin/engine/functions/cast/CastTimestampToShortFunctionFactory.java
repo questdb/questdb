@@ -52,7 +52,7 @@ public class CastTimestampToShortFunctionFactory implements FunctionFactory {
         @Override
         public short getShort(Record rec) {
             final long value = arg.getTimestamp(rec);
-            return value != Numbers.LONG_NaN ? (short) value : 0;
+            return value != Numbers.LONG_NULL ? (short) value : 0;
         }
     }
 }

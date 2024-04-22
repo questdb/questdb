@@ -2027,7 +2027,7 @@ if __name__ == "__main__":
                 // type information is lost in text mode; Numbers.INT_NaN is transmitted as "-2147483648" string
                 // and bind variable type is set to BYTEA, despite us calling setInt()
                 // server cannot assume that the client is sending null
-                ps.setInt(1, Numbers.INT_NaN);
+                ps.setInt(1, Numbers.INT_NULL);
                 try (ResultSet rs = ps.executeQuery()) {
                     if (binary) {
                         // in binary protocol DOUBLE.null == INT.null
@@ -10725,7 +10725,7 @@ create table tab as (
 
                     sink.clear();
                     try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
-                        ps.setInt(1, Numbers.INT_NaN);
+                        ps.setInt(1, Numbers.INT_NULL);
                         try (ResultSet rs = ps.executeQuery()) {
                             if (binary) {
                                 assertResultSet(
@@ -11482,13 +11482,13 @@ create table tab as (
                                 if (rnd.nextInt() % 4 > 0) {
                                     Assert.assertEquals(rnd.nextInt(), record.getInt(3));
                                 } else {
-                                    Assert.assertEquals(Numbers.INT_NaN, record.getInt(3));
+                                    Assert.assertEquals(Numbers.INT_NULL, record.getInt(3));
                                 }
 
                                 if (rnd.nextInt() % 4 > 0) {
                                     Assert.assertEquals(rnd.nextLong(), record.getLong(4));
                                 } else {
-                                    Assert.assertEquals(Numbers.LONG_NaN, record.getLong(4));
+                                    Assert.assertEquals(Numbers.LONG_NULL, record.getLong(4));
                                 }
 
                                 if (rnd.nextInt() % 4 > 0) {

@@ -1204,7 +1204,7 @@ public class UuidTest extends AbstractCairoTest {
         insert("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
         assertSql(
                 "cast\n" +
-                        "NaN\n",
+                        "null\n",
                 "select cast(u as long) from x"
         );
     }

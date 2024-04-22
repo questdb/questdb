@@ -61,7 +61,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 LongAddIntFunction func = addFunctions.getQuick(periodValue);
                 if (func != null) {
                     if (interval.isConstant()) {
-                        if (interval.getInt(null) != Numbers.INT_NaN) {
+                        if (interval.getInt(null) != Numbers.INT_NULL) {
                             return new AddLongIntVarConstFunction(args.getQuick(2), interval.getInt(null), func, periodValue);
                         }
                         return TimestampConstant.NULL;
@@ -100,8 +100,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final long l = arg.getTimestamp(rec);
-            if (l == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
             }
             return func.add(l, interval);
         }
@@ -139,8 +139,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final long l = left.getTimestamp(rec);
             final int r = right.getInt(rec);
-            if (l == Numbers.LONG_NaN || r == Numbers.INT_NaN) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL || r == Numbers.INT_NULL) {
+                return Numbers.LONG_NULL;
             }
             return func.add(l, r);
         }
@@ -187,8 +187,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             final long l = left.getTimestamp(rec);
             final char c = center.getChar(rec);
             final int r = right.getInt(rec);
-            if (l == Numbers.LONG_NaN || r == Numbers.INT_NaN) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL || r == Numbers.INT_NULL) {
+                return Numbers.LONG_NULL;
             }
             return Timestamps.addPeriod(l, c, r);
         }

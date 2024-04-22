@@ -581,8 +581,8 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     engine.clear();
                     assertQuery(
                             "ts\ti\tl\ts\tstr\tvch\n" +
-                                    "2022-08-02T11:59:59.625000Z\tNaN\t3\t\t\t\uF2C1ӍKB\n" +
-                                    "2022-08-02T23:59:59.500000Z\tNaN\t4\t\t\tK䰭\n",
+                                    "2022-08-02T11:59:59.625000Z\tnull\t3\t\t\t\uF2C1ӍKB\n" +
+                                    "2022-08-02T23:59:59.500000Z\tnull\t4\t\t\tK䰭\n",
                             dst.getName(),
                             "ts",
                             true,

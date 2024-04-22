@@ -60,7 +60,7 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
             final long value = Vect.sumInt(address, addressSize / Integer.BYTES);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 this.sum.add(value);
                 this.count.increment();
             }
@@ -89,7 +89,7 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     @Override
     public long getLong(Record rec) {
-        return this.count.sum() > 0 ? this.sum.sum() : Numbers.LONG_NaN;
+        return this.count.sum() > 0 ? this.sum.sum() : Numbers.LONG_NULL;
     }
 
     @Override

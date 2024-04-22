@@ -133,7 +133,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private boolean isReadOnly;
         private int limit; // partitionCount + detached + attachable
         private long maxTimestamp = Long.MIN_VALUE;
-        private long minTimestamp = Numbers.LONG_NaN; // so that in absence of metadata is NaN
+        private long minTimestamp = Numbers.LONG_NULL; // so that in absence of metadata is NaN
         private long numRows = -1L;
         private int partitionBy = -1;
         private int partitionIndex = -1;
@@ -206,7 +206,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             isActive = false;
             isDetached = false;
             isAttachable = false;
-            minTimestamp = Numbers.LONG_NaN; // so that in absence of metadata is NaN
+            minTimestamp = Numbers.LONG_NULL; // so that in absence of metadata is NaN
             maxTimestamp = Long.MIN_VALUE;
             numRows = -1L;
             partitionSize = -1L;
@@ -244,7 +244,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 assert partitionName.length() != 0;
 
                 // open detached meta files (_meta, _txn) if they exist
-                dynamicPartitionIndex = Numbers.INT_NaN; // so that in absence of metadata is NaN
+                dynamicPartitionIndex = Numbers.INT_NULL; // so that in absence of metadata is NaN
                 if (ff.exists(path.concat(partitionName).concat(TableUtils.META_FILE_NAME).$())) {
                     try {
                         if (detachedMetaReader == null) {
@@ -305,7 +305,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     minTimestamp = ff.readNonNegativeLong(fd, 0);
                     maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
                 } catch (CairoException e) {
-                    dynamicPartitionIndex = Numbers.INT_NaN;
+                    dynamicPartitionIndex = Numbers.INT_NULL;
                     LOG.error().$("no file found for designated timestamp column [path=").$(path).I$();
                 } finally {
                     if (fd != -1) {

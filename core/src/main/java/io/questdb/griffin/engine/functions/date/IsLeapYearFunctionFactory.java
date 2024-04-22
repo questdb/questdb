@@ -65,7 +65,7 @@ public class IsLeapYearFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return Boolean.FALSE;
             }
             final int year = Timestamps.getYear(value);

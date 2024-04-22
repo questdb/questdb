@@ -71,7 +71,7 @@ public class CastDateToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
             final long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return;
             }
             utf8Sink.putISODateMillis(value);
@@ -80,7 +80,7 @@ public class CastDateToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final long value = arg.getDate(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 sinkA.clear();
                 sinkA.putISODateMillis(value);
                 return sinkA;
@@ -91,7 +91,7 @@ public class CastDateToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             final long value = arg.getDate(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 sinkB.clear();
                 sinkB.putISODateMillis(value);
                 return sinkB;

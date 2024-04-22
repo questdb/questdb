@@ -82,7 +82,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
             drainWalQueue();
             String expected = "location\ttemperature\ttimestamp\tcast\thumidity\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\tnull\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tcast\t23.0\n";
             try (TableReader reader = newOffPoolReader(configuration, tableName)) {
                 TableReaderMetadata meta = reader.getMetadata();
@@ -112,13 +112,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thumidity\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\tNaN\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tnull\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\tnull\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t23.0\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\tNaN\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tNaN\n";
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\tnull\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tnull\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tnull\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tnull\n";
             assertTable(expected, table);
         });
     }
@@ -126,13 +126,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testAddFloatColumnAsDouble() throws Exception {
         floatDefaultColumnType = ColumnType.DOUBLE;
-        testDefaultColumnType(ColumnType.DOUBLE, "24.3", "24.3", "NaN");
+        testDefaultColumnType(ColumnType.DOUBLE, "24.3", "24.3", "null");
     }
 
     @Test
     public void testAddFloatColumnAsFloat() throws Exception {
         floatDefaultColumnType = ColumnType.FLOAT;
-        testDefaultColumnType(ColumnType.FLOAT, "24.3", "24.3000", "NaN");
+        testDefaultColumnType(ColumnType.FLOAT, "24.3", "24.3000", "null");
     }
 
     @Test
@@ -144,13 +144,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testAddIntegerColumnAsInt() throws Exception {
         integerDefaultColumnType = ColumnType.INT;
-        testDefaultColumnType(ColumnType.INT, "21i", "21", "NaN");
+        testDefaultColumnType(ColumnType.INT, "21i", "21", "null");
     }
 
     @Test
     public void testAddIntegerColumnAsLong() throws Exception {
         integerDefaultColumnType = ColumnType.LONG;
-        testDefaultColumnType(ColumnType.LONG, "21i", "21", "NaN");
+        testDefaultColumnType(ColumnType.LONG, "21i", "21", "null");
     }
 
     @Test
@@ -931,8 +931,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-midwest\t83.0\t3.0\t2016-06-13T17:43:50.100500Z\n" +
                     "us-eastcoast\t81.0\t2.0\t2016-06-13T17:43:50.101400Z\n" +
                     "us-midwest\t85.0\t2.1\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\tNaN\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\tNaN\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t89.0\tnull\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\tnull\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\t82.0\t2.2\t2016-06-13T17:43:50.102500Z\n";
             assertTable(expected, table);
         });
@@ -957,8 +957,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-midwest\t83.0\t3.0\t2016-06-13T17:43:50.100500Z\n" +
                     "us-eastcoast\t81.0\t2.0\t2016-06-13T17:43:50.101400Z\n" +
                     "us-midwest\t85.0\t2.1\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\tNaN\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\tNaN\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t89.0\tnull\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\tnull\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\t82.0\t2.2\t2016-06-13T17:43:50.102500Z\n";
             assertTable(expected, table);
         });
@@ -983,8 +983,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-midwest\t83.0\t3.0\t2016-06-13T17:43:50.100500Z\n" +
                     "us-eastcoast\t81.0\t2.0\t2016-06-13T17:43:50.101400Z\n" +
                     "us-midwest\t85.0\t2.1\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\tNaN\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\tNaN\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t89.0\tnull\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\tnull\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\t82.0\t2.2\t2016-06-13T17:43:50.102500Z\n";
             assertTable(expected, table);
         });
@@ -1064,8 +1064,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t3.0\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t2.0\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t2.1\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tnull\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tnull\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\t2.2\n";
             assertTable(expected, table);
         });
@@ -1086,13 +1086,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thumidity\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\tNaN\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tnull\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\tnull\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t24.0\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t27.0\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tNaN\n";
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tnull\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tnull\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tnull\n";
             assertTable(expected, table);
         });
     }
@@ -1112,13 +1112,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thumidity\tanother\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\tNaN\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\tNaN\tNaN\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tnull\tnull\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\tnull\tnull\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t24.0\t26.0\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t27.0\tNaN\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t27.0\tnull\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t31.0\t30.0\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tNaN\tNaN\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tNaN\tNaN\n";
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tnull\tnull\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tnull\tnull\n";
             assertTable(expected, table);
         });
     }
@@ -1138,13 +1138,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thumidity\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\tNaN\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tnull\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\tnull\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t24.0\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t27.0\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t28.0\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tNaN\n";
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tnull\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tnull\n";
             assertTable(expected, table);
         });
     }
@@ -1446,13 +1446,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thumidity\tpollution\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\tNaN\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\tNaN\tNaN\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tnull\tnull\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\tnull\tnull\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t24.0\t2.0\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t27.0\t3.0\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tNaN\t5.0\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tNaN\tNaN\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tNaN\tNaN\n";
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tnull\t5.0\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tnull\tnull\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tnull\tnull\n";
             assertTable(expected, table);
         });
     }
@@ -1685,8 +1685,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "APP\t2.0\t1970-01-02T00:00:00.000000Z\n" +
                     "\t3.0\t1970-01-02T00:00:00.000000Z\n" +
                     "\t4.0\t1970-01-02T00:00:00.000000Z\n" +
-                    "APP2\tNaN\t1970-01-02T00:00:00.000000Z\n" +
-                    "APP3\tNaN\t1970-01-02T00:00:00.000000Z\n";
+                    "APP2\tnull\t1970-01-02T00:00:00.000000Z\n" +
+                    "APP3\tnull\t1970-01-02T00:00:00.000000Z\n";
             assertTable(expected, table);
         });
     }
@@ -1729,13 +1729,13 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\thőmérséklet" + nonPrintable1 + "\thőmérséklet" + nonPrintable2 + "\thőmérséklet" + nonPrintable + "\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\tNaN\tNaN\n" +
-                    "us-mid" + nonPrintable1 + "west\t83.0\t2016-06-13T17:43:50.100500Z\tNaN\tNaN\tNaN\n" +
-                    "us-eastcoast" + nonPrintable2 + "\t81.0\t2016-06-13T17:43:50.101400Z\tNaN\tNaN\tNaN\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t24.0\tNaN\tNaN\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tNaN\t26.0\tNaN\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tNaN\t23.0\t25.0\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tNaN\tNaN\tNaN\n";
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tnull\tnull\tnull\n" +
+                    "us-mid" + nonPrintable1 + "west\t83.0\t2016-06-13T17:43:50.100500Z\tnull\tnull\tnull\n" +
+                    "us-eastcoast" + nonPrintable2 + "\t81.0\t2016-06-13T17:43:50.101400Z\tnull\tnull\tnull\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t24.0\tnull\tnull\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tnull\t26.0\tnull\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tnull\t23.0\t25.0\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tnull\tnull\tnull\n";
             assertTable(expected, table);
         });
     }
