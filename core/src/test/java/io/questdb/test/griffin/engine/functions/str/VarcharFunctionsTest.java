@@ -57,6 +57,21 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
                 "create table x as (select rnd_varchar('xa', 'xx', 'aax', '') k from long_sequence(5))",
                 null, true, true);
     }
+
+    @Test
+    public void testReplace() throws Exception {
+        assertQuery(
+                "k\treplace\n" +
+                        "xa\txb\n" +
+                        "aax\tbbx\n" +
+                        "xx\txx\n" +
+                        "\t\n" +
+                        "xx\txx\n",
+                "select k, replace(k, 'a', 'b') from x",
+                "create table x as (select rnd_varchar('xa', 'xx', 'aax', '') k from long_sequence(5))",
+                null, true, true);
+    }
+
     @Test
     public void testRtrim() throws Exception {
         assertQuery(

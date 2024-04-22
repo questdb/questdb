@@ -837,6 +837,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()
             io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory,
+            io.questdb.griffin.engine.functions.str.ReplaceVarcharFunctionFactory,
             // regexp_replace()
             io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.RegexpReplaceVarcharFunctionFactory,
