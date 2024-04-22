@@ -26,11 +26,9 @@ package io.questdb.test.cairo.map;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecordCursor;
-import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.UnorderedVarcharMap;
-import io.questdb.std.Chars;
+import io.questdb.cairo.map.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
@@ -57,21 +55,30 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCursor() {
+    public void testCursor() throws Exception {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
              UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
         ) {
-            int keyCount = 1_000;
+            int keyCount = 100_000;
             for (int i = 0; i < keyCount; i++) {
-                put("foo" + i, i + 1, map, sinkA, true);
+                put(String.valueOf(i), i, map, sinkA, true);
             }
-            put("", 0, map, sinkA, true);
-            put(null, -1, map, sinkA, true);
+            put("", -1, map, sinkA, true);
+            put(null, -2, map, sinkA, true);
 
+            MapRecordCursor danglingCursor = null;
             try (MapRecordCursor cursor = map.getCursor()) {
+                assertCursor(cursor, keyCount);
+                Assert.assertFalse(cursor.hasNext());
 
+                cursor.toTop();
+                assertCursor(cursor, keyCount);
+                Assert.assertFalse(cursor.hasNext());
+                danglingCursor = cursor;
             }
+            // double-close must be noop
+            danglingCursor.close();
         }
     }
 
@@ -120,6 +127,46 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                     Assert.assertEquals(i + 1, get("foo" + i, mapA));
                     Assert.assertEquals(i + 1, get("foo" + i, mapB));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testKeyHashCode() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+            try (Map map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE);
+                 DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024)) {
+                final int N = 100000;
+                final LongList keyHashCodes = new LongList(N);
+                long lo = sinkA.hi();
+                DirectUtf8String directUtf8 = new DirectUtf8String(true);
+                for (int i = 0; i < N; i++) {
+                    MapKey mapKey = map.withKey();
+                    sinkA.put("foo").put(i);
+                    long hi = sinkA.hi();
+                    directUtf8.of(lo, hi, true);
+                    lo = hi;
+                    mapKey.putVarchar(directUtf8);
+                    mapKey.commit();
+                    long hashCode = mapKey.hash();
+                    keyHashCodes.add(hashCode);
+
+                    MapValue value = mapKey.createValue(hashCode);
+                    Assert.assertTrue(value.isNew());
+                    value.putInt(0, i + 2);
+                }
+
+                final LongList recordHashCodes = new LongList(N);
+                RecordCursor cursor = map.getCursor();
+                MapRecord record = map.getRecord();
+                while (cursor.hasNext()) {
+                    recordHashCodes.add(record.keyHashCode());
+                }
+
+                keyHashCodes.sort();
+                recordHashCodes.sort();
+                TestUtils.assertEquals(keyHashCodes, recordHashCodes);
             }
         });
     }
@@ -224,6 +271,35 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
             for (int i = 0; i < keyCount; i++) {
                 Assert.assertEquals(i, get("foo" + i, map));
             }
+        }
+    }
+
+    private static void assertCursor(MapRecordCursor cursor, int keyCount) throws NumericException {
+        BitSet keys = new BitSet();
+        boolean nullObserved = false;
+        boolean emptyObserved = false;
+        MapRecord record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            Utf8Sequence varcharA = record.getVarcharA(1);
+            int value = record.getInt(0);
+            if (value >= 0) {
+                int n = Numbers.parseInt(varcharA);
+                Assert.assertEquals(value, n);
+                Assert.assertFalse(keys.getAndSet(n));
+            } else if (value == -1) {
+                TestUtils.assertEquals("", varcharA);
+                Assert.assertFalse(emptyObserved);
+                emptyObserved = true;
+            } else if (value == -2) {
+                Assert.assertNull(varcharA);
+                Assert.assertFalse(nullObserved);
+                nullObserved = true;
+            }
+        }
+        Assert.assertTrue(nullObserved);
+        Assert.assertTrue(emptyObserved);
+        for (int i = 0; i < keyCount; i++) {
+            Assert.assertTrue(keys.get(i));
         }
     }
 

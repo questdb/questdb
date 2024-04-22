@@ -30,6 +30,8 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -42,6 +44,8 @@ final class UnorderedVarcharMapRecord implements MapRecord {
     private final long[] columnOffsets;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
+    private final DirectUtf8String usA;
+    private final DirectUtf8String usB;
     private final UnorderedVarcharMapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
@@ -95,6 +99,8 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
         this.keyLong256A = long256A;
         this.keyLong256B = long256B;
+        this.usA = new DirectUtf8String();
+        this.usB = new DirectUtf8String();
     }
 
     private UnorderedVarcharMapRecord(
@@ -110,6 +116,8 @@ final class UnorderedVarcharMapRecord implements MapRecord {
         this.value = new UnorderedVarcharMapValue(valueSize, valueOffsets);
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
+        this.usA = new DirectUtf8String();
+        this.usB = new DirectUtf8String();
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
@@ -266,10 +274,26 @@ final class UnorderedVarcharMapRecord implements MapRecord {
     }
 
     @Override
+    public @Nullable Utf8Sequence getVarcharA(int col) {
+        return getVarchar0(col, usA);
+    }
+
+    @Override
+    public @Nullable Utf8Sequence getVarcharB(int col) {
+        return getVarchar0(col, usB);
+    }
+
+    @Override
     public long keyHashCode() {
-        long key1 = Unsafe.getUnsafe().getLong(startAddress);
-        long key2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
-        return Hash.hashLong128_64(key1, key2);
+        int lenAndFlags = Unsafe.getUnsafe().getInt(startAddress + 4);
+        long ptr = Unsafe.getUnsafe().getLong(startAddress + 8);
+
+        int size = lenAndFlags & UnorderedVarcharMap.MASK_FLAGS_FROM_SIZE;
+        if (size > 0) {
+            return Hash.hashVarSizeMem64(ptr, size);
+        }
+        // null or empty key -> hash is 0
+        return 0;
     }
 
     public void of(long address) {
@@ -301,5 +325,18 @@ final class UnorderedVarcharMapRecord implements MapRecord {
                 Unsafe.getUnsafe().getLong(address + Long.BYTES * 3)
         );
         return long256;
+    }
+
+    private DirectUtf8String getVarchar0(int col, DirectUtf8String us) {
+        long address = addressOfColumn(col);
+        long packedHashAndSize = Unsafe.getUnsafe().getLong(address);
+        byte flags = UnorderedVarcharMap.unpackFlags(packedHashAndSize);
+        if (UnorderedVarcharMap.isNull(flags)) {
+            return null;
+        }
+        boolean isAscii = UnorderedVarcharMap.isAscii(flags);
+        long size = UnorderedVarcharMap.unpackSize(packedHashAndSize);
+        long ptr = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+        return us.of(ptr, ptr + size, isAscii);
     }
 }

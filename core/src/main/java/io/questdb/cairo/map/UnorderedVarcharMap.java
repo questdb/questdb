@@ -61,9 +61,10 @@ import org.jetbrains.annotations.Nullable;
  * </pre>
  */
 public class UnorderedVarcharMap implements Map, Reopenable {
+    static final byte FLAG_IS_ASCII = (byte) (1 << 7);
+    static final byte FLAG_IS_NULL = (byte) (1 << 6);
     static final long KEY_HEADER_SIZE = 2 * Long.BYTES;
-    private static final byte FLAG_IS_ASCII = (byte) (1 << 7);
-    private static final byte FLAG_IS_NULL = (byte) (1 << 6);
+    static final int MASK_FLAGS_FROM_SIZE = ~(FLAG_IS_ASCII | FLAG_IS_NULL);
     private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     private static final int MIN_KEY_CAPACITY = 16;
     private final UnorderedVarcharMapCursor cursor;
@@ -281,25 +282,8 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return key.init();
     }
 
-    private static long packHashSizeFlags(long hash, int size, byte flags) {
-        // size must be within 30 bits
-        assert size < (1 << 30);
-        // flags must have lower 6 bits clear
-        assert (flags & 0x3f) == 0;
-
-        int sizeAndFlags = size | (flags << 24);
-        return ((long) sizeAndFlags << 32) | (hash & 0xffffffffL);
-    }
-
     private static int unpackHash(long hashSizeFlags) {
         return (int) (hashSizeFlags);
-    }
-
-    private static int unpackSize(long packedHashSizeFlags) {
-        int sizeAndFlags = (int) (packedHashSizeFlags >>> 32);
-
-        // clear top 2 bits
-        return sizeAndFlags & 0x3FFFFFFF;
     }
 
     private UnorderedVarcharMapValue asNew(long startAddress, long hash, long ptr, int size, long newEntryPackedHashSizeFlags, UnorderedVarcharMapValue value) {
@@ -426,18 +410,45 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return value.of(startAddress, memLimit, newValue);
     }
 
+    static boolean isAscii(byte flags) {
+        return (flags & FLAG_IS_ASCII) != 0;
+    }
+
+    static boolean isNull(byte flags) {
+        return (flags & FLAG_IS_NULL) != 0;
+    }
+
+    static long packHashSizeFlags(long hash, int size, byte flags) {
+        // size must be within 30 bits
+        assert size < (1 << 30);
+        // flags must have lower 6 bits clear
+        assert (flags & 0x3f) == 0;
+
+        int sizeAndFlags = size | (flags << 24);
+        return ((long) sizeAndFlags << 32) | (hash & 0xffffffffL);
+    }
+
+    static byte unpackFlags(long packedHashSizeFlags) {
+        return (byte) (packedHashSizeFlags >>> 56);
+    }
+
+    static int unpackSize(long packedHashSizeFlags) {
+        int sizeAndFlags = (int) (packedHashSizeFlags >>> 32);
+
+        // clear top 2 bits
+        return sizeAndFlags & 0x3FFFFFFF;
+    }
+
     long entrySize() {
         return entrySize;
     }
 
     boolean isZeroKey(long startAddress) {
-        long key1 = Unsafe.getUnsafe().getLong(startAddress);
-        long key2 = Unsafe.getUnsafe().getLong(startAddress + 8L);
-        return key1 == 0 && key2 == 0;
+        long packedHashAndSize = Unsafe.getUnsafe().getLong(startAddress);
+        return packedHashAndSize == 0;
     }
 
     class Key implements MapKey {
-        // todo: probably better to keep all flags already packed in a byte
         private byte flags;
         private long ptr;
         private int size;
