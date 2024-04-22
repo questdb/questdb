@@ -95,7 +95,7 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putChar(valueIndex + 1, srcValue.getChar(valueIndex + 1));
         }
@@ -103,7 +103,7 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putChar(valueIndex + 1, (char) 0);
     }
 

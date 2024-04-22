@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.test.tools.TestUtils;
@@ -287,7 +286,7 @@ public class VarcharFunctionTest {
 
     @Test
     public void testCastToIntNull() {
-        Assert.assertEquals(Numbers.INT_NaN, new VarcharConstant((Utf8Sequence) null).getInt(null));
+        Assert.assertEquals(Numbers.INT_NULL, new VarcharConstant((Utf8Sequence) null).getInt(null));
     }
 
     @Test
@@ -332,7 +331,7 @@ public class VarcharFunctionTest {
 
     @Test
     public void testCastToLongNull() {
-        Assert.assertEquals(Numbers.LONG_NaN, new VarcharConstant((Utf8Sequence) null).getLong(null));
+        Assert.assertEquals(Numbers.LONG_NULL, new VarcharConstant((Utf8Sequence) null).getLong(null));
     }
 
     @Test
@@ -417,7 +416,7 @@ public class VarcharFunctionTest {
 
     @Test
     public void testCastToTimestampNull() {
-        Assert.assertEquals(Numbers.LONG_NaN, new VarcharConstant((Utf8Sequence) null).getTimestamp(null));
+        Assert.assertEquals(Numbers.LONG_NULL, new VarcharConstant((Utf8Sequence) null).getTimestamp(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -139,7 +139,7 @@ public final class Timestamps {
             case 'y':
                 return Timestamps.addYear(lo, period);
             default:
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
         }
     }
 
@@ -669,7 +669,7 @@ public final class Timestamps {
             case 'y':
                 return Timestamps.getYearsBetween(start, end);
             default:
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
         }
     }
 

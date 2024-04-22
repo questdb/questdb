@@ -128,7 +128,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
         isChainBuilt = false;
         rowsInGroup = 0;
         rowsSoFar = 0;
-        groupTimestamp = Numbers.LONG_NaN;
+        groupTimestamp = Numbers.LONG_NULL;
         timestampInitialized = false;
         chain.clear();
     }

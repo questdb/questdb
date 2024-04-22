@@ -32,7 +32,7 @@ public class VarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarPopAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "var_pop\nNaN\n", "select var_pop(x) from (select cast(null as double) x from long_sequence(100))"
+                "var_pop\nnull\n", "select var_pop(x) from (select cast(null as double) x from long_sequence(100))"
         ));
     }
 
@@ -103,7 +103,7 @@ public class VarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl1(x int)");
             assertSql(
-                    "var_pop\nNaN\n", "select var_pop(x) from tbl1"
+                    "var_pop\nnull\n", "select var_pop(x) from tbl1"
             );
         });
     }

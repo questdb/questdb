@@ -209,8 +209,8 @@ public class LineWalAppender {
                                 final long entityValue = ent.getLongValue();
                                 if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
                                     r.putInt(columnIndex, (int) entityValue);
-                                } else if (entityValue == Numbers.LONG_NaN) {
-                                    r.putInt(columnIndex, Numbers.INT_NaN);
+                                } else if (entityValue == Numbers.LONG_NULL) {
+                                    r.putInt(columnIndex, Numbers.INT_NULL);
                                 } else {
                                     throw boundsError(entityValue, ColumnType.INT, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                 }
@@ -220,7 +220,7 @@ public class LineWalAppender {
                                 final long entityValue = ent.getLongValue();
                                 if (entityValue >= Short.MIN_VALUE && entityValue <= Short.MAX_VALUE) {
                                     r.putShort(columnIndex, (short) entityValue);
-                                } else if (entityValue == Numbers.LONG_NaN) {
+                                } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putShort(columnIndex, (short) 0);
                                 } else {
                                     throw boundsError(entityValue, ColumnType.SHORT, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
@@ -231,7 +231,7 @@ public class LineWalAppender {
                                 final long entityValue = ent.getLongValue();
                                 if (entityValue >= Byte.MIN_VALUE && entityValue <= Byte.MAX_VALUE) {
                                     r.putByte(columnIndex, (byte) entityValue);
-                                } else if (entityValue == Numbers.LONG_NaN) {
+                                } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putByte(columnIndex, (byte) 0);
                                 } else {
                                     throw boundsError(entityValue, ColumnType.BYTE, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));

@@ -39,7 +39,7 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -49,7 +49,7 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             mapValue.addLong(valueIndex, 1);
         }
     }

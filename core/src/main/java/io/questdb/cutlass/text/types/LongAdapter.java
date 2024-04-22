@@ -67,6 +67,6 @@ public final class LongAdapter extends AbstractTypeAdapter implements TimestampC
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        row.putLong(column, SqlKeywords.isNullKeyword(value) ? Numbers.LONG_NaN : getLong(value));
+        row.putLong(column, SqlKeywords.isNullKeyword(value) ? Numbers.LONG_NULL : getLong(value));
     }
 }

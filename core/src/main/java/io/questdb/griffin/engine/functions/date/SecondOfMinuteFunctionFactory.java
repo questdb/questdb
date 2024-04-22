@@ -66,10 +66,10 @@ public class SecondOfMinuteFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getSecondOfMinute(value);
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
 
         @Override

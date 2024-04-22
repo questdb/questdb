@@ -45,12 +45,12 @@ public class InlinedVarchar implements DirectUtf8Sequence {
     }
 
     @Override
-    public boolean equalsAssumingSameSize(Utf8Sequence other) {
+    public boolean equalsAssumingSameSize(Utf8Sequence other, int size) {
         if (other instanceof InlinedVarchar) {
             return ((longAt(0) ^ other.longAt(0)) & valueMask) == 0
                     && (size <= 8 || byteAt(8) == other.byteAt(8));
         }
-        return DirectUtf8Sequence.super.equalsAssumingSameSize(other);
+        return DirectUtf8Sequence.super.equalsAssumingSameSize(other, size);
     }
 
     @Override

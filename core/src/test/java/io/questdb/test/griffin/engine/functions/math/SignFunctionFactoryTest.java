@@ -60,12 +60,12 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                             "2.2250738585072014E-308\t1.0\n" +
                             "1.0\t1.0\n" +
                             "1.7976931348623157E308\t1.0\n" +
-                            "Infinity\t1.0\n" +
+                            "null\t1.0\n" +
                             "-2.2250738585072014E-308\t-1.0\n" +
                             "-1.0\t-1.0\n" +
                             "-1.7976931348623157E308\t-1.0\n" +
-                            "-Infinity\t-1.0\n" +
-                            "NaN\tNaN\n",
+                            "null\t-1.0\n" +
+                            "null\tnull\n",
                     "select d, sign(d) from tab");
         });
     }
@@ -84,12 +84,12 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                             "0.0000\t1.0000\n" +
                             "1.0000\t1.0000\n" +
                             "3.4028235E38\t1.0000\n" +
-                            "Infinity\t1.0000\n" +
+                            "null\t1.0000\n" +
                             "-0.0000\t-1.0000\n" +
                             "-1.0000\t-1.0000\n" +
                             "-3.4028235E38\t-1.0000\n" +
-                            "-Infinity\t-1.0000\n" +
-                            "NaN\tNaN\n",
+                            "null\t-1.0000\n" +
+                            "null\tnull\n",
                     "select f, sign(f) from tab");
         });
     }
@@ -108,7 +108,7 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                             "2147483647\t1\n" +
                             "-1\t-1\n" +
                             "-2147483647\t-1\n" +
-                            "NaN\tNaN\n",
+                            "null\tnull\n",
                     "select i, sign(i) from tab");
         });
     }
@@ -127,7 +127,7 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                             "9223372036854775807\t1\n" +
                             "-1\t-1\n" +
                             "-9223372036854775807\t-1\n" +
-                            "NaN\tNaN\n",
+                            "null\tnull\n",
                     "select l, sign(l) from tab");
         });
     }

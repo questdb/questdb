@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTest {
@@ -35,7 +35,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     public void testLargeNegScale() throws SqlException {
         assertQuery(
                 "round_half_even\n" +
-                        "NaN\n",
+                        "null\n",
                 "select round_half_even(14.7778, -18) from long_sequence(1)",
                 null,
                 true,
@@ -47,7 +47,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     public void testLargePosScale() throws SqlException {
         assertQuery(
                 "round_half_even\n" +
-                        "NaN\n",
+                        "null\n",
                 "select round_half_even(14.7778, 18) from long_sequence(1)",
                 null,
                 true,

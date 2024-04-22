@@ -324,55 +324,55 @@ public class IPv4Test extends AbstractCairoTest {
     public void testCaseIPv44() throws Exception {
         assertQuery(
                 "ip\tbytes\tcase\n" +
-                        "187.139.150.80\t580\tNaN\n" +
-                        "212.159.205.29\t23\tNaN\n" +
-                        "79.15.250.138\t850\tNaN\n" +
-                        "205.123.179.216\t167\tNaN\n" +
-                        "170.90.236.206\t572\tNaN\n" +
-                        "92.26.178.136\t7\tNaN\n" +
-                        "231.146.30.59\t766\tNaN\n" +
-                        "113.132.124.243\t522\tNaN\n" +
-                        "67.22.249.199\t203\tNaN\n" +
+                        "187.139.150.80\t580\tnull\n" +
+                        "212.159.205.29\t23\tnull\n" +
+                        "79.15.250.138\t850\tnull\n" +
+                        "205.123.179.216\t167\tnull\n" +
+                        "170.90.236.206\t572\tnull\n" +
+                        "92.26.178.136\t7\tnull\n" +
+                        "231.146.30.59\t766\tnull\n" +
+                        "113.132.124.243\t522\tnull\n" +
+                        "67.22.249.199\t203\tnull\n" +
                         "25.107.51.160\t827\t1\n" +
-                        "146.16.210.119\t383\tNaN\n" +
-                        "187.63.210.97\t424\tNaN\n" +
-                        "188.239.72.25\t513\tNaN\n" +
-                        "181.82.42.148\t539\tNaN\n" +
-                        "129.172.181.73\t25\tNaN\n" +
-                        "66.56.51.126\t904\tNaN\n" +
-                        "230.202.108.161\t171\tNaN\n" +
-                        "180.48.50.141\t136\tNaN\n" +
-                        "128.225.84.244\t313\tNaN\n" +
-                        "254.93.251.9\t810\tNaN\n" +
-                        "227.40.250.157\t903\tNaN\n" +
-                        "180.36.62.54\t528\tNaN\n" +
-                        "136.166.51.222\t580\tNaN\n" +
+                        "146.16.210.119\t383\tnull\n" +
+                        "187.63.210.97\t424\tnull\n" +
+                        "188.239.72.25\t513\tnull\n" +
+                        "181.82.42.148\t539\tnull\n" +
+                        "129.172.181.73\t25\tnull\n" +
+                        "66.56.51.126\t904\tnull\n" +
+                        "230.202.108.161\t171\tnull\n" +
+                        "180.48.50.141\t136\tnull\n" +
+                        "128.225.84.244\t313\tnull\n" +
+                        "254.93.251.9\t810\tnull\n" +
+                        "227.40.250.157\t903\tnull\n" +
+                        "180.36.62.54\t528\tnull\n" +
+                        "136.166.51.222\t580\tnull\n" +
                         "24.123.12.210\t95\t1\n" +
-                        "171.117.213.66\t720\tNaN\n" +
-                        "224.99.254.121\t619\tNaN\n" +
+                        "171.117.213.66\t720\tnull\n" +
+                        "224.99.254.121\t619\tnull\n" +
                         "55.211.206.129\t785\t1\n" +
-                        "144.131.72.77\t369\tNaN\n" +
-                        "97.159.145.120\t352\tNaN\n" +
-                        "164.153.242.17\t906\tNaN\n" +
-                        "165.166.233.251\t332\tNaN\n" +
-                        "114.126.117.26\t71\tNaN\n" +
-                        "164.74.203.45\t678\tNaN\n" +
-                        "241.248.184.75\t334\tNaN\n" +
-                        "255.95.177.227\t44\tNaN\n" +
-                        "216.150.248.30\t563\tNaN\n" +
-                        "71.73.196.29\t741\tNaN\n" +
-                        "180.91.244.55\t906\tNaN\n" +
-                        "111.221.228.130\t531\tNaN\n" +
-                        "171.30.189.77\t238\tNaN\n" +
-                        "73.153.126.70\t772\tNaN\n" +
-                        "105.218.160.179\t986\tNaN\n" +
-                        "201.100.238.229\t318\tNaN\n" +
+                        "144.131.72.77\t369\tnull\n" +
+                        "97.159.145.120\t352\tnull\n" +
+                        "164.153.242.17\t906\tnull\n" +
+                        "165.166.233.251\t332\tnull\n" +
+                        "114.126.117.26\t71\tnull\n" +
+                        "164.74.203.45\t678\tnull\n" +
+                        "241.248.184.75\t334\tnull\n" +
+                        "255.95.177.227\t44\tnull\n" +
+                        "216.150.248.30\t563\tnull\n" +
+                        "71.73.196.29\t741\tnull\n" +
+                        "180.91.244.55\t906\tnull\n" +
+                        "111.221.228.130\t531\tnull\n" +
+                        "171.30.189.77\t238\tnull\n" +
+                        "73.153.126.70\t772\tnull\n" +
+                        "105.218.160.179\t986\tnull\n" +
+                        "201.100.238.229\t318\tnull\n" +
                         "12.214.12.100\t598\t1\n" +
-                        "212.102.182.127\t984\tNaN\n" +
+                        "212.102.182.127\t984\tnull\n" +
                         "50.214.139.184\t574\t1\n" +
-                        "186.33.243.40\t659\tNaN\n" +
-                        "74.196.176.71\t740\tNaN\n" +
-                        "150.153.88.133\t849\tNaN\n" +
+                        "186.33.243.40\t659\tnull\n" +
+                        "74.196.176.71\t740\tnull\n" +
+                        "150.153.88.133\t849\tnull\n" +
                         "63.60.82.184\t37\t1\n",
                 "select ip, bytes, case when ip << '2.65.32.1/2' then 1 end from test",
                 "create table test as " +
@@ -2324,7 +2324,7 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4MinusIPv4ConstNull() throws Exception {
         assertSql(
                 "column\n" +
-                        "NaN\n",
+                        "null\n",
                 "select ipv4 '0.0.0.0' - ipv4 '1.1.1.1'"
         );
     }
@@ -4898,11 +4898,11 @@ public class IPv4Test extends AbstractCairoTest {
         ddl("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))");
         assertSql(
                 "ip\tip2\tcount\tcount2\n" +
-                        "1.1.96.238\t\t1\tNaN\n" +
-                        "1.1.50.227\t\t1\tNaN\n" +
-                        "1.1.89.171\t\t1\tNaN\n" +
-                        "1.1.82.23\t\t1\tNaN\n" +
-                        "1.1.76.40\t\t1\tNaN\n",
+                        "1.1.96.238\t\t1\tnull\n" +
+                        "1.1.50.227\t\t1\tnull\n" +
+                        "1.1.89.171\t\t1\tnull\n" +
+                        "1.1.82.23\t\t1\tnull\n" +
+                        "1.1.76.40\t\t1\tnull\n",
                 "select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip"
         );
     }
@@ -4913,60 +4913,60 @@ public class IPv4Test extends AbstractCairoTest {
         ddl("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(50))");
         assertSql(
                 "ip\tip2\tcount\tcount2\n" +
-                        "12.5.9.238\t\t1\tNaN\n" +
-                        "12.5.9.227\t\t1\tNaN\n" +
-                        "12.5.9.171\t\t1\tNaN\n" +
-                        "12.5.9.23\t\t1\tNaN\n" +
-                        "12.5.9.40\t\t1\tNaN\n" +
-                        "12.5.9.236\t\t1\tNaN\n" +
-                        "12.5.9.15\t\t1\tNaN\n" +
-                        "12.5.9.136\t\t1\tNaN\n" +
-                        "12.5.9.145\t\t1\tNaN\n" +
+                        "12.5.9.238\t\t1\tnull\n" +
+                        "12.5.9.227\t\t1\tnull\n" +
+                        "12.5.9.171\t\t1\tnull\n" +
+                        "12.5.9.23\t\t1\tnull\n" +
+                        "12.5.9.40\t\t1\tnull\n" +
+                        "12.5.9.236\t\t1\tnull\n" +
+                        "12.5.9.15\t\t1\tnull\n" +
+                        "12.5.9.136\t\t1\tnull\n" +
+                        "12.5.9.145\t\t1\tnull\n" +
                         "12.5.9.114\t12.5.9.114\t1\t2\n" +
-                        "12.5.9.243\t\t1\tNaN\n" +
-                        "12.5.9.229\t\t1\tNaN\n" +
-                        "12.5.9.120\t\t1\tNaN\n" +
-                        "12.5.9.160\t\t1\tNaN\n" +
-                        "12.5.9.196\t\t1\tNaN\n" +
-                        "12.5.9.235\t\t1\tNaN\n" +
+                        "12.5.9.243\t\t1\tnull\n" +
+                        "12.5.9.229\t\t1\tnull\n" +
+                        "12.5.9.120\t\t1\tnull\n" +
+                        "12.5.9.160\t\t1\tnull\n" +
+                        "12.5.9.196\t\t1\tnull\n" +
+                        "12.5.9.235\t\t1\tnull\n" +
                         "12.5.9.159\t12.5.9.159\t1\t2\n" +
-                        "12.5.9.81\t\t1\tNaN\n" +
-                        "12.5.9.196\t\t1\tNaN\n" +
-                        "12.5.9.108\t\t1\tNaN\n" +
-                        "12.5.9.173\t\t1\tNaN\n" +
-                        "12.5.9.76\t\t1\tNaN\n" +
-                        "12.5.9.126\t\t1\tNaN\n" +
-                        "12.5.9.248\t\t1\tNaN\n" +
+                        "12.5.9.81\t\t1\tnull\n" +
+                        "12.5.9.196\t\t1\tnull\n" +
+                        "12.5.9.108\t\t1\tnull\n" +
+                        "12.5.9.173\t\t1\tnull\n" +
+                        "12.5.9.76\t\t1\tnull\n" +
+                        "12.5.9.126\t\t1\tnull\n" +
+                        "12.5.9.248\t\t1\tnull\n" +
                         "12.5.9.226\t12.5.9.226\t1\t2\n" +
-                        "12.5.9.115\t\t1\tNaN\n" +
-                        "12.5.9.98\t\t1\tNaN\n" +
-                        "12.5.9.200\t\t1\tNaN\n" +
-                        "12.5.9.247\t\t1\tNaN\n" +
-                        "12.5.9.216\t\t1\tNaN\n" +
-                        "12.5.9.48\t\t1\tNaN\n" +
-                        "12.5.9.202\t\t1\tNaN\n" +
-                        "12.5.9.50\t\t1\tNaN\n" +
-                        "12.5.9.228\t\t1\tNaN\n" +
-                        "12.5.9.210\t\t1\tNaN\n" +
-                        "12.5.9.7\t\t1\tNaN\n" +
-                        "12.5.9.4\t\t1\tNaN\n" +
-                        "12.5.9.135\t\t1\tNaN\n" +
-                        "12.5.9.117\t\t1\tNaN\n" +
+                        "12.5.9.115\t\t1\tnull\n" +
+                        "12.5.9.98\t\t1\tnull\n" +
+                        "12.5.9.200\t\t1\tnull\n" +
+                        "12.5.9.247\t\t1\tnull\n" +
+                        "12.5.9.216\t\t1\tnull\n" +
+                        "12.5.9.48\t\t1\tnull\n" +
+                        "12.5.9.202\t\t1\tnull\n" +
+                        "12.5.9.50\t\t1\tnull\n" +
+                        "12.5.9.228\t\t1\tnull\n" +
+                        "12.5.9.210\t\t1\tnull\n" +
+                        "12.5.9.7\t\t1\tnull\n" +
+                        "12.5.9.4\t\t1\tnull\n" +
+                        "12.5.9.135\t\t1\tnull\n" +
+                        "12.5.9.117\t\t1\tnull\n" +
                         "12.5.9.43\t12.5.9.43\t1\t2\n" +
                         "12.5.9.43\t12.5.9.43\t1\t2\n" +
                         "12.5.9.179\t12.5.9.179\t1\t2\n" +
                         "12.5.9.179\t12.5.9.179\t1\t2\n" +
-                        "12.5.9.142\t\t1\tNaN\n" +
-                        "12.5.9.75\t\t1\tNaN\n" +
-                        "12.5.9.239\t\t1\tNaN\n" +
-                        "12.5.9.48\t\t1\tNaN\n" +
+                        "12.5.9.142\t\t1\tnull\n" +
+                        "12.5.9.75\t\t1\tnull\n" +
+                        "12.5.9.239\t\t1\tnull\n" +
+                        "12.5.9.48\t\t1\tnull\n" +
                         "12.5.9.100\t12.5.9.100\t1\t2\n" +
                         "12.5.9.100\t12.5.9.100\t1\t2\n" +
                         "12.5.9.100\t12.5.9.100\t1\t2\n" +
-                        "12.5.9.26\t\t1\tNaN\n" +
-                        "12.5.9.240\t\t1\tNaN\n" +
-                        "12.5.9.192\t\t1\tNaN\n" +
-                        "12.5.9.181\t\t1\tNaN\n",
+                        "12.5.9.26\t\t1\tnull\n" +
+                        "12.5.9.240\t\t1\tnull\n" +
+                        "12.5.9.192\t\t1\tnull\n" +
+                        "12.5.9.181\t\t1\tnull\n",
                 "select test.ip, test2.ip2, test.count, test2.count2 from test left join test2 on test2.ip2 = test.ip"
         );
     }

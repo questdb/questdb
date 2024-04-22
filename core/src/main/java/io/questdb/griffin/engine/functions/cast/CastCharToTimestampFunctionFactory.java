@@ -58,7 +58,7 @@ public class CastCharToTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final byte v = (byte) (arg.getChar(rec) - '0');
-            return v > -1 && v < 10 ? v : Numbers.LONG_NaN;
+            return v > -1 && v < 10 ? v : Numbers.LONG_NULL;
         }
     }
 }

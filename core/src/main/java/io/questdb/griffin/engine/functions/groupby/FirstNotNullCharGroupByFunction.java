@@ -58,7 +58,7 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putChar(valueIndex + 1, srcVal);
         }

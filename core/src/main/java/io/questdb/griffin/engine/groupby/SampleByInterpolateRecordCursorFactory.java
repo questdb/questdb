@@ -156,7 +156,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         entityColumnFilter.of(keyTypes.getColumnCount());
         this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, false);
 
-        this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, sampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+        this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
     }
 
     @Override
@@ -243,14 +243,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
         private final Function offsetFunc;
         private final int offsetFuncPos;
-        private final TimestampSampler timestampSampler;
         private final Function timezoneNameFunc;
         private final int timezoneNameFuncPos;
         private long fixedOffset;
-        private long nextDstUtc;
         private TimeZoneRules rules;
         private long tzOffset;
-
 
         public SampleByInterpolateRecordCursor(
                 CairoConfiguration configuration,
@@ -258,7 +255,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 ObjList<GroupByFunction> groupByFunctions,
                 @Transient @NotNull ArrayColumnTypes keyTypes,
                 @Transient @NotNull ArrayColumnTypes valueTypes,
-                TimestampSampler timestampSampler,
                 Function timezoneNameFunc,
                 int timezoneNameFuncPos,
                 Function offsetFunc,
@@ -274,7 +270,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             GroupByUtils.setAllocator(groupByFunctions, allocator);
             isOpen = true;
 
-            this.timestampSampler = timestampSampler;
             this.timezoneNameFunc = timezoneNameFunc;
             this.timezoneNameFuncPos = timezoneNameFuncPos;
             this.offsetFunc = offsetFunc;
@@ -691,20 +686,18 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     } else {
                         // here timezone is in numeric offset format
                         tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
-                        nextDstUtc = Long.MAX_VALUE;
                     }
                 } catch (NumericException e) {
                     throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
                 }
             } else {
                 tzOffset = 0;
-                nextDstUtc = Long.MAX_VALUE;
             }
 
             final CharSequence offset = offsetFunc.getStrA(null);
             if (offset != null) {
                 final long val = Timestamps.parseOffset(offset);
-                if (val == Numbers.LONG_NaN) {
+                if (val == Numbers.LONG_NULL) {
                     // bad value for offset
                     throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
                 }
@@ -721,19 +714,19 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 return;
             }
 
-            assert managedCursor.hasNext();
+            final boolean good = managedCursor.hasNext();
+            assert good;
 
             final long timestamp = managedRecord.getTimestamp(timestampIndex);
             if (rules != null) {
                 tzOffset = rules.getOffset(timestamp);
-                nextDstUtc = rules.getNextDST(timestamp);
             }
 
             if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
                 // this is the default path, we align time intervals to the first observation
-                timestampSampler.setStart(timestamp);
+                sampler.setStart(timestamp);
             } else {
-                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+                sampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
             }
             prevSample = sampler.round(timestamp);
             loSample = prevSample; // the lowest timestamp value

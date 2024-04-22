@@ -62,7 +62,7 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrA(Record rec) {
             final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            if (value == Numbers.INT_NULL) {
                 return null;
             }
             sinkA.clear();
@@ -73,7 +73,7 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
         @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
             final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            if (value == Numbers.INT_NULL) {
                 return;
             }
             utf16Sink.put(value);
@@ -82,7 +82,7 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            if (value == Numbers.INT_NULL) {
                 return null;
             }
             sinkB.clear();

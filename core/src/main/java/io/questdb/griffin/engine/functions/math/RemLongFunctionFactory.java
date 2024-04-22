@@ -63,13 +63,13 @@ public class RemLongFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             final long r = right.getLong(rec);
-            if (r == 0 || r == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
+            if (r == 0 || r == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
             }
 
             final long l = left.getLong(rec);
-            if (l == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
             }
 
             return l % r;
