@@ -36,7 +36,7 @@ class DateBindVariable extends DateFunction implements ScalarFunction, Mutable {
 
     @Override
     public void clear() {
-        this.value = Numbers.LONG_NaN;
+        this.value = Numbers.LONG_NULL;
     }
 
     @Override

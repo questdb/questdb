@@ -66,8 +66,8 @@ public class DivLongFunctionFactory implements FunctionFactory {
             final long l = left.getLong(rec);
             final long r = right.getLong(rec);
 
-            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN || r == 0) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL || r == 0) {
+                return Numbers.LONG_NULL;
             }
             return l / r;
         }

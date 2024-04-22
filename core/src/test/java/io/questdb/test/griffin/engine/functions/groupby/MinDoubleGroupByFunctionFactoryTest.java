@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -53,7 +54,7 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertTrue(Double.isNaN(record.getDouble(0)));
+                Assert.assertTrue(Numbers.isNull(record.getDouble(0)));
             }
         }
     }
@@ -158,8 +159,8 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t3.0299755031293305\t1970-01-03T00:00:00.000000Z\n" +
                         "NPIW\t4.115364146194077\t1970-01-03T00:00:00.000000Z\n" +
                         "PEVM\t-3.15429689776691\t1970-01-03T00:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T00:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T00:00:00.000000Z\n" +
                         "\t0.03993124821273464\t1970-01-03T03:00:00.000000Z\n" +
                         "VTJW\t0.2185865835029681\t1970-01-03T03:00:00.000000Z\n" +
                         "CPSW\t0.029080850168636263\t1970-01-03T03:00:00.000000Z\n" +
@@ -169,8 +170,8 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t2.783711718043071\t1970-01-03T03:00:00.000000Z\n" +
                         "NPIW\t3.750106582628655\t1970-01-03T03:00:00.000000Z\n" +
                         "PEVM\t-2.7606061299772864\t1970-01-03T03:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T03:00:00.000000Z\n" +
                         "\t0.07828020681514525\t1970-01-03T06:00:00.000000Z\n" +
                         "VTJW\t0.4835256202036067\t1970-01-03T06:00:00.000000Z\n" +
                         "HYRX\t0.23493793601747937\t1970-01-03T06:00:00.000000Z\n" +
@@ -180,8 +181,8 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t2.5374479329568107\t1970-01-03T06:00:00.000000Z\n" +
                         "NPIW\t3.3848490190632345\t1970-01-03T06:00:00.000000Z\n" +
                         "PEVM\t-2.3669153621876635\t1970-01-03T06:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T06:00:00.000000Z\n" +
                         "\t0.4740684604688953\t1970-01-03T09:00:00.000000Z\n" +
                         "RXGZ\t0.03192108074989719\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\t0.49199001716312474\t1970-01-03T09:00:00.000000Z\n" +
@@ -191,8 +192,8 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t2.291184147870552\t1970-01-03T09:00:00.000000Z\n" +
                         "NPIW\t3.0195914554978125\t1970-01-03T09:00:00.000000Z\n" +
                         "PEVM\t-1.9732245943980409\t1970-01-03T09:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T09:00:00.000000Z\n" +
                         "\t0.4134692424154023\t1970-01-03T12:00:00.000000Z\n" +
                         "VTJW\t0.5004544141226428\t1970-01-03T12:00:00.000000Z\n" +
                         "RXGZ\t0.055856706541069105\t1970-01-03T12:00:00.000000Z\n" +
@@ -202,8 +203,8 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t2.0449203627842922\t1970-01-03T12:00:00.000000Z\n" +
                         "NPIW\t2.6543338919323913\t1970-01-03T12:00:00.000000Z\n" +
                         "PEVM\t-1.5795338266084187\t1970-01-03T12:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T12:00:00.000000Z\n" +
                         "\t0.3528700243619092\t1970-01-03T15:00:00.000000Z\n" +
                         "VTJW\t0.5089188110821609\t1970-01-03T15:00:00.000000Z\n" +
                         "RXGZ\t0.07979233233224103\t1970-01-03T15:00:00.000000Z\n" +
@@ -213,8 +214,8 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t1.7986565776980326\t1970-01-03T15:00:00.000000Z\n" +
                         "NPIW\t2.28907632836697\t1970-01-03T15:00:00.000000Z\n" +
                         "PEVM\t-1.1858430588187956\t1970-01-03T15:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T15:00:00.000000Z\n" +
                         "\t0.2922708063084161\t1970-01-03T18:00:00.000000Z\n" +
                         "VTJW\t0.5173832080416787\t1970-01-03T18:00:00.000000Z\n" +
                         "RXGZ\t0.10372795812341296\t1970-01-03T18:00:00.000000Z\n" +
@@ -224,8 +225,8 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t1.552392792611773\t1970-01-03T18:00:00.000000Z\n" +
                         "NPIW\t1.9238187648015488\t1970-01-03T18:00:00.000000Z\n" +
                         "PEVM\t-0.7921522910291726\t1970-01-03T18:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T18:00:00.000000Z\n" +
                         "\t0.23167158825492307\t1970-01-03T21:00:00.000000Z\n" +
                         "VTJW\t0.525847605001197\t1970-01-03T21:00:00.000000Z\n" +
                         "RXGZ\t0.12766358391458488\t1970-01-03T21:00:00.000000Z\n" +
@@ -235,8 +236,8 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t1.3061290075255139\t1970-01-03T21:00:00.000000Z\n" +
                         "NPIW\t1.5585612012361274\t1970-01-03T21:00:00.000000Z\n" +
                         "PEVM\t-0.3984615232395501\t1970-01-03T21:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T21:00:00.000000Z\n" +
                         "\t0.17107237020143\t1970-01-04T00:00:00.000000Z\n" +
                         "VTJW\t0.5343120019607148\t1970-01-04T00:00:00.000000Z\n" +
                         "RXGZ\t0.15159920970575683\t1970-01-04T00:00:00.000000Z\n" +
@@ -246,8 +247,8 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t1.0598652224392542\t1970-01-04T00:00:00.000000Z\n" +
                         "NPIW\t1.1933036376707062\t1970-01-04T00:00:00.000000Z\n" +
                         "PEVM\t-0.004770755449927295\t1970-01-04T00:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-04T00:00:00.000000Z\n" +
                         "\t0.11047315214793696\t1970-01-04T03:00:00.000000Z\n" +
                         "CGFN\t0.8136014373529948\t1970-01-04T03:00:00.000000Z\n" +
                         "NPIW\t0.8280460741052847\t1970-01-04T03:00:00.000000Z\n" +
@@ -257,8 +258,8 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "PEHN\t-3.2749603285421753\t1970-01-04T03:00:00.000000Z\n" +
                         "HYRX\t1.51841129309067\t1970-01-04T03:00:00.000000Z\n" +
                         "CPSW\t-0.700205218541072\t1970-01-04T03:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-04T03:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-04T03:00:00.000000Z\n" +
                         "WGRM\t0.5234892454427748\t1970-01-04T06:00:00.000000Z\n" +
                         "CGFN\t0.5673376522667354\t1970-01-04T06:00:00.000000Z\n" +
                         "\t0.034652347087289925\t1970-01-04T06:00:00.000000Z\n" +

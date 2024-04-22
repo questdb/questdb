@@ -136,7 +136,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         );
     }
 
-    @Test // all values except first are NaN and thus ignored
+    @Test // all values except first are null and thus ignored
     public void testSumOfAdditionOfDouble3() throws Exception {
         assertAggQuery(
                 "r\n" +
@@ -180,14 +180,14 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     public void testSumOfAdditionWithNull() throws Exception {
         assertAggQuery(
                 "r\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(x+null) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
 
         assertAggQuery(
                 "r\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(null+x) r from y",
                 null
         );
@@ -234,7 +234,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         );
     }
 
-    @Test // all values except first are NaN and thus ignored
+    @Test // all values except first are null and thus ignored
     public void testSumOfMultiplicationOfDouble3() throws Exception {
         assertAggQuery(
                 "r\n" +
@@ -268,14 +268,14 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     public void testSumOfMultiplicationWithNull() throws Exception {
         assertAggQuery(
                 "r\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(x*null) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
 
         assertAggQuery(
                 "r\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(null*x) r from y",
                 null
         );
@@ -322,7 +322,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         );
     }
 
-    @Test // all values except first are NaN and thus ignored
+    @Test // all values except first are null and thus ignored
     public void testSumOfSubtractionOfDouble3() throws Exception {
         assertAggQuery(
                 "r\n" +
@@ -366,14 +366,14 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     public void testSumOfSubtractionWithNull() throws Exception {
         assertAggQuery(
                 "r\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(x-null) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
 
         assertAggQuery(
                 "r\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(null-x) r from y",
                 null
         );

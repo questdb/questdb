@@ -114,7 +114,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             drainWalQueue();
             runWalPurgeJob();
 
-            assertExistence(true, tableToken, SEQ_DIR);
+            assertExistence(true, tableToken);
             assertSeqPartExistence(false, tableToken, 0);
             assertSeqPartExistence(false, tableToken, 1);
             assertSeqPartExistence(true, tableToken, 2);
@@ -275,9 +275,9 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 assertSql("x\tts\ti1\ti2\n" +
-                        "1\t2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
-                        "2\t2022-02-25T00:00:00.000000Z\t2\tNaN\n" +
-                        "3\t2022-02-26T00:00:00.000000Z\t3\tNaN\n" +
+                        "1\t2022-02-24T00:00:00.000000Z\tnull\tnull\n" +
+                        "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n" +
+                        "3\t2022-02-26T00:00:00.000000Z\t3\tnull\n" +
                         "4\t2022-02-27T00:00:00.000000Z\t4\t4\n", tableName);
 
                 assertWalExistence(true, tableName, 1);
@@ -321,23 +321,23 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
-            createPendingFile(tableToken, SEQ_DIR);
+            createPendingFile(tableToken);
             compile("drop table " + tableName);
 
             drainWalQueue();
             runWalPurgeJob();
 
-            assertExistence(true, tableToken, SEQ_DIR);
+            assertExistence(true, tableToken);
 
             engine.releaseAllWalWriters();
 
             runWalPurgeJob();
-            assertExistence(true, tableToken, SEQ_DIR);
+            assertExistence(true, tableToken);
             assertWalExistence(false, tableToken, 1);
 
-            removePendingFile(tableToken, SEQ_DIR);
+            removePendingFile(tableToken);
             runWalPurgeJob();
-            assertExistence(false, tableToken, SEQ_DIR);
+            assertExistence(false, tableToken);
         });
     }
 
@@ -729,7 +729,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         engine.releaseInactive();
         runWalPurgeJob();
         assertSql("x\tts\ti1\n" +
-                "1\t2022-02-24T00:00:00.000000Z\tNaN\n", tableName);
+                "1\t2022-02-24T00:00:00.000000Z\tnull\n", tableName);
         assertWalExistence(false, tableName, 1);
     }
 
@@ -841,8 +841,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql("x\tts\ti1\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\tNaN\n" +
-                    "11\t2022-02-24T00:00:00.000000Z\tNaN\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\tnull\n" +
+                    "11\t2022-02-24T00:00:00.000000Z\tnull\n" +
                     "2\t2022-02-25T00:00:00.000000Z\t2\n", tableName);
 
 
@@ -913,9 +913,9 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql("x\tts\ti1\ti2\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
-                    "2\t2022-02-25T00:00:00.000000Z\t2\tNaN\n" +
-                    "2\t2022-02-25T00:00:00.000000Z\t2\tNaN\n", tableName);
+                    "1\t2022-02-24T00:00:00.000000Z\tnull\tnull\n" +
+                    "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n" +
+                    "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n", tableName);
 
 
             // All applied, all segments can be deleted.
@@ -1152,10 +1152,10 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         });
     }
 
-    private void assertExistence(boolean exists, TableToken tableToken, String dir) {
+    private void assertExistence(boolean exists, TableToken tableToken) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(tableToken).concat(dir).$();
+            path.of(root).concat(tableToken).concat(WalUtils.SEQ_DIR).$();
             Assert.assertEquals(Utf8s.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
@@ -1176,20 +1176,20 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         Assert.assertEquals(Utf8s.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path));
     }
 
-    private void createPendingFile(TableToken tableToken, String dir) {
+    private void createPendingFile(TableToken tableToken) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(tableToken).concat(dir).concat(WalUtils.WAL_PENDING_FS_MARKER);
+            path.of(root).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(WalUtils.WAL_PENDING_FS_MARKER);
             ff.mkdir(path.$(), configuration.getMkDirMode());
             path.concat("test.pending");
             ff.touch(path.$());
         }
     }
 
-    private void removePendingFile(TableToken tableToken, String dir) {
+    private void removePendingFile(TableToken tableToken) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(tableToken).concat(dir).concat(WalUtils.WAL_PENDING_FS_MARKER);
+            path.of(root).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(WalUtils.WAL_PENDING_FS_MARKER);
             path.concat("test.pending");
             ff.remove(path.$());
         }

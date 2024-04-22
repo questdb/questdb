@@ -581,8 +581,8 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     engine.clear();
                     assertQuery(
                             "ts\ti\tl\ts\tstr\tvch\n" +
-                                    "2022-08-02T11:59:59.625000Z\tNaN\t3\t\t\t龘и\uDA89\uDFA4~2\uDAC6\uDED3ڎBH뤻䰭\u008B}ѱ\n" +
-                                    "2022-08-02T23:59:59.500000Z\tNaN\t4\t\t\t̷킉V1Ѓَᯤ\\篸{\n",
+                                    "2022-08-02T11:59:59.625000Z\tnull\t3\t\t\t\uF2C1ӍKB\n" +
+                                    "2022-08-02T23:59:59.500000Z\tnull\t4\t\t\tK䰭\n",
                             dst.getName(),
                             "ts",
                             true,
@@ -1112,18 +1112,18 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         try (TableReader srcReader = getReader(src.getTableName())) {
                             String tableHeader = "l\ti\tstr\tvch\tts\n";
                         // check the original src table is not affected
-                        String srcPartition2020_01_09 = "1\t1\t1\t핕\u05FA씎鈄\t2020-01-09T09:35:59.800000Z\n" +
+                        String srcPartition2020_01_09 = "1\t1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2020-01-09T09:35:59.800000Z\n" +
                                 "2\t2\t2\t\t2020-01-09T19:11:59.600000Z\n";
-                        String srcPartition2020_01_10 = "3\t3\t3\tӄǈ2Lg\t2020-01-10T04:47:59.400000Z\n" +
-                                "4\t4\t4\t\uF644䶓zV衞͛Ԉ龘и\uDA89\uDFA4~2\uDAC6\uDED3ڎB\t2020-01-10T14:23:59.200000Z\n" +
-                                "5\t5\t5\t뤻䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\篸{\t2020-01-10T23:59:59.000000Z\n";
+                        String srcPartition2020_01_10 = "3\t3\t3\těȞ鼷G\uD991\uDE7E\t2020-01-10T04:47:59.400000Z\n" +
+                                "4\t4\t4\t\t2020-01-10T14:23:59.200000Z\n" +
+                                "5\t5\t5\t͛Ԉ龘и\uDA89\uDFA4~\t2020-01-10T23:59:59.000000Z\n";
                         String expected = tableHeader + srcPartition2020_01_09 + srcPartition2020_01_10;
                             assertCursor(expected, srcReader.getCursor(), srcReader.getMetadata(), true);
 
                         // now check the dst table
                         // the first 2 rows must be the same as the src table - because we attached the 2020-01-09 partition from src table
                         // and 3rd line is a partition 2020-01-10 from the original dst table
-                        String dstPartition2020_01_10 = "2\t2\t2\tг\uDBAE\uDD12ɜ|\\軦۽㒾\uD99D\uDEA7K裷\uD9CC\uDE73+\u0093\t2020-01-10T23:59:59.000000Z\n";
+                        String dstPartition2020_01_10 = "2\t2\t2\tqK䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\篸\t2020-01-10T23:59:59.000000Z\n";
                         expected = tableHeader + srcPartition2020_01_09 + dstPartition2020_01_10;
                         assertCursor(
                                 expected,

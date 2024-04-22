@@ -64,7 +64,7 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     }
 
     @Override
-    public boolean equalsAssumingSameSize(Utf8Sequence other) {
+    public boolean equalsAssumingSameSize(Utf8Sequence other, int size) {
         return zeroPaddedSixPrefix() == other.zeroPaddedSixPrefix() && dataEquals(other);
     }
 

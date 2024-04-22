@@ -71,7 +71,7 @@ public class CountColumnTest extends AbstractCairoTest {
         });
 
         assertQuery("k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "NaN\t3\t3\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
+                        "null\t3\t3\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
                         "0\t1\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
                         "1\t1\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
                         "2\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\n" +
@@ -182,7 +182,7 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testKeyedCountAllColumnTypesOnFixedData2() throws Exception {
         assertQuery("k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
-                        "NaN\t1\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
+                        "null\t1\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
                         "0\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\t1\n",
                 "select k, " +
                         "count(1) c1, " +
@@ -253,15 +253,15 @@ public class CountColumnTest extends AbstractCairoTest {
         assertQuery(
                 "k\tc1\tcstar\tci\tcl\tcf\tcd\tcdat\tcts\tcl256\tcstr\tcvar\tcsym\tcgb\tcgs\tcgi\tcgl\n" +
                         "0\t10000\t10000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
-                        "1\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8300\t10000\t10000\t10000\t10000\t10000\n" +
-                        "2\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8364\t10000\t10000\t10000\t10000\t10000\n" +
-                        "3\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8359\t10000\t10000\t10000\t10000\t10000\n" +
-                        "4\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8303\t10000\t10000\t10000\t10000\t10000\n" +
+                        "1\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8392\t10000\t10000\t10000\t10000\t10000\n" +
+                        "2\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8341\t10000\t10000\t10000\t10000\t10000\n" +
+                        "3\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8327\t10000\t10000\t10000\t10000\t10000\n" +
+                        "4\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8298\t10000\t10000\t10000\t10000\t10000\n" +
                         "5\t10000\t10000\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" +
-                        "6\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8312\t10000\t10000\t10000\t10000\t10000\n" +
-                        "7\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8282\t10000\t10000\t10000\t10000\t10000\n" +
-                        "8\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8351\t10000\t10000\t10000\t10000\t10000\n" +
-                        "9\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8355\t10000\t10000\t10000\t10000\t10000\n",
+                        "6\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8372\t10000\t10000\t10000\t10000\t10000\n" +
+                        "7\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8346\t10000\t10000\t10000\t10000\t10000\n" +
+                        "8\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8273\t10000\t10000\t10000\t10000\t10000\n" +
+                        "9\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t10000\t8378\t10000\t10000\t10000\t10000\t10000\n",
                 "select k, " +
                         "count(1) c1, " +
                         "count(*) cstar, " +
@@ -463,7 +463,7 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testVectorizedKeyedCount() throws Exception {
         assertQuery("k\tc1\tcstar\tci\tcl\n" +
-                        "NaN\t769230\t769230\t615384\t615384\n" +
+                        "null\t769230\t769230\t615384\t615384\n" +
                         "1\t769231\t769231\t615385\t615385\n" +
                         "2\t769231\t769231\t615385\t615385\n" +
                         "3\t769231\t769231\t615385\t615385\n" +
@@ -511,7 +511,7 @@ public class CountColumnTest extends AbstractCairoTest {
         });
 
         assertQuery("k\tc1\tcstar\tci\tcl\n" +
-                        "NaN\t3\t3\t0\t0\n" +
+                        "null\t3\t3\t0\t0\n" +
                         "0\t1\t1\t0\t0\n" +
                         "1\t1\t1\t0\t0\n" +
                         "2\t1\t1\t1\t1\n" +

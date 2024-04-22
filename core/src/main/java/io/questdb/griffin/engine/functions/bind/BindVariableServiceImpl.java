@@ -327,7 +327,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setDate(int index) throws SqlException {
-        setDate(index, Numbers.LONG_NaN);
+        setDate(index, Numbers.LONG_NULL);
     }
 
     @Override
@@ -480,7 +480,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setInt(int index) throws SqlException {
-        setInt(index, Numbers.INT_NaN);
+        setInt(index, Numbers.INT_NULL);
     }
 
     @Override
@@ -510,7 +510,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setLong(int index) throws SqlException {
-        setLong(index, Numbers.LONG_NaN);
+        setLong(index, Numbers.LONG_NULL);
     }
 
     @Override
@@ -560,7 +560,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setLong256(int index) throws SqlException {
-        setLong256(index, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN);
+        setLong256(index, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
 
     @Override
@@ -651,7 +651,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setTimestamp(int index) throws SqlException {
-        setTimestamp(index, Numbers.LONG_NaN);
+        setTimestamp(index, Numbers.LONG_NULL);
     }
 
     @Override
@@ -705,7 +705,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     public void setUuid(int index) throws SqlException {
-        setUuid(index, Numbers.LONG_NaN, Numbers.LONG_NaN);
+        setUuid(index, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
 
     @Override
@@ -933,31 +933,31 @@ public class BindVariableServiceImpl implements BindVariableService {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = value != Numbers.INT_NaN ? SqlUtil.implicitCastAsByte(value, ColumnType.INT) : 0;
+                ((ByteBindVariable) function).value = value != Numbers.INT_NULL ? SqlUtil.implicitCastAsByte(value, ColumnType.INT) : 0;
                 break;
             case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = value != Numbers.INT_NaN ? SqlUtil.implicitCastAsShort(value, ColumnType.INT) : 0;
+                ((ShortBindVariable) function).value = value != Numbers.INT_NULL ? SqlUtil.implicitCastAsShort(value, ColumnType.INT) : 0;
                 break;
             case ColumnType.INT:
                 ((IntBindVariable) function).value = value;
                 break;
             case ColumnType.IPv4:
-                ((IPv4BindVariable) function).value = value != Numbers.INT_NaN ? value : Numbers.IPv4_NULL;
+                ((IPv4BindVariable) function).value = value != Numbers.INT_NULL ? value : Numbers.IPv4_NULL;
                 break;
             case ColumnType.LONG:
-                ((LongBindVariable) function).value = value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;
+                ((LongBindVariable) function).value = value != Numbers.INT_NULL ? value : Numbers.LONG_NULL;
                 break;
             case ColumnType.TIMESTAMP:
-                ((TimestampBindVariable) function).value = value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;
+                ((TimestampBindVariable) function).value = value != Numbers.INT_NULL ? value : Numbers.LONG_NULL;
                 break;
             case ColumnType.DATE:
-                ((DateBindVariable) function).value = value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;
+                ((DateBindVariable) function).value = value != Numbers.INT_NULL ? value : Numbers.LONG_NULL;
                 break;
             case ColumnType.FLOAT:
-                ((FloatBindVariable) function).value = value != Numbers.INT_NaN ? value : Float.NaN;
+                ((FloatBindVariable) function).value = value != Numbers.INT_NULL ? value : Float.NaN;
                 break;
             case ColumnType.DOUBLE:
-                ((DoubleBindVariable) function).value = value != Numbers.INT_NaN ? value : Double.NaN;
+                ((DoubleBindVariable) function).value = value != Numbers.INT_NULL ? value : Double.NaN;
                 break;
             case ColumnType.STRING:
                 ((StrBindVariable) function).setValue(value);
@@ -966,7 +966,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((VarcharBindVariable) function).setValue(value);
                 break;
             case ColumnType.CHAR:
-                ((CharBindVariable) function).value = value != Numbers.INT_NaN ? SqlUtil.implicitCastAsChar(value, ColumnType.INT) : 0;
+                ((CharBindVariable) function).value = value != Numbers.INT_NULL ? SqlUtil.implicitCastAsChar(value, ColumnType.INT) : 0;
                 break;
             default:
                 reportError(function, ColumnType.INT, index, name);
@@ -978,13 +978,13 @@ public class BindVariableServiceImpl implements BindVariableService {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsByte(value, ColumnType.LONG) : 0;
+                ((ByteBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsByte(value, ColumnType.LONG) : 0;
                 break;
             case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsShort(value, ColumnType.LONG) : 0;
+                ((ShortBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsShort(value, ColumnType.LONG) : 0;
                 break;
             case ColumnType.INT:
-                ((IntBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsInt(value, ColumnType.LONG) : Numbers.INT_NaN;
+                ((IntBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsInt(value, ColumnType.LONG) : Numbers.INT_NULL;
                 break;
             case ColumnType.LONG:
                 ((LongBindVariable) function).value = value;
@@ -996,10 +996,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((DateBindVariable) function).value = value;
                 break;
             case ColumnType.FLOAT:
-                ((FloatBindVariable) function).value = value != Numbers.LONG_NaN ? value : Float.NaN;
+                ((FloatBindVariable) function).value = value != Numbers.LONG_NULL ? value : Float.NaN;
                 break;
             case ColumnType.DOUBLE:
-                ((DoubleBindVariable) function).value = value != Numbers.LONG_NaN ? value : Double.NaN;
+                ((DoubleBindVariable) function).value = value != Numbers.LONG_NULL ? value : Double.NaN;
                 break;
             case ColumnType.STRING:
                 ((StrBindVariable) function).setValue(value);
@@ -1008,7 +1008,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((VarcharBindVariable) function).setValue(value);
                 break;
             case ColumnType.CHAR:
-                ((CharBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsChar(value, ColumnType.LONG) : 0;
+                ((CharBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsChar(value, ColumnType.LONG) : 0;
                 break;
             default:
                 reportError(function, srcType, index, name);
@@ -1142,13 +1142,13 @@ public class BindVariableServiceImpl implements BindVariableService {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsByte(value, ColumnType.TIMESTAMP) : 0;
+                ((ByteBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsByte(value, ColumnType.TIMESTAMP) : 0;
                 break;
             case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsShort(value, ColumnType.TIMESTAMP) : 0;
+                ((ShortBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsShort(value, ColumnType.TIMESTAMP) : 0;
                 break;
             case ColumnType.INT:
-                ((IntBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsInt(value, ColumnType.TIMESTAMP) : Numbers.INT_NaN;
+                ((IntBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsInt(value, ColumnType.TIMESTAMP) : Numbers.INT_NULL;
                 break;
             case ColumnType.LONG:
                 ((LongBindVariable) function).value = value;
@@ -1157,13 +1157,13 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((TimestampBindVariable) function).value = value;
                 break;
             case ColumnType.DATE:
-                ((DateBindVariable) function).value = value != Numbers.LONG_NaN ? value / 1000 : value;
+                ((DateBindVariable) function).value = value != Numbers.LONG_NULL ? value / 1000 : value;
                 break;
             case ColumnType.FLOAT:
-                ((FloatBindVariable) function).value = value != Numbers.LONG_NaN ? value : Float.NaN;
+                ((FloatBindVariable) function).value = value != Numbers.LONG_NULL ? value : Float.NaN;
                 break;
             case ColumnType.DOUBLE:
-                ((DoubleBindVariable) function).value = value != Numbers.LONG_NaN ? value : Double.NaN;
+                ((DoubleBindVariable) function).value = value != Numbers.LONG_NULL ? value : Double.NaN;
                 break;
             case ColumnType.STRING:
                 ((StrBindVariable) function).setTimestamp(value);
@@ -1228,7 +1228,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 } else {
                     StringSink sink = Misc.getThreadLocalSink();
                     sink.clear();
-                    if(!Utf8s.utf8ToUtf16(value, sink)) {
+                    if (!Utf8s.utf8ToUtf16(value, sink)) {
                         throw SqlException.position(0).put("Could not update bind variable. Invalid UTF-8 encoding.");
                     }
                     charSeq = sink;

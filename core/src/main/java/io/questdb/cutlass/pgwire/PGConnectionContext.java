@@ -638,12 +638,23 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         Function fn = bindVariableService.getFunction(index);
         // If the function type is VARCHAR, there's no need to convert to UTF-16
         if (fn != null && fn.getType() == ColumnType.VARCHAR) {
-            if (Utf8s.validateUtf8(address, address + valueLen) != -1) {
-                bindVariableService.setVarchar(index, utf8String.of(address, address + valueLen));
-            } else {
-                LOG.error().$("invalid varchar bind variable type [index=").$(index).I$();
-                throw BadProtocolException.INSTANCE;
+            final int sequenceType = Utf8s.getUtf8SequenceType(address, address + valueLen);
+            boolean ascii;
+            switch (sequenceType) {
+                case 0:
+                    // ascii sequence
+                    ascii = true;
+                    break;
+                case 1:
+                    // non-ASCII sequence
+                    ascii = false;
+                    break;
+                default:
+                    LOG.error().$("invalid varchar bind variable type [index=").$(index).I$();
+                    throw BadProtocolException.INSTANCE;
             }
+            bindVariableService.setVarchar(index, utf8String.of(address, address + valueLen, ascii));
+
         } else {
             if (Utf8s.utf8ToUtf16(address, address + valueLen, e)) {
                 bindVariableService.setStr(index, characterStore.toImmutable());
@@ -769,7 +780,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendDateColumn(Record record, int columnIndex) {
         final long longValue = record.getDate(columnIndex);
-        if (longValue != Numbers.LONG_NaN) {
+        if (longValue != Numbers.LONG_NULL) {
             final long a = responseUtf8Sink.skip();
             PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, responseUtf8Sink);
             responseUtf8Sink.putLenEx(a);
@@ -780,7 +791,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendDateColumnBin(Record record, int columnIndex) {
         final long longValue = record.getDate(columnIndex);
-        if (longValue != Numbers.LONG_NaN) {
+        if (longValue != Numbers.LONG_NULL) {
             responseUtf8Sink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
             responseUtf8Sink.putNetworkLong(longValue * 1000 - Numbers.JULIAN_EPOCH_OFFSET_USEC);
@@ -844,7 +855,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendIntCol(Record record, int i) {
         final int intValue = record.getInt(i);
-        if (intValue != Numbers.INT_NaN) {
+        if (intValue != Numbers.INT_NULL) {
             final long a = responseUtf8Sink.skip();
             responseUtf8Sink.put(intValue);
             responseUtf8Sink.putLenEx(a);
@@ -855,7 +866,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendIntColumnBin(Record record, int columnIndex) {
         final int value = record.getInt(columnIndex);
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             responseUtf8Sink.checkCapacity(8);
             responseUtf8Sink.putIntUnsafe(0, INT_BYTES_X);
             responseUtf8Sink.putIntUnsafe(4, Numbers.bswap(value));
@@ -867,10 +878,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendLong256Column(Record record, int columnIndex) {
         final Long256 long256Value = record.getLong256A(columnIndex);
-        if (long256Value.getLong0() == Numbers.LONG_NaN &&
-                long256Value.getLong1() == Numbers.LONG_NaN &&
-                long256Value.getLong2() == Numbers.LONG_NaN &&
-                long256Value.getLong3() == Numbers.LONG_NaN) {
+        if (long256Value.getLong0() == Numbers.LONG_NULL &&
+                long256Value.getLong1() == Numbers.LONG_NULL &&
+                long256Value.getLong2() == Numbers.LONG_NULL &&
+                long256Value.getLong3() == Numbers.LONG_NULL) {
             responseUtf8Sink.setNullValue();
         } else {
             final long a = responseUtf8Sink.skip();
@@ -887,7 +898,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendLongColumn(Record record, int columnIndex) {
         final long longValue = record.getLong(columnIndex);
-        if (longValue != Numbers.LONG_NaN) {
+        if (longValue != Numbers.LONG_NULL) {
             final long a = responseUtf8Sink.skip();
             responseUtf8Sink.put(longValue);
             responseUtf8Sink.putLenEx(a);
@@ -898,7 +909,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendLongColumnBin(Record record, int columnIndex) {
         final long longValue = record.getLong(columnIndex);
-        if (longValue != Numbers.LONG_NaN) {
+        if (longValue != Numbers.LONG_NULL) {
             responseUtf8Sink.putNetworkInt(Long.BYTES);
             responseUtf8Sink.putNetworkLong(longValue);
         } else {
@@ -1075,7 +1086,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void appendTimestampColumn(Record record, int i) {
         long a;
         long longValue = record.getTimestamp(i);
-        if (longValue == Numbers.LONG_NaN) {
+        if (longValue == Numbers.LONG_NULL) {
             responseUtf8Sink.setNullValue();
         } else {
             a = responseUtf8Sink.skip();
@@ -1086,7 +1097,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendTimestampColumnBin(Record record, int columnIndex) {
         final long longValue = record.getTimestamp(columnIndex);
-        if (longValue == Numbers.LONG_NaN) {
+        if (longValue == Numbers.LONG_NULL) {
             responseUtf8Sink.setNullValue();
         } else {
             responseUtf8Sink.putNetworkInt(Long.BYTES);

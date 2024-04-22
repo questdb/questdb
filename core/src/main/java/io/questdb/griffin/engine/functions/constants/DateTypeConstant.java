@@ -34,6 +34,6 @@ public class DateTypeConstant extends DateFunction implements TypeConstant {
 
     @Override
     public long getDate(Record rec) {
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 }

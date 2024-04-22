@@ -580,16 +580,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testDoubleNull() throws Exception {
         testUnionAll(
                 "a\tc\n" +
-                        "0.6508594025855301\tNaN\n" +
-                        "0.8423410920883345\tNaN\n" +
-                        "0.9856290845874263\tNaN\n" +
-                        "0.22452340856088226\tNaN\n" +
-                        "0.5093827001617407\tNaN\n" +
-                        "NaN\t0.6607777894187332\n" +
-                        "NaN\t0.2246301342497259\n" +
-                        "NaN\t0.08486964232560668\n" +
-                        "NaN\t0.299199045961845\n" +
-                        "NaN\t0.20447441837877756\n",
+                        "0.6508594025855301\tnull\n" +
+                        "0.8423410920883345\tnull\n" +
+                        "0.9856290845874263\tnull\n" +
+                        "0.22452340856088226\tnull\n" +
+                        "0.5093827001617407\tnull\n" +
+                        "null\t0.6607777894187332\n" +
+                        "null\t0.2246301342497259\n" +
+                        "null\t0.08486964232560668\n" +
+                        "null\t0.299199045961845\n" +
+                        "null\t0.20447441837877756\n",
                 "create table x as (select rnd_double() a, null c from long_sequence(5))",
                 "create table y as (select null b, rnd_double() c from long_sequence(5))"
         );
@@ -872,16 +872,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testFloatNull() throws Exception {
         testUnionAll(
                 "a\tc\n" +
-                        "0.2846\tNaN\n" +
-                        "0.2992\tNaN\n" +
-                        "0.0844\tNaN\n" +
-                        "0.2045\tNaN\n" +
-                        "0.9345\tNaN\n" +
-                        "NaN\t0.6608\n" +
-                        "NaN\t0.8043\n" +
-                        "NaN\t0.2246\n" +
-                        "NaN\t0.1297\n" +
-                        "NaN\t0.0849\n",
+                        "0.2846\tnull\n" +
+                        "0.2992\tnull\n" +
+                        "0.0844\tnull\n" +
+                        "0.2045\tnull\n" +
+                        "0.9345\tnull\n" +
+                        "null\t0.6608\n" +
+                        "null\t0.8043\n" +
+                        "null\t0.2246\n" +
+                        "null\t0.1297\n" +
+                        "null\t0.0849\n",
                 "create table x as (select rnd_float() a, null c from long_sequence(5))",
                 "create table y as (select null b, rnd_float() c from long_sequence(5))"
         );
@@ -1429,16 +1429,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testIntNull() throws Exception {
         testUnionAll(
                 "a\tc\n" +
-                        "-948263339\tNaN\n" +
-                        "1326447242\tNaN\n" +
-                        "592859671\tNaN\n" +
-                        "1868723706\tNaN\n" +
-                        "-847531048\tNaN\n" +
-                        "NaN\t-1148479920\n" +
-                        "NaN\t315515118\n" +
-                        "NaN\t1548800833\n" +
-                        "NaN\t-727724771\n" +
-                        "NaN\t73575701\n",
+                        "-948263339\tnull\n" +
+                        "1326447242\tnull\n" +
+                        "592859671\tnull\n" +
+                        "1868723706\tnull\n" +
+                        "-847531048\tnull\n" +
+                        "null\t-1148479920\n" +
+                        "null\t315515118\n" +
+                        "null\t1548800833\n" +
+                        "null\t-727724771\n" +
+                        "null\t73575701\n",
                 "create table x as (select rnd_int() a, null c from long_sequence(5))",
                 "create table y as (select null b, rnd_int() c from long_sequence(5))"
         );
@@ -1673,16 +1673,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testLongNull() throws Exception {
         testUnionAll(
                 "a\tc\n" +
-                        "8920866532787660373\tNaN\n" +
-                        "-7611843578141082998\tNaN\n" +
-                        "-5354193255228091881\tNaN\n" +
-                        "-2653407051020864006\tNaN\n" +
-                        "-1675638984090602536\tNaN\n" +
-                        "NaN\t4689592037643856\n" +
-                        "NaN\t4729996258992366\n" +
-                        "NaN\t7746536061816329025\n" +
-                        "NaN\t-6945921502384501475\n" +
-                        "NaN\t8260188555232587029\n",
+                        "8920866532787660373\tnull\n" +
+                        "-7611843578141082998\tnull\n" +
+                        "-5354193255228091881\tnull\n" +
+                        "-2653407051020864006\tnull\n" +
+                        "-1675638984090602536\tnull\n" +
+                        "null\t4689592037643856\n" +
+                        "null\t4729996258992366\n" +
+                        "null\t7746536061816329025\n" +
+                        "null\t-6945921502384501475\n" +
+                        "null\t8260188555232587029\n",
                 "create table x as (select rnd_long() a, null c from long_sequence(5))",
                 "create table y as (select null b, rnd_long() c from long_sequence(5))"
         );
@@ -2271,16 +2271,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testUuidVarchar() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "7eb6d806-49d1-4fe3-8e4a-7f661df6c32b\n" +
-                        "9502128c-da08-47fe-bcdb-8640c107a692\n" +
-                        "a90c0466-3c80-4638-a011-214bad888a69\n" +
-                        "aec65e34-419d-4077-9b21-7d41156b2ee1\n" +
-                        "7b5dd2b8-513b-41e7-b20e-1900caff819a\n" +
-                        "핕\u05FA씎鈄۲ӄǈ2L\n" +
-                        "\uD95A\uDFD9唶鴙\uDAE2\uDC5E͛Ԉ\n" +
-                        "蝰L➤~2\uDAC6\uDED3ڎBH뤻\n" +
-                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46\n" +
-                        "Fг\uDBAE\uDD12ɜ|\\軦۽\n",
+                        "acb025f7-59cf-4bd0-9e9b-e4e331fe36e6\n" +
+                        "8fd449ba-3259-4a2b-9beb-329042090bb3\n" +
+                        "b482cff5-7e9c-4398-ac09-f1b4db297f07\n" +
+                        "dbd7587f-2077-4576-9b4b-ae41862e09cc\n" +
+                        "7ee6a03f-4f93-4fa3-9d6c-b7b4fbf1fa48\n" +
+                        "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\n" +
+                        "8#3TsZ\n" +
+                        "zV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
+                        "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\n" +
+                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\n",
                 "create table x as (select rnd_uuid4() a from long_sequence(5))",
                 "create table y as (select rnd_varchar() b from long_sequence(5))",
                 true

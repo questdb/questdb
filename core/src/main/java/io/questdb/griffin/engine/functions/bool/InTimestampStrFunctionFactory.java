@@ -71,7 +71,7 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         if (seq != null) {
             parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
         } else {
-            addHiLoInterval(Numbers.LONG_NaN, Numbers.LONG_NaN, IntervalOperation.INTERSECT, out);
+            addHiLoInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
         }
         applyLastEncodedIntervalEx(out);
     }
@@ -122,7 +122,7 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long ts = left.getTimestamp(rec);
-            if (ts == Numbers.LONG_NaN) {
+            if (ts == Numbers.LONG_NULL) {
                 return negated;
             }
             CharSequence timestampAsString = right.getStrA(rec);
@@ -149,10 +149,18 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
             return right;
         }
 
-
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(right);
         }
     }
 }

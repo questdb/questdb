@@ -52,7 +52,7 @@ public class CastTimestampToDateFunctionFactory implements FunctionFactory {
         @Override
         public long getDate(Record rec) {
             final long value = arg.getTimestamp(rec);
-            return value == Numbers.LONG_NaN ? value : value / 1000L;
+            return value == Numbers.LONG_NULL ? value : value / 1000L;
         }
     }
 }

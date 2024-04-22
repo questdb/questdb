@@ -32,7 +32,7 @@ public class VarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarSampleAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "var_samp\nNaN\n", "select var_samp(x) from (select cast(null as double) x from long_sequence(100))"
+                "var_samp\nnull\n", "select var_samp(x) from (select cast(null as double) x from long_sequence(100))"
         ));
     }
 
@@ -103,7 +103,7 @@ public class VarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl1(x int)");
             assertSql(
-                    "var_samp\nNaN\n", "select var_samp(x) from tbl1"
+                    "var_samp\nnull\n", "select var_samp(x) from tbl1"
             );
         });
     }
@@ -115,7 +115,7 @@ public class VarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
             insert("insert into 'tbl1' VALUES " +
                     "(17.2151920)");
             assertSql(
-                    "var_samp\nNaN\n", "select var_samp(x) from tbl1"
+                    "var_samp\nnull\n", "select var_samp(x) from tbl1"
             );
         });
     }

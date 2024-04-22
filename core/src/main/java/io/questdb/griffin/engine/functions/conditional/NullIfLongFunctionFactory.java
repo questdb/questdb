@@ -69,7 +69,7 @@ public class NullIfLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            return longFunc1.getLong(rec) == longFunc2.getLong(rec) ? Numbers.LONG_NaN : longFunc1.getLong(rec);
+            return longFunc1.getLong(rec) == longFunc2.getLong(rec) ? Numbers.LONG_NULL : longFunc1.getLong(rec);
         }
 
         @Override

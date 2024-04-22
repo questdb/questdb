@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class FloorFunctionFactoryTest extends AbstractCairoTest {
@@ -83,7 +83,7 @@ public class FloorFunctionFactoryTest extends AbstractCairoTest {
     public void testNaN() throws SqlException {
         assertQuery(
                 "floor\n" +
-                        "NaN\n",
+                        "null\n",
                 "select floor(NaN)",
                 null,
                 true,

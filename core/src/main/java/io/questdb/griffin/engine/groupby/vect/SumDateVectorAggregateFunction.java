@@ -60,7 +60,7 @@ public class SumDateVectorAggregateFunction extends DateFunction implements Vect
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
             final long value = Vect.sumLong(address, addressSize / Long.BYTES);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 sum.add(value);
                 this.count.increment();
             }
@@ -92,7 +92,7 @@ public class SumDateVectorAggregateFunction extends DateFunction implements Vect
         if (count.sum() > 0) {
             return sum.sum();
         }
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     @Override

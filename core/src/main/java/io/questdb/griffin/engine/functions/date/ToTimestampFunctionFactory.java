@@ -72,7 +72,7 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
                 return Numbers.parseLong(value);
             } catch (NumericException ignore) {
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
     }
 }

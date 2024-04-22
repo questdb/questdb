@@ -46,6 +46,6 @@ public class Long128 {
     }
 
     public static boolean isNull(long lo, long hi) {
-        return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
+        return hi == Numbers.LONG_NULL && lo == Numbers.LONG_NULL;
     }
 }

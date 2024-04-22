@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
 
 public class TimestampConstant extends TimestampFunction implements ConstantFunction {
-    public static final TimestampConstant NULL = new TimestampConstant(Numbers.LONG_NaN);
+    public static final TimestampConstant NULL = new TimestampConstant(Numbers.LONG_NULL);
     private final long value;
 
     public TimestampConstant(long value) {
@@ -38,12 +38,17 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
     }
 
     public static TimestampConstant newInstance(long value) {
-        return value != Numbers.LONG_NaN ? new TimestampConstant(value) : NULL;
+        return value != Numbers.LONG_NULL ? new TimestampConstant(value) : NULL;
     }
 
     @Override
     public long getTimestamp(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return value == Numbers.LONG_NULL;
     }
 
     @Override
