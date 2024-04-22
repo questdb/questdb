@@ -112,8 +112,11 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     }
 
     /**
-     * Put a non-ASCII byte. This method is not commonly implemented on
-     * {@link CharSink}. To write a known-ASCII (8-byte) char, call {@link #putAscii(char)}
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * Put a non-ASCII byte. To write a known-ASCII char, call {@link #putAscii(char)}.
+     * <br/>
+     * For impls that don't care about the ASCII/non-ASCII distinction:
+     * Put any kind of byte.
      *
      * @param b byte value
      * @return this sink for daisy-chaining
@@ -181,12 +184,34 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         return this;
     }
 
+    /**
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * Put a general UTF-8 byte. If the byte is non-ASCII, `isAscii()` becomes false.
+     * <br/>
+     * For impls that don't care about the ASCII/non-ASCII distinction:
+     * Synonymous with {@link #put(byte)}.
+     */
     default Utf8Sink putAny(byte b) {
-        return this;
+        return put(b);
     }
 
+    /**
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * Put a general UTF-8 sequence. If the sequence contains a non-ASCII character,
+     * `isAscii()` becomes false.
+     * <br/>
+     * For impls that don't care about the ASCII/non-ASCII distinction:
+     * Synonymous with {@link #put(Utf8Sequence, int, int)}.
+     */
     default Utf8Sink putAny(Utf8Sequence seq, int lo, int hi) {
-        return this;
+        return put(seq, lo, hi);
+    }
+
+    @Override
+    default Utf8Sink putAscii(char c) {
+        // This works for impls that don't care about the ASCII/non-ASCII distinction.
+        // Must override in impls that do care, and assert the char is ASCII.
+        return put((byte) c);
     }
 
     @Override
@@ -198,12 +223,6 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             }
         }
         return this;
-    }
-
-    @Override
-    default Utf8Sink putAscii(char c) {
-        // todo: have function that accepts ascii byte
-        return put((byte) c);
     }
 
     default Utf8Sink putQuote() {

@@ -117,6 +117,21 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     }
 
     @Override
+    public Utf8Sink putAny(byte b) {
+        ascii &= b >= 0;
+        sink.put(b);
+        return this;
+    }
+
+    @Override
+    public Utf8Sink putAny(Utf8Sequence seq, int lo, int hi) {
+        for (int i = lo; i < hi; i++) {
+            putAny(seq.byteAt(i));
+        }
+        return this;
+    }
+
+    @Override
     public DirectUtf8Sink putAscii(char c) {
         assert c < 128 : "c is non-ASCII";
         sink.put((byte) c);
