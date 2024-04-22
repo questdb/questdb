@@ -73,7 +73,7 @@ stages:
     jobs:
       - template: templates/rust-test-and-lint.yml
 
-  - state: RustCrossCompile
+  - stage: RustCrossCompile
     displayName: "Rust Cross Compile"
     dependsOn:
       - CheckChanges
