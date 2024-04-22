@@ -54,8 +54,8 @@ public class LastUuidGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Lo(0));
-                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Hi(0));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getLong128Lo(0));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getLong128Hi(0));
             }
         }
     }
@@ -105,8 +105,8 @@ public class LastUuidGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Lo(0));
-                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Hi(0));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getLong128Lo(0));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getLong128Hi(0));
             }
         }
     }

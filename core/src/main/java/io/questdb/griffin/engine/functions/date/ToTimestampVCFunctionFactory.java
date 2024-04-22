@@ -108,7 +108,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
                 }
             } catch (NumericException ignore) {
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
 
         @Override

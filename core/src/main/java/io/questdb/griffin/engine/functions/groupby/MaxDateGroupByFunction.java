@@ -105,7 +105,7 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putDate(valueIndex, Numbers.LONG_NaN);
+        mapValue.putDate(valueIndex, Numbers.LONG_NULL);
     }
 
     @Override

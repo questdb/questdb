@@ -55,7 +55,7 @@ final class TimestampFloorFunctions {
         @Override
         public final long getTimestamp(Record rec) {
             long micros = arg.getTimestamp(rec);
-            return micros == Numbers.LONG_NaN ? Numbers.LONG_NaN : floor(micros);
+            return micros == Numbers.LONG_NULL ? Numbers.LONG_NULL : floor(micros);
         }
 
         @Override

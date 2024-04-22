@@ -54,7 +54,7 @@ public class CastIntToLong256FunctionFactory implements FunctionFactory {
         @Override
         public void getLong256(Record rec, CharSink<?> sink) {
             final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            if (value == Numbers.INT_NULL) {
                 return;
             }
             Numbers.appendLong256(value, 0, 0, 0, sink);
@@ -63,7 +63,7 @@ public class CastIntToLong256FunctionFactory implements FunctionFactory {
         @Override
         public Long256 getLong256A(Record rec) {
             final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            if (value == Numbers.INT_NULL) {
                 return Long256Impl.NULL_LONG256;
             }
             long256a.setLow(value);
@@ -73,7 +73,7 @@ public class CastIntToLong256FunctionFactory implements FunctionFactory {
         @Override
         public Long256 getLong256B(Record rec) {
             final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            if (value == Numbers.INT_NULL) {
                 return Long256Impl.NULL_LONG256;
             }
             long256b.setLow(value);

@@ -62,7 +62,7 @@ public class NegLongFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             final long value = arg.getLong(rec);
-            return value != Numbers.LONG_NaN ? -value : Numbers.LONG_NaN;
+            return value != Numbers.LONG_NULL ? -value : Numbers.LONG_NULL;
         }
 
         @Override

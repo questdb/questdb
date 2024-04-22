@@ -117,7 +117,7 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
             @Override
             public long getLong(int col) {
                 if (col == OWNER_THREAD_COLUMN_INDEX) {
-                    return owner_thread == -1 ? Numbers.LONG_NaN : owner_thread;
+                    return owner_thread == -1 ? Numbers.LONG_NULL : owner_thread;
                 }
                 throw CairoException.nonCritical().put("unsupported column number. [column=").put(col).put("]");
             }

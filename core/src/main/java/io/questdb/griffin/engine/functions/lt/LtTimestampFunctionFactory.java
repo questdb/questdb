@@ -64,14 +64,11 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long left = this.left.getTimestamp(rec);
-            if (left != Numbers.LONG_NaN) {
-                long right = this.right.getTimestamp(rec);
-                if (right != Numbers.LONG_NaN) {
-                    return negated == (left >= right);
-                }
-            }
-            return false;
+            return Numbers.lessThan(
+                    this.left.getTimestamp(rec),
+                    this.right.getTimestamp(rec),
+                    negated
+            );
         }
 
         @Override

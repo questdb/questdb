@@ -124,7 +124,7 @@ public class LineTcpEventBuffer {
     public long addGeoHash(long address, DirectUtf8Sequence value, int colTypeMeta) {
         long geohash;
         try {
-            geohash = GeoHashes.fromStringTruncatingNl(value.lo(), value.hi(), Numbers.decodeLowShort(colTypeMeta));
+            geohash = GeoHashes.fromAsciiTruncatingNl(value.lo(), value.hi(), Numbers.decodeLowShort(colTypeMeta));
         } catch (NumericException e) {
             geohash = GeoHashes.NULL;
         }
@@ -218,7 +218,7 @@ public class LineTcpEventBuffer {
             if (!hasNonAsciiChars) {
                 tempSink.put(value);
             } else {
-                Utf8s.utf8ToUtf16(value, tempSink, true);
+                Utf8s.utf8ToUtf16(value, tempSink);
             }
             final int length = tempSink.length();
             Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_TAG);

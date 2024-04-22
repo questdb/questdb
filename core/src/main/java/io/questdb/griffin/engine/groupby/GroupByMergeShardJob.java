@@ -50,8 +50,9 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         task.clear();
         subSeq.done(cursor);
 
-        final int slotId = atom.acquire(workerId, circuitBreaker);
+        int slotId = -1;
         try {
+            slotId = atom.acquire(workerId, circuitBreaker);
             if (circuitBreaker.checkIfTripped()) {
                 return;
             }

@@ -180,7 +180,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                 long slaveTimestamp = this.slaveTimestamp;
                 long slaveRowID = this.lastSlaveRowID;
                 if (slaveTimestamp < masterTimestamp) {
-                    if (lastSlaveRowID != Numbers.LONG_NaN) {
+                    if (lastSlaveRowID != Numbers.LONG_NULL) {
                         slaveCursor.recordAt(slaveRecord, lastSlaveRowID);
                         key = joinKeyMap.withKey();
                         key.put(slaveRecord, slaveKeySink);

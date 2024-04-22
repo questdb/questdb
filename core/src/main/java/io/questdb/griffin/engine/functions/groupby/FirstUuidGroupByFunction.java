@@ -99,7 +99,7 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong128(valueIndex + 1, srcValue.getLong128Lo(valueIndex + 1), srcValue.getLong128Hi(valueIndex + 1));
         }
@@ -107,8 +107,8 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-        mapValue.putLong128(valueIndex + 1, Numbers.LONG_NaN, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putLong128(valueIndex + 1, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
 
     @Override

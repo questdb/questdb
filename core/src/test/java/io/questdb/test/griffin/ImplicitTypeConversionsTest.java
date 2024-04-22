@@ -118,7 +118,7 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
 
     @Test
     public void testInsertDoubleAsInt_ReturnsMinValue() throws Exception {
-        testInsert("double", "-2147483648.0", "int", "NaN");//see Numbers.append:127
+        testInsert("double", "-2147483648.0", "int", "null");//see Numbers.append:127
     }
 
     @Test
@@ -340,7 +340,7 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
 
     @Test
     public void testInsertLongAsInt_ReturnsMinValue() throws Exception {
-        testInsert("long", "-2147483648", "int", "NaN"); //see Numbers.append:127
+        testInsert("long", "-2147483648", "int", "null"); //see Numbers.append:127
     }
 
     @Test

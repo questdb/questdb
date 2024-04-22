@@ -54,7 +54,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.LONG_NaN, record.getLong(0));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getLong(0));
             }
         }
     }
@@ -263,7 +263,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.LONG_NaN, record.getDate(0));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getDate(0));
             }
         }
     }

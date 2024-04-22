@@ -152,7 +152,7 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     public void merge(MapValue destValue, MapValue srcValue) {
         if (srcValue.getBool(overwrittenFlagIndex)) {
             long srcCount = srcValue.getLong(valueIndex);
-            if (srcCount == 0 || srcCount == Numbers.LONG_NaN) {
+            if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
                 return;
             }
             // If reached here, it would mean that the value has been overwritten by interpolation
@@ -169,7 +169,7 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
 
         if (destValue.getBool(overwrittenFlagIndex)) {
             long dstCount = destValue.getLong(valueIndex);
-            if (dstCount == 0 || dstCount == Numbers.LONG_NaN) {
+            if (dstCount == 0 || dstCount == Numbers.LONG_NULL) {
                 destValue.putBool(overwrittenFlagIndex, false);
                 destValue.putLong(hllPtrIndex, srcPtr);
                 destValue.putLong(valueIndex, NULL_VALUE);
@@ -214,7 +214,7 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
 
     @Override
     public void setNull(MapValue mapValue) {
-        overwrite(mapValue, Numbers.LONG_NaN);
+        overwrite(mapValue, Numbers.LONG_NULL);
     }
 
     @Override

@@ -253,13 +253,13 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
 
     @Test
     public void testMaxIsNanWhenNoData() throws Exception {
-        // empty table should produce NaN as sum
+        // empty table should produce null as sum
         assertMemoryLeak(() -> {
             ddl("create table abc (x short)");
 
             assertSql(
                     "x\n" +
-                            "NaN\n",
+                            "null\n",
                     "select max(x) x from abc"
             );
         });
@@ -281,13 +281,13 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
 
     @Test
     public void testMinIsNanWhenNoData() throws Exception {
-        // empty table should produce NaN as sum
+        // empty table should produce null as sum
         assertMemoryLeak(() -> {
             ddl("create table abc (x short)");
 
             assertSql(
                     "x\n" +
-                            "NaN\n",
+                            "null\n",
                     "select min(x) x from abc"
             );
         });
@@ -309,13 +309,13 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
 
     @Test
     public void testSumIsNanWhenNoData() throws Exception {
-        // empty table should produce NaN as sum
+        // empty table should produce null as sum
         assertMemoryLeak(() -> {
             ddl("create table abc (x short)");
 
             assertSql(
                     "x\n" +
-                            "NaN\n",
+                            "null\n",
                     "select sum(x) x from abc"
             );
         });

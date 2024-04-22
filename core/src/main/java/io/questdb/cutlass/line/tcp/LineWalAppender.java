@@ -194,7 +194,7 @@ public class LineWalAppender {
                     case LineTcpParser.ENTITY_TYPE_SYMBOL: {
                         // parser would reject this condition based on config
                         if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
-                            r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                            r.putSymUtf8(columnIndex, ent.getValue());
                         } else {
                             throw castError(tud.getTableNameUtf16(), "TAG", colType, ent.getName());
                         }
@@ -209,8 +209,8 @@ public class LineWalAppender {
                                 final long entityValue = ent.getLongValue();
                                 if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
                                     r.putInt(columnIndex, (int) entityValue);
-                                } else if (entityValue == Numbers.LONG_NaN) {
-                                    r.putInt(columnIndex, Numbers.INT_NaN);
+                                } else if (entityValue == Numbers.LONG_NULL) {
+                                    r.putInt(columnIndex, Numbers.INT_NULL);
                                 } else {
                                     throw boundsError(entityValue, ColumnType.INT, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                 }
@@ -220,7 +220,7 @@ public class LineWalAppender {
                                 final long entityValue = ent.getLongValue();
                                 if (entityValue >= Short.MIN_VALUE && entityValue <= Short.MAX_VALUE) {
                                     r.putShort(columnIndex, (short) entityValue);
-                                } else if (entityValue == Numbers.LONG_NaN) {
+                                } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putShort(columnIndex, (short) 0);
                                 } else {
                                     throw boundsError(entityValue, ColumnType.SHORT, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
@@ -231,7 +231,7 @@ public class LineWalAppender {
                                 final long entityValue = ent.getLongValue();
                                 if (entityValue >= Byte.MIN_VALUE && entityValue <= Byte.MAX_VALUE) {
                                     r.putByte(columnIndex, (byte) entityValue);
-                                } else if (entityValue == Numbers.LONG_NaN) {
+                                } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putByte(columnIndex, (byte) 0);
                                 } else {
                                     throw boundsError(entityValue, ColumnType.BYTE, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
@@ -251,7 +251,7 @@ public class LineWalAppender {
                                 r.putFloat(columnIndex, ent.getLongValue());
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                                r.putSymUtf8(columnIndex, ent.getValue());
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "INTEGER", colType, ent.getName());
@@ -267,7 +267,7 @@ public class LineWalAppender {
                                 r.putFloat(columnIndex, (float) ent.getFloatValue());
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                                r.putSymUtf8(columnIndex, ent.getValue());
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "FLOAT", colType, ent.getName());
@@ -291,7 +291,7 @@ public class LineWalAppender {
                                     r.putVarchar(columnIndex, entityValue);
                                     break;
                                 case ColumnType.STRING:
-                                    r.putStrUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());
+                                    r.putStrUtf8(columnIndex, entityValue);
                                     break;
                                 case ColumnType.CHAR:
                                     if (entityValue.size() == 1 && entityValue.byteAt(0) > -1) {
@@ -308,7 +308,7 @@ public class LineWalAppender {
                                     }
                                     break;
                                 case ColumnType.SYMBOL:
-                                    r.putSymUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());
+                                    r.putSymUtf8(columnIndex, entityValue);
                                     break;
                                 case ColumnType.UUID:
                                     r.putUuidUtf8(columnIndex, entityValue);
@@ -320,7 +320,7 @@ public class LineWalAppender {
                             long geoHash;
                             try {
                                 DirectUtf8Sequence value = ent.getValue();
-                                geoHash = GeoHashes.fromStringTruncatingNl(value.lo(), value.hi(), geoHashBits);
+                                geoHash = GeoHashes.fromAsciiTruncatingNl(value.lo(), value.hi(), geoHashBits);
                             } catch (NumericException e) {
                                 geoHash = GeoHashes.NULL;
                             }
@@ -334,7 +334,7 @@ public class LineWalAppender {
                                 r.putLong256Utf8(columnIndex, ent.getValue());
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                                r.putSymUtf8(columnIndex, ent.getValue());
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "LONG256", colType, ent.getName());
@@ -365,7 +365,7 @@ public class LineWalAppender {
                                 r.putDouble(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                                r.putSymUtf8(columnIndex, ent.getValue());
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "BOOLEAN", colType, ent.getName());
@@ -383,7 +383,7 @@ public class LineWalAppender {
                                 r.putTimestamp(columnIndex, dateValue / 1000);
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                                r.putSymUtf8(columnIndex, ent.getValue());
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "TIMESTAMP", colType, ent.getName());

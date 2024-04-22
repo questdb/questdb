@@ -143,7 +143,6 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                 long lo = sinkA.hi();
                 DirectUtf8String directUtf8 = new DirectUtf8String(true);
                 for (int i = 0; i < N; i++) {
-                    System.out.println("Iteration: " + i);
                     MapKey mapKey = map.withKey();
                     sinkA.put("foo").put(i);
                     long hi = sinkA.hi();

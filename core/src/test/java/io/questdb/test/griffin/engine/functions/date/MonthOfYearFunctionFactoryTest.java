@@ -32,7 +32,7 @@ public class MonthOfYearFunctionFactoryTest extends AbstractCairoTest {
     public void testNull() throws Exception {
         assertQuery(
                 "month\n" +
-                        "NaN\n",
+                        "null\n",
                 "select month(null)",
                 null,
                 null,

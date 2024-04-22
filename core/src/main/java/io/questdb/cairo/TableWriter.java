@@ -653,7 +653,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // run indexer for the whole table
                     indexHistoricPartitions(indexer, columnName, indexValueBlockSize);
                     long timestamp = txWriter.getLastPartitionTimestamp();
-                    if (timestamp != Numbers.LONG_NaN) {
+                    if (timestamp != Numbers.LONG_NULL) {
                         path.trimTo(rootLen);
                         setStateForTimestamp(path, timestamp);
                         // create index in last partition
@@ -2330,7 +2330,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     nullers.add(() -> dataMem.putFloat(Float.NaN));
                     break;
                 case ColumnType.INT:
-                    nullers.add(() -> dataMem.putInt(Numbers.INT_NaN));
+                    nullers.add(() -> dataMem.putInt(Numbers.INT_NULL));
                     break;
                 case ColumnType.IPv4:
                     nullers.add(() -> dataMem.putInt(Numbers.IPv4_NULL));
@@ -2338,15 +2338,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 case ColumnType.LONG:
                 case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
-                    nullers.add(() -> dataMem.putLong(Numbers.LONG_NaN));
+                    nullers.add(() -> dataMem.putLong(Numbers.LONG_NULL));
                     break;
                 case ColumnType.LONG128:
                     // fall through
                 case ColumnType.UUID:
-                    nullers.add(() -> dataMem.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                    nullers.add(() -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL));
                     break;
                 case ColumnType.LONG256:
-                    nullers.add(() -> dataMem.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
+                    nullers.add(() -> dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL));
                     break;
                 case ColumnType.SHORT:
                     nullers.add(() -> dataMem.putShort((short) 0));
@@ -3871,7 +3871,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     colDataExtraSize = colDataMem.getAppendOffset() - colDataOffset;
-                    colAuxMem.jumpTo(columnTypeDriver.getAuxVectorOffset(committedRowCount));
+                    // we have to restore aux column size to its required size to hold "committedRowCount" row count.
+                    colAuxMem.jumpTo(columnTypeDriver.getAuxVectorSize(committedRowCount));
                 } else {
                     // Fixed size
                     final int shl = ColumnType.pow2SizeOf(columnType);
@@ -4667,7 +4668,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
         long ts = this.txWriter.getMaxTimestamp();
-        if (ts > Numbers.LONG_NaN) {
+        if (ts > Numbers.LONG_NULL) {
             final int columnIndex = metadata.getColumnIndex(columnName);
             try {
                 // Index last partition separately
@@ -6732,7 +6733,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long repairDataGaps(final long timestamp) {
-        if (txWriter.getMaxTimestamp() != Numbers.LONG_NaN && PartitionBy.isPartitioned(partitionBy)) {
+        if (txWriter.getMaxTimestamp() != Numbers.LONG_NULL && PartitionBy.isPartitioned(partitionBy)) {
             long fixedRowCount = 0;
             long lastTimestamp = -1;
             long transientRowCount = txWriter.getTransientRowCount();
@@ -7891,9 +7892,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putGeoStr(int columnIndex, CharSequence value);
 
-        default void putGeoVarchar(int columnIndex, Utf8Sequence value) {
-            putGeoStr(columnIndex, value.asAsciiCharSequence());
-        }
+        void putGeoVarchar(int columnIndex, Utf8Sequence value);
 
         void putIPv4(int columnIndex, int value);
 
@@ -7925,13 +7924,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
          * Writes UTF8-encoded string to WAL. As the name of the function suggest the storage format is
          * expected to be UTF16. The function must re-encode string from UTF8 to UTF16 before storing.
          *
-         * @param columnIndex      index of the column we are writing to
-         * @param value            UTF8 bytes represented as CharSequence interface.
-         *                         On this interface getChar() returns a byte, not complete character.
-         * @param hasNonAsciiChars helper flag to indicate implementation if all bytes can be assumed as ASCII.
-         *                         "true" here indicates that UTF8 decoding is compulsory.
+         * @param columnIndex index of the column we are writing to
+         * @param value       UTF8 bytes represented as CharSequence interface.
+         *                    On this interface getChar() returns a byte, not complete character.
          */
-        void putStrUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars);
+        void putStrUtf8(int columnIndex, DirectUtf8Sequence value);
 
         void putSym(int columnIndex, CharSequence value);
 
@@ -7942,7 +7939,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         /**
          * Writes UTF8-encoded symbol to WAL. Supported for WAL tables only.
          */
-        void putSymUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars);
+        void putSymUtf8(int columnIndex, DirectUtf8Sequence value);
 
         void putTimestamp(int columnIndex, long value);
 
@@ -8022,6 +8019,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putGeoVarchar(int columnIndex, Utf8Sequence value) {
+            // no-op
+        }
+
+        @Override
         public void putIPv4(int columnIndex, int value) {
             // no-op
         }
@@ -8087,7 +8089,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
             // no-op
         }
 
@@ -8107,7 +8109,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value) {
             // no-op
         }
 
@@ -8214,6 +8216,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putGeoVarchar(int columnIndex, Utf8Sequence hash) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putGeoVarchar(columnIndex, hash, type, this);
+        }
+
+        @Override
         public void putIPv4(int columnIndex, int value) {
             putInt(columnIndex, value);
         }
@@ -8293,8 +8301,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value, hasNonAsciiChars));
+        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
             setRowValueNotNull(columnIndex);
         }
 
@@ -8316,7 +8324,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
+        public void putSymUtf8(int columnIndex, DirectUtf8Sequence value) {
             throw new UnsupportedOperationException();
         }
 

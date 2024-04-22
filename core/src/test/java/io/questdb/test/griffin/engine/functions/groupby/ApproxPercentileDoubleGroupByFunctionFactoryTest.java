@@ -148,7 +148,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
             insert("insert into test values (null), (null), (null)");
             assertSql(
                     "approx_percentile\n" +
-                            "NaN\n",
+                            "null\n",
                     "select approx_percentile(x, 0.5) from test"
             );
         });
@@ -171,7 +171,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
             compile("create table test (x double)");
             assertSql(
                     "approx_percentile\n" +
-                            "NaN\n",
+                            "null\n",
                     "select approx_percentile(x, 0.5) from test"
             );
         });
@@ -184,7 +184,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
             insert("insert into test values (null), (null), (null)");
             assertSql(
                     "approx_percentile\n" +
-                            "NaN\n",
+                            "null\n",
                     "select approx_percentile(x, 0.5, 5) from test"
             );
         });
@@ -196,7 +196,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
             compile("create table test (x double)");
             assertSql(
                     "approx_percentile\n" +
-                            "NaN\n",
+                            "null\n",
                     "select approx_percentile(x, 0.5, 5) from test"
             );
         });

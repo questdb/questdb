@@ -59,8 +59,8 @@ public class SubStringFunctionFactory implements FunctionFactory {
         final Function startFunc = args.getQuick(1);
         final Function lenFunc = args.getQuick(2);
         if (strFunc.isNullConstant()
-                || startFunc.isConstant() && startFunc.getInt(null) == Numbers.INT_NaN
-                || lenFunc.isConstant() && lenFunc.getInt(null) == Numbers.INT_NaN) {
+                || startFunc.isConstant() && startFunc.getInt(null) == Numbers.INT_NULL
+                || lenFunc.isConstant() && lenFunc.getInt(null) == Numbers.INT_NULL) {
             return StrConstant.NULL;
         }
         if (lenFunc.isConstant()) {
@@ -127,8 +127,8 @@ public class SubStringFunctionFactory implements FunctionFactory {
             int rawStart = startFunc.getInt(rec);
             int len = lenFunc.getInt(rec);
             if (strLen == TableUtils.NULL_LEN
-                    || rawStart == Numbers.INT_NaN
-                    || len == Numbers.INT_NaN) {
+                    || rawStart == Numbers.INT_NULL
+                    || len == Numbers.INT_NULL) {
                 return TableUtils.NULL_LEN;
             }
 
@@ -155,7 +155,7 @@ public class SubStringFunctionFactory implements FunctionFactory {
             }
             int rawStart = startFunc.getInt(rec);
             int len = lenFunc.getInt(rec);
-            if (rawStart == Numbers.INT_NaN || len == Numbers.INT_NaN) {
+            if (rawStart == Numbers.INT_NULL || len == Numbers.INT_NULL) {
                 return null;
             }
             if (len < 0) {

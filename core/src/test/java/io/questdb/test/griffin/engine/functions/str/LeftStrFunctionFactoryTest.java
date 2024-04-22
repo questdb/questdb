@@ -144,7 +144,7 @@ public class LeftStrFunctionFactoryTest extends AbstractCairoTest {
         assertQuery(
                 "k\tn\tleft\n" +
                         "JWCPSWHYRXPEHNRX\t5\tJWCPS\n" +
-                        "\tNaN\t\n" +
+                        "\tnull\t\n" +
                         "IBBTGPGWFFYUDEY\t15\tIBBTGPGWFFYUDEY\n" +
                         "BHFOWLPDXY\t-1\tBHFOWLPDX\n" +
                         "UOJSHRUEDRQQULO\t9\tUOJSHRUED\n" +
