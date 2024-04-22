@@ -114,7 +114,7 @@ public class StrPosVarcharFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final Utf8Sequence str = this.varcharFunc.getVarcharA(rec);
             if (str == null) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             return strpos(str, substr);
         }
@@ -139,11 +139,11 @@ public class StrPosVarcharFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final Utf8Sequence str = this.strFunc.getVarcharA(rec);
             if (str == null) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             final Utf8Sequence substr = this.substrFunc.getVarcharA(rec);
             if (substr == null) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             return strpos(str, substr);
         }
