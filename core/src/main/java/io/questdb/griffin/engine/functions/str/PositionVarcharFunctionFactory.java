@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-public class PositionVarcharFunctionFactory extends StrPosFunctionFactory {
+public class PositionVarcharFunctionFactory extends StrPosVarcharFunctionFactory {
     @Override
     public String getSignature() {
         return "position(ØØ)";
