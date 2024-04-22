@@ -32,6 +32,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -45,7 +46,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
              UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
         ) {
-            put("foo", 42, map, sinkA, true);
+            putStable("foo", 42, map, sinkA, true);
             Assert.assertEquals(42, get("foo", map));
             Assert.assertEquals(1, map.size());
             map.clear();
@@ -62,10 +63,10 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         ) {
             int keyCount = 100_000;
             for (int i = 0; i < keyCount; i++) {
-                put(String.valueOf(i), i, map, sinkA, true);
+                putStable(String.valueOf(i), i, map, sinkA, true);
             }
-            put("", -1, map, sinkA, true);
-            put(null, -2, map, sinkA, true);
+            putStable("", -1, map, sinkA, true);
+            putStable(null, -2, map, sinkA, true);
 
             MapRecordCursor danglingCursor = null;
             try (MapRecordCursor cursor = map.getCursor()) {
@@ -90,11 +91,11 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
              UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
         ) {
             Assert.assertNull(findValue("", map));
-            put("", 42, map, sinkA, true);
+            putStable("", 42, map, sinkA, true);
             Assert.assertEquals(42, get("", map));
             Assert.assertEquals(1, map.size());
 
-            put("", 43, map, sinkB, false);
+            putStable("", 43, map, sinkB, false);
             Assert.assertEquals(43, get("", map));
             Assert.assertEquals(1, map.size());
         }
@@ -111,7 +112,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
             ) {
                 final int N = 100_000;
                 for (int i = 0; i < N; i++) {
-                    MapKey keyA = put("foo" + i, i + 1, mapA, sinkA, true);
+                    MapKey keyA = putStable("foo" + i, i + 1, mapA, sinkA, true);
 
                     MapKey keyB = mapB.withKey();
                     keyB.copyFrom(keyA);
@@ -142,6 +143,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                 long lo = sinkA.hi();
                 DirectUtf8String directUtf8 = new DirectUtf8String(true);
                 for (int i = 0; i < N; i++) {
+                    System.out.println("Iteration: " + i);
                     MapKey mapKey = map.withKey();
                     sinkA.put("foo").put(i);
                     long hi = sinkA.hi();
@@ -182,14 +184,41 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
             int keyCountA = 100;
             int keyCountB = 200;
             for (int i = 0; i < keyCountA; i++) {
-                put("foo" + i, i, mapA, sinkA, true);
+                putStable("foo" + i, i, mapA, sinkA, true);
             }
 
             for (int i = 0; i < keyCountB; i++) {
-                put("foo" + i, i, mapB, sinkB, true);
+                putStable("foo" + i, i, mapB, sinkB, true);
             }
 
             mapA.merge(mapB, (dstValue, srcValue) -> dstValue.putInt(0, dstValue.getInt(0) + srcValue.getInt(0)));
+
+            for (int i = 0; i < keyCountA; i++) {
+                Assert.assertEquals(i * 2, get("foo" + i, mapA));
+            }
+            for (int i = keyCountA; i < keyCountB; i++) {
+                Assert.assertEquals(i, get("foo" + i, mapA));
+            }
+        }
+    }
+
+    @Test
+    public void testMergeUnstable() {
+        SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+        try (UnorderedVarcharMap mapA = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)) {
+
+            int keyCountA = 100;
+            int keyCountB = 200;
+            try (UnorderedVarcharMap mapB = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)) {
+                for (int i = 0; i < keyCountA; i++) {
+                    putUnstable("foo" + i, i, mapA, true);
+                }
+                for (int i = 0; i < keyCountB; i++) {
+                    putUnstable("foo" + i, i, mapB, true);
+                }
+                mapA.merge(mapB, (dstValue, srcValue) -> dstValue.putInt(0, dstValue.getInt(0) + srcValue.getInt(0)));
+            }
+
 
             for (int i = 0; i < keyCountA; i++) {
                 Assert.assertEquals(i * 2, get("foo" + i, mapA));
@@ -208,11 +237,11 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
              UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
         ) {
             Assert.assertNull(findValue(null, map));
-            put(null, 42, map, sinkA, true);
+            putStable(null, 42, map, sinkA, true);
             Assert.assertEquals(42, get(null, map));
             Assert.assertEquals(1, map.size());
 
-            put(null, 43, map, sinkB, false);
+            putStable(null, 43, map, sinkB, false);
             Assert.assertEquals(43, get(null, map));
             Assert.assertEquals(1, map.size());
         }
@@ -227,7 +256,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         ) {
             int keyCount = 1_000;
             for (int i = 0; i < keyCount; i++) {
-                put("foo" + i, i, map, sinkA, true);
+                putStable("foo" + i, i, map, sinkA, true);
             }
 
             for (int i = 0; i < keyCount; i++) {
@@ -236,7 +265,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
 
             sinkB.clear();
             for (int i = 0; i < keyCount; i++) {
-                put("foo" + i, -i, map, sinkB, false);
+                putStable("foo" + i, -i, map, sinkB, false);
             }
             for (int i = 0; i < keyCount; i++) {
                 Assert.assertEquals(-i, get("foo" + i, map));
@@ -245,33 +274,49 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSmoke() {
-        SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-             DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
-        ) {
-            put("foo", 42, map, sinkA, true);
-            Assert.assertEquals(42, get("foo", map));
+    public void testSmoke() throws Exception {
+        assertMemoryLeak(() -> {
+            SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+            UnorderedVarcharMap danglingMap = null;
+            try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
+                 DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
+                 UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
+            ) {
+                danglingMap = map;
 
-            Assert.assertNull(findValue("bar", map));
-            sinkB.clear();
-            Assert.assertEquals(42, get("foo", map));
+                putStable("foo", 42, map, sinkA, true);
+                Assert.assertEquals(42, get("foo", map));
 
-            put("foo", 43, map, sinkB, false);
-            Assert.assertEquals(43, get("foo", map));
+                Assert.assertNull(findValue("bar", map));
+                sinkB.clear();
+                Assert.assertEquals(42, get("foo", map));
 
-            map.clear();
-            sinkA.clear();
-            int keyCount = 1_000;
-            for (int i = 0; i < keyCount; i++) {
-                put("foo" + i, i, map, sinkA, true);
+                putStable("foo", 43, map, sinkB, false);
+                Assert.assertEquals(43, get("foo", map));
+
+                map.clear();
+                sinkA.clear();
+                int keyCount = 1_000;
+                for (int i = 0; i < keyCount; i++) {
+                    putStable("foo" + i, i, map, sinkA, true);
+                }
+                for (int i = 0; i < keyCount; i++) {
+                    Assert.assertEquals(i, get("foo" + i, map));
+                }
+                for (int i = 0; i < keyCount; i++) {
+                    putUnstable("foo" + i, i, map, false);
+                }
+
+                map.clear();
+                for (int i = 0; i < keyCount; i++) {
+                    putUnstable("foo" + i, i, map, true);
+                }
+                for (int i = 0; i < keyCount; i++) {
+                    putStable("foo" + i, i, map, sinkA, false);
+                }
             }
-
-            for (int i = 0; i < keyCount; i++) {
-                Assert.assertEquals(i, get("foo" + i, map));
-            }
-        }
+            danglingMap.close();
+        });
     }
 
     private static void assertCursor(MapRecordCursor cursor, int keyCount) throws NumericException {
@@ -325,7 +370,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         return value.getInt(0);
     }
 
-    private static MapKey put(String stringKey, int intValue, UnorderedVarcharMap map, DirectUtf8Sink sink, boolean isNew) {
+    private static MapKey putStable(String stringKey, int intValue, UnorderedVarcharMap map, DirectUtf8Sink sink, boolean isNew) {
         MapKey mapKey = map.withKey();
         if (stringKey == null) {
             mapKey.putVarchar((Utf8Sequence) null);
@@ -335,6 +380,21 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
             DirectUtf8String key = new DirectUtf8String(true);
             key.of(lo, sink.hi(), Chars.isAscii(stringKey));
             mapKey.putVarchar(key);
+        }
+        MapValue value = mapKey.createValue();
+        Assert.assertNotNull(value);
+        Assert.assertEquals(isNew, value.isNew());
+        value.putInt(0, intValue);
+
+        return mapKey;
+    }
+
+    private static MapKey putUnstable(String stringKey, int intValue, UnorderedVarcharMap map, boolean isNew) {
+        MapKey mapKey = map.withKey();
+        if (stringKey == null) {
+            mapKey.putVarchar((Utf8Sequence) null);
+        } else {
+            mapKey.putVarchar(new Utf8String(stringKey));
         }
         MapValue value = mapKey.createValue();
         Assert.assertNotNull(value);
