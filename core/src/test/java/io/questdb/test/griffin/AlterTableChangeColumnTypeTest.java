@@ -39,6 +39,32 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeStringToSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            ddl("create table y as (select c from x)", sqlExecutionContext);
+            ddl("alter table x alter column c type symbol", sqlExecutionContext);
+
+            assertSqlCursorsConvertedStrings(
+                    "select c from y",
+                    "select c from x"
+            );
+
+            insert("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
+            assertSql("c\nabc\n", "select c from x limit -1");
+
+            ddl("create table z as (select c from x)", sqlExecutionContext);
+            ddl("alter table x alter column c type string", sqlExecutionContext);
+
+            assertSqlCursorsConvertedStrings(
+                    "select c from z",
+                    "select c from x"
+
+            );
+        });
+    }
+
+    @Test
     public void testChangeStringToVarchar() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -64,26 +90,15 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testChangeStringToSymbol() throws Exception {
+    public void testChangeTypePreservesColumnOrder() throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            ddl("create table y as (select c from x)", sqlExecutionContext);
+            ddl("create table y as (select * from x)", sqlExecutionContext);
             ddl("alter table x alter column c type symbol", sqlExecutionContext);
 
             assertSqlCursorsConvertedStrings(
-                    "select c from x",
-                    "select c from y"
-            );
-
-            insert("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
-            assertSql("c\nabc\n", "select c from x limit -1");
-
-            ddl("create table z as (select c from x)", sqlExecutionContext);
-            ddl("alter table x alter column c type string", sqlExecutionContext);
-
-            assertSqlCursorsConvertedStrings(
-                    "select c from x",
-                    "select c from z"
+                    "select * from y limit 10",
+                    "select * from x limit 10"
             );
         });
     }
@@ -116,20 +131,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         "select v from y"
                 );
             }
-        });
-    }
-
-    @Test
-    public void testChangeTypePreservesColumnOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-            ddl("create table y as (select * from x)", sqlExecutionContext);
-            ddl("alter table x alter column c type symbol", sqlExecutionContext);
-
-            assertSqlCursorsConvertedStrings(
-                    "select * from y limit 10",
-                    "select * from x limit 10"
-            );
         });
     }
 

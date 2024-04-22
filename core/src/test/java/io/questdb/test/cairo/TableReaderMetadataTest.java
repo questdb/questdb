@@ -150,6 +150,49 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddRemoveChangeType() throws Exception {
+        final String expected = "int:INT\n" +
+                "short:SHORT\n" +
+                "byte:BYTE\n" +
+                "double:DOUBLE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n" +
+                "str:" + varcharColumnType + "\n" +
+                "sym:" + stringColumnType + "\n" +
+                "bin:BINARY\n" +
+                "date:DATE\n" +
+                "varchar:" + stringColumnType + "\n" +
+                "bool2:BOOLEAN\n";
+        assertThat(expected,
+                w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
+                w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null),
+                w -> w.removeColumn("bool"),
+                w -> w.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, null),
+                w -> w.changeColumnType("varchar", ColumnType.STRING, 0, false, false, 0, false, null)
+        );
+    }
+
+    @Test
+    public void testChangeType() throws Exception {
+        final String expected = "int:INT\n" +
+                "short:SHORT\n" +
+                "byte:BYTE\n" +
+                "double:DOUBLE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n" +
+                "str:" + varcharColumnType + "\n" +
+                "sym:" + stringColumnType + "\n" +
+                "bool:BOOLEAN\n" +
+                "bin:BINARY\n" +
+                "date:DATE\n" +
+                "varchar:" + varcharColumnType + "\n";
+        assertThat(expected,
+                w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
+                w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null)
+        );
+    }
+
+    @Test
     public void testColumnIndex() {
         ObjIntHashMap<String> expected = new ObjIntHashMap<>();
         expected.put("int", 0);

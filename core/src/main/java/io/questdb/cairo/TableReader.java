@@ -715,19 +715,17 @@ public class TableReader implements Closeable, SymbolTableSource {
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
                 if (partitionRowCount > -1L && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, fromBase)) > -1L) {
                     for (int i = 0; i < iterateCount; i++) {
-                        final int action = transitionIndex.getAction(i);// Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
-                        final int fromColumnIndex = transitionIndex.getCopyFromIndex(i);// Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4L);
-
-                        if (action == -1) {
+                        if (transitionIndex.closeColumn(i)) {
                             closePartitionColumnFile(fromBase, i);
                         }
 
-                        if (fromColumnIndex > -1) {
-                            assert fromColumnIndex < this.columnCount;
-                            copyColumns(fromBase, fromColumnIndex, toColumns, toColumnTops, toIndexReaders, toBase, i);
-                        } else if (fromColumnIndex != Integer.MIN_VALUE) {
+                        if (transitionIndex.replaceWithNew(i)) {
                             // new instance
                             reloadColumnAt(partitionIndex, path, toColumns, toColumnTops, toIndexReaders, toBase, i, partitionRowCount);
+                        } else {
+                            final int fromColumnIndex = transitionIndex.getCopyFromIndex(i);
+                            assert fromColumnIndex < this.columnCount;
+                            copyColumns(fromBase, fromColumnIndex, toColumns, toColumnTops, toIndexReaders, toBase, i);
                         }
                     }
                 }
@@ -926,13 +924,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void openSymbolMaps() {
-        int symbolColumnIndex = 0;
         final int columnCount = metadata.getColumnCount();
         symbolMapReaders.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
             if (ColumnType.isSymbol(metadata.getColumnType(i))) {
                 // symbol map index array is sparse
-                symbolMapReaders.extendAndSet(i, newSymbolMapReader(symbolColumnIndex++, i));
+                symbolMapReaders.extendAndSet(i, newSymbolMapReader(metadata.getDenseSymbolIndex(i), i));
             }
         }
     }
@@ -1030,14 +1027,13 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reloadAllSymbols() {
-        int symbolMapIndex = 0;
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
                 SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
                 if (symbolMapReader instanceof SymbolMapReaderImpl) {
                     final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
                     final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
-                    int symbolCount = txFile.getSymbolValueCount(symbolMapIndex++);
+                    int symbolCount = txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(columnIndex));
                     ((SymbolMapReaderImpl) symbolMapReader).of(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, symbolCount);
                 }
             }
@@ -1196,7 +1192,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reloadPartition(int partitionIndex, long rowCount, long openPartitionNameTxn) {
         Path path = pathGenPartitioned(partitionIndex, openPartitionNameTxn);
         try {
-            int symbolMapIndex = 0;
             int columnBase = getColumnBase(partitionIndex);
             for (int i = 0; i < columnCount; i++) {
                 final int index = getPrimaryColumnIndex(columnBase, i);
@@ -1226,7 +1221,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (reader == null) {
                     continue;
                 }
-                reader.updateSymbolCount(txFile.getSymbolValueCount(symbolMapIndex++));
+                reader.updateSymbolCount(txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(i)));
             }
         } finally {
             path.trimTo(rootLen);
@@ -1248,12 +1243,11 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reloadSymbolMapCounts() {
-        int symbolMapIndex = 0;
         for (int i = 0; i < columnCount; i++) {
             if (!ColumnType.isSymbol(metadata.getColumnType(i))) {
                 continue;
             }
-            symbolMapReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(symbolMapIndex++));
+            symbolMapReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(i)));
         }
     }
 
@@ -1295,10 +1289,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
                 if (partitionRowCount > -1L && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, base)) > -1L) {
                     for (int i = 0; i < iterateCount; i++) {
-                        final int action = transitionIndex.getAction(i); //Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
-                        final int copyFrom = transitionIndex.getCopyFromIndex(i);//Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4L);
+                        final int copyFrom = transitionIndex.getCopyFromIndex(i);
 
-                        if (action == -1) {
+                        if (transitionIndex.closeColumn(i)) {
                             // This column is deleted (not moved).
                             // Close all files
                             closePartitionColumnFile(base, i);
@@ -1364,18 +1357,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         // "copy from" == Integer.MIN_VALUE  indicates that column is deleted for good and should not be re-added from any source
 
         for (int i = 0, n = Math.max(columnCount, this.columnCount); i < n; i++) {
-            final int action = transitionIndex.getAction(i);//Unsafe.getUnsafe().getInt(offset);
-            final int copyFrom = transitionIndex.getCopyFromIndex(i);// Unsafe.getUnsafe().getInt(offset + 4L);
-
-            if (action == -1) {
+            if (transitionIndex.closeColumn(i)) {
                 // deleted
                 Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(i, null));
             }
 
-            if (copyFrom > -1) {
-                SymbolMapReader rdr = symbolMapReaders.getQuick(copyFrom);
+            final int replaceWith = transitionIndex.getCopyFromIndex(i);
+            if (replaceWith > -1) {
+                SymbolMapReader rdr = symbolMapReaders.getQuick(replaceWith);
                 renewSymbolMapReader(rdr, i);
-            } else if (copyFrom != Integer.MIN_VALUE) {
+            } else if (replaceWith != Integer.MIN_VALUE) {
                 // New instance
                 renewSymbolMapReader(null, i);
             }

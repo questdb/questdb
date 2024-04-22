@@ -78,22 +78,22 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
     @Test
     public void testAlterExpectCapacityKeyword() throws Exception {
-        assertFailure("alter table x alter column y add index a", 39, "'capacity' expected");
+        assertFailure("alter table x alter column c add index a", 39, "'capacity' expected");
     }
 
     @Test
     public void testAlterExpectCapacityValue() throws Exception {
-        assertFailure("alter table x alter column y add index capacity ", 48, "capacity value expected");
+        assertFailure("alter table x alter column c add index capacity ", 48, "capacity value expected");
     }
 
     @Test
     public void testAlterExpectCapacityValueIsInteger() throws Exception {
-        assertFailure("alter table x alter column y add index capacity qwe", 48, "positive integer literal expected as index capacity");
+        assertFailure("alter table x alter column c add index capacity qwe", 48, "positive integer literal expected as index capacity");
     }
 
     @Test
     public void testAlterExpectCapacityValueIsPositiveInteger() throws Exception {
-        assertFailure("alter table x alter column y add index capacity -123", 48, "positive integer literal expected as index capacity");
+        assertFailure("alter table x alter column c add index capacity -123", 48, "positive integer literal expected as index capacity");
     }
 
     @Test
@@ -169,7 +169,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidColumnName() throws Exception {
-        assertFailure("alter table x alter column y add index", 27, "Invalid column: y");
+        assertFailure("alter table x alter column y add index", 27, "column 'y' does not exists in table 'x'");
     }
 
     @Test

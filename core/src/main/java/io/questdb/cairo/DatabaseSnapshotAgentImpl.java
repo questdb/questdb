@@ -127,13 +127,12 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
     }
 
     private void rebuildSymbolFiles(Path tablePath, AtomicInteger recoveredSymbolFiles, int pathTableLen) {
-        int denseSymbolIndex = 0;
         tablePath.trimTo(pathTableLen);
         for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
 
             int columnType = tableMetadata.getColumnType(i);
             if (ColumnType.isSymbol(columnType)) {
-                int cleanSymbolCount = txWriter.getSymbolValueCount(denseSymbolIndex++);
+                int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
                 String columnName = tableMetadata.getColumnName(i);
                 LOG.info().$("rebuilding symbol files [table=").$(tablePath)
                         .$(", column=").$(columnName)

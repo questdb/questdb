@@ -7747,7 +7747,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         ddlMem.putLong(flags);
         ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
         ddlMem.skip(8);
-        ddlMem.putInt(getReplacingColumnIndex(metaMem, i));
+        ddlMem.putInt(getReplacingColumnIndexRaw(metaMem, i));
         ddlMem.skip(4);
     }
 

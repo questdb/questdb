@@ -164,17 +164,17 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
 
     @Test
     public void testBadSyntax() throws Exception {
-        assertFailure("alter table x alter column z", 28, "'add index' or 'drop index' or 'cache' or 'nocache' expected");
+        assertFailure("alter table x alter column c", 28, "'add index' or 'drop index' or 'type' or 'cache' or 'nocache' expected");
     }
 
     @Test
     public void testInvalidColumn() throws Exception {
-        assertFailure("alter table x alter column y cache", 27, "Invalid column: y");
+        assertFailure("alter table x alter column y cache", 27, "column 'y' does not exists in table 'x'");
     }
 
     @Test
     public void testWhenCacheOrNocacheAreNotInAlterStatement() throws Exception {
-        assertFailure("alter table x alter column z ca", 29, "'cache' or 'nocache' expected");
+        assertFailure("alter table x alter column c ca", 29, "'cache' or 'nocache' expected");
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {

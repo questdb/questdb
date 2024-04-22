@@ -591,7 +591,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 .put("' does not exists in table '").put(tableToken.getTableName()).put('\'');
                     }
 
-                    tok = expectToken(lexer, "'add index' or 'drop index', 'type' or 'cache' or 'nocache'");
+                    tok = expectToken(lexer, "'add index' or 'drop index' or 'type' or 'cache' or 'nocache'");
                     if (SqlKeywords.isAddKeyword(tok)) {
                         expectKeyword(lexer, "index");
                         tok = SqlUtil.fetchNext(lexer);
