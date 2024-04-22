@@ -54,9 +54,9 @@ public class DirectUtf8SinkTest extends AbstractTest {
             final long ptr = sink.ptr();
             Assert.assertNotEquals(0, ptr);
             Assert.assertEquals(32, sink.capacity());
-            sink.put((byte) 'a');
-            sink.put((byte) 'b');
-            sink.put((byte) 'c');
+            sink.put('a');
+            sink.put('b');
+            sink.put('c');
             Assert.assertEquals(3, sink.size());
             Assert.assertEquals((byte) 'a', sink.byteAt(0));
             Assert.assertEquals((byte) 'b', sink.byteAt(1));
@@ -95,7 +95,7 @@ public class DirectUtf8SinkTest extends AbstractTest {
             final long ptr = sink.ptr();
             Assert.assertNotEquals(0, ptr);
 
-            sink.put((byte) 'a');
+            sink.put('a');
             Assert.assertEquals(1, sink.size());
             Assert.assertEquals(32, sink.capacity());
             Assert.assertEquals(ptr, sink.ptr());
@@ -173,12 +173,12 @@ public class DirectUtf8SinkTest extends AbstractTest {
         final int initialCapacity = 4;
         try (DirectUtf8Sink sink = new DirectUtf8Sink(initialCapacity)) {
             for (int i = 0; i < 30; i++) {
-                sink.putAscii((char) ('a' + i)).putAscii('\n');
+                sink.put((char) ('a' + i)).put('\n');
             }
             TestUtils.assertEquals(expected, sink.toString());
             sink.clear();
             for (int i = 0; i < 30; i++) {
-                sink.put((byte) ('a' + i)).put((byte) '\n');
+                sink.put((char) ('a' + i)).put('\n');
             }
             TestUtils.assertEquals(expected, sink.toString());
 
