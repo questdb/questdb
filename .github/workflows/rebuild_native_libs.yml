@@ -70,7 +70,7 @@ jobs:
           cmake -B build/release -DCMAKE_BUILD_TYPE=Release
           cmake --build build/release --config Release
           cd rust/qdbr
-          cargo build --release
+          cargo clean build --release
           cd ../../../
       - name: Copy ARM MacOS Rust library to the final directory
         if: ${{ matrix.os == 'macos-14' }}
@@ -118,7 +118,7 @@ jobs:
           cd ./core
           cmake --build cmake-build-release --config Release
           cd rust/qdbr
-          cargo build --release
+          cargo clean build --release
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/ 
           cd ../../../
       - name: CMAKE ARM Linux
@@ -132,6 +132,7 @@ jobs:
           cd rust/qdbr
           cargo install cross
           rustup target add x86_64-pc-windows-msvc
+          cargo clean
           cross build --target aarch64-unknown-linux-gnu --release
           ls -la target/release/ 
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/ 
@@ -151,6 +152,7 @@ jobs:
           cd rust/qdbr
           cargo install cross
           rustup target add x86_64-pc-windows-gnu
+          cargo clean
           cross build --target x86_64-pc-windows-gnu --release
           ls -la target/release/ 
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/windows/libquestdbr.dll 
@@ -177,6 +179,7 @@ jobs:
         with:
           path: |
             core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
+            core/src/main/resources/io/questdb/bin/armlinux/libquestdbr.so
           key: nativelibs-armlinux-${{ github.sha }}
       - name: Save Windows binary to Cache
         uses: actions/cache/save@v3
