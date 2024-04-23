@@ -177,6 +177,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     }
 
     @Override
+    public long getHeapSize() {
+        return memLimit - memStart + allocator.allocated();
+    }
+
+    @Override
     public int getKeyCapacity() {
         return keyCapacity;
     }
@@ -716,6 +721,18 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 }
             }
             return probeReadOnly(startAddress, ptr, size, packedHashSizeFlags, value);
+        }
+
+        void copyFromStartAddress(long address) {
+            long srcPackedHashAndSize = Unsafe.getUnsafe().getLong(address);
+            byte srcFlags = UnorderedVarcharMap.unpackFlags(srcPackedHashAndSize);
+            int srcSize = UnorderedVarcharMap.unpackSize(srcPackedHashAndSize);
+            long srcPtrWithUnstableFlag = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+
+            size = srcSize;
+            ptrWithUnstableFlag = srcPtrWithUnstableFlag;
+            ptr = srcPtrWithUnstableFlag & PTR_MASK;
+            flags = srcFlags;
         }
     }
 }

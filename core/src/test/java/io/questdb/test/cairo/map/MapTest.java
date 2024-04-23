@@ -29,14 +29,12 @@ import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.std.Chars;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.LongList;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -46,10 +44,16 @@ import java.util.HashMap;
 
 @RunWith(Parameterized.class)
 public class MapTest extends AbstractCairoTest {
+    private static final DirectUtf8Sink stableSink = new DirectUtf8Sink(100 * 1024 * 1024);
     private final MapType mapType;
 
     public MapTest(MapType mapType) {
         this.mapType = mapType;
+    }
+
+    @AfterClass
+    public static void closeSink() {
+        stableSink.close();
     }
 
     @Parameterized.Parameters(name = "{0}")
@@ -59,7 +63,26 @@ public class MapTest extends AbstractCairoTest {
                 {MapType.UNORDERED_4_MAP},
                 {MapType.UNORDERED_8_MAP},
                 {MapType.UNORDERED_16_MAP},
+                {MapType.UNORDERED_VARCHAR_MAP},
         });
+    }
+
+    @After
+    public void clearSink() {
+        stableSink.clear();
+    }
+
+    public int readKey(Record record, int index, int preferredType) throws NumericException {
+        if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
+            return Numbers.parseInt(record.getVarcharA(index));
+        }
+        if (preferredType == ColumnType.INT) {
+            return record.getInt(index);
+        } else if (preferredType == ColumnType.SHORT) {
+            return record.getShort(index);
+        } else {
+            throw new UnsupportedOperationException("Unsupported type: " + ColumnType.nameOf(preferredType));
+        }
     }
 
     @Test
@@ -67,8 +90,7 @@ public class MapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
 
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.INT);
+            ColumnTypes keyTypes = keyColumnType(ColumnType.INT);
 
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.BYTE);
@@ -89,7 +111,7 @@ public class MapTest extends AbstractCairoTest {
                 final int N = 10000;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(rnd.nextInt());
+                    populateKey(key, rnd.nextInt(), ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -116,7 +138,7 @@ public class MapTest extends AbstractCairoTest {
                 // assert that all values are good
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(rnd.nextInt());
+                    populateKey(key, rnd.nextInt(), ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -145,7 +167,7 @@ public class MapTest extends AbstractCairoTest {
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         // key part, comes after value part in records
-                        int in = record.getInt(13);
+                        int in = readKey(record, 13, ColumnType.INT);
                         String key = String.valueOf(in);
                         keyToRowIds.put(key, record.getRowId());
                         rowIds.add(record.getRowId());
@@ -155,7 +177,7 @@ public class MapTest extends AbstractCairoTest {
                     cursor.toTop();
                     int i = 0;
                     while (cursor.hasNext()) {
-                        int in = record.getInt(13);
+                        int in = readKey(record, 13, ColumnType.INT);
                         String key = String.valueOf(in);
                         Assert.assertEquals((long) keyToRowIds.get(key), record.getRowId());
                         Assert.assertEquals(rowIds.getQuick(i++), record.getRowId());
@@ -197,10 +219,10 @@ public class MapTest extends AbstractCairoTest {
     public void testClear() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
-            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), N / 2, 0.5f, 100)) {
+            try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), N / 2, 0.5f, 100)) {
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(i);
+                    populateKey(key, i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -209,7 +231,7 @@ public class MapTest extends AbstractCairoTest {
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(i);
+                    populateKey(key, i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -225,7 +247,7 @@ public class MapTest extends AbstractCairoTest {
                 // Fill the map once again and verify contents.
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(N + i);
+                    populateKey(key, N + i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -234,7 +256,7 @@ public class MapTest extends AbstractCairoTest {
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(N + i);
+                    populateKey(key, N + i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -248,12 +270,14 @@ public class MapTest extends AbstractCairoTest {
 
     @Test
     public void testCollisionPerformance() throws Exception {
+        Assume.assumeFalse(mapType == MapType.UNORDERED_VARCHAR_MAP);
+
         TestUtils.assertMemoryLeak(() -> {
             // These used to be default FastMap configuration for a join
-            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 2097152, 0.5, 10000)) {
+            try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 2097152, 0.5, 10000)) {
                 for (int i = 0; i < 40_000_000; i++) {
                     MapKey key = map.withKey();
-                    key.putInt((i + 15) % 151269);
+                    populateKey(key, (i + 15) % 151269, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     value.putLong(0, i);
@@ -265,7 +289,7 @@ public class MapTest extends AbstractCairoTest {
     @Test
     public void testCopyValue() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
+            SingleColumnType keyTypes = keyColumnType(ColumnType.INT);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
 
             try (
@@ -275,7 +299,7 @@ public class MapTest extends AbstractCairoTest {
                 final int N = 10000;
                 for (int i = 0; i < N; i++) {
                     MapKey keyA = mapA.withKey();
-                    keyA.putInt(i);
+                    populateKey(keyA, i, ColumnType.INT);
 
                     MapValue valueA = keyA.createValue();
                     Assert.assertTrue(valueA.isNew());
@@ -313,7 +337,7 @@ public class MapTest extends AbstractCairoTest {
     @Test
     public void testKeyCopyFrom() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            SingleColumnType keyTypes = new SingleColumnType(ColumnType.SHORT);
+            SingleColumnType keyTypes = keyColumnType(ColumnType.SHORT);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.INT);
 
             try (
@@ -323,7 +347,7 @@ public class MapTest extends AbstractCairoTest {
                 final int N = 10000;
                 for (int i = 0; i < N; i++) {
                     MapKey keyA = mapA.withKey();
-                    keyA.putShort((short) i);
+                    populateKey(keyA, i, ColumnType.SHORT);
 
                     MapValue valueA = keyA.createValue();
                     Assert.assertTrue(valueA.isNew());
@@ -342,10 +366,10 @@ public class MapTest extends AbstractCairoTest {
                 // assert that all map A keys can be found in map B
                 for (int i = 0; i < N; i++) {
                     MapKey keyA = mapA.withKey();
-                    keyA.putShort((short) i);
+                    populateKey(keyA, i, ColumnType.SHORT);
 
                     MapKey keyB = mapB.withKey();
-                    keyB.putShort((short) i);
+                    populateKey(keyB, i, ColumnType.SHORT);
 
                     MapValue valueA = keyA.findValue();
                     Assert.assertFalse(valueA.isNew());
@@ -363,12 +387,12 @@ public class MapTest extends AbstractCairoTest {
     @Test
     public void testKeyHashCode() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 64, 0.8, 24)) {
+            try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 64, 0.8, 24)) {
                 final int N = 100000;
                 final LongList keyHashCodes = new LongList(N);
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(i);
+                    populateKey(key, i, ColumnType.INT);
                     key.commit();
                     long hashCode = key.hash();
                     keyHashCodes.add(hashCode);
@@ -395,13 +419,13 @@ public class MapTest extends AbstractCairoTest {
     @Test
     public void testKeyOnly() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            ColumnTypes types = new SingleColumnType(ColumnType.INT);
+            ColumnTypes types = keyColumnType(ColumnType.INT);
 
             final int N = 10000;
             try (Map map = createMap(types, null, 64, 0.5, Integer.MAX_VALUE)) {
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(i);
+                    populateKey(key, i, ColumnType.INT);
                     MapValue values = key.createValue();
                     Assert.assertTrue(values.isNew());
                 }
@@ -410,7 +434,13 @@ public class MapTest extends AbstractCairoTest {
                 try (RecordCursor cursor = map.getCursor()) {
                     final MapRecord record = (MapRecord) cursor.getRecord();
                     while (cursor.hasNext()) {
-                        cnts[record.getInt(0)]++;
+                        int index;
+                        if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
+                            index = Numbers.parseInt(record.getVarcharA(0));
+                        } else {
+                            index = record.getInt(0);
+                        }
+                        cnts[index]++;
                     }
                 }
 
@@ -424,10 +454,10 @@ public class MapTest extends AbstractCairoTest {
     @Test(expected = LimitOverflowException.class)
     public void testMaxResizes() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG256), 64, 0.8, 1)) {
+            try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG256), 64, 0.8, 1)) {
                 for (int i = 0; i < 100000; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(i);
+                    populateKey(key, i, ColumnType.INT);
                     key.createValue();
                 }
             }
@@ -437,7 +467,7 @@ public class MapTest extends AbstractCairoTest {
     @Test
     public void testMergeIntersectingMaps() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
+            SingleColumnType keyTypes = keyColumnType(ColumnType.INT);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.INT);
 
             try (
@@ -447,7 +477,7 @@ public class MapTest extends AbstractCairoTest {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
                     MapKey keyA = mapA.withKey();
-                    keyA.putInt(i);
+                    populateKey(keyA, i, ColumnType.INT);
 
                     MapValue valueA = keyA.createValue();
                     Assert.assertTrue(valueA.isNew());
@@ -456,7 +486,7 @@ public class MapTest extends AbstractCairoTest {
 
                 for (int i = 0; i < 2 * N; i++) {
                     MapKey keyB = mapB.withKey();
-                    keyB.putInt(i);
+                    populateKey(keyB, i, ColumnType.INT);
 
                     MapValue valueB = keyB.createValue();
                     Assert.assertTrue(valueB.isNew());
@@ -473,11 +503,11 @@ public class MapTest extends AbstractCairoTest {
                 RecordCursor cursorA = mapA.getCursor();
                 MapRecord recordA = mapA.getRecord();
                 while (cursorA.hasNext()) {
-                    int i = recordA.getInt(1);
+                    int i = readKey(recordA, 1, ColumnType.INT);
                     MapValue valueA = recordA.getValue();
 
                     MapKey keyB = mapB.withKey();
-                    keyB.putInt(i);
+                    populateKey(keyB, i, ColumnType.INT);
                     MapValue valueB = keyB.findValue();
 
                     Assert.assertFalse(valueB.isNew());
@@ -494,7 +524,7 @@ public class MapTest extends AbstractCairoTest {
     @Test
     public void testMergeNonIntersectingMaps() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
+            SingleColumnType keyTypes = keyColumnType(ColumnType.INT);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.INT);
 
             try (
@@ -504,7 +534,7 @@ public class MapTest extends AbstractCairoTest {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
                     MapKey keyA = mapA.withKey();
-                    keyA.putInt(i);
+                    populateKey(keyA, i, ColumnType.INT);
 
                     MapValue valueA = keyA.createValue();
                     Assert.assertTrue(valueA.isNew());
@@ -513,7 +543,7 @@ public class MapTest extends AbstractCairoTest {
 
                 for (int i = N; i < 2 * N; i++) {
                     MapKey keyB = mapB.withKey();
-                    keyB.putInt(i);
+                    populateKey(keyB, i, ColumnType.INT);
 
                     MapValue valueB = keyB.createValue();
                     Assert.assertTrue(valueB.isNew());
@@ -530,11 +560,11 @@ public class MapTest extends AbstractCairoTest {
                 RecordCursor cursorA = mapA.getCursor();
                 MapRecord recordA = mapA.getRecord();
                 while (cursorA.hasNext()) {
-                    int i = recordA.getInt(1);
+                    int i = readKey(recordA, 1, ColumnType.INT);
                     MapValue valueA = recordA.getValue();
 
                     MapKey keyB = mapB.withKey();
-                    keyB.putInt(i);
+                    populateKey(keyB, i, ColumnType.INT);
                     MapValue valueB = keyB.findValue();
 
                     if (i < N) {
@@ -553,7 +583,7 @@ public class MapTest extends AbstractCairoTest {
         // Here we aim to resize map A as many times as possible to catch
         // possible bugs with append address initialization.
         TestUtils.assertMemoryLeak(() -> {
-            SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
+            SingleColumnType keyTypes = keyColumnType(ColumnType.INT);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.INT);
 
             try (
@@ -566,7 +596,7 @@ public class MapTest extends AbstractCairoTest {
                     mapB.clear();
                     for (int j = 0; j < M; j++) {
                         MapKey keyB = mapB.withKey();
-                        keyB.putInt(M * i + j);
+                        populateKey(keyB, M * i + j, ColumnType.INT);
 
                         MapValue valueB = keyB.createValue();
                         Assert.assertTrue(valueB.isNew());
@@ -584,10 +614,10 @@ public class MapTest extends AbstractCairoTest {
     public void testReopen() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
-            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), N / 2, 0.5f, 100)) {
+            try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), N / 2, 0.5f, 100)) {
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(i);
+                    populateKey(key, i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -596,7 +626,7 @@ public class MapTest extends AbstractCairoTest {
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(i);
+                    populateKey(key, i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -614,7 +644,7 @@ public class MapTest extends AbstractCairoTest {
                 // Fill the map once again and verify contents.
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(N + i);
+                    populateKey(key, N + i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -623,7 +653,7 @@ public class MapTest extends AbstractCairoTest {
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(N + i);
+                    populateKey(key, N + i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -639,13 +669,13 @@ public class MapTest extends AbstractCairoTest {
     public void testReopenWithKeyCapacityAndPageSize() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
-            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), N / 2, 0.5f, 100)) {
+            try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), N / 2, 0.5f, 100)) {
                 final int initialKeyCapacity = map.getKeyCapacity();
                 final long initialHeapSize = map.getHeapSize();
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(i);
+                    populateKey(key, i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -654,7 +684,7 @@ public class MapTest extends AbstractCairoTest {
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(i);
+                    populateKey(key, i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -675,7 +705,7 @@ public class MapTest extends AbstractCairoTest {
                 // Fill the map once again and verify contents.
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(N + i);
+                    populateKey(key, N + i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -684,7 +714,7 @@ public class MapTest extends AbstractCairoTest {
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(N + i);
+                    populateKey(key, N + i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -700,10 +730,10 @@ public class MapTest extends AbstractCairoTest {
     public void testRestoreInitialCapacity() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
-            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), N / 2, 0.5f, 100)) {
+            try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), N / 2, 0.5f, 100)) {
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(i);
+                    populateKey(key, i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -712,7 +742,7 @@ public class MapTest extends AbstractCairoTest {
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(i);
+                    populateKey(key, i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -728,7 +758,7 @@ public class MapTest extends AbstractCairoTest {
                 // Fill the map once again and verify contents.
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(N + i);
+                    populateKey(key, N + i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -737,7 +767,7 @@ public class MapTest extends AbstractCairoTest {
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(N + i);
+                    populateKey(key, N + i, ColumnType.INT);
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -752,11 +782,11 @@ public class MapTest extends AbstractCairoTest {
     @Test
     public void testRowIdAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final int N = 10000;
-            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 64, 0.5, 100)) {
+            final int N = 10;
+            try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 64, 0.5, 100)) {
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(i);
+                    populateKey(key, i, ColumnType.INT);
                     MapValue values = key.createValue();
                     Assert.assertTrue(values.isNew());
                     values.putInt(0, i);
@@ -777,7 +807,8 @@ public class MapTest extends AbstractCairoTest {
 
                     for (int i = 0, n = rowIds.size(); i < n; i++) {
                         cursor.recordAt(recordB, rowIds.getQuick(i));
-                        Assert.assertEquals(recordB.getInt(1) * 2, recordB.getInt(0));
+                        int expected = readKey(recordB, 1, ColumnType.INT) * 2;
+                        Assert.assertEquals(expected, recordB.getInt(0));
                     }
                 }
             }
@@ -787,7 +818,7 @@ public class MapTest extends AbstractCairoTest {
     @Test
     public void testSetKeyCapacity() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 64, 0.5, 2147483647)) {
+            try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 64, 0.5, 2147483647)) {
                 Assert.assertEquals(128, map.getKeyCapacity());
 
                 map.setKeyCapacity(130);
@@ -806,7 +837,7 @@ public class MapTest extends AbstractCairoTest {
     @Test
     public void testSetKeyCapacityOverflow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Map map = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 16, 0.75, Integer.MAX_VALUE)) {
+            try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 16, 0.75, Integer.MAX_VALUE)) {
                 try {
                     map.setKeyCapacity(Integer.MAX_VALUE);
                     Assert.fail();
@@ -820,7 +851,7 @@ public class MapTest extends AbstractCairoTest {
     @Test
     public void testUnsupportedValueBinary() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Map ignore = createMap(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.BINARY), 64, 0.5, 1)) {
+            try (Map ignore = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.BINARY), 64, 0.5, 1)) {
                 Assert.fail();
             } catch (CairoException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "value type is not supported"));
@@ -838,13 +869,42 @@ public class MapTest extends AbstractCairoTest {
                 return new Unordered8Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
             case UNORDERED_16_MAP:
                 return new Unordered16Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
+            case UNORDERED_VARCHAR_MAP:
+                Assert.assertEquals(1, keyTypes.getColumnCount());
+                Assert.assertEquals(ColumnType.VARCHAR, keyTypes.getColumnType(0));
+                return new UnorderedVarcharMap(valueTypes, keyCapacity, loadFactor, maxResizes);
             default:
                 throw new IllegalArgumentException("Unknown map type: " + mapType);
         }
     }
 
+    private SingleColumnType keyColumnType(int preferredKeyColumnType) {
+        return new SingleColumnType((mapType == MapType.UNORDERED_VARCHAR_MAP ? ColumnType.VARCHAR : preferredKeyColumnType));
+    }
+
+    private void populateKey(MapKey key, int index, int preferredKeyType) {
+        if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
+            long hi = stableSink.hi();
+            stableSink.put(index);
+            DirectUtf8String directStr = new DirectUtf8String(true);
+            directStr.of(hi, stableSink.hi(), true, true);
+            key.putVarchar(directStr);
+        } else {
+            switch (preferredKeyType) {
+                case ColumnType.INT:
+                    key.putInt(index);
+                    break;
+                case ColumnType.SHORT:
+                    key.putShort((short) index);
+                    break;
+                default:
+                    throw new UnsupportedOperationException("unsupported key type:" + ColumnType.nameOf(preferredKeyType));
+            }
+        }
+    }
+
     public enum MapType {
-        ORDERED_MAP, UNORDERED_4_MAP, UNORDERED_8_MAP, UNORDERED_16_MAP
+        ORDERED_MAP, UNORDERED_4_MAP, UNORDERED_8_MAP, UNORDERED_16_MAP, UNORDERED_VARCHAR_MAP // todo: a version with unstable pointers
     }
 
     private static class TestMapValueMergeFunction implements MapValueMergeFunction {

@@ -146,8 +146,8 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     @Override
     public void copyToKey(MapKey destKey) {
-        Unordered16Map.Key destBaseKey = (Unordered16Map.Key) destKey;
-        destBaseKey.copyFromRawKey(startAddress);
+        UnorderedVarcharMap.Key destBaseKey = (UnorderedVarcharMap.Key) destKey;
+        destBaseKey.copyFromStartAddress(startAddress);
     }
 
     @Override
