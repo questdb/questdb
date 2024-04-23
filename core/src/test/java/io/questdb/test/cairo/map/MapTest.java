@@ -45,7 +45,7 @@ import java.util.HashMap;
 
 @RunWith(Parameterized.class)
 public class MapTest extends AbstractCairoTest {
-    private static final DirectUtf8Sink stableSink = new DirectUtf8Sink(100 * 1024 * 1024);
+    private static DirectUtf8Sink STABLE_SINK;
     private final MapType mapType;
     private Rnd rnd;
 
@@ -55,7 +55,12 @@ public class MapTest extends AbstractCairoTest {
 
     @AfterClass
     public static void closeSink() {
-        stableSink.close();
+        STABLE_SINK.close();
+    }
+
+    @BeforeClass
+    public static void createSink() {
+        STABLE_SINK = new DirectUtf8Sink(100 * 1024 * 1024);
     }
 
     @Parameterized.Parameters(name = "{0}")
@@ -71,7 +76,7 @@ public class MapTest extends AbstractCairoTest {
 
     @After
     public void clearSink() {
-        stableSink.clear();
+        STABLE_SINK.clear();
     }
 
     public int readKey(Record record, int index, int preferredType) throws NumericException {
@@ -903,10 +908,10 @@ public class MapTest extends AbstractCairoTest {
                 }
             } else {
                 // 80% of using a stable offheap sequence
-                long hi = stableSink.hi();
-                stableSink.put(index);
+                long hi = STABLE_SINK.hi();
+                STABLE_SINK.put(index);
                 DirectUtf8String directStr = new DirectUtf8String(true);
-                directStr.of(hi, stableSink.hi(), true, true);
+                directStr.of(hi, STABLE_SINK.hi(), true, true);
                 key.putVarchar(directStr);
             }
         } else {
