@@ -259,7 +259,8 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     @Override
     default Utf8Sink putAscii(char c) {
         // This works for impls that don't care about the ASCII/non-ASCII distinction.
-        // Must override in impls that do care, and assert the char is ASCII.
+        // In impls that do care, calling put(byte) would drop the `isAscii` status,
+        // and therefore such impls must override it.
         return put((byte) c);
     }
 

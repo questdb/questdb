@@ -114,7 +114,6 @@ public class Utf8StringSink implements MutableUtf8Sink {
 
     @Override
     public Utf8Sink putAscii(char c) {
-        assert c < 128 : "c is non-ASCII";
         return putByte0((byte) c);
     }
 
