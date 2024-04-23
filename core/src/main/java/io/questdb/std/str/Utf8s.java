@@ -154,10 +154,14 @@ public final class Utf8s {
     }
 
     /**
-     * Return true if the sequences contain equal strings. Co-exists with
+     * Checks if the given UTF-8 sequences contain equal strings. Co-exists with
      * {@link #equals(Utf8Sequence, Utf8Sequence)} merely to avoid megamorphism
      * in {@link Utf8StringIntHashMap} and {@link Utf8StringObjHashMap}. Also, unlike
      * the general equals method, this one doesn't allow nulls.
+     *
+     * @param l left sequence to compare
+     * @param r right sequence to compare
+     * @return true if the sequences contain equal strings, false otherwise
      */
     public static boolean equals(@NotNull DirectUtf8Sequence l, @NotNull Utf8String r) {
         final int size = l.size();
