@@ -284,6 +284,13 @@ final class UnorderedVarcharMapRecord implements MapRecord {
     }
 
     @Override
+    public int getVarcharSize(int col) {
+        long address = addressOfColumn(col);
+        long packedHashSizeFlags = Unsafe.getUnsafe().getLong(address);
+        return UnorderedVarcharMap.unpackSize(packedHashSizeFlags);
+    }
+
+    @Override
     public long keyHashCode() {
         int lenAndFlags = Unsafe.getUnsafe().getInt(startAddress + 4);
         long ptr = Unsafe.getUnsafe().getLong(startAddress + 8) & UnorderedVarcharMap.PTR_MASK;
@@ -329,13 +336,13 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     private DirectUtf8String getVarchar0(int col, DirectUtf8String us) {
         long address = addressOfColumn(col);
-        long packedHashAndSize = Unsafe.getUnsafe().getLong(address);
-        byte flags = UnorderedVarcharMap.unpackFlags(packedHashAndSize);
+        long packedHashSizeFlags = Unsafe.getUnsafe().getLong(address);
+        byte flags = UnorderedVarcharMap.unpackFlags(packedHashSizeFlags);
         if (UnorderedVarcharMap.isNull(flags)) {
             return null;
         }
         boolean isAscii = UnorderedVarcharMap.isAscii(flags);
-        long size = UnorderedVarcharMap.unpackSize(packedHashAndSize);
+        long size = UnorderedVarcharMap.unpackSize(packedHashSizeFlags);
         long ptrWithUnstableFlag = Unsafe.getUnsafe().getLong(address + Long.BYTES);
         long ptr = ptrWithUnstableFlag & UnorderedVarcharMap.PTR_MASK;
         return us.of(ptr, ptr + size, isAscii, ptr == ptrWithUnstableFlag);
