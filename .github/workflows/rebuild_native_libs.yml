@@ -64,26 +64,25 @@ jobs:
       - name: Install tooling
         run: |
           brew install make cmake gcc nasm
-      - name: Build MacOS
+      - name: Build MacOS C/C++ Library
         run: |
           cd core
           cmake -B build/release -DCMAKE_BUILD_TYPE=Release
           cmake --build build/release --config Release
-          cd rust/qdbr
+      - name: Build MacOS Rust Library
+        run: |
+          cd core/rust/qdbr
           cargo clean
           cargo build --release
-          cd ../../../
-      - name: Copy ARM MacOS Rust library to the final directory
+      - name: Copy ARM MacOS Rust Library to the final directory
         if: ${{ matrix.os == 'macos-14' }}
         run: |
-          pwd
-          ls -la core/rust/qdbr/target/release/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/armosx/
-      - name: Copy x64 MacOS Rust library to the final directory
+      - name: Copy x64 MacOS Rust Library to the final directory
         if: ${{ matrix.os == 'macos-latest' }}
         run: |
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/osx/
-      - name: Save ARM MacOS binary to Cache
+      - name: Save ARM MacOS Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
         with:
@@ -91,7 +90,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
             core/src/main/resources/io/questdb/bin/armosx/libquestdbr.dylib
           key: nativelibs-armosx-${{ github.sha }}
-      - name: Save x64 MacOS binary to Cache
+      - name: Save x64 MacOS Libraries to Cache
         if: ${{ matrix.os == 'macos-latest' }}
         uses: actions/cache/save@v3
         with:
@@ -114,31 +113,34 @@ jobs:
         run: |
           cd ./core
           cmake -G "$generator" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
-      - name: Build x64 Linux
+      - name: Build x64 Linux C/C++ Library
         run: |
-          cd ./core
+          cd core
           cmake --build cmake-build-release --config Release
-          cd rust/qdbr
+      - name: Build x64 Linux Rust Library
+        run: |
+          cd core/rust/qdbr
           cargo clean
           cargo build --release
-          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/ 
-          cd ../../../
+          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
       - name: CMAKE ARM Linux
         run: |
           cd ./core
           cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DARM_TOOLCHAIN_PATH=/usr/bin/ -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
-      - name: Build ARM Linux
+      - name: Build ARM Linux C/C++ Library
         run: |
-          cd ./core
+          cd core
           cmake --build cmake-build-release-arm64 --config Release
-          cd rust/qdbr
+      - name: Build ARM Linux Rust Library
+        run: |
+          cd core/rust/qdbr
           cargo install cross
           rustup target add aarch64-unknown-linux-gnu
           cargo clean
-          cross build --target aarch64-unknown-linux-gnu --release --target-dir target
+          cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
           ls -la target/aarch64-unknown-linux-gnu/ 
-          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/ 
-          cd ../../../
+          ls -la target/release/ 
+          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/
       - name: Download windows jni_md.h from JDK 11
         run: |
           cd ./core
