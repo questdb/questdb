@@ -164,11 +164,12 @@ jobs:
           cd core/rust/qdbr
           cargo clean
           cross build --target x86_64-pc-windows-gnu --release --target-dir `pwd`/target
+          ls -la target
           cp target/x86_64-pc-windows-gnu/release/libquestdbr.dll ../../src/main/resources/io/questdb/bin/windows/
       - name: Check git status
         run: |
           git status
-      - name: Save x64 Linux binary to Cache
+      - name: Save x64 Linux Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
@@ -182,7 +183,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
             core/src/main/resources/io/questdb/bin/armlinux/libquestdbr.so
           key: nativelibs-armlinux-${{ github.sha }}
-      - name: Save Windows binary to Cache
+      - name: Save Windows Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
