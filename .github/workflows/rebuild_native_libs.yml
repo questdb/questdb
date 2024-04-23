@@ -229,6 +229,7 @@ jobs:
         with:
           path: |
             core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
+            core/src/main/resources/io/questdb/bin/armlinux/libquestdbr.so
           key: nativelibs-armlinux-${{ github.sha }}
       - name: Restore Windows binary from Cache
         uses: actions/cache/restore@v3
