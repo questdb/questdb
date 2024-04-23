@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "libquestdbr"
+name = "questdbr"
 crate-type = ["dylib"]
 
 [dependencies]
