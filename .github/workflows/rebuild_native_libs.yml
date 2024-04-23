@@ -112,10 +112,6 @@ jobs:
         run: |
           cd ./core
           cmake --build cmake-build-release-arm64 --config Release
-          cd rust/qdbr
-          rustup target add aarch64-unknown-linux-gnu
-          cargo build --target aarch64-unknown-linux-gnu
-          cd ../../../
       - name: Download windows jni_md.h from JDK 11
         run: |
           cd ./core
