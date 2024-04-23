@@ -69,6 +69,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     static final int MASK_FLAGS_FROM_SIZE = ~(FLAG_IS_ASCII | FLAG_IS_NULL);
     static final long PTR_UNSTABLE_MASK = 0x8000000000000000L; // 63 bits
     static final long PTR_MASK = ~PTR_UNSTABLE_MASK;
+    static final int SIZE_IS_NULL = 1 << 30;
     private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     private static final int MIN_KEY_CAPACITY = 16;
     private final GroupByAllocator allocator;
@@ -464,6 +465,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     static boolean isNull(byte flags) {
         return (flags & FLAG_IS_NULL) != 0;
     }
+
+    static boolean isSizeNull(int sizeAndFlags) {
+        return (sizeAndFlags & SIZE_IS_NULL) != 0;
+    }
+
 
     static byte unpackFlags(long packedHashSizeFlags) {
         return (byte) (packedHashSizeFlags >>> 56);

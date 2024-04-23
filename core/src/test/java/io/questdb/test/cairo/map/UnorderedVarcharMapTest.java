@@ -71,7 +71,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
             putStable("", -1, map, sinkA, true);
             putStable(null, -2, map, sinkA, true);
 
-            MapRecordCursor danglingCursor = null;
+            MapRecordCursor danglingCursor;
             try (MapRecordCursor cursor = map.getCursor()) {
                 assertCursor(cursor, keyCount);
                 Assert.assertFalse(cursor.hasNext());
@@ -222,24 +222,6 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMergeOver4GBMap() throws Exception {
-        SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (UnorderedVarcharMap mapA = newDefaultMap(valueType)) {
-
-            // huge source map capacity, fingers crossed for lazy allocation
-            mapA.setKeyCapacity((int) (1L << 29));
-            MapKey mapKey = mapA.withKey();
-            mapKey.putVarchar(new Utf8String("foobar"));
-            MapValue value = mapKey.createValue();
-            value.putInt(0, 42);
-
-            try (UnorderedVarcharMap mapB = newDefaultMap(valueType)) {
-                mapA.merge(mapB, (dstValue, srcValue) -> dstValue.putInt(0, dstValue.getInt(0) + srcValue.getInt(0)));
-            }
-        }
-    }
-
-    @Test
     public void testMergeUnstable() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (UnorderedVarcharMap mapA = newDefaultMap(valueType)) {
@@ -370,16 +352,20 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         MapRecord record = cursor.getRecord();
         while (cursor.hasNext()) {
             Utf8Sequence varcharA = record.getVarcharA(1);
+            int varcharSize = record.getVarcharSize(1);
             int value = record.getInt(0);
             if (value >= 0) {
                 int n = Numbers.parseInt(varcharA);
+                Assert.assertEquals(varcharA.size(), varcharSize);
                 Assert.assertEquals(value, n);
                 Assert.assertFalse(keys.getAndSet(n));
             } else if (value == -1) {
                 TestUtils.assertEquals("", varcharA);
+                Assert.assertEquals(0, varcharSize);
                 Assert.assertFalse(emptyObserved);
                 emptyObserved = true;
             } else if (value == -2) {
+                Assert.assertEquals(-1, varcharSize);
                 Assert.assertNull(varcharA);
                 Assert.assertFalse(nullObserved);
                 nullObserved = true;

@@ -286,8 +286,12 @@ final class UnorderedVarcharMapRecord implements MapRecord {
     @Override
     public int getVarcharSize(int col) {
         long address = addressOfColumn(col);
-        long packedHashSizeFlags = Unsafe.getUnsafe().getLong(address);
-        return UnorderedVarcharMap.unpackSize(packedHashSizeFlags);
+        int sizeWithFlags = Unsafe.getUnsafe().getInt(address + 4);
+        boolean isNull = UnorderedVarcharMap.isSizeNull(sizeWithFlags);
+        if (isNull) {
+            return -1;
+        }
+        return sizeWithFlags & UnorderedVarcharMap.MASK_FLAGS_FROM_SIZE;
     }
 
     @Override
