@@ -109,15 +109,7 @@ public interface CharSink<T extends CharSink<?>> {
         return putAscii(value ? "true" : "false");
     }
 
-    default T putAny(char c) {
-        return (T) this;
-    }
-
     default T putAny(@Nullable Utf8Sequence us) {
-        return (T) this;
-    }
-
-    default T putAny(@Nullable CharSequence cs) {
         return (T) this;
     }
 
