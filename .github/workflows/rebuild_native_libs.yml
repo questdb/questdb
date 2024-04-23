@@ -28,6 +28,15 @@ jobs:
       - name: log git status
         run: |
           git status
+      - name: Copy Windows Rust Library to the final directory
+        run: |
+          cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
+      - name: Save Windows Rust Library to Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
+          key: nativelibs-windows-rust-${{ github.sha }}
   build-freebsd:
     runs-on: ubuntu-latest
     steps:
@@ -198,7 +207,6 @@ jobs:
         with:
           path: |
             core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
-            core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
           key: nativelibs-windows-${{ github.sha }}
   collect-commit-and-push:
     needs: [ build-freebsd, build-macos, build-others ]
@@ -242,13 +250,18 @@ jobs:
             core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
             core/src/main/resources/io/questdb/bin/armlinux/libquestdbr.so
           key: nativelibs-armlinux-${{ github.sha }}
-      - name: Restore Windows binary from Cache
+      - name: Restore Windows C/C++ Library from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
-            core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
           key: nativelibs-windows-${{ github.sha }}
+      - name: Restore Windows Rust Library from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
+          key: nativelibs-windows-rust-${{ github.sha }}
       - name: Commit the files
         run: |
           git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
