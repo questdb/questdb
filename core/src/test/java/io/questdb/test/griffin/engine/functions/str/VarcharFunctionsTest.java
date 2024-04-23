@@ -73,6 +73,66 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceConstant() throws Exception {
+        assertQuery(
+                "replace\n" +
+                        "som\n",
+                "select replace('tom'::varchar, 't'::varchar, 's'::varchar) from x",
+                "create table x as (select x from long_sequence(1))",
+                null, true, true);
+    }
+
+    @Test
+    public void testReplaceConstantFirstArgNull() throws Exception {
+        assertQuery(
+                "replace\n" +
+                        "null\n",
+                "select replace(NULL, 't'::varchar, 's'::varchar) from x",
+                "create table x as (select x from long_sequence(1))",
+                null, true, true);
+    }
+
+    @Test
+    public void testReplaceConstantSecondArgEmpty() throws Exception {
+        assertQuery(
+                "replace\n" +
+                        "tom\n",
+                "select replace('tom'::varchar, ''::varchar, 's'::varchar) from x",
+                "create table x as (select x from long_sequence(1))",
+                null, true, true);
+    }
+
+    @Test
+    public void testReplaceConstantSecondArgNull() throws Exception {
+        assertQuery(
+                "replace\n" +
+                        "\n",
+                "select replace('tom'::varchar, NULL, 's'::varchar) from x",
+                "create table x as (select x from long_sequence(1))",
+                null, true, true);
+    }
+
+    @Test
+    public void testReplaceConstantThirdArgEmpty() throws Exception {
+        assertQuery(
+                "replace\n" +
+                        "om\n",
+                "select replace('tom'::varchar, 't'::varchar, ''::varchar) from x",
+                "create table x as (select x from long_sequence(1))",
+                null, true, true);
+    }
+
+    @Test
+    public void testReplaceConstantThirdArgNull() throws Exception {
+        assertQuery(
+                "replace\n" +
+                        "\n",
+                "select replace('tom'::varchar, 't'::varchar, NULL) from x",
+                "create table x as (select x from long_sequence(1))",
+                null, true, true);
+    }
+
+    @Test
     public void testRtrim() throws Exception {
         assertQuery(
                 "k\trtrim\n" +
