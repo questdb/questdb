@@ -109,6 +109,9 @@ jobs:
           sudo sysctl -w fs.file-max=500000
           sudo apt-get update -y
           sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64 g++-mingw-w64
+      - name: Install rs-cross
+        run: |
+          cargo install cross
       - name: Generate Makefiles
         run: |
           cd ./core
@@ -134,31 +137,21 @@ jobs:
       - name: Build ARM Linux Rust Library
         run: |
           cd core/rust/qdbr
-          cargo install cross
           cargo clean
           cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
-          ls -la target/aarch64-unknown-linux-gnu/release/ 
-          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/
+          cp target/aarch64-unknown-linux-gnu/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/
       - name: Download windows jni_md.h from JDK 11
         run: |
-          cd ./core
+          cd core
           curl https://raw.githubusercontent.com/AdoptOpenJDK/openjdk-jdk11/master/src/java.base/windows/native/include/jni_md.h > $JAVA_HOME/include/jni_md.h
       - name: CMake Windows
         run: |
-          cd ./core
+          cd core
           cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/windows-x86_64.cmake -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-win64
-      - name: Build Windows
+      - name: Build Windows C/C++ Library
         run: |
-          cd ./core
+          cd core
           cmake --build cmake-build-release-win64 --config Release
-          cd rust/qdbr
-          cargo install cross
-          rustup target add x86_64-pc-windows-gnu
-          cargo clean
-          cross build --target x86_64-pc-windows-gnu --release
-          ls -la target/release/ 
-          cp target/release/libquestdbr.dll ../../src/main/resources/io/questdb/bin/windows/ 
-          cd ../../../
       - name: Check C++ runtime dependency
         run: |
           cd ./core
@@ -166,6 +159,12 @@ jobs:
             echo "Failure: C++ runtime dependency detected"
             exit 1
           fi
+      - name: Build Windows Rust Library
+        run: |
+          cd core/rust/qdbr
+          cargo clean
+          cross build --target x86_64-pc-windows-gnu --release --target-dir `pwd`/target
+          cp target/x86_64-pc-windows-gnu/release/libquestdbr.dll ../../src/main/resources/io/questdb/bin/windows/
       - name: Check git status
         run: |
           git status
