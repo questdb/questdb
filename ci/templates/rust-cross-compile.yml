@@ -42,6 +42,12 @@ jobs:
           cd core/rust/qdb-core
           cross build --target x86_64-unknown-freebsd --target-dir target/cross/x86_64-unknown-freebsd
         displayName: "x86_64-unknown-freebsd"
+      - script: |
+          find core/target
+        displayName: "List core/target directory"
+      - script: |
+          find core/rust/qdb/target/cross
+        displayName: "List core/rust/qdb/target/cross directory"
       - task: PublishBuildArtifacts@1
         inputs:
           PathtoPublish: core/rust/qdb/target/cross
