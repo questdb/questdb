@@ -153,15 +153,24 @@ public final class Utf8s {
         return !(seqSize == 0 || seqSize < size) && equalsAsciiLowerCase(asciiEnds, seq, seqSize - size, seqSize);
     }
 
+    /**
+     * Return true if the sequences contain equal strings. Co-exists with
+     * {@link #equals(Utf8Sequence, Utf8Sequence)} merely to avoid megamorphism
+     * in {@link Utf8StringIntHashMap} and {@link Utf8StringObjHashMap}. Also, unlike
+     * the general equals method, this one doesn't allow nulls.
+     */
+    public static boolean equals(@NotNull DirectUtf8Sequence l, @NotNull Utf8String r) {
+        final int size = l.size();
+        return (size == r.size() && l.equalsAssumingSameSize(r, size));
+    }
+
     public static boolean equals(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
         if (l == null && r == null) {
             return true;
         }
-
         if (l == null || r == null) {
             return false;
         }
-
         final int size = l.size();
         return (size == r.size() && l.equalsAssumingSameSize(r, size));
     }
@@ -374,37 +383,6 @@ public final class Utf8s {
             }
         }
         return ll > rl;
-    }
-
-    /**
-     * Strictly less than (&lt;) comparison of two UTF8 sequences in lexicographical
-     * order. For example, for:
-     * l = aaaaa
-     * r = aaaaaaa
-     * the l &lt; r will produce "true", however for:
-     * l = bbbb
-     * r = aaaaaaa
-     * the l &lt; r will produce "false", because b &lt; a.
-     *
-     * @param l left sequence, can be null
-     * @param r right sequence, can be null
-     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
-     */
-    public static boolean lessThan(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
-        if (l == null || r == null) {
-            return false;
-        }
-
-        final int ll = l.size();
-        final int rl = r.size();
-        final int min = Math.min(ll, rl);
-        for (int i = 0; i < min; i++) {
-            final int k = Numbers.compareUnsigned(l.byteAt(i), r.byteAt(i));
-            if (k != 0) {
-                return k < 0;
-            }
-        }
-        return ll < rl;
     }
 
     public static int hashCode(@NotNull Utf8Sequence value) {
@@ -656,6 +634,37 @@ public final class Utf8s {
             }
         }
         return -1;
+    }
+
+    /**
+     * Strictly less than (&lt;) comparison of two UTF8 sequences in lexicographical
+     * order. For example, for:
+     * l = aaaaa
+     * r = aaaaaaa
+     * the l &lt; r will produce "true", however for:
+     * l = bbbb
+     * r = aaaaaaa
+     * the l &lt; r will produce "false", because b &lt; a.
+     *
+     * @param l left sequence, can be null
+     * @param r right sequence, can be null
+     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     */
+    public static boolean lessThan(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
+        if (l == null || r == null) {
+            return false;
+        }
+
+        final int ll = l.size();
+        final int rl = r.size();
+        final int min = Math.min(ll, rl);
+        for (int i = 0; i < min; i++) {
+            final int k = Numbers.compareUnsigned(l.byteAt(i), r.byteAt(i));
+            if (k != 0) {
+                return k < 0;
+            }
+        }
+        return ll < rl;
     }
 
     public static boolean lessThan(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r, boolean negated) {
