@@ -164,7 +164,7 @@ jobs:
           cd core/rust/qdbr
           cargo clean
           cross build --target x86_64-pc-windows-gnu --release --target-dir `pwd`/target
-          ls -la target/x86_64-pc-windows-gnu/
+          ls -la target/x86_64-pc-windows-gnu/release
           cp target/x86_64-pc-windows-gnu/release/libquestdbr.dll ../../src/main/resources/io/questdb/bin/windows/
       - name: Check git status
         run: |

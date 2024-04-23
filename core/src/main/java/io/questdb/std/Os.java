@@ -254,7 +254,7 @@ public final class Os {
             } else if (osName.contains("Windows")) {
                 type = WINDOWS;
                 libRoot = "/io/questdb/bin/windows/";
-                libExt = ".ddl";
+                libExt = ".dll";
             } else if (osName.contains("FreeBSD")) {
                 type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
                 libRoot = "/io/questdb/bin/freebsd/";
@@ -266,13 +266,16 @@ public final class Os {
             loadLib(libRoot + "libquestdb" + libExt);
             // Rust library is loaded conditionally to allow for convenience
             // of the development environments that target Rust source code
-            String devLib = "/io/questdb/rust/libquestdbr" + libExt;
+            // The library file is missing "lib" prefix due to a possible bug in the
+            // rust-maven-plugin.
+            String devLib = "/io/questdb/rust/questdbr" + libExt;
             InputStream libStream = Os.class.getResourceAsStream(devLib);
             if (libStream == null) {
                 loadLib(libRoot + "libquestdbr" + libExt);
             } else {
                 loadLib(devLib, libStream);
             }
+            initRust();
         } else {
             type = _32Bit;
         }
