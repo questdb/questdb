@@ -133,10 +133,10 @@ jobs:
           cmake --build cmake-build-release-arm64 --config Release
           cd rust/qdbr
           cargo install cross
-          rustup target add x86_64-pc-windows-msvc
+          rustup target add aarch64-unknown-linux-gnu
           cargo clean
           cross build --target aarch64-unknown-linux-gnu --release --target-dir target
-          ls -la target 
+          ls -la target/aarch64-unknown-linux-gnu/ 
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/ 
           cd ../../../
       - name: Download windows jni_md.h from JDK 11
