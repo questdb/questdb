@@ -72,7 +72,7 @@ macro_rules! unwrap_or_throw {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Qdb_initQdb(mut env: JNIEnv, _class: JClass) {
+pub extern "system" fn Java_io_questdb_std_Os_initRust(mut env: JNIEnv, _class: JClass) {
     if std::env::var("RUST_BACKTRACE").is_err() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
@@ -84,7 +84,7 @@ pub extern "system" fn Java_io_questdb_std_Qdb_initQdb(mut env: JNIEnv, _class: 
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Qdb_smokeTest(
+pub extern "system" fn Java_io_questdb_std_Os_rustSmokeTest(
     _env: JNIEnv,
     _class: JClass,
     a: i64,
@@ -94,7 +94,7 @@ pub extern "system" fn Java_io_questdb_std_Qdb_smokeTest(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Qdb_isReleaseBuild(
+pub extern "system" fn Java_io_questdb_std_Os_isRustReleaseBuild(
     _env: JNIEnv,
     _class: JClass,
 ) -> bool {
