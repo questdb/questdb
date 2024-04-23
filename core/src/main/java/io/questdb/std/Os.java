@@ -266,9 +266,13 @@ public final class Os {
             loadLib(libRoot + "libquestdb" + libExt);
             // Rust library is loaded conditionally to allow for convenience
             // of the development environments that target Rust source code
-            // The library file is missing "lib" prefix due to a possible bug in the
-            // rust-maven-plugin.
-            String devLib = "/io/questdb/rust/questdbr" + libExt;
+            // The library file is missing "lib" prefix on Windows
+            final String devLib;
+            if (type == WINDOWS) {
+                devLib = "/io/questdb/rust/questdbr" + libExt;
+            } else {
+                devLib = "/io/questdb/rust/libquestdbr" + libExt;
+            }
             InputStream libStream = Os.class.getResourceAsStream(devLib);
             if (libStream == null) {
                 loadLib(libRoot + "libquestdbr" + libExt);
