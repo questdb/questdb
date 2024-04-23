@@ -127,6 +127,13 @@ jobs:
         run: |
           cd ./core
           cmake --build cmake-build-release-arm64 --config Release
+          cd rust/qdbr
+          cargo install cross
+          rustup target add x86_64-pc-windows-msvc
+          cross build --target aarch64-unknown-linux-gnu --release
+          ls -la target/release/ 
+          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/ 
+          cd ../../../
       - name: Download windows jni_md.h from JDK 11
         run: |
           cd ./core
@@ -141,10 +148,10 @@ jobs:
           cmake --build cmake-build-release-win64 --config Release
           cd rust/qdbr
           cargo install cross
-          rustup target add x86_64-pc-windows-msvc
-          cross build --target x86_64-pc-windows-msvc --release
+          rustup target add x86_64-pc-windows-gnu
+          cross build --target x86_64-pc-windows-gnu --release
           ls -la target/release/ 
-          cp target/release/libquestdbr.dll ../../src/main/resources/io/questdb/bin/windows/ 
+          cp target/release/libquestdbr.do ../../src/main/resources/io/questdb/bin/windows/libquestdbr.dll 
           cd ../../../
       - name: Check C++ runtime dependency
         run: |
