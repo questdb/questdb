@@ -31,21 +31,17 @@ jobs:
 #          git submodule update --init --remote
 #        displayName: "install cross"
       - script: |
-          cd core/rust/qdb-core
+          cd core/rust/qdb
           cross build --target aarch64-unknown-linux-gnu --target-dir target/cross/aarch64-unknown-linux-gnu --release
         displayName: "aarch64-unknown-linux-gnu"
       - script: |
-          cd core/rust/qdb-core
+          cd core/rust/qdb
           cross build --target x86_64-unknown-linux-gnu --target-dir target/cross/x86_64-unknown-linux-gnu --release
         displayName: "x86_64-unknown-linux-gnu"
       - script: |
-          cd core/rust/qdb-core
+          cd core/rust/qdb
           cross build --target x86_64-unknown-freebsd --target-dir target/cross/x86_64-unknown-freebsd --release
         displayName: "x86_64-unknown-freebsd"
-      - script: |
-          find core/target
-          echo "done"
-        displayName: "List core/target directory"
       - script: |
           find core/rust/qdb/target
           echo "done"
@@ -54,9 +50,9 @@ jobs:
           find .
           echo "done"
         displayName: "List all"
-      - task: PublishBuildArtifacts@1
-        inputs:
-          PathtoPublish: core/rust/qdb/target
-          ArtifactName: cross
-          publishLocation: Container
-        displayName: "Publish cross build artifacts"
+#      - task: PublishBuildArtifacts@1
+#        inputs:
+#          PathtoPublish: core/rust/qdb/target
+#          ArtifactName: cross
+#          publishLocation: Container
+#        displayName: "Publish cross build artifacts"
