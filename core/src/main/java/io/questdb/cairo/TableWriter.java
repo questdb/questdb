@@ -833,101 +833,111 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isSequential,
             SecurityContext securityContext
     ) {
-        int existingColIndex = metadata.getColumnIndexQuiet(columnName);
-        if (existingColIndex < 0) {
-            throw CairoException.nonCritical().put("cannot change column type, column does not exists [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-        }
-        int existingType = metadata.getColumnType(existingColIndex);
-        if (existingType < 0) {
-            throw CairoException.nonCritical().put("cannot change column type, column is deleted [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-        }
-
-        LOG.info().$("converting column [table=").$(tableToken).$(", column=").$(columnName)
-                .$(", from=").$(ColumnType.nameOf(existingType))
-                .$(", to=").$(ColumnType.nameOf(newType)).I$();
-
-        boolean isDedupKey = metadata.isDedupKey(existingColIndex);
-        boolean existingColumnIndexed = metadata.isColumnIndexed(existingColIndex);
-        if (existingType == newType) {
-            if (ColumnType.isSymbol(newType)) {
-                // If symbol attributes change, rewrite symbol maps instead of the data.
-                if (symbolMapWriters.getQuick(existingColIndex).isCached() != symbolCacheFlag) {
-                    changeCacheFlag(existingColIndex, symbolCacheFlag);
-                    return;
-                }
-                if (symbolMapWriters.getQuick(existingColIndex).getSymbolCapacity() != symbolCapacity) {
-                    changeSymbolCapacity(columnName, symbolCapacity);
-                    return;
-                }
-                if (isIndexed != existingColumnIndexed) {
-                    if (isIndexed) {
-                        addIndex(columnName, indexValueBlockCapacity);
-                    } else {
-                        dropIndex(columnName);
-                    }
-                    return;
-                }
-            }
-            LOG.info().$("column type is the same, will not change the column type [table=").utf8(tableToken.getTableName()).$(", column=").utf8(columnName).I$();
-            return;
-        }
-
-        int columnIndex = columnCount;
-        long columnNameTxn = getTxn();
-
-        // Set txn number in the column version file to mark the transaction where the column is added
-        columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getPartitionTimestampByIndex(0));
-
-        if (ColumnType.isSymbol(newType)) {
-            createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
-        } else {
-            // maintain sparse list of symbol writers
-            symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
-        }
-        getConvertOperator().convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
-
-        // Column converted, add new one to _meta file and remove the existing column
-        addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, existingColIndex);
-
-        // close old column files
-        freeColumnMemory(existingColIndex);
-
-        // remove old column to in-memory metadata object and add new one
-        metadata.removeColumn(existingColIndex);
-        metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey);
-
-        // open new column files
-        if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
-            openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
-        }
-
-        // write index if necessary or remove the old one
-        // index must be created before column is initialised because
-        // it uses primary column object as temporary tool
-        if (isIndexed) {
-            SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
-            writeIndex(columnName, indexValueBlockCapacity, columnIndex, indexer);
-            // add / remove indexers
-            indexers.extendAndSet(columnIndex, indexer);
-            populateDenseIndexerList();
-        }
-
         try {
-            // open _meta file
-            openMetaFile(ff, path, rootLen, metaMem);
-            // remove _todo
-            clearTodoLog();
-        } catch (CairoException e) {
-            throwDistressException(e);
+            int existingColIndex = metadata.getColumnIndexQuiet(columnName);
+            if (existingColIndex < 0) {
+                throw CairoException.nonCritical().put("cannot change column type, column does not exists [table=")
+                        .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+            }
+            int existingType = metadata.getColumnType(existingColIndex);
+            if (existingType < 0) {
+                throw CairoException.nonCritical().put("cannot change column type, column is deleted [table=")
+                        .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+            }
+
+            LOG.info().$("converting column [table=").$(tableToken).$(", column=").$(columnName)
+                    .$(", from=").$(ColumnType.nameOf(existingType))
+                    .$(", to=").$(ColumnType.nameOf(newType)).I$();
+
+            boolean isDedupKey = metadata.isDedupKey(existingColIndex);
+            boolean existingColumnIndexed = metadata.isColumnIndexed(existingColIndex);
+            if (existingType == newType) {
+                if (ColumnType.isSymbol(newType)) {
+                    // If symbol attributes change, rewrite symbol maps instead of the data.
+                    if (symbolMapWriters.getQuick(existingColIndex).isCached() != symbolCacheFlag) {
+                        changeCacheFlag(existingColIndex, symbolCacheFlag);
+                        return;
+                    }
+                    if (symbolMapWriters.getQuick(existingColIndex).getSymbolCapacity() != symbolCapacity) {
+                        changeSymbolCapacity(columnName, symbolCapacity);
+                        return;
+                    }
+                    if (isIndexed != existingColumnIndexed) {
+                        if (isIndexed) {
+                            addIndex(columnName, indexValueBlockCapacity);
+                        } else {
+                            dropIndex(columnName);
+                        }
+                        return;
+                    }
+                }
+                LOG.info().$("column type is the same, will not change the column type [table=").utf8(tableToken.getTableName()).$(", column=").utf8(columnName).I$();
+                return;
+            }
+
+            int columnIndex = columnCount;
+            long columnNameTxn = getTxn();
+
+            // Set txn number in the column version file to mark the transaction where the column is added
+            columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getPartitionTimestampByIndex(0));
+
+            if (ColumnType.isSymbol(newType)) {
+                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
+            } else {
+                // maintain sparse list of symbol writers
+                symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
+            }
+            getConvertOperator().convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
+
+            // Column converted, add new one to _meta file and remove the existing column
+            addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, existingColIndex);
+
+            // close old column files
+            freeColumnMemory(existingColIndex);
+
+            // remove old column to in-memory metadata object and add new one
+            metadata.removeColumn(existingColIndex);
+            metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey);
+
+            // open new column files
+            if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+                long partitionTimestamp = txWriter.getLastPartitionTimestamp();
+                setStateForTimestamp(path, partitionTimestamp);
+                openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
+                path.trimTo(rootLen);
+            }
+
+            // write index if necessary or remove the old one
+            // index must be created before column is initialised because
+            // it uses primary column object as temporary tool
+            if (isIndexed) {
+                SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
+                writeIndex(columnName, indexValueBlockCapacity, columnIndex, indexer);
+                // add / remove indexers
+                indexers.extendAndSet(columnIndex, indexer);
+                populateDenseIndexerList();
+            }
+
+            try {
+                // open _meta file
+                openMetaFile(ff, path, rootLen, metaMem);
+                // remove _todo
+                clearTodoLog();
+            } catch (CairoException e) {
+                throwDistressException(e);
+            }
+
+            // commit transaction to _txn file
+            bumpMetadataAndColumnStructureVersion();
+
+            // purge old column files
+            getConvertOperator().finishColumnConversion();
+        } catch (Throwable th) {
+            LOG.error().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").$(columnName)
+                    .$(", error=").$(th).I$();
+        } finally {
+            path.trimTo(rootLen);
         }
-
-        // commit transaction to _txn file
-        bumpMetadataAndColumnStructureVersion();
-
-        // purge old column files
-        getConvertOperator().finishColumnConversion();
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
