@@ -836,12 +836,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             int columnIndex
     ) throws SqlException {
-        AlterOperationBuilder addColumn = alterOperationBuilder.ofColumnChangeType(
+        AlterOperationBuilder changeColumn = alterOperationBuilder.ofColumnChangeType(
                 tableNamePosition,
                 tableToken,
                 tableMetadata.getTableId()
         );
-        int newColumnType = addColumnWithType(addColumn, columnName, columnNamePosition);
+        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition);
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");

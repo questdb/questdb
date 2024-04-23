@@ -39,6 +39,54 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeIndexedSymbolToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            ddl("create table y as (select ik from x)", sqlExecutionContext);
+            ddl("alter table x alter column ik type string", sqlExecutionContext);
+
+            assertSqlCursorsConvertedStrings(
+                    "select ik from y",
+                    "select ik from x"
+            );
+
+            insert("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
+            assertSql("ik\nabc\n", "select ik from x limit -1");
+
+            insert("insert into y(ik) values('abc')", sqlExecutionContext);
+            assertSqlCursorsConvertedStrings(
+                    "select 'abc' as ik",
+                    "select ik from x where ik = 'abc'"
+
+            );
+        });
+    }
+
+    @Test
+    public void testChangeStringToIndexedSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            ddl("create table y as (select c from x)", sqlExecutionContext);
+            ddl("alter table x alter column c type symbol index", sqlExecutionContext);
+
+            assertSqlCursorsConvertedStrings(
+                    "select c from y",
+                    "select c from x"
+            );
+
+            insert("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
+            assertSql("c\nabc\n", "select c from x limit -1");
+
+            insert("insert into y(c) values('abc')", sqlExecutionContext);
+            assertSqlCursorsConvertedStrings(
+                    "select c from y where c = 'abc'",
+                    "select c from x where c = 'abc'"
+
+            );
+        });
+    }
+
+    @Test
     public void testChangeStringToSymbol() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -83,8 +131,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             ddl("alter table x alter column c type string", sqlExecutionContext);
 
             assertSqlCursorsConvertedStrings(
-                    "select c from x",
-                    "select c from z"
+                    "select c from z",
+                    "select c from x"
             );
         });
     }
@@ -127,8 +175,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 ddl("alter table x alter column v type " + type, sqlExecutionContext);
 
                 assertSqlCursorsConvertedStrings(
-                        "select v from x",
-                        "select v from y"
+                        "select v from y",
+                        "select v from x"
                 );
             }
         });
@@ -153,8 +201,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             ddl("alter table x alter column v type varchar", sqlExecutionContext);
 
             assertSqlCursorsConvertedStrings(
-                    "select v from x",
-                    "select v from z"
+                    "select v from z",
+                    "select v from x"
             );
         });
     }
@@ -208,7 +256,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_varchar(5,64,2) v" +
                         " from long_sequence(1000)" +
-                        ") timestamp (timestamp) PARTITION BY HOUR BYPASS WAL;"
+                        "), index(ik) timestamp (timestamp) PARTITION BY HOUR BYPASS WAL;"
         );
     }
 

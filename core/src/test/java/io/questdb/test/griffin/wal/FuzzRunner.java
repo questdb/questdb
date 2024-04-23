@@ -66,6 +66,7 @@ public class FuzzRunner {
     protected int partitionCount;
     private double cancelRowsProb;
     private double colRenameProb;
+    private double colTypeChangeProb;
     private double collAddProb;
     private double collRemoveProb;
     private double dataAddProb;
@@ -370,6 +371,7 @@ public class FuzzRunner {
                 collAddProb,
                 collRemoveProb,
                 colRenameProb,
+                colTypeChangeProb,
                 dataAddProb,
                 truncateProb,
                 equalTsRowsProb,
@@ -423,6 +425,7 @@ public class FuzzRunner {
         this.collAddProb = collAddProb;
         this.collRemoveProb = collRemoveProb;
         this.colRenameProb = colRenameProb;
+        this.colTypeChangeProb = colRenameProb;
         this.dataAddProb = dataAddProb;
         this.truncateProb = truncateProb;
         this.equalTsRowsProb = equalTsRowsProb;

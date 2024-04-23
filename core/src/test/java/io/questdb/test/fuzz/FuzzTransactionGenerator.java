@@ -51,6 +51,7 @@ public class FuzzTransactionGenerator {
             double probabilityOfAddingNewColumn,
             double probabilityOfRemovingColumn,
             double probabilityOfRenamingColumn,
+            double probabilityOfColumnTypeChange,
             double probabilityOfDataInsert,
             double probabilityOfTruncate,
             double probabilityOfSameTimestamp,
@@ -65,10 +66,11 @@ public class FuzzTransactionGenerator {
 
         long lastTimestamp = minTimestamp;
 
-        double sumOfProbabilities = probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRemovingColumn + probabilityOfDataInsert + probabilityOfTruncate;
+        double sumOfProbabilities = probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRemovingColumn + probabilityOfDataInsert + probabilityOfTruncate + probabilityOfColumnTypeChange;
         probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
         probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
+        probabilityOfColumnTypeChange = probabilityOfColumnTypeChange / sumOfProbabilities;
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
 
         // To prevent long loops of cancelling rows, limit max probability of cancelling rows
@@ -116,6 +118,9 @@ public class FuzzTransactionGenerator {
             } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn + probabilityOfTruncate && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 // generate column add
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
+            } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn + probabilityOfTruncate + probabilityOfColumnTypeChange && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
+                // generate column add
+                meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else {
                 // generate row set
                 int blockRows = rowCount / (transactionCount - i);

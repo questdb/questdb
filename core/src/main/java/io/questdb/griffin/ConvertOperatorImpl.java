@@ -52,7 +52,6 @@ public class ConvertOperatorImpl implements Closeable {
     private final CairoConfiguration configuration;
     private SymbolMapReaderImpl symbolMapReader;
     private final TableWriter tableWriter;
-    private IndexBuilder indexBuilder;
     private int partitionUpdated;
     private SymbolMapper symbolMapper;
 
@@ -61,7 +60,6 @@ public class ConvertOperatorImpl implements Closeable {
         this.tableWriter = tableWriter;
         this.rootLen = rootLen;
         this.purgingOperator = purgingOperator;
-        this.indexBuilder = new IndexBuilder(configuration);
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
         this.ff = configuration.getFilesFacade();
         this.path = path;
@@ -70,7 +68,6 @@ public class ConvertOperatorImpl implements Closeable {
 
     @Override
     public void close() throws IOException {
-        indexBuilder = Misc.free(indexBuilder);
     }
 
     public void convertColumn(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {

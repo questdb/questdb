@@ -143,7 +143,7 @@ public final class PurgingOperator {
                             .$(", updateTxn=").$(txn)
                             .I$();
                 } else {
-                    log.info().$("column complete [table=").utf8(tableToken.getTableName())
+                    log.info().$("column purge complete [table=").utf8(tableToken.getTableName())
                             .$(", column=").utf8(columnName)
                             .$(", newColumnVersion=").$(txn - 1)
                             .I$();
