@@ -681,6 +681,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             if (value == null) {
                 size = 0;
                 ptrWithUnstableFlag = 0;
+                ptr = 0;
                 // set the 2 top bits to indicate null value (+ascii flag)
                 flags = FLAG_IS_NULL | FLAG_IS_ASCII;
             } else {

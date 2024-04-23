@@ -286,7 +286,7 @@ final class UnorderedVarcharMapRecord implements MapRecord {
     @Override
     public long keyHashCode() {
         int lenAndFlags = Unsafe.getUnsafe().getInt(startAddress + 4);
-        long ptr = Unsafe.getUnsafe().getLong(startAddress + 8);
+        long ptr = Unsafe.getUnsafe().getLong(startAddress + 8) & UnorderedVarcharMap.PTR_MASK;
 
         int size = lenAndFlags & UnorderedVarcharMap.MASK_FLAGS_FROM_SIZE;
         if (size > 0) {

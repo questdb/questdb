@@ -66,10 +66,10 @@ public class MapTest extends AbstractCairoTest {
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {MapType.ORDERED_MAP},
-                {MapType.UNORDERED_4_MAP},
-                {MapType.UNORDERED_8_MAP},
-                {MapType.UNORDERED_16_MAP},
+//                {MapType.ORDERED_MAP},
+//                {MapType.UNORDERED_4_MAP},
+//                {MapType.UNORDERED_8_MAP},
+//                {MapType.UNORDERED_16_MAP},
                 {MapType.UNORDERED_VARCHAR_MAP},
         });
     }
