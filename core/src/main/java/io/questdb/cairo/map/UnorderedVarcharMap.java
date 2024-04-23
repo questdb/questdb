@@ -207,17 +207,23 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 continue;
             }
 
-            // todo: this is likely incorrect - since it's just lower 32 bits of the hash
-            // we will probably have to rehash the key. but perhaps this could still be a fast-path
-            // when the map mask has less than 32 bits set?
-            int srcHash = unpackHash(srcHashSizeFlags);
+            long srcPtrWithUnstableFlags = Unsafe.getUnsafe().getLong(srcAddr + 8);
+            long srcPtr = srcPtrWithUnstableFlags & PTR_MASK;
             int srcSize = unpackSize(srcHashSizeFlags);
-
+            long srcHash;
+            if ((mask & 0xffffffff00000000L) == 0) {
+                // fast-path: mask has 32 or fewer bits -> we can use the stored 32 LSBs of the hash since the higher bits
+                // will be masked out and won't contribute to destAddr calculation
+                srcHash = unpackHash(srcHashSizeFlags) & 0x00000000ffffffffL;
+            } else {
+                // slow-path: mask has more than 32 bits -> we need to rehash the key :(
+                // todo: write a test for this path. it might require 4GB+ of memory to trigger...
+                srcHash = Hash.hashVarSizeMem64(srcPtr, srcSize);
+            }
             long destAddr = getStartAddress(srcHash & mask);
-            long srcPtrWithUnstableFlags;
+
             for (; ; ) {
                 long dstHashSizeFlags = Unsafe.getUnsafe().getLong(destAddr);
-                srcPtrWithUnstableFlags = Unsafe.getUnsafe().getLong(srcAddr + 8);
                 if (dstHashSizeFlags == 0) {
                     break;
                 } else if (dstHashSizeFlags == srcHashSizeFlags) {
