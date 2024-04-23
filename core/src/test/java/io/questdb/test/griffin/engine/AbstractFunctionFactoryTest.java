@@ -591,7 +591,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             } else {
                 Utf8Sequence a = func.getVarcharA(record);
                 Utf8Sequence b = func.getVarcharB(record);
-                if (!func.isConstant()) {
+                if (!func.isConstant() && a != null) {
                     Assert.assertNotSame(a, b);
                 }
                 TestUtils.assertEquals(expected, a);
