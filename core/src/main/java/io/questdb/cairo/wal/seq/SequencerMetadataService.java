@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -91,6 +90,6 @@ public class SequencerMetadataService implements MetadataServiceStub {
 
     @Override
     public void changeColumnType(CharSequence name, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
-        throw CairoException.nonCritical().put("change of column type not supported yet");
+        metadata.changeColumnType(name, newType);
     }
 }

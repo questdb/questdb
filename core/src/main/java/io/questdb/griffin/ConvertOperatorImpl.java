@@ -128,6 +128,7 @@ public class ConvertOperatorImpl implements Closeable {
 
                 final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
                 if (columnTop != -1) {
+                    long rowCount = maxRow - columnTop;
                     long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
 
                     path.trimTo(rootLen);
@@ -146,8 +147,12 @@ public class ConvertOperatorImpl implements Closeable {
                         tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
                     }
 
-                    LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen)).$(", column=").$(columnName).$(", from=").$(ColumnType.nameOf(existingType)).$(", to=").$(ColumnType.nameOf(newType)).I$();
-                    boolean ok = ColumnTypeConverter.convertColumn(maxRow - columnTop, existingType, srcFixFd, srcVarFd, symbolTable, newType, dstFixFd, dstVarFd, symbolMapperWriter, ff, appendPageSize);
+                    LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen))
+                            .$(", column=").$(columnName)
+                            .$(", from=").$(ColumnType.nameOf(existingType))
+                            .$(", to=").$(ColumnType.nameOf(newType))
+                            .$(", rowCount=").$(rowCount).I$();
+                    boolean ok = ColumnTypeConverter.convertColumn(rowCount, existingType, srcFixFd, srcVarFd, symbolTable, newType, dstFixFd, dstVarFd, symbolMapperWriter, ff, appendPageSize);
                     if (!ok) {
                         closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
                         LOG.critical().$("failed to convert column, column is corrupt [at=").$(path.trimTo(pathTrimToLen))

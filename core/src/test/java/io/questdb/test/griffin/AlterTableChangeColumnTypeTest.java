@@ -34,11 +34,6 @@ import org.junit.Test;
 
 public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
-    public void testChangeStringToInt() throws Exception {
-        assertFailure("alter table x alter column c type int", 34, "incompatible column type change [existing=STRING, new=INT]");
-    }
-
-    @Test
     public void testChangeIndexedSymbolToVarchar() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -51,6 +46,32 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             );
 
             insert("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
+            assertSql("ik\nabc\n", "select ik from x limit -1");
+
+            insert("insert into y(ik) values('abc')", sqlExecutionContext);
+            assertSqlCursorsConvertedStrings(
+                    "select 'abc' as ik",
+                    "select ik from x where ik = 'abc'"
+
+            );
+        });
+    }
+
+    @Test
+    public void testChangeIndexedSymbolToVarcharWal() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            ddl("create table y as (select ik from x)", sqlExecutionContext);
+            ddl("alter table x alter column ik type varchar", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSqlCursorsConvertedStrings(
+                    "select ik from y",
+                    "select ik from x"
+            );
+
+            insert("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
+            drainWalQueue();
             assertSql("ik\nabc\n", "select ik from x limit -1");
 
             insert("insert into y(ik) values('abc')", sqlExecutionContext);
@@ -84,6 +105,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             );
         });
+    }
+
+    @Test
+    public void testChangeStringToInt() throws Exception {
+        assertFailure("alter table x alter column c type int", 34, "incompatible column type change [existing=STRING, new=INT]");
     }
 
     @Test
@@ -257,6 +283,31 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         " rnd_varchar(5,64,2) v" +
                         " from long_sequence(1000)" +
                         "), index(ik) timestamp (timestamp) PARTITION BY HOUR BYPASS WAL;"
+        );
+    }
+
+    private void createXWal() throws SqlException {
+        ddl(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str(5,1024,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_varchar(5,64,2) v" +
+                        " from long_sequence(1000)" +
+                        "), index(ik) timestamp (timestamp) PARTITION BY HOUR WAL;"
         );
     }
 

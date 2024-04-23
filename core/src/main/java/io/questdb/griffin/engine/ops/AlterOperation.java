@@ -266,6 +266,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case RENAME_TABLE:
             case SET_DEDUP_DISABLE:
             case SET_DEDUP_ENABLE:
+            case CHANGE_COLUMN_TYPE:
                 return true;
             default:
                 return false;
@@ -377,39 +378,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 e.position(columnNamePosition);
                 throw e;
             }
-        }
-    }
-
-    private void changeColumnType(MetadataService svc) {
-        if (activeExtraStrInfo.size() != 1) {
-            throw CairoException.nonCritical().put("invalid change column type alter statement");
-        }
-        CharSequence columnName = activeExtraStrInfo.getStrA(0);
-        int lParam = 0;
-        int newType = (int) extraInfo.get(lParam++);
-        int symbolCapacity = (int) extraInfo.get(lParam++);
-        boolean symbolCacheFlag = extraInfo.get(lParam++) > 0;
-        long flags = extraInfo.get(lParam++);
-        boolean isIndexed = (flags & BIT_INDEXED) == BIT_INDEXED;
-        boolean isDedupKey = (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
-        assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
-        int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
-        int columnNamePosition = (int) extraInfo.get(lParam);
-
-        try {
-            svc.changeColumnType(
-                    columnName,
-                    newType,
-                    symbolCapacity,
-                    symbolCacheFlag,
-                    isIndexed,
-                    indexValueBlockCapacity,
-                    false,
-                    securityContext
-            );
-        } catch (CairoException e) {
-            e.position(columnNamePosition);
-            throw e;
         }
     }
 
@@ -532,6 +500,39 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 svc.getMetadata().getColumnIndex(columnName),
                 isCacheOn
         );
+    }
+
+    private void changeColumnType(MetadataService svc) {
+        if (activeExtraStrInfo.size() != 1) {
+            throw CairoException.nonCritical().put("invalid change column type alter statement");
+        }
+        CharSequence columnName = activeExtraStrInfo.getStrA(0);
+        int lParam = 0;
+        int newType = (int) extraInfo.get(lParam++);
+        int symbolCapacity = (int) extraInfo.get(lParam++);
+        boolean symbolCacheFlag = extraInfo.get(lParam++) > 0;
+        long flags = extraInfo.get(lParam++);
+        boolean isIndexed = (flags & BIT_INDEXED) == BIT_INDEXED;
+        boolean isDedupKey = (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
+        assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
+        int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
+        int columnNamePosition = (int) extraInfo.get(lParam);
+
+        try {
+            svc.changeColumnType(
+                    columnName,
+                    newType,
+                    symbolCapacity,
+                    symbolCacheFlag,
+                    isIndexed,
+                    indexValueBlockCapacity,
+                    false,
+                    securityContext
+            );
+        } catch (CairoException e) {
+            e.position(columnNamePosition);
+            throw e;
+        }
     }
 
     private void enableDeduplication(MetadataService svc) {

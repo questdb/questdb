@@ -130,7 +130,7 @@ public interface MetadataService {
     void tick();
 
     void changeColumnType(
-            CharSequence name,
+            CharSequence columnName,
             int newType,
             int symbolCapacity,
             boolean symbolCacheFlag,

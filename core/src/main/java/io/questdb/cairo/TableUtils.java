@@ -1324,6 +1324,29 @@ public final class TableUtils {
         columnNameIndexMap.put(newNameStr, columnIndex);
     }
 
+    public static void changeColumnTypeInMetadata(CharSequence columnName, int newType, LowerCaseCharSequenceIntHashMap columnNameIndexMap, ObjList<TableColumnMetadata> columnMetadata) {
+        int existingIndex = columnNameIndexMap.get(columnName);
+        if (existingIndex < 0) {
+            throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
+        }
+        String columnNameStr = columnMetadata.getQuick(existingIndex).getName();
+        int columnIndex = columnMetadata.size();
+        columnMetadata.add(
+                new TableColumnMetadata(
+                        columnNameStr,
+                        newType,
+                        false,
+                        0,
+                        false,
+                        null,
+                        columnIndex,
+                        false
+                )
+        );
+        columnMetadata.getQuick(existingIndex).markDeleted();
+        columnNameIndexMap.put(columnNameStr, columnIndex);
+    }
+
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
         if (ff.rename(src, dst) != Files.FILES_RENAME_OK) {
             throw CairoException.critical(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);

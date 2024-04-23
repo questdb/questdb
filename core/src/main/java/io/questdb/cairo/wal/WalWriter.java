@@ -1557,15 +1557,21 @@ public class WalWriter implements TableWriterAPI {
                 boolean isSequential,
                 SecurityContext securityContext
         ) {
-            if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
-                throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
-            }
-            if (metadata.getColumnIndexQuiet(columnName) > -1) {
-                throw CairoException.nonCritical().put("duplicate column name: ").put(columnName);
-            }
-            if (columnType <= 0) {
-                throw CairoException.nonCritical().put("invalid column type: ").put(columnType);
-            }
+            validateNewColumnName(columnName);
+            validateNewColumnType(columnType);
+            structureVersion++;
+        }
+
+        @Override
+        public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
+            validateExistingColumnName(columnName, "cannot change type");
+            validateNewColumnType(newType);
+            structureVersion++;
+        }
+
+        @Override
+        public void removeColumn(@NotNull CharSequence columnName) {
+            validateExistingColumnName(columnName, "cannot remove");
             structureVersion++;
         }
 
@@ -1606,41 +1612,22 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnName) {
-            int columnIndex = metadata.getColumnIndexQuiet(columnName);
-            if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
-                throw CairoException.nonCritical().put("cannot remove column, column does not exist [table=").put(tableToken.getTableName())
-                        .put(", column=").put(columnName).put(']');
-            }
-
-            if (columnIndex == metadata.getTimestampIndex()) {
-                throw CairoException.nonCritical().put("cannot remove designated timestamp column [table=").put(tableToken.getTableName())
-                        .put(", column=").put(columnName);
-            }
+        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
+            validateExistingColumnName(columnName, "cannot rename ");
+            validateNewColumnName(columnName);
             structureVersion++;
         }
 
-        @Override
-        public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
+        private void validateExistingColumnName(CharSequence columnName, String errorPrefix) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0) {
-                throw CairoException.nonCritical().put("cannot rename column, column does not exist [table=").put(tableToken.getTableName())
+                throw CairoException.nonCritical().put(errorPrefix).put(", column does not exist [table=").put(tableToken.getTableName())
                         .put(", column=").put(columnName).put(']');
             }
             if (columnIndex == metadata.getTimestampIndex()) {
-                throw CairoException.nonCritical().put("cannot rename designated timestamp column [table=").put(tableToken.getTableName())
+                throw CairoException.nonCritical().put(errorPrefix).put(" designated timestamp column [table=").put(tableToken.getTableName())
                         .put(", column=").put(columnName).put(']');
             }
-
-            int columnIndexNew = metadata.getColumnIndexQuiet(newName);
-            if (columnIndexNew > -1) {
-                throw CairoException.nonCritical().put("cannot rename column, column with the name already exists [table=").put(tableToken.getTableName())
-                        .put(", newName=").put(newName).put(']');
-            }
-            if (!TableUtils.isValidColumnName(newName, newName.length())) {
-                throw CairoException.nonCritical().put("invalid column name: ").put(newName);
-            }
-            structureVersion++;
         }
 
         @Override
@@ -1652,13 +1639,23 @@ public class WalWriter implements TableWriterAPI {
             structureVersion++;
         }
 
-        @Override
-        public void changeColumnType(CharSequence name, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
-            throw CairoException.nonCritical().put("change of column type not supported yet");
-        }
-
         public void startAlterValidation() {
             structureVersion = getColumnStructureVersion();
+        }
+
+        private void validateNewColumnName(CharSequence columnName) {
+            if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
+                throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
+            }
+            if (metadata.getColumnIndexQuiet(columnName) > -1) {
+                throw CairoException.nonCritical().put("duplicate column name: ").put(columnName);
+            }
+        }
+
+        private void validateNewColumnType(int columnType) {
+            if (columnType <= 0) {
+                throw CairoException.nonCritical().put("invalid column type: ").put(columnType);
+            }
         }
     }
 
@@ -1727,6 +1724,60 @@ public class WalWriter implements TableWriterAPI {
                 } else {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
                 }
+            }
+        }
+
+        @Override
+        public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag,
+                                     boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext
+        ) {
+            final int existingColumnIndex = metadata.getColumnIndexQuiet(columnName);
+            if (existingColumnIndex > -1) {
+                int existingColumnType = metadata.getColumnType(existingColumnIndex);
+                if (existingColumnType > 0) {
+                    long uncommittedRows = getUncommittedRowCount();
+                    if (currentTxnStartRowNum > 0) {
+                        // Roll last transaction to new segment
+                        rollUncommittedToNewSegment();
+                    }
+
+                    if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
+                        metadata.changeColumnType(columnName, newType);
+                        columnCount = metadata.getColumnCount();
+
+                        if (!rollSegmentOnNextRow) {
+                            // this means we have rolled uncommitted rows to a new segment already
+                            // we should switch metadata to this new segment
+                            path.trimTo(rootLen).slash().put(segmentId);
+                            // this will close old _meta file and create the new one
+                            metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
+                        }
+                        // if we did not have to roll uncommitted rows to a new segment
+                        // it will switch metadata file on next row write
+                        // as part of rolling to a new segment
+                        configureColumn(columnCount - 1, newType);
+                        if (ColumnType.isSymbol(newType)) {
+                            configureSymbolMapWriter(newType, columnName, 0, -1);
+                        }
+
+                        if (ColumnType.isSymbol(existingColumnType)) {
+                            removeSymbolMapReader(existingColumnIndex);
+                        }
+                        markColumnRemoved(existingColumnIndex);
+                        if (uncommittedRows > 0) {
+                            // TODO: convert the column data
+                            throw new UnsupportedOperationException("Changing column type with uncommitted rows is not supported");
+//                            convertColumn(columnName, existingColumnType, newType);
+                        }
+
+                        LOG.info().$("change column type in WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
+                    } else {
+                        throw CairoException.critical(0).put("column '").put(columnName)
+                                .put("' was removed, cannot apply commit because of concurrent table definition change");
+                    }
+                }
+            } else {
+                throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
             }
         }
 
@@ -1847,11 +1898,6 @@ public class WalWriter implements TableWriterAPI {
         public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
             tableToken = metadata.getTableToken().renamed(Chars.toString(toTableName));
             metadata.renameTable(tableToken);
-        }
-
-        @Override
-        public void changeColumnType(CharSequence name, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
-            throw CairoException.nonCritical().put("change of column type not supported yet");
         }
     }
 
