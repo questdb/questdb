@@ -149,6 +149,22 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnLessThanNullComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(-10, 10, 10) i32," +
+                " rnd_long(-10, 10, 10) i64," +
+                " rnd_float(10) f32," +
+                " rnd_double(10) f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
+                .withAnyOf(" <= ", " >= ", " = ")
+                .withAnyOf("null");
+        assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
     public void testColumnFloatConstantComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +

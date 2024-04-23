@@ -249,6 +249,12 @@ namespace questdb::avx2 {
         return dst;
     }
 
+    inline Ymm mask_xor(Compiler &c, const Ymm &lhs, const Ymm &rhs) {
+        Ymm dst = c.newYmm();
+        c.vpxor(dst, lhs, rhs);
+        return dst;
+    }
+
     inline Ymm nulls_mask(Compiler &c, data_type_t &type, const Ymm &lhs, const Ymm &rhs) {
         Ymm lhs_nulls = cmp_eq_null(c, type, lhs);
         Ymm rhs_nulls = cmp_eq_null(c, type, rhs);
@@ -257,6 +263,16 @@ namespace questdb::avx2 {
 
     inline Ymm not_nulls_mask(Compiler &c, data_type_t &type, const Ymm &lhs, const Ymm &rhs) {
         return mask_not(c, nulls_mask(c, type, lhs, rhs));
+    }
+
+    inline Ymm xor_nulls_mask(Compiler &c, data_type_t &type, const Ymm &lhs, const Ymm &rhs) {
+        Ymm lhs_nulls = cmp_eq_null(c, type, lhs);
+        Ymm rhs_nulls = cmp_eq_null(c, type, rhs);
+        return mask_xor(c, lhs_nulls, rhs_nulls);
+    }
+
+    inline Ymm not_xor_nulls_mask(Compiler &c, data_type_t &type, const Ymm &lhs, const Ymm &rhs) {
+        return mask_not(c, xor_nulls_mask(c, type, lhs, rhs));
     }
 
     inline Ymm cmp_eq_float(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
@@ -396,8 +412,8 @@ namespace questdb::avx2 {
                 return cmp_le(c, type, rhs, lhs, null_check);
             default: {
                 Ymm mask = mask_not(c, cmp_lt(c, type, lhs, rhs));
-                Ymm not_nulls = not_nulls_mask(c, type, lhs, rhs);
-                return mask_and(c, mask, not_nulls);
+                Ymm not_xor_nulls = not_xor_nulls_mask(c, type, lhs, rhs);
+                return mask_and(c, mask, not_xor_nulls);
             }
         }
     }
