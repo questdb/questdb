@@ -157,7 +157,7 @@ jobs:
           cargo clean
           cross build --target x86_64-pc-windows-gnu --release
           ls -la target/release/ 
-          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/windows/libquestdbr.dll 
+          cp target/release/libquestdbr.dll ../../src/main/resources/io/questdb/bin/windows/ 
           cd ../../../
       - name: Check C++ runtime dependency
         run: |
