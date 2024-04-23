@@ -25,13 +25,29 @@ jobs:
       - script: |
           cargo install cross
         displayName: "Install cross"
+#      - script: |
+#          git clone https://github.com/cross-rs/cross
+#          cd cross
+#          git submodule update --init --remote
+#        displayName: "install cross"
       - script: |
           cd core/rust/qdb-core
           cross build --target aarch64-unknown-linux-gnu --target-dir target/cross/aarch64-unknown-linux-gnu
-        displayName: "cross build x86_64-unknown-linux-gnu"
+        displayName: "aarch64-unknown-linux-gnu"
+      - script: |
+          cd core/rust/qdb-core
+          cross build --target x86_64-unknown-linux-gnu --target-dir target/cross/x86_64-unknown-linux-gnu
+        displayName: "x86_64-unknown-linux-gnu"
+      - script: |
+          cd core/rust/qdb-core
+          cross build --target x86_64-unknown-freebsd --target-dir target/cross/x86_64-unknown-freebsd
+        displayName: "x86_64-unknown-freebsd"
+      - script: |
+          cd core/rust/qdb-core
+          cross build --target
       - task: PublishBuildArtifacts@1
         inputs:
-          PathtoPublish: target/cross
+          PathtoPublish: core/rust/qdb/target/cross
           ArtifactName: cross
           publishLocation: Container
         displayName: "Publish cross build artifacts"
