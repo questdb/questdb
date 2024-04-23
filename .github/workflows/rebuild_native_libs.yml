@@ -17,6 +17,17 @@ on:
 # and pushes them to the current branch.
 
 jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build Rust on Windows
+        run: |
+          cd core/rust/qdbr
+          cargo build --release
+      - name: log git status
+        run: |
+          git status
   build-freebsd:
     runs-on: ubuntu-latest
     steps:
