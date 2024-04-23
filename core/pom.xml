@@ -466,31 +466,11 @@
                             </execution>
                         </executions>
                     </plugin>
-                    <plugin>
-                        <groupId>org.questdb</groupId>
-                        <artifactId>rust-maven-plugin</artifactId>
-                        <version>1.2.0</version>
-                        <executions>
-                            <execution>
-                                <id>qdb-build</id>
-                                <goals>
-                                    <goal>build</goal>
-                                </goals>
-                                <configuration>
-                                    <path>${qdb.path}</path>
-                                    <release>${qdb.release}</release>
-                                    <copyTo>${project.build.directory}/classes/io/questdb/rust</copyTo>
-                                    <copyWithPlatformDir>true</copyWithPlatformDir>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-
                 </plugins>
             </build>
         </profile>
         <profile>
-            <id>build-rust-binaries</id>
+            <id>build-rust-library</id>
             <build>
                 <plugins>
                     <!--

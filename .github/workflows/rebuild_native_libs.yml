@@ -94,6 +94,7 @@ jobs:
         with:
           path: |
             core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
+            core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           key: nativelibs-osx-${{ github.sha }}
   build-others:
     runs-on: ubuntu-20.04
@@ -116,7 +117,8 @@ jobs:
           cmake --build cmake-build-release --config Release
           cd rust/qdbr
           cargo build --release
-          cp target/release/libquestdbr.so cd ../../src/main/resources/io/questdb/bin/linux/ 
+          ls -la t
+          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/ 
           cd ../../../
       - name: CMAKE ARM Linux
         run: |
@@ -142,7 +144,7 @@ jobs:
           cargo install cross
           rustup target add x86_64-pc-windows-gnu
           cargo build --target x86_64-pc-windows-gnu
-          cp target/release/libquestdbr.dll cd ../../src/main/resources/io/questdb/bin/windows/ 
+          cp target/release/libquestdbr.dll ../../src/main/resources/io/questdb/bin/windows/ 
           cd ../../../
       - name: Check C++ runtime dependency
         run: |
