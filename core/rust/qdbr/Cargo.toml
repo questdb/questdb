@@ -9,7 +9,3 @@ crate-type = ["dylib"]
 
 [dependencies]
 jni = "0.21.1"
-
-[workspace.metadata.cross.target.x86_64-pc-windows-gnu]
-xargo = false
-build-std = false
