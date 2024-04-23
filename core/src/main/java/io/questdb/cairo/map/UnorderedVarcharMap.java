@@ -61,6 +61,13 @@ import org.jetbrains.annotations.Nullable;
  * |       4 bytes     |  4 bytes   |     8 bytes     |         -          |
  * +-------------------+------------+-----------------+--------------------+
  * </pre>
+ * Length is a 30-bit integer, the top 2 bits are reserved for flags. The flags are:
+ * <ul>
+ *     <li>Bit 31 (the highest bit, indexing from zero): ascii flag, this is also set for empty and null sequences</li>
+ *     <li>Bit 30: null bit</li>
+ * </ul>
+ * The highest bit of the varchar pointer is set when the pointer is unstable, i.e. it points to our own arena
+ * memory. The lower 63 bits are the actual pointer value.
  */
 public class UnorderedVarcharMap implements Map, Reopenable {
     static final byte FLAG_IS_ASCII = (byte) (1 << 7);
