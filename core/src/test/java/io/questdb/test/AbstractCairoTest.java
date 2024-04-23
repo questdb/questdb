@@ -1473,6 +1473,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    protected static Utf8Sequence utf8(CharSequence value) {
+        return value != null ? new Utf8String(value) : null;
+    }
+
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
         TestUtils.assertCursor(expected, cursor, metadata, header, sink);
     }

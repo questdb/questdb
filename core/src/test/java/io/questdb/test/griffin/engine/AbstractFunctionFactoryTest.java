@@ -42,7 +42,6 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8String;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -416,10 +415,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 toByteRefs++;
                 break;
         }
-    }
-
-    protected static Utf8Sequence utf8(CharSequence value) {
-        return value != null ? new Utf8String(value) : null;
     }
 
     protected void addExtraFunctions() {
