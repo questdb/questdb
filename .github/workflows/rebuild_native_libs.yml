@@ -135,7 +135,6 @@ jobs:
         run: |
           cd core/rust/qdbr
           cargo install cross
-          rustup target add aarch64-unknown-linux-gnu
           cargo clean
           cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
           ls -la target/aarch64-unknown-linux-gnu/release/ 
