@@ -65,9 +65,9 @@ jobs:
           cd core
           cmake -B build/release -DCMAKE_BUILD_TYPE=Release
           cmake --build build/release --config Release
-            cd rust/qdbr
-            cargo build
-            cd ../../../
+          cd rust/qdbr
+          cargo build
+          cd ../../../
       - name: Save ARM MacOS binary to Cache
         if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
@@ -101,6 +101,9 @@ jobs:
         run: |
           cd ./core
           cmake --build cmake-build-release --config Release
+          cd rust/qdbr
+          cargo build
+          cd ../../../
       - name: CMAKE ARM Linux
         run: |
           cd ./core
@@ -109,6 +112,10 @@ jobs:
         run: |
           cd ./core
           cmake --build cmake-build-release-arm64 --config Release
+          cd rust/qdbr
+          rustup target add aarch64-unknown-linux-gnu
+          cargo build --target aarch64-unknown-linux-gnu
+          cd ../../../
       - name: Download windows jni_md.h from JDK 11
         run: |
           cd ./core
@@ -121,6 +128,10 @@ jobs:
         run: |
           cd ./core
           cmake --build cmake-build-release-win64 --config Release
+          cd rust/qdbr
+          rustup target add x86_64-pc-windows-msvc
+          cargo build --target x86_64-pc-windows-msvc
+          cd ../../../
       - name: Check C++ runtime dependency
         run: |
           cd ./core
