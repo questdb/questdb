@@ -1,0 +1,11 @@
+[package]
+name = "qdbr"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "libquestdbr"
+crate-type = ["dylib"]
+
+[dependencies]
+jni = "0.21.1"
