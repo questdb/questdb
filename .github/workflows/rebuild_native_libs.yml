@@ -35,6 +35,7 @@ jobs:
             cd core
             cmake -B build/release -DCMAKE_BUILD_TYPE=Release
             cmake --build build/release --config Release
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
             cd rust/qdbr
             cargo build --release
             cp target/release/libquestdbr.so cd ../../src/main/resources/io/questdb/bin/freebsd/ 
@@ -151,7 +152,7 @@ jobs:
           rustup target add x86_64-pc-windows-gnu
           cross build --target x86_64-pc-windows-gnu --release
           ls -la target/release/ 
-          cp target/release/libquestdbr.do ../../src/main/resources/io/questdb/bin/windows/libquestdbr.dll 
+          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/windows/libquestdbr.dll 
           cd ../../../
       - name: Check C++ runtime dependency
         run: |
