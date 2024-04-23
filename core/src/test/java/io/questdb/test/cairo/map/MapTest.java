@@ -884,7 +884,7 @@ public class MapTest extends AbstractCairoTest {
             case UNORDERED_VARCHAR_MAP:
                 Assert.assertEquals(1, keyTypes.getColumnCount());
                 Assert.assertEquals(ColumnType.VARCHAR, keyTypes.getColumnType(0));
-                return new UnorderedVarcharMap(valueTypes, keyCapacity, loadFactor, maxResizes);
+                return new UnorderedVarcharMap(valueTypes, keyCapacity, loadFactor, maxResizes, 128 * 1024, 4 * Numbers.SIZE_1GB);
             default:
                 throw new IllegalArgumentException("Unknown map type: " + mapType);
         }

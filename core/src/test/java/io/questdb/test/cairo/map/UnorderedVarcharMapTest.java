@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.map;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.RecordCursor;
@@ -44,7 +45,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     public void testClear() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
+             UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE, 128 * 1024, 4 * Numbers.SIZE_1GB)
         ) {
             putStable("foo", 42, map, sinkA, true);
             Assert.assertEquals(42, get("foo", map));
@@ -59,7 +60,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     public void testCursor() throws Exception {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
+             UnorderedVarcharMap map = newDefaultMap(valueType)
         ) {
             int keyCount = 100_000;
             for (int i = 0; i < keyCount; i++) {
@@ -88,7 +89,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
              DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
+             UnorderedVarcharMap map = newDefaultMap(valueType)
         ) {
             Assert.assertNull(findValue("", map));
             putStable("", 42, map, sinkA, true);
@@ -107,8 +108,8 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.INT);
             try (
                     DirectUtf8Sink sinkA = new DirectUtf8Sink(10 * 1024 * 1024);
-                    UnorderedVarcharMap mapA = new UnorderedVarcharMap(valueTypes, 16, 0.6, Integer.MAX_VALUE);
-                    UnorderedVarcharMap mapB = new UnorderedVarcharMap(valueTypes, 16, 0.6, Integer.MAX_VALUE)
+                    UnorderedVarcharMap mapA = newDefaultMap(valueTypes);
+                    UnorderedVarcharMap mapB = newDefaultMap(valueTypes)
             ) {
                 final int N = 100_000;
                 for (int i = 0; i < N; i++) {
@@ -136,7 +137,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     public void testKeyHashCode() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-            try (Map map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE);
+            try (Map map = newDefaultMap(valueType);
                  DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024)) {
                 final int N = 100000;
                 final LongList keyHashCodes = new LongList(N);
@@ -177,8 +178,8 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
              DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap mapA = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE);
-             UnorderedVarcharMap mapB = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
+             UnorderedVarcharMap mapA = newDefaultMap(valueType);
+             UnorderedVarcharMap mapB = newDefaultMap(valueType)
         ) {
             int keyCountA = 100;
             int keyCountB = 200;
@@ -204,11 +205,11 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     @Test
     public void testMergeUnstable() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (UnorderedVarcharMap mapA = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)) {
+        try (UnorderedVarcharMap mapA = newDefaultMap(valueType)) {
 
             int keyCountA = 100;
             int keyCountB = 200;
-            try (UnorderedVarcharMap mapB = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)) {
+            try (UnorderedVarcharMap mapB = newDefaultMap(valueType)) {
                 for (int i = 0; i < keyCountA; i++) {
                     putUnstable("foo" + i, i, mapA, true);
                 }
@@ -233,7 +234,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
              DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
+             UnorderedVarcharMap map = newDefaultMap(valueType)
         ) {
             Assert.assertNull(findValue(null, map));
             putStable(null, 42, map, sinkA, true);
@@ -251,7 +252,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
              DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
+             UnorderedVarcharMap map = newDefaultMap(valueType)
         ) {
             int keyCount = 1_000;
             for (int i = 0; i < keyCount; i++) {
@@ -279,7 +280,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
             UnorderedVarcharMap danglingMap = null;
             try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
                  DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-                 UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE)
+                 UnorderedVarcharMap map = newDefaultMap(valueType)
             ) {
                 danglingMap = map;
 
@@ -374,6 +375,10 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         Assert.assertNotNull(value);
         Assert.assertFalse(value.isNew());
         return value.getInt(0);
+    }
+
+    private static UnorderedVarcharMap newDefaultMap(ColumnTypes valueTypes) {
+        return new UnorderedVarcharMap(valueTypes, 16, 0.6, Integer.MAX_VALUE, 128 * 1024, 4 * Numbers.SIZE_1GB);
     }
 
     private static MapKey putStable(String stringKey, int intValue, UnorderedVarcharMap map, DirectUtf8Sink sink, boolean isNew) {

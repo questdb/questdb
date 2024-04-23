@@ -95,9 +95,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
             double loadFactor,
-            int maxResizes
+            int maxResizes,
+            long allocatorDefaultChunkSize,
+            long allocatorMaxChunkSize
     ) {
-        this(valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP);
+        this(valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP, allocatorDefaultChunkSize, allocatorMaxChunkSize);
     }
 
     UnorderedVarcharMap(
@@ -105,7 +107,9 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             int keyCapacity,
             double loadFactor,
             int maxResizes,
-            int memoryTag
+            int memoryTag,
+            long allocatorDefaultChunkSize,
+            long allocatorMaxChunkSize
     ) {
         assert loadFactor > 0 && loadFactor < 1d;
 
@@ -150,7 +154,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         record = new UnorderedVarcharMapRecord(valueSize, valueOffsets, value, valueTypes);
         cursor = new UnorderedVarcharMapCursor(record, this);
         key = new Key();
-        allocator = new GroupByAllocatorArena(128 * 1024, 4 * Numbers.SIZE_1GB); // todo: configurable, or perhaps passed by caller
+        allocator = new GroupByAllocatorArena(allocatorDefaultChunkSize, allocatorMaxChunkSize);
     }
 
     @Override

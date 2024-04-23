@@ -105,14 +105,7 @@ public class MapFactory {
         final int keySize = totalSize(keyTypes);
         final int valueSize = totalSize(valueTypes);
         if (keySize > 0) {
-            if (keyTypes.getColumnCount() == 1 && keyTypes.getColumnType(0) == ColumnType.VARCHAR) {
-                return new UnorderedVarcharMap(
-                        valueTypes,
-                        keyCapacity,
-                        configuration.getSqlFastMapLoadFactor(),
-                        configuration.getSqlMapMaxResizes()
-                );
-            } else if (keySize <= Short.BYTES && valueSize <= maxEntrySize) {
+            if (keySize <= Short.BYTES && valueSize <= maxEntrySize) {
                 return new Unordered2Map(keyTypes, valueTypes);
             } else if (keySize <= Integer.BYTES && Integer.BYTES + valueSize <= maxEntrySize) {
                 return new Unordered4Map(
@@ -139,6 +132,15 @@ public class MapFactory {
                         configuration.getSqlMapMaxResizes()
                 );
             }
+        } else if (keyTypes.getColumnCount() == 1 && keyTypes.getColumnType(0) == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+            return new UnorderedVarcharMap(
+                    valueTypes,
+                    keyCapacity,
+                    configuration.getSqlFastMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes(),
+                    configuration.getGroupByAllocatorDefaultChunkSize(),
+                    configuration.getGroupByAllocatorMaxChunkSize()
+            );
         }
 
         return new OrderedMap(
