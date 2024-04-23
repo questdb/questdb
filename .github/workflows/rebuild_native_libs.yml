@@ -70,7 +70,8 @@ jobs:
           cmake -B build/release -DCMAKE_BUILD_TYPE=Release
           cmake --build build/release --config Release
           cd rust/qdbr
-          cargo clean build --release
+          cargo clean
+          cargo build --release
           cd ../../../
       - name: Copy ARM MacOS Rust library to the final directory
         if: ${{ matrix.os == 'macos-14' }}
@@ -118,7 +119,8 @@ jobs:
           cd ./core
           cmake --build cmake-build-release --config Release
           cd rust/qdbr
-          cargo clean build --release
+          cargo clean
+          cargo build --release
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/ 
           cd ../../../
       - name: CMAKE ARM Linux
@@ -134,7 +136,7 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
           cargo clean
           cross build --target aarch64-unknown-linux-gnu --release --target-dir target
-          ls -la target/release/ 
+          ls -la . 
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/ 
           cd ../../../
       - name: Download windows jni_md.h from JDK 11
