@@ -35,6 +35,9 @@ jobs:
             cd core
             cmake -B build/release -DCMAKE_BUILD_TYPE=Release
             cmake --build build/release --config Release
+            cd rust/qdbr
+            cargo build
+            cd ../../../
       - name: log git status
         run: |
           git status
@@ -62,7 +65,9 @@ jobs:
           cd core
           cmake -B build/release -DCMAKE_BUILD_TYPE=Release
           cmake --build build/release --config Release
-          cd ..
+            cd rust/qdbr
+            cargo build
+            cd ../../../
       - name: Save ARM MacOS binary to Cache
         if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
