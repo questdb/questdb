@@ -44,9 +44,11 @@ jobs:
         displayName: "x86_64-unknown-freebsd"
       - script: |
           find core/target
+          echo "done"
         displayName: "List core/target directory"
       - script: |
           find core/rust/qdb/target/cross
+          echo "done"
         displayName: "List core/rust/qdb/target/cross directory"
       - task: PublishBuildArtifacts@1
         inputs:
