@@ -125,6 +125,7 @@ jobs:
           cd ./core
           cmake --build cmake-build-release-win64 --config Release
           cd rust/qdbr
+          cargo install cross
           rustup target add x86_64-pc-windows-msvc
           cargo build --target x86_64-pc-windows-msvc
           cd ../../../
