@@ -39,6 +39,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.ThreadLocalRandom;
+
 public class UnorderedVarcharMapTest extends AbstractCairoTest {
 
     @Test
@@ -99,6 +101,23 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
             putStable("", 43, map, sinkB, false);
             Assert.assertEquals(43, get("", map));
             Assert.assertEquals(1, map.size());
+        }
+    }
+
+    @Test
+    public void testHashPacking() {
+        long hash = Integer.MAX_VALUE;
+        long packed = UnorderedVarcharMap.packHashSizeFlags(hash, 0, (byte) 0);
+        Assert.assertEquals(hash & 0xffffffffL, UnorderedVarcharMap.unpackHash(packed));
+
+        hash = Integer.MIN_VALUE;
+        packed = UnorderedVarcharMap.packHashSizeFlags(hash, 0, (byte) 0);
+        Assert.assertEquals(hash & 0xffffffffL, UnorderedVarcharMap.unpackHash(packed));
+
+        for (int i = 0; i < 1000; i++) {
+            hash = ThreadLocalRandom.current().nextLong();
+            packed = UnorderedVarcharMap.packHashSizeFlags(hash, 0, (byte) 0);
+            Assert.assertEquals(hash & 0xffffffffL, UnorderedVarcharMap.unpackHash(packed));
         }
     }
 
@@ -198,6 +217,24 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
             }
             for (int i = keyCountA; i < keyCountB; i++) {
                 Assert.assertEquals(i, get("foo" + i, mapA));
+            }
+        }
+    }
+
+    @Test
+    public void testMergeOver4GBMap() throws Exception {
+        SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+        try (UnorderedVarcharMap mapA = newDefaultMap(valueType)) {
+
+            // huge source map capacity, fingers crossed for lazy allocation
+            mapA.setKeyCapacity((int) (1L << 29));
+            MapKey mapKey = mapA.withKey();
+            mapKey.putVarchar(new Utf8String("foobar"));
+            MapValue value = mapKey.createValue();
+            value.putInt(0, 42);
+
+            try (UnorderedVarcharMap mapB = newDefaultMap(valueType)) {
+                mapA.merge(mapB, (dstValue, srcValue) -> dstValue.putInt(0, dstValue.getInt(0) + srcValue.getInt(0)));
             }
         }
     }

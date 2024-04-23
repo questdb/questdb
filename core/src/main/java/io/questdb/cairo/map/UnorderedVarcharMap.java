@@ -157,6 +157,22 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         allocator = new GroupByAllocatorArena(allocatorDefaultChunkSize, allocatorMaxChunkSize);
     }
 
+    // public for testing
+    public static long packHashSizeFlags(long hash, int size, byte flags) {
+        // size must be within 30 bits
+        assert size < (1 << 30);
+        // flags must have lower 6 bits clear
+        assert (flags & 0x3f) == 0;
+
+        int sizeAndFlags = size | (flags << 24);
+        return ((long) sizeAndFlags << 32) | (hash & 0xffffffffL);
+    }
+
+    // public for testing
+    public static long unpackHash(long hashSizeFlags) {
+        return hashSizeFlags & 0xffffffffL;
+    }
+
     @Override
     public void clear() {
         free = (int) (keyCapacity * loadFactor);
@@ -212,18 +228,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             }
 
             long srcPtrWithUnstableFlags = Unsafe.getUnsafe().getLong(srcAddr + 8);
-            long srcPtr = srcPtrWithUnstableFlags & PTR_MASK;
             int srcSize = unpackSize(srcHashSizeFlags);
-            long srcHash;
-            if ((mask & 0xffffffff00000000L) == 0) {
-                // fast-path: mask has 32 or fewer bits -> we can use the stored 32 LSBs of the hash since the higher bits
-                // will be masked out and won't contribute to destAddr calculation
-                srcHash = unpackHash(srcHashSizeFlags) & 0x00000000ffffffffL;
-            } else {
-                // slow-path: mask has more than 32 bits -> we need to rehash the key :(
-                // todo: write a test for this path. it might require 4GB+ of memory to trigger...
-                srcHash = Hash.hashVarSizeMem64(srcPtr, srcSize);
-            }
+
+            // mask is guaranteed to have 32 or fewer bits sets -> we can use the stored 32 LSBs of the
+            // hash since the higher bits will be masked out and won't contribute to destAddr calculation
+            long srcHash = unpackHash(srcHashSizeFlags);
             long destAddr = getStartAddress(srcHash & mask);
 
             for (; ; ) {
@@ -322,10 +331,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     @Override
     public MapKey withKey() {
         return key.init();
-    }
-
-    private static int unpackHash(long hashSizeFlags) {
-        return (int) (hashSizeFlags);
     }
 
     private UnorderedVarcharMapValue asNew(long startAddress, long hash, long ptr, long ptrWithUnstableFlag, int size, long newEntryPackedHashSizeFlags, UnorderedVarcharMapValue value) {
@@ -458,16 +463,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
     static boolean isNull(byte flags) {
         return (flags & FLAG_IS_NULL) != 0;
-    }
-
-    static long packHashSizeFlags(long hash, int size, byte flags) {
-        // size must be within 30 bits
-        assert size < (1 << 30);
-        // flags must have lower 6 bits clear
-        assert (flags & 0x3f) == 0;
-
-        int sizeAndFlags = size | (flags << 24);
-        return ((long) sizeAndFlags << 32) | (hash & 0xffffffffL);
     }
 
     static byte unpackFlags(long packedHashSizeFlags) {
