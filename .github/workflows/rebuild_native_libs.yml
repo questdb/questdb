@@ -35,7 +35,7 @@ jobs:
             cd core
             cmake -B build/release -DCMAKE_BUILD_TYPE=Release
             cmake --build build/release --config Release
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             cd rust/qdbr
             cargo build --release
             cp target/release/libquestdbr.so cd ../../src/main/resources/io/questdb/bin/freebsd/ 
@@ -244,6 +244,7 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/linux/libquestdb.so
           git add core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
+          git add core/src/main/resources/io/questdb/bin/armlinux/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
           git add core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
           git commit -m "chore(build): Rebuild Native Libraries"
