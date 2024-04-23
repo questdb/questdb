@@ -138,11 +138,6 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return value.isConstant() && oldSubStr.isConstant() && newSubStr.isConstant();
-        }
-
-        @Override
         public boolean isReadThreadSafe() {
             return false;
         }

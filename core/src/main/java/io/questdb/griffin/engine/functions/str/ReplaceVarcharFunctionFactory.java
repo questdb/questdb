@@ -216,11 +216,6 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return value.isConstant() && lookFor.isConstant() && replaceWith.isConstant();
-        }
-
-        @Override
         public boolean isReadThreadSafe() {
             return false;
         }
