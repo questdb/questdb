@@ -30,13 +30,13 @@ jobs:
           usesh: true
           prepare: |
             pkg install -y curl cmake gcc git nasm openjdk17
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
           run: |
             export JAVA_HOME=/usr/local/openjdk17
             cd core
             cmake -B build/release -DCMAKE_BUILD_TYPE=Release
             cmake --build build/release --config Release
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            . "$HOME/.cargo/env"
             cd rust/qdbr
             cargo build --release
             cp target/release/libquestdbr.so cd ../../src/main/resources/io/questdb/bin/freebsd/ 
@@ -136,7 +136,7 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
           cargo clean
           cross build --target aarch64-unknown-linux-gnu --release --target-dir target
-          ls -la . 
+          ls -la target 
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/ 
           cd ../../../
       - name: Download windows jni_md.h from JDK 11
