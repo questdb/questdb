@@ -521,7 +521,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
         @Override
         public MapValue createValue() {
-            long ptr = ptrWithUnstableFlag & PTR_MASK;
             long hash = Hash.hashVarSizeMem64(ptr, size);
             long index = hash & mask;
             long startAddress = getStartAddress(index);
