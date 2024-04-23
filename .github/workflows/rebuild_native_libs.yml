@@ -74,7 +74,7 @@ jobs:
         if: ${{ matrix.os == 'macos-14' }}
         run: |
           pwd
-          ls -la core/rust/qdbr/target/
+          ls -la core/rust/qdbr/target/release/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/armosx/
       - name: Copy x64 MacOS Rust library to the final directory
         if: ${{ matrix.os == 'macos-latest' }}
