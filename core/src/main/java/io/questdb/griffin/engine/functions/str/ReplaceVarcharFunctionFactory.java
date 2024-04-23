@@ -68,7 +68,6 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
                 return args.getQuick(0);
             }
         }
-
         final Function value = args.getQuick(0);
         if (value.isConstant()) {
             int len = value.getVarcharSize(null);
@@ -76,13 +75,18 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
                 return value;
             }
         }
-        final int maxLength = configuration.getStrFunctionMaxBufferLength();
-
+        final int maxSize = configuration.getStrFunctionMaxBufferLength();
         if (value.isConstant() && lookFor.isConstant() && replaceWith.isConstant()) {
-
+            return new VarcharConstant(
+                    replace(
+                            value.getVarcharA(null),
+                            lookFor.getVarcharA(null),
+                            replaceWith.getVarcharA(null),
+                            new Utf8StringSink(4),
+                            maxSize
+                    ));
         }
-
-        return new Func(value, lookFor, replaceWith, maxLength);
+        return new Func(value, lookFor, replaceWith, maxSize);
     }
 
     static void checkSizeLimit(int size, int maxSize) {
