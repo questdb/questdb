@@ -133,7 +133,7 @@ jobs:
           cargo install cross
           rustup target add x86_64-pc-windows-msvc
           cargo clean
-          cross build --target aarch64-unknown-linux-gnu --release
+          cross build --target aarch64-unknown-linux-gnu --release --target-dir target
           ls -la target/release/ 
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/ 
           cd ../../../
