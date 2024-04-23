@@ -142,7 +142,7 @@ jobs:
           cd rust/qdbr
           cargo install cross
           rustup target add x86_64-pc-windows-gnu
-          cargo build --target x86_64-pc-windows-gnu --release
+          cross build --target x86_64-pc-windows-gnu --release
           ls -la target/release/ 
           cp target/release/libquestdbr.dll ../../src/main/resources/io/questdb/bin/windows/ 
           cd ../../../
