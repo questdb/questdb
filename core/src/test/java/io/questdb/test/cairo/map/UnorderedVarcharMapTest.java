@@ -313,6 +313,13 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                 for (int i = 0; i < keyCount; i++) {
                     putStable("foo" + i, i, map, sinkA, false);
                 }
+
+                for (int i = 0; i < keyCount; i++) {
+                    MapValue value = findValue("foo" + i, map);
+                    Assert.assertNotNull(value);
+                    Assert.assertFalse(value.isNew());
+                    Assert.assertEquals(i, value.getInt(0));
+                }
             }
             danglingMap.close();
         });
@@ -355,7 +362,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         }
         try (DirectUtf8Sink sink = new DirectUtf8Sink(stringKey.length() * 4L)) {
             sink.put(stringKey);
-            DirectUtf8String key = new DirectUtf8String(true);
+            DirectUtf8String key = new DirectUtf8String(false);
             key.of(sink.lo(), sink.hi(), sink.isAscii());
             mapKey.putVarchar(key);
             return mapKey.findValue();

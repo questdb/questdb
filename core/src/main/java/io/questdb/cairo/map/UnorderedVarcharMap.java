@@ -224,10 +224,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                     // lower 32 bits of hash, size, and flags match, let's compare keys.
                     long dstPtrWithUnstableFlags = Unsafe.getUnsafe().getLong(destAddr + 8);
 
-                    // todo: we could optimize by comparing pointers first. as long as they are stable.
-                    // the question is whether it's a win in real-world scenarios. since pointers are likely
-                    // to different parts of mmap() memory.
-                    if (Vect.memeq(srcPtrWithUnstableFlags & PTR_MASK, dstPtrWithUnstableFlags & PTR_MASK, srcSize)) {
+                    if (srcPtrWithUnstableFlags == dstPtrWithUnstableFlags || Vect.memeq(srcPtrWithUnstableFlags & PTR_MASK, dstPtrWithUnstableFlags & PTR_MASK, srcSize)) {
                         // Match found, merge values.
                         mergeFunc.merge(
                                 valueAt(destAddr),
@@ -332,7 +329,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 long loadedHashSizeFlags = Unsafe.getUnsafe().getLong(startAddress);
                 if (loadedHashSizeFlags == newEntryPackedHashSizeFlags) {
                     long currentEntryPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
-                    if (Vect.memeq(currentEntryPtr, ptr, size)) {
+                    if (currentEntryPtr == ptr || Vect.memeq(currentEntryPtr, ptr, size)) {
                         break;
                     }
                 }
@@ -553,22 +550,22 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
         @Override
         public MapValue findValue() {
-            return findValue(ptrWithUnstableFlag, size, flags, value);
+            return findValue(ptr, size, flags, value);
         }
 
         @Override
         public MapValue findValue2() {
-            return findValue(ptrWithUnstableFlag, size, flags, value2);
+            return findValue(ptr, size, flags, value2);
         }
 
         @Override
         public MapValue findValue3() {
-            return findValue(ptrWithUnstableFlag, size, flags, value3);
+            return findValue(ptr, size, flags, value3);
         }
 
         @Override
         public long hash() {
-            return Hash.hashVarSizeMem64(ptrWithUnstableFlag, size);
+            return Hash.hashVarSizeMem64(ptr, size);
         }
 
         public Key init() {
@@ -716,7 +713,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long packedHashSizeFlags = packHashSizeFlags(hash, size, flags);
             if (loadedHashSizeFlags == packedHashSizeFlags) {
                 long currentPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
-                if (Vect.memeq(currentPtr, ptr, size)) {
+                if (currentPtr == ptr || Vect.memeq(currentPtr, ptr, size)) {
                     return valueOf(startAddress, false, value);
                 }
             }
