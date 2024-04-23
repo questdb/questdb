@@ -117,7 +117,6 @@ jobs:
           cmake --build cmake-build-release --config Release
           cd rust/qdbr
           cargo build --release
-          ls -la t
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/ 
           cd ../../../
       - name: CMAKE ARM Linux
@@ -195,18 +194,21 @@ jobs:
         with:
           path: |
             core/src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
+            core/src/main/resources/io/questdb/bin/armosx/libquestdbr.dylib
           key: nativelibs-armosx-${{ github.sha }}
       - name: Restore x64 MacOS binary from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
+            core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           key: nativelibs-osx-${{ github.sha }}
       - name: Restore x64 Linux binary from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/linux/libquestdb.so
+            core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
       - name: Restore ARM Linux binary from Cache
         uses: actions/cache/restore@v3
@@ -219,17 +221,22 @@ jobs:
         with:
           path: |
             core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
+            core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
           key: nativelibs-windows-${{ github.sha }}
       - name: Commit the files
         run: |
           git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
           git config --global user.email 'jaromir@questdb.io'
           git add core/src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
+          git add core/src/main/resources/io/questdb/bin/armosx/libquestdbr.dylib
           git add core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
+          git add core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           git add core/src/main/resources/io/questdb/bin/freebsd/libquestdb.so
           git add core/src/main/resources/io/questdb/bin/linux/libquestdb.so
+          git add core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
           git add core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
+          git add core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
           git commit -m "chore(build): Rebuild Native Libraries"
       - name: Check git status
         run: |
