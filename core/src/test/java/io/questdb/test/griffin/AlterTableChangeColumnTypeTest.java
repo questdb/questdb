@@ -43,7 +43,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
             ddl("create table y as (select ik from x)", sqlExecutionContext);
-            ddl("alter table x alter column ik type string", sqlExecutionContext);
+            ddl("alter table x alter column ik type varchar", sqlExecutionContext);
 
             assertSqlCursorsConvertedStrings(
                     "select ik from y",

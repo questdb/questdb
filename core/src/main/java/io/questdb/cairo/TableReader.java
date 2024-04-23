@@ -1086,7 +1086,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         LOG.critical().$("Invalid var len column size [column=").$(name).$(", size=").$(dataSize).$(", path=").$(path).I$();
                         throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(dataSize).put(']');
                     }
-                    if (dataSize > 0) {
+                    if (columnRowCount > 0) {
                         TableUtils.dFile(path.trimTo(plen), name, columnTxn);
                         openOrCreateMemory(path, columns, primaryIndex, dataMem, dataSize);
                     }
