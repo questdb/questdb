@@ -36,6 +36,7 @@ jobs:
             cmake -B build/release -DCMAKE_BUILD_TYPE=Release
             cmake --build build/release --config Release
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
             cd rust/qdbr
             cargo build --release
             cp target/release/libquestdbr.so cd ../../src/main/resources/io/questdb/bin/freebsd/ 

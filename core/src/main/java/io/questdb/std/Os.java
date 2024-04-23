@@ -241,6 +241,7 @@ public final class Os {
             } else if (osName.contains("Windows")) {
                 type = WINDOWS;
                 loadLib("/io/questdb/bin/windows/libquestdb.dll");
+                loadLib("/io/questdb/bin/windows/libquestdbr.dll");
             } else if (osName.contains("FreeBSD")) {
                 type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
                 loadLib("/io/questdb/bin/freebsd/libquestdb.so");
