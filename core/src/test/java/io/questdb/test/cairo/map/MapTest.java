@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -46,6 +47,7 @@ import java.util.HashMap;
 public class MapTest extends AbstractCairoTest {
     private static final DirectUtf8Sink stableSink = new DirectUtf8Sink(100 * 1024 * 1024);
     private final MapType mapType;
+    private Rnd rnd;
 
     public MapTest(MapType mapType) {
         this.mapType = mapType;
@@ -83,6 +85,11 @@ public class MapTest extends AbstractCairoTest {
         } else {
             throw new UnsupportedOperationException("Unsupported type: " + ColumnType.nameOf(preferredType));
         }
+    }
+
+    @Before
+    public void setupRnd() {
+        rnd = TestUtils.generateRandom(null);
     }
 
     @Test
@@ -884,11 +891,24 @@ public class MapTest extends AbstractCairoTest {
 
     private void populateKey(MapKey key, int index, int preferredKeyType) {
         if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
-            long hi = stableSink.hi();
-            stableSink.put(index);
-            DirectUtf8String directStr = new DirectUtf8String(true);
-            directStr.of(hi, stableSink.hi(), true, true);
-            key.putVarchar(directStr);
+            int mode = rnd.nextInt(10);
+            if (mode == 0) {
+                // 10% chances of using on-heap utf8 sequence
+                key.putVarchar(new Utf8String(String.valueOf(index)));
+            } else if (mode == 1) {
+                // 10% of using a non-stable offheap sequence
+                try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
+                    sink.put(index);
+                    key.putVarchar(sink);
+                }
+            } else {
+                // 80% of using a stable offheap sequence
+                long hi = stableSink.hi();
+                stableSink.put(index);
+                DirectUtf8String directStr = new DirectUtf8String(true);
+                directStr.of(hi, stableSink.hi(), true, true);
+                key.putVarchar(directStr);
+            }
         } else {
             switch (preferredKeyType) {
                 case ColumnType.INT:
@@ -904,7 +924,7 @@ public class MapTest extends AbstractCairoTest {
     }
 
     public enum MapType {
-        ORDERED_MAP, UNORDERED_4_MAP, UNORDERED_8_MAP, UNORDERED_16_MAP, UNORDERED_VARCHAR_MAP // todo: a version with unstable pointers
+        ORDERED_MAP, UNORDERED_4_MAP, UNORDERED_8_MAP, UNORDERED_16_MAP, UNORDERED_VARCHAR_MAP
     }
 
     private static class TestMapValueMergeFunction implements MapValueMergeFunction {
