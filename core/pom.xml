@@ -38,11 +38,8 @@
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
         <web.console.version>0.3.3</web.console.version>
-        <qdb.path>rust/qdbr</qdb.path>
-        <!--
-        For production builds, use -P qdb-release to compile optimized Rust binaries.
-        -->
-        <qdb.release>true</qdb.release>
+        <qdbr.path>rust/qdbr</qdbr.path>
+        <qdbr.release>false</qdbr.release>
     </properties>
 
     <version>7.4.3-SNAPSHOT</version>
@@ -488,13 +485,13 @@
                         <version>1.2.0</version>
                         <executions>
                             <execution>
-                                <id>qdb-build</id>
+                                <id>qdbr-build</id>
                                 <goals>
                                     <goal>build</goal>
                                 </goals>
                                 <configuration>
-                                    <path>${qdb.path}</path>
-                                    <release>${qdb.release}</release>
+                                    <path>${qdbr.path}</path>
+                                    <release>${qdbr.release}</release>
                                     <copyTo>${project.build.directory}/classes/io/questdb/rust</copyTo>
                                 </configuration>
                             </execution>
@@ -689,7 +686,7 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <version>42.5.4</version>
+            <version>42.7.0</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
