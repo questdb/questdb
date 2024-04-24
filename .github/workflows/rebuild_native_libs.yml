@@ -51,8 +51,7 @@ jobs:
           prepare: |
             pkg install -y curl cmake gcc git nasm openjdk17
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            set path = (/sbin /bin /usr/sbin /usr/bin /usr/local/sbin /usr/local/bin $HOME/bin $HOME/.cargo/bin)
-            which cargo
+            cat "$HOME/.cargo/env"
           run: |
             export JAVA_HOME=/usr/local/openjdk17
             cd core
