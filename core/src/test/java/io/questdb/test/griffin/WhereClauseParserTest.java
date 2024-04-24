@@ -1799,7 +1799,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                         "timestamp > '2021-01'",
                         "timestamp < '2022-04'"
                 },
-                "[1648022400000000,1648202400000000]"
+                "[1648022400000000,1648166399999999]"
         );
 
         andShuffleExpressionsTest(
@@ -1811,7 +1811,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                         "timestamp < '2022-04'",
                         "timestamp NOT BETWEEN '2022-03-23T08:00:00.000000Z' AND '2022-03-25T10:00:00.000000Z'"
                 },
-                "[1648022400000000,1648202400000000]"
+                "[]"
         );
     }
 
@@ -3278,6 +3278,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             String expression = sink.toString();
             try (RuntimeIntrinsicIntervalModel intervalModel = modelOf(expression).buildIntervalModel()) {
                 Assert.assertEquals(
+                        "shuffled expression '" + expression + "' have unexpected result",
                         expected,
                         intervalModel.calculateIntervals(sqlExecutionContext).toString()
                 );
