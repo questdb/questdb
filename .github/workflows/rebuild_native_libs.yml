@@ -59,8 +59,7 @@ jobs:
             cmake --build build/release --config Release
             cd rust/qdbr
             cargo build --release
-            cp target/release/libquestdbr.so cd ../../src/main/resources/io/questdb/bin/freebsd/ 
-            cd ../../../
+            cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd/
       - name: log git status
         run: |
           git status
@@ -215,6 +214,7 @@ jobs:
         with:
           path: |
             core/src/main/resources/io/questdb/bin/freebsd/libquestdb.so
+            core/src/main/resources/io/questdb/bin/freebsd/libquestdbr.so
           key: nativelibs-freebsd-${{ github.sha }}
       - name: Restore ARM MacOS binary from Cache
         uses: actions/cache/restore@v3
