@@ -38,7 +38,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
           key: nativelibs-windows-rust-${{ github.sha }}
   build-freebsd:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v3
       - name: Build in FreeBSD
