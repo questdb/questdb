@@ -46,6 +46,11 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
+    public int detachFdClose() {
+        return -1;
+    }
+
+    @Override
     public void extend(long size) {
     }
 

@@ -510,80 +510,6 @@ public final class TableUtils {
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
-    public static long createTransitionIndex(
-            MemoryR masterMeta,
-            AbstractRecordMetadata slaveMeta
-    ) {
-        int slaveColumnCount = slaveMeta.columnCount;
-        int masterColumnCount = masterMeta.getInt(META_OFFSET_COUNT);
-        final long pTransitionIndex;
-        final int size = 8 + masterColumnCount * 8;
-
-        long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_TABLE_READER);
-        Unsafe.getUnsafe().putInt(index, size);
-        index += 8;
-
-        // index structure is
-        // [action: int, copy from:int]
-
-        // action: if -1 then current column in slave is deleted or renamed, else it's reused
-        // "copy from" >= 0 indicates that column is to be copied from slave position
-        // "copy from" < 0  indicates that column is new and should be taken from updated metadata position
-        // "copy from" == Integer.MIN_VALUE  indicates that column is deleted for good and should not be re-added from any source
-
-        long offset = getColumnNameOffset(masterColumnCount);
-        int slaveIndex = 0;
-        int shiftLeft = 0;
-        for (int masterIndex = 0; masterIndex < masterColumnCount; masterIndex++) {
-            CharSequence name = masterMeta.getStrA(offset);
-            offset += Vm.getStorageLength(name);
-            int masterColumnType = getColumnType(masterMeta, masterIndex);
-
-            if (slaveIndex < slaveColumnCount) {
-                int existingWriterIndex = slaveMeta.getWriterIndex(slaveIndex);
-                if (existingWriterIndex > masterIndex) {
-                    // This column must be deleted so existing dense columns do not contain it
-                    assert masterColumnType < 0;
-                    continue;
-                }
-                assert existingWriterIndex == masterIndex;
-            }
-
-            int outIndex = slaveIndex - shiftLeft;
-            if (masterColumnType < 0) {
-                shiftLeft++; // Deleted in master
-                if (slaveIndex < slaveColumnCount) {
-                    Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);
-                    Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);
-                }
-            } else {
-                if (
-                        slaveIndex < slaveColumnCount
-                                && isColumnIndexed(masterMeta, masterIndex) == slaveMeta.isColumnIndexed(slaveIndex)
-                                && Chars.equals(name, slaveMeta.getColumnName(slaveIndex))
-                ) {
-                    // reuse
-                    Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, slaveIndex);
-                    if (slaveIndex > outIndex) {
-                        // mark to do nothing with existing column, this may be overwritten later
-                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);
-                    }
-                } else {
-                    // new
-                    if (slaveIndex < slaveColumnCount) {
-                        // column deleted at slaveIndex
-                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);
-                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);
-                    }
-                    Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, -masterIndex - 1);
-                }
-            }
-            slaveIndex++;
-        }
-        Unsafe.getUnsafe().putInt(pTransitionIndex + 4, slaveIndex - shiftLeft);
-        return pTransitionIndex;
-    }
-
     public static void createTxn(
             MemoryMW txMem,
             int symbolMapCount,
@@ -766,6 +692,14 @@ public final class TableUtils {
 
     public static long getPartitionTableSizeOffset(int symbolWriterCount) {
         return getSymbolWriterIndexOffset(symbolWriterCount);
+    }
+
+    public static int getReplacingColumnIndex(MemoryR metaMem, int columnIndex) {
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8 + 4 + 8) - 1;
+    }
+
+    public static int getReplacingColumnIndexRaw(MemoryR metaMem, int columnIndex) {
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8 + 4 + 8);
     }
 
     public static int getSymbolCapacity(MemoryMR metaMem, int columnIndex) {
@@ -1390,6 +1324,29 @@ public final class TableUtils {
         columnNameIndexMap.put(newNameStr, columnIndex);
     }
 
+    public static void changeColumnTypeInMetadata(CharSequence columnName, int newType, LowerCaseCharSequenceIntHashMap columnNameIndexMap, ObjList<TableColumnMetadata> columnMetadata) {
+        int existingIndex = columnNameIndexMap.get(columnName);
+        if (existingIndex < 0) {
+            throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
+        }
+        String columnNameStr = columnMetadata.getQuick(existingIndex).getName();
+        int columnIndex = columnMetadata.size();
+        columnMetadata.add(
+                new TableColumnMetadata(
+                        columnNameStr,
+                        newType,
+                        false,
+                        0,
+                        false,
+                        null,
+                        columnIndex,
+                        false
+                )
+        );
+        columnMetadata.getQuick(existingIndex).markDeleted();
+        columnNameIndexMap.put(columnNameStr, columnIndex);
+    }
+
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
         if (ff.rename(src, dst) != Files.FILES_RENAME_OK) {
             throw CairoException.critical(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
@@ -1658,12 +1615,14 @@ public final class TableUtils {
 
             // validate column names
             int denseCount = 0;
-            for (int i = 0; i < columnCount; i++) {
-                final CharSequence name = getColumnName(metaMem, memSize, offset, i);
-                if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
-                    offset += Vm.getStorageLength(name);
-                } else {
-                    throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
+            if (nameIndex != null) {
+                for (int i = 0; i < columnCount; i++) {
+                    final CharSequence name = getColumnName(metaMem, memSize, offset, i);
+                    if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
+                        offset += Vm.getStorageLength(name);
+                    } else {
+                        throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
+                    }
                 }
             }
         } catch (Throwable e) {

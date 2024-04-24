@@ -26,13 +26,13 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.griffin.ColumnTypeConverter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.wal.WalWriter.NEW_COL_RECORD_SIZE;
 
 public class CopyWalSegmentUtils {
     private static final Log LOG = LogFactory.getLog(CopyWalSegmentUtils.class);
@@ -49,63 +49,110 @@ public class CopyWalSegmentUtils {
             int columnType,
             long startRowNumber,
             long rowCount,
-            LongList newColumnFiles,
+            SegmentColumnRollSink newColumnFiles,
             int columnIndex,
-            int commitMode
+            int commitMode,
+            int newColumnType
     ) {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment);
         int setPathRoot = newSegPath.size();
         dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE);
         int primaryFd = openRW(ff, newSegPath, LOG, options);
-        newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);
+        newColumnFiles.setDestPrimaryFd(primaryFd);
 
         int secondaryFd;
-        if (ColumnType.isVarSize(columnType)) {
+        if (ColumnType.isVarSize(newColumnType)) {
             iFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE);
             secondaryFd = openRW(ff, newSegPath, LOG, options);
-            newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 3, secondaryFd);
         } else {
             secondaryFd = -1;
         }
+        newColumnFiles.setDestSecondaryFd(secondaryFd);
 
         boolean success;
-        if (ColumnType.isVarSize(columnType)) {
-            success = copyVarSizeFiles(
-                    ff,
-                    columnType,
-                    primaryColumn,
-                    secondaryColumn,
-                    primaryFd,
-                    secondaryFd,
-                    startRowNumber,
-                    rowCount,
-                    newColumnFiles,
-                    columnIndex,
-                    commitMode
-            );
-        } else if (columnType > 0) {
-            success = copyFixLenFile(
-                    ff,
-                    primaryColumn,
-                    primaryFd,
-                    startRowNumber,
-                    rowCount,
-                    columnType,
-                    newColumnFiles,
-                    columnIndex,
-                    commitMode
-            );
+        if (columnType == newColumnType) {
+            if (ColumnType.isVarSize(columnType)) {
+                success = copyVarSizeFiles(
+                        ff,
+                        columnType,
+                        primaryColumn,
+                        secondaryColumn,
+                        primaryFd,
+                        secondaryFd,
+                        startRowNumber,
+                        rowCount,
+                        newColumnFiles,
+                        commitMode
+                );
+            } else if (columnType > 0) {
+                success = copyFixLenFile(
+                        ff,
+                        primaryColumn,
+                        primaryFd,
+                        startRowNumber,
+                        rowCount,
+                        columnType,
+                        newColumnFiles,
+                        commitMode
+                );
+            } else {
+                success = copyTimestampFile(
+                        ff,
+                        primaryColumn,
+                        primaryFd,
+                        startRowNumber,
+                        rowCount,
+                        newColumnFiles,
+                        columnIndex,
+                        commitMode
+                );
+            }
         } else {
-            success = copyTimestampFile(
-                    ff,
-                    primaryColumn,
-                    primaryFd,
-                    startRowNumber,
-                    rowCount,
-                    newColumnFiles,
-                    columnIndex,
-                    commitMode
-            );
+            try {
+                if (ColumnType.isVarSize(columnType)) {
+                    int srcFixFd = secondaryColumn.getFd();
+                    int srcVarFd = primaryColumn.getFd();
+                    int dstFixFd = secondaryFd;
+                    int dstVarFd = primaryFd;
+
+                    success = ColumnTypeConverter.convertColumn(
+                            startRowNumber,
+                            rowCount,
+                            columnType,
+                            srcFixFd,
+                            srcVarFd,
+                            null,
+                            newColumnType,
+                            dstFixFd,
+                            dstVarFd,
+                            null,
+                            ff,
+                            primaryColumn.getExtendSegmentSize(),
+                            newColumnFiles
+                    );
+                } else {
+                    int srcFd = primaryColumn.getFd();
+                    int dstFd = primaryFd;
+                    success = ColumnTypeConverter.convertColumn(
+                            startRowNumber,
+                            rowCount,
+                            columnType,
+                            srcFd,
+                            -1,
+                            null,
+                            newColumnType,
+                            dstFd,
+                            -1,
+                            null,
+                            ff,
+                            primaryColumn.getExtendSegmentSize(),
+                            newColumnFiles
+                    );
+                }
+            } catch (Throwable th) {
+                LOG.critical().$("Failed to convert column [name=").$(newSegPath).$(", error=").$(th).I$();
+                success = false;
+            }
         }
 
         if (!success) {
@@ -114,7 +161,8 @@ public class CopyWalSegmentUtils {
                     .put(", column=").put(columnName)
                     .put(", startRowNumber=").put(startRowNumber)
                     .put(", rowCount=").put(rowCount)
-                    .put(", columnType=").put(columnType).put("]");
+                    .put(", columnType=").put(columnType)
+                    .put(", newColumnType=").put(newColumnType).put("]");
         }
     }
 
@@ -125,8 +173,7 @@ public class CopyWalSegmentUtils {
             long rowOffset,
             long rowCount,
             int columnType,
-            LongList newOffsets,
-            int columnIndex,
+            SegmentColumnRollSink newOffsets,
             int commitMode
     ) {
         int shl = ColumnType.pow2SizeOf(columnType);
@@ -135,8 +182,8 @@ public class CopyWalSegmentUtils {
 
         boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, offset, length) == length;
         if (success) {
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, offset);
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, length);
+            newOffsets.setSrcOffsets(offset, -1);
+            newOffsets.setDestSizes(length, -1);
         }
         if (commitMode != CommitMode.NOSYNC) {
             ff.fsync(primaryFd);
@@ -150,12 +197,12 @@ public class CopyWalSegmentUtils {
             int primaryFd,
             long rowOffset,
             long rowCount,
-            LongList newOffsets,
+            SegmentColumnRollSink newOffsets,
             int columnIndex,
             int commitMode
     ) {
         // Designated timestamp column is written as 2 long values
-        if (!copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, ColumnType.LONG128, newOffsets, columnIndex, commitMode)) {
+        if (!copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, ColumnType.LONG128, newOffsets, commitMode)) {
             return false;
         }
         long size = rowCount << 4;
@@ -177,8 +224,7 @@ public class CopyWalSegmentUtils {
             int secondaryFd,
             long startRowNumber,
             long rowCount,
-            LongList newOffsets,
-            int columnIndex,
+            SegmentColumnRollSink newOffsets,
             int commitMode
     ) {
         ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
@@ -197,9 +243,6 @@ public class CopyWalSegmentUtils {
                 ff.fsync(primaryFd);
             }
 
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, dataStartOffset);
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, dataSize);
-
             final long newAuxMemSize = columnTypeDriver.getAuxVectorSize(rowCount);
             final long newAuxMemAddr = TableUtils.mapRW(ff, secondaryFd, newAuxMemSize, MEMORY_TAG);
             ff.madvise(newAuxMemAddr, newAuxMemSize, Files.POSIX_MADV_RANDOM);
@@ -213,8 +256,8 @@ public class CopyWalSegmentUtils {
                     newAuxMemSize
             );
 
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 4, columnTypeDriver.getAuxVectorOffset(startRowNumber + 1));
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 5, newAuxMemSize);
+            newOffsets.setSrcOffsets(dataStartOffset, columnTypeDriver.getAuxVectorOffset(startRowNumber));
+            newOffsets.setDestSizes(dataSize, newAuxMemSize);
 
             if (commitMode != CommitMode.NOSYNC) {
                 ff.msync(newAuxMemAddr, newAuxMemSize, commitMode == CommitMode.ASYNC);

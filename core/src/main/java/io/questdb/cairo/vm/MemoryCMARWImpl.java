@@ -42,6 +42,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
+    private boolean closeFdOnClose = true;
     private long extendSegmentMsb;
     private int fd = -1;
     private int madviseOpts = -1;
@@ -73,6 +74,11 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void close(boolean truncate, byte truncateMode) {
+        int underlyingFd = this.fd;
+        if (underlyingFd < -1) {
+            underlyingFd = -fd - 1;
+            fd = -1;
+        }
         if (pageAddress != 0) {
             final long truncateSize;
             if (truncate) {
@@ -85,12 +91,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                         // If this is a lazy close of unused memory the underlying file can already be truncated
                         //  using another fd and memset can lead to SIGBUS on Linux.
                         // Check the physical file length before trying to memset to the mapped memory.
-                        sz = Math.min(sz, ff.length(fd));
+                        sz = Math.min(sz, ff.length(underlyingFd));
                         if (appendOffset < sz) {
                             Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
                         }
                     } catch (CairoException e) {
-                        LOG.error().$("cannot determine file length to safely truncate [fd=").$(fd)
+                        LOG.error().$("cannot determine file length to safely truncate [fd=").$(underlyingFd)
                                 .$(", errno=").$(e.getErrno())
                                 .$(", error=").$(e.getFlyweightMessage())
                                 .I$();
@@ -102,13 +108,18 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             ff.munmap(pageAddress, size, memoryTag);
             this.pageAddress = 0;
             try {
-                Vm.bestEffortClose(ff, LOG, fd, truncateSize, truncateMode);
+                if (closeFdOnClose) {
+                    Vm.bestEffortClose(ff, LOG, fd, truncateSize, truncateMode);
+                }
             } finally {
                 fd = -1;
             }
         }
-        if (ff != null && ff.close(fd)) {
-            LOG.debug().$("closed [fd=").$(fd).$(']').$();
+        if (ff != null) {
+            if (closeFdOnClose) {
+                ff.close(fd);
+                LOG.debug().$("closed [fd=").$(fd).I$();
+            }
             fd = -1;
         }
         size = 0;
@@ -118,6 +129,19 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public void close() {
         close(true);
+    }
+
+    @Override
+    public int detachFdClose() {
+        try {
+            int fd = this.fd;
+            this.closeFdOnClose = false;
+            close();
+            assert this.fd == -1;
+            return fd;
+        } finally {
+            closeFdOnClose = true;
+        }
     }
 
     @Override
@@ -217,7 +241,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void switchTo(int fd, long offset, boolean truncate, byte truncateMode) {
+    public void switchTo(FilesFacade ff, int fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
+        this.ff = ff;
+        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         close(truncate, truncateMode);
         this.fd = fd;
         map(ff, null, offset, memoryTag);

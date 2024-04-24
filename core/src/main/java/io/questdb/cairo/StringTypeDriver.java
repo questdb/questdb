@@ -36,6 +36,10 @@ import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
 public class StringTypeDriver implements ColumnTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
 
+    public static void appendValue(MemoryCMARW dataMem, MemoryCMARW auxMem, CharSequence sink) {
+        auxMem.putLong(dataMem.putStr(sink));
+    }
+
     @Override
     public void appendNull(MemoryA dataMem, MemoryA auxMem) {
         auxMem.putLong(dataMem.putNullStr());

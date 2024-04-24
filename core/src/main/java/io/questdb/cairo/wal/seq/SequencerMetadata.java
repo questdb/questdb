@@ -72,6 +72,12 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion.incrementAndGet();
     }
 
+    public void changeColumnType(CharSequence columnName, int newType) {
+        TableUtils.changeColumnTypeInMetadata(columnName, newType, columnNameIndexMap, columnMetadata);
+        columnCount++;
+        structureVersion.incrementAndGet();
+    }
+
     @Override
     public void close() {
         reset();
