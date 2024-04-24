@@ -530,21 +530,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         @Override
         public MapValue createValue() {
             long hash = Hash.hashVarSizeMem64(ptr, size);
-            long index = hash & mask;
-            long startAddress = getStartAddress(index);
-
-            long loadedHashSizeFlags = Unsafe.getUnsafe().getLong(startAddress);
-            long packedHashSizeFlags = packHashSizeFlags(hash, size, flags);
-            if (loadedHashSizeFlags == 0) {
-                return asNew(startAddress, hash, ptr, ptrWithUnstableFlag, size, packedHashSizeFlags, value);
-            }
-            if (loadedHashSizeFlags == packedHashSizeFlags) {
-                long currentPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
-                if (Vect.memeq(currentPtr, ptr, size)) {
-                    return valueOf(startAddress, false, value);
-                }
-            }
-            return probe0(startAddress, hash, ptr, ptrWithUnstableFlag, size, packedHashSizeFlags, value);
+            return createValue(hash);
         }
 
         @Override

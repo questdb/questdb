@@ -25,7 +25,10 @@
 package org.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.UnorderedVarcharMap;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -48,15 +51,16 @@ public class UnorderedVarcharMapBenchmark {
 
     private static final String AUX_MEM_FILENAME = "aux";
     private static final String DATA_MEM_FILENAME = "data";
-    private static final int MAX_SIZE = 50;
+    private static final int MAX_SIZE = 1000;
+    private static final int MIN_SIZE = 5;
     private static final int ROW_COUNT = 1_000_000;
-    private static final int WORD_COUNT = 10_000;
+    private static final int WORD_COUNT = 1_000;
     private MemoryMR auxReadMemStable;
     private MemoryMR auxReadMemUnstable;
     private MemoryMR dataReadMemStable;
     private MemoryMR dataReadMemUnstable;
-    private Map orderedMap;
-    private Map varcharMap;
+    private OrderedMap orderedMap;
+    private UnorderedVarcharMap varcharMap;
 
     public static void main(String[] args) throws RunnerException {
         ensureFileDoesNotExist(AUX_MEM_FILENAME);
@@ -64,8 +68,9 @@ public class UnorderedVarcharMapBenchmark {
         Options opt = new OptionsBuilder()
                 .include(UnorderedVarcharMapBenchmark.class.getSimpleName())
                 .warmupIterations(1)
-                .measurementIterations(4)
+                .measurementIterations(2)
                 .forks(1)
+                //            .addProfiler(AsyncProfiler.class, "output=flamegraph")
                 .build();
 
         new Runner(opt).run();
@@ -128,7 +133,7 @@ public class UnorderedVarcharMapBenchmark {
         varcharMap = new UnorderedVarcharMap(values, WORD_COUNT, 0.6, 5, 128 * 1024, 4 * Numbers.SIZE_1GB);
 
         // generous initial heap size to avoid resizing
-        orderedMap = new OrderedMap(100 * Numbers.SIZE_1MB, new SingleColumnType(ColumnType.VARCHAR), values, WORD_COUNT, 0.6, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+        orderedMap = new OrderedMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.VARCHAR), values, WORD_COUNT, 0.6, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Setup(Level.Trial)
@@ -152,7 +157,7 @@ public class UnorderedVarcharMapBenchmark {
                 seeds0[i] = strGen.getSeed0();
                 seeds1[i] = strGen.getSeed1();
 
-                int size = strGen.nextInt(MAX_SIZE);
+                int size = strGen.nextInt(MAX_SIZE - MIN_SIZE) + MIN_SIZE;
                 strGen.nextUtf8AsciiStr(size, sink);
             }
 
