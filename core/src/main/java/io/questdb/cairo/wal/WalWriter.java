@@ -1614,7 +1614,7 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
             validateExistingColumnName(columnName, "cannot rename ");
-            validateNewColumnName(columnName);
+            validateNewColumnName(newName);
             structureVersion++;
         }
 
