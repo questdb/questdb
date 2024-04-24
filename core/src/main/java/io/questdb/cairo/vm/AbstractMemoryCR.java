@@ -69,6 +69,10 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     public void clear() {
         // avoid debugger seg faulting when memory is closed
+        utf8SplitViewA.clear();
+        utf8SplitViewB.clear();
+        utf8viewA.clear();
+        utf8viewB.clear();
         csviewA.clear();
         csviewB.clear();
         bsview.clear();
