@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
@@ -62,7 +63,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
      * @param key immutable sequence of characters.
      * @return false if key is already in the set and true otherwise.
      */
-    public boolean add(CharSequence key) {
+    public boolean add(@Nullable CharSequence key) {
         if (key == null) {
             return addNull();
         }
@@ -76,13 +77,13 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         return true;
     }
 
-    public final void addAll(CharSequenceHashSet that) {
+    public final void addAll(@NotNull CharSequenceHashSet that) {
         for (int i = 0, k = that.size(); i < k; i++) {
             add(that.get(i));
         }
     }
 
-    public void addAt(int index, CharSequence key) {
+    public void addAt(int index, @NotNull CharSequence key) {
         final String s = Chars.toString(key);
         keys[index] = s;
         list.add(s);
@@ -110,12 +111,12 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
     }
 
     @Override
-    public boolean contains(CharSequence key) {
+    public boolean contains(@Nullable CharSequence key) {
         return key == null ? hasNull : keyIndex(key) < 0;
     }
 
     @Override
-    public boolean excludes(CharSequence key) {
+    public boolean excludes(@Nullable CharSequence key) {
         return key == null ? !hasNull : keyIndex(key) > -1;
     }
 
@@ -136,7 +137,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         return list.indexOf(keys[index]);
     }
 
-    public int getListIndexOf(CharSequence cs) {
+    public int getListIndexOf(@NotNull CharSequence cs) {
         return getListIndexAt(keyIndex(cs));
     }
 
@@ -147,7 +148,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
     }
 
     @Override
-    public int remove(CharSequence key) {
+    public int remove(@Nullable CharSequence key) {
         if (key == null) {
             return removeNull();
         }

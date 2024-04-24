@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -141,6 +142,8 @@ public final class Os {
         return type != Os.WINDOWS;
     }
 
+    public static native boolean isRustReleaseBuild();
+
     public static boolean isWindows() {
         return type == Os.WINDOWS;
     }
@@ -178,18 +181,25 @@ public final class Os {
         }
     }
 
+    public static native long smokeTest(long a, long b);
+
     private static native long forkExec(long argv);
 
     private static native void freeKrbToken(long struct);
 
     private static native long generateKrbToken(long spn);
 
+    private static native void initRust();
+
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
         if (is == null) {
             throw new FatalError("Internal error: cannot find " + lib + ", broken package?");
         }
+        loadLib(lib, is);
+    }
 
+    private static void loadLib(String lib, @NotNull InputStream libStream) {
         try {
             File tempLib = null;
             try {
@@ -199,7 +209,7 @@ public final class Os {
                 try (FileOutputStream out = new FileOutputStream(tempLib)) {
                     byte[] buf = new byte[4096];
                     while (true) {
-                        int read = is.read(buf);
+                        int read = libStream.read(buf);
                         if (read == -1) {
                             break;
                         }
@@ -213,7 +223,7 @@ public final class Os {
                 throw new FatalError("Internal error: cannot unpack " + tempLib, e);
             }
         } finally {
-            Misc.free(is);
+            Misc.free(libStream);
         }
     }
 
@@ -222,31 +232,54 @@ public final class Os {
     static {
         if ("64".equals(System.getProperty("sun.arch.data.model"))) {
             String osName = System.getProperty("os.name");
+            String libRoot;
+            String libExt = ".so";
             if (osName.contains("Linux")) {
                 if ("aarch64".equals(System.getProperty("os.arch"))) {
                     type = LINUX_ARM64;
-                    loadLib("/io/questdb/bin/armlinux/libquestdb.so");
+                    libRoot = "/io/questdb/bin/armlinux/";
                 } else {
                     type = LINUX_AMD64;
-                    loadLib("/io/questdb/bin/linux/libquestdb.so");
+                    libRoot = "/io/questdb/bin/linux/";
                 }
             } else if (osName.contains("Mac")) {
+                libExt = ".dylib";
                 if ("aarch64".equals(System.getProperty("os.arch"))) {
                     type = OSX_ARM64;
-                    loadLib("/io/questdb/bin/armosx/libquestdb.dylib");
+                    libRoot = "/io/questdb/bin/armosx/";
                 } else {
                     type = OSX_AMD64; // darwin
-                    loadLib("/io/questdb/bin/osx/libquestdb.dylib");
+                    libRoot = "/io/questdb/bin/osx/";
                 }
             } else if (osName.contains("Windows")) {
                 type = WINDOWS;
-                loadLib("/io/questdb/bin/windows/libquestdb.dll");
+                libRoot = "/io/questdb/bin/windows/";
+                libExt = ".dll";
             } else if (osName.contains("FreeBSD")) {
                 type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
-                loadLib("/io/questdb/bin/freebsd/libquestdb.so");
+                libRoot = "/io/questdb/bin/freebsd/";
             } else {
                 throw new Error("Unsupported OS: " + osName);
             }
+
+            // C/C++ library
+            loadLib(libRoot + "libquestdb" + libExt);
+            // Rust library is loaded conditionally to allow for convenience
+            // of the development environments that target Rust source code
+            // The library file is missing "lib" prefix on Windows
+            final String devLib;
+            if (type == WINDOWS) {
+                devLib = "/io/questdb/rust/questdbr" + libExt;
+            } else {
+                devLib = "/io/questdb/rust/libquestdbr" + libExt;
+            }
+            InputStream libStream = Os.class.getResourceAsStream(devLib);
+            if (libStream == null) {
+                loadLib(libRoot + "libquestdbr" + libExt);
+            } else {
+                loadLib(devLib, libStream);
+            }
+            initRust();
         } else {
             type = _32Bit;
         }
