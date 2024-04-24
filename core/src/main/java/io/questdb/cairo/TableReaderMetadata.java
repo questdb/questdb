@@ -249,8 +249,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     public void load(Path path) {
         try {
             this.metaMem.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
-            this.columnNameIndexMap.clear();
-            TableUtils.validateMeta(metaMem, this.columnNameIndexMap, ColumnType.VERSION);
+            TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
@@ -262,8 +261,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             this.columnMetadata.clear();
             this.timestampIndex = -1;
 
-            // don't create strings in this loop, we already have them in columnNameIndexMap
             buildWriterOrderMap(metaMem, columnCount);
+            this.columnNameIndexMap.clear();
+
             for (int i = 0, n = columnOrderMap.size(); i < n; i += 3) {
                 int writerIndex = columnOrderMap.get(i);
                 if (writerIndex < 0) {
@@ -276,30 +276,27 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 int columnType = TableUtils.getColumnType(metaMem, writerIndex);
 
                 if (columnType > -1) {
-                    TableColumnMetadata columnMeta = new TableColumnMetadata(
-                            Chars.toString(name),
-                            columnType,
-                            TableUtils.isColumnIndexed(metaMem, writerIndex),
-                            TableUtils.getIndexBlockCapacity(metaMem, writerIndex),
-                            true,
-                            null,
-                            writerIndex,
-                            TableUtils.isColumnDedupKey(metaMem, writerIndex),
-                            denseSymbolIndex
+                    String colName = Chars.toString(name);
+                    columnMetadata.add(
+                            new TableColumnMetadata(
+                                    colName,
+                                    columnType,
+                                    TableUtils.isColumnIndexed(metaMem, i),
+                                    TableUtils.getIndexBlockCapacity(metaMem, i),
+                                    true,
+                                    null,
+                                    writerIndex,
+                                    TableUtils.isColumnDedupKey(metaMem, i),
+                                    denseSymbolIndex
+                            )
                     );
-                    int columnPlaceIndex = TableUtils.getReplacingColumnIndex(metaMem, writerIndex);
-                    if (columnPlaceIndex > -1 && columnPlaceIndex < columnMetadata.size()) {
-                        assert columnMetadata.get(columnPlaceIndex) == null;
-                        columnMetadata.set(columnPlaceIndex, columnMeta);
-                    } else {
-                        columnMetadata.add(columnMeta);
-                    }
+                    int denseIndex = columnMetadata.size() - 1;
+                    columnNameIndexMap.put(colName, denseIndex);
                     if (writerIndex == timestampIndex) {
-                        this.timestampIndex = columnMetadata.size() - 1;
+                        this.timestampIndex = denseIndex;
                     }
                 }
             }
-
             this.columnCount = columnMetadata.size();
         } catch (Throwable e) {
             clear();

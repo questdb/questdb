@@ -73,6 +73,14 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
+    public int detachFdClose() {
+        int fd = this.fd;
+        this.fd = -1;
+        close();
+        return fd;
+    }
+
+    @Override
     public void extend(long newSize) {
         if (newSize > size) {
             setSize0(newSize);

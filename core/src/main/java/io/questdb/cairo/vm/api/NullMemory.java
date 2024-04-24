@@ -61,6 +61,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
+    public int detachFdClose() {
+        return -1;
+    }
+
+    @Override
     public void extend(long size) {
     }
 
@@ -357,7 +362,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void switchTo(int fd, long offset, boolean truncate, byte truncateMode) {
+    public void switchTo(FilesFacade ff, int fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
     }
 
     @Override

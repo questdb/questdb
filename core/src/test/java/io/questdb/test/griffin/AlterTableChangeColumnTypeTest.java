@@ -24,8 +24,10 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -60,7 +62,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testChangeIndexedSymbolToVarcharWal() throws Exception {
         assertMemoryLeak(() -> {
-            createX();
+            createXWal();
+            drainWalQueue();
             ddl("create table y as (select ik from x)", sqlExecutionContext);
             ddl("alter table x alter column ik type varchar", sqlExecutionContext);
             drainWalQueue();
@@ -246,6 +249,33 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testNewTypeMissing() throws Exception {
         assertFailure("alter table x alter column c type", 33, "column type expected");
+    }
+
+    @Test
+    public void testWalWriterConvertsRowOnUncommittedDataStringToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (" +
+                            "select" +
+                            " rnd_str(5,1024,2) c," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp," +
+                            " from long_sequence(1000)" +
+                            ") timestamp (timestamp) PARTITION BY HOUR WAL;"
+            );
+
+            try (var walWriter = getWalWriter("x")) {
+                TableWriter.Row row = walWriter.newRow(IntervalUtils.parseFloorPartialTimestamp("2024-02-04"));
+                row.putStr(0, "abc");
+                row.append();
+                ddl("alter table x alter column c type varchar", sqlExecutionContext);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+
+            assertSql("c\nabc\n", "select c from x limit -1");
+        });
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {

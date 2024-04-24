@@ -22,37 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.griffin;
 
-import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.str.LPSZ;
+public interface ColumnConversionOffsetSink {
+    void setDestSizes(long primarySize, long auxSize);
 
-public class MemoryFMCRImpl extends MemoryFCRImpl implements MemoryMR {
-
-    @Override
-    public int detachFdClose() {
-        close();
-        return -1;
-    }
-
-    @Override
-    public int getFd() {
-        return -1;
-    }
-
-    @Override
-    public boolean isMapped(long offset, long len) {
-        return false;
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
-        throw new UnsupportedOperationException();
-    }
+    void setSrcOffsets(long primaryOffset, long auxOffset);
 }

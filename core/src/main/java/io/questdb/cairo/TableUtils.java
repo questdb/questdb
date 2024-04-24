@@ -1615,12 +1615,14 @@ public final class TableUtils {
 
             // validate column names
             int denseCount = 0;
-            for (int i = 0; i < columnCount; i++) {
-                final CharSequence name = getColumnName(metaMem, memSize, offset, i);
-                if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
-                    offset += Vm.getStorageLength(name);
-                } else {
-                    throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
+            if (nameIndex != null) {
+                for (int i = 0; i < columnCount; i++) {
+                    final CharSequence name = getColumnName(metaMem, memSize, offset, i);
+                    if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
+                        offset += Vm.getStorageLength(name);
+                    } else {
+                        throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
+                    }
                 }
             }
         } catch (Throwable e) {
