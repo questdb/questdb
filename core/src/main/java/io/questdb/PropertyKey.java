@@ -416,6 +416,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
     CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
     CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default"),
+    CAIRO_WAL_DEFAULT_FORMAT("cairo.wal.default.format"),
     CAIRO_WAL_PURGE_INTERVAL("cairo.wal.purge.interval"),
     CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT("cairo.wal.segment.rollover.row.count"),
     CAIRO_WAL_SEGMENT_ROLLOVER_SIZE("cairo.wal.segment.rollover.size"),

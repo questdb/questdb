@@ -504,6 +504,8 @@ public interface CairoConfiguration {
 
     long getWalDataAppendPageSize();
 
+    int getWalDefaultFormat();
+
     boolean getWalEnabledDefault();
 
     long getWalEventAppendPageSize();

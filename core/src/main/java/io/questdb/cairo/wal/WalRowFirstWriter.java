@@ -56,7 +56,7 @@ import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 /**
  * WAL writer with row-first storage format. All columns are written into a single file.
  */
-public class WalRowFirstWriter implements TableWriterAPI {
+public class WalRowFirstWriter implements WalWriter {
     public static final int NEW_ROW_SEPARATOR = -1;
     private static final Log LOG = LogFactory.getLog(WalRowFirstWriter.class);
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
@@ -354,6 +354,7 @@ public class WalRowFirstWriter implements TableWriterAPI {
         return symbolMapReaders.getQuick(columnIndex);
     }
 
+    @Override
     public TableToken getTableToken() {
         return tableToken;
     }
@@ -367,11 +368,12 @@ public class WalRowFirstWriter implements TableWriterAPI {
         return rowMem.getAppendOffset() - currentTxnOffset;
     }
 
+    @Override
     public int getWalId() {
         return walId;
     }
 
-    @TestOnly
+    @Override
     public String getWalName() {
         return walName;
     }

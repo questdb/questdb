@@ -353,6 +353,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean walApplyWorkerHaltOnError;
     private final long walApplyWorkerSleepThreshold;
     private final long walApplyWorkerYieldThreshold;
+    private final int walDefaultFormat;
     private final boolean walEnabledDefault;
     private final long walMaxLagSize;
     private final int walMaxLagTxnCount;
@@ -570,6 +571,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         // a pre-WAL version suddenly would start to create WAL tables by default, this could come as a surprise to users
         // instead cairo.wal.enabled.default=true is added to the config, so only new QuestDB installations have WAL enabled by default
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+        this.walDefaultFormat = getWalDefaultFormat(properties, env);
         this.walPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
         this.walPurgeWaitBeforeDelete = getInt(properties, env, PropertyKey.DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE, 0);
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
@@ -1409,26 +1411,33 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
         final String jitMode = getString(properties, env, PropertyKey.CAIRO_SQL_JIT_MODE, "on");
-
         assert jitMode != null;
-
         if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
             return SqlJitMode.JIT_MODE_ENABLED;
         }
-
         if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
             return SqlJitMode.JIT_MODE_DISABLED;
         }
-
         if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
             return SqlJitMode.JIT_MODE_FORCE_SCALAR;
         }
-
         return SqlJitMode.JIT_MODE_ENABLED;
     }
 
     private DateFormat getTimestampFormat(Properties properties, @Nullable Map<String, String> env) {
         return compiler.compile(getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "yyyy-MM-dd"));
+    }
+
+    private int getWalDefaultFormat(Properties properties, @Nullable Map<String, String> env) {
+        final String jitMode = getString(properties, env, PropertyKey.CAIRO_WAL_DEFAULT_FORMAT, "row");
+        assert jitMode != null;
+        if (Chars.equalsLowerCaseAscii(jitMode, "row")) {
+            return WalFormat.WAL_FORMAT_ROW_FIRST;
+        }
+        if (Chars.equalsLowerCaseAscii(jitMode, "column")) {
+            return WalFormat.WAL_FORMAT_COL_FIRST;
+        }
+        return WalFormat.WAL_FORMAT_COL_FIRST;
     }
 
     private boolean pathEquals(String p1, String p2) {
@@ -1885,7 +1894,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 return value.incrementAndGet();
             }
         };
-
 
         @Override
         public boolean attachPartitionCopy() {
@@ -2747,6 +2755,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalDataAppendPageSize() {
             return walWriterDataAppendPageSize;
+        }
+
+        @Override
+        public int getWalDefaultFormat() {
+            return walDefaultFormat;
         }
 
         @Override

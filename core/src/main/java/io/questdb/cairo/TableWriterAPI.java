@@ -45,7 +45,7 @@ public interface TableWriterAPI extends Closeable {
      * already have data this function will create ".top" file in addition to column files. ".top" file contains
      * size of partition at the moment of column creation. It must be used to accurately position inside new
      * column when either appending or reading.
-     *
+     * <p>
      * <b>Failures</b>
      * Adding new column can fail in many situations. None of the failures affect integrity of data that is already in
      * the table but can leave instance of TableWriter in inconsistent state. When this happens function will throw CairoError.
@@ -54,7 +54,7 @@ public interface TableWriterAPI extends Closeable {
      * <p>
      * Whenever function throws CairoException application code can continue using TableWriter instance and may attempt to
      * add columns again.
-     *
+     * <p>
      * <b>Transactions</b>
      * <p>
      * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may

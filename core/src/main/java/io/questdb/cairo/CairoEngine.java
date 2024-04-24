@@ -721,6 +721,9 @@ public class CairoEngine implements Closeable, WriterSource {
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
         }
+        if (configuration.getWalDefaultFormat() == WalFormat.WAL_FORMAT_ROW_FIRST) {
+            return walRowFirstWriterPool.get(tableToken);
+        }
         return walColFirstWriterPool.get(tableToken);
     }
 
@@ -731,6 +734,9 @@ public class CairoEngine implements Closeable, WriterSource {
         // it will do unnecessary token verification
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
+        }
+        if (configuration.getWalDefaultFormat() == WalFormat.WAL_FORMAT_ROW_FIRST) {
+            return walRowFirstWriterPool.get(tableToken);
         }
         return walColFirstWriterPool.get(tableToken);
     }
@@ -767,6 +773,14 @@ public class CairoEngine implements Closeable, WriterSource {
     public @NotNull WalRowFirstWriter getWalRowFirstWriter(TableToken tableToken) {
         verifyTableToken(tableToken);
         return walRowFirstWriterPool.get(tableToken);
+    }
+
+    public @NotNull WalWriter getWalWriter(TableToken tableToken) {
+        verifyTableToken(tableToken);
+        if (configuration.getWalDefaultFormat() == WalFormat.WAL_FORMAT_ROW_FIRST) {
+            return walRowFirstWriterPool.get(tableToken);
+        }
+        return walColFirstWriterPool.get(tableToken);
     }
 
     public TableWriter getWriter(TableToken tableToken, @NotNull String lockReason) {

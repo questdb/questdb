@@ -24,10 +24,10 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
-import io.questdb.cairo.wal.WalColFirstWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
@@ -43,19 +43,38 @@ import io.questdb.test.griffin.AbstractMultiNodeTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
 
+@RunWith(Parameterized.class)
 public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
+    private final WalFormat walFormat;
+
+    public WalTableWriterFuzzTest(WalFormat walFormat) {
+        this.walFormat = walFormat;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalFormat.ROW_FIRST},
+                {WalFormat.COL_FIRST}
+        });
+    }
 
     @Before
     public void setUp() {
         super.setUp();
         currentMicros = 0L;
+        node1.setProperty(PropertyKey.CAIRO_WAL_DEFAULT_FORMAT, walFormat == WalFormat.ROW_FIRST ? "row" : "column");
     }
 
     @Test
@@ -73,7 +92,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter = engine.getWalWriter(tableToken)
             ) {
                 final int tableId = addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -107,7 +126,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     .wal();
             TableToken tt = createTable(model);
 
-            try (WalColFirstWriter walWriter = engine.getWalColFirstWriter(tt)) {
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
                 TableWriter.Row row = walWriter.newRow(1000);
                 row.putInt(0, 1);
                 row.append();
@@ -151,7 +170,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter = engine.getWalColFirstWriter(tt)
+                    WalWriter walWriter = engine.getWalWriter(tt)
             ) {
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
@@ -179,7 +198,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter = engine.getWalColFirstWriter(tt)
+                    WalWriter walWriter = engine.getWalWriter(tt)
             ) {
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
@@ -206,17 +225,17 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter1 = engine.getWalColFirstWriter(tt);
-                    WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tt);
-                    WalColFirstWriter walWriter3 = engine.getWalColFirstWriter(tt)
+                    WalWriter walWriter1 = engine.getWalWriter(tt);
+                    WalWriter walWriter2 = engine.getWalWriter(tt);
+                    WalWriter walWriter3 = engine.getWalWriter(tt)
             ) {
                 long start = now;
-                WalColFirstWriter[] writers = new WalColFirstWriter[]{walWriter1, walWriter2, walWriter3};
+                WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3};
 
                 for (int i = 0; i < 5; i++) {
                     boolean inOrder = rnd.nextBoolean();
                     int walIndex = rnd.nextInt(writers.length);
-                    WalColFirstWriter walWriter = writers[walIndex];
+                    WalWriter walWriter = writers[walIndex];
                     int rowCount = rnd.nextInt(1000) + 2;
                     tsIncrement = rnd.nextLong(Timestamps.MINUTE_MICROS);
 
@@ -256,18 +275,17 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter1 = engine.getWalColFirstWriter(tableToken);
-                    WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tableToken);
-                    WalColFirstWriter walWriter3 = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter1 = engine.getWalWriter(tableToken);
+                    WalWriter walWriter2 = engine.getWalWriter(tableToken);
+                    WalWriter walWriter3 = engine.getWalWriter(tableToken)
             ) {
-
                 long start = now;
-                WalColFirstWriter[] writers = new WalColFirstWriter[]{walWriter1, walWriter2, walWriter3};
+                WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3};
 
                 for (int i = 0; i < 20; i++) {
                     boolean inOrder = rnd.nextBoolean();
                     int walIndex = rnd.nextInt(writers.length);
-                    WalColFirstWriter walWriter = writers[walIndex];
+                    WalWriter walWriter = writers[walIndex];
                     int rowCount = rnd.nextInt(10000) + 1;
                     int partitions = rnd.nextInt(3) + 1;
                     tsIncrement = partitions * Timestamps.HOUR_MICROS / rowCount;
@@ -319,7 +337,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             Rnd rnd = new Rnd();
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter = engine.getWalWriter(tableToken)
             ) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -341,10 +359,9 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             Rnd rnd = new Rnd();
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter1 = engine.getWalColFirstWriter(tableToken);
-                    WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter1 = engine.getWalWriter(tableToken);
+                    WalWriter walWriter2 = engine.getWalWriter(tableToken)
             ) {
-
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts, rnd, walWriter1, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
@@ -368,10 +385,9 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             Rnd rnd = new Rnd();
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter1 = engine.getWalColFirstWriter(tableToken);
-                    WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter1 = engine.getWalWriter(tableToken);
+                    WalWriter walWriter2 = engine.getWalWriter(tableToken)
             ) {
-
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, start, rnd, walWriter1, false);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -398,7 +414,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     .wal();
             TableToken tableToken = createTable(model);
 
-            try (WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putInt(0, 10);
                 row.append();
@@ -430,7 +446,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     .wal();
             TableToken tableToken = createTable(model);
 
-            try (WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putInt(0, 10);
                 row.append();
@@ -477,7 +493,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final Utf8String varChar = new Utf8String("₴ п'ять доллярів");
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter = engine.getWalWriter(tableToken)
             ) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -569,7 +585,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter = engine.getWalWriter(tableToken)
             ) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -605,7 +621,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final Utf8String varChar = new Utf8String("₴ п'ять доллярів");
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter = engine.getWalWriter(tableToken)
             ) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -705,7 +721,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
 
             final String walName;
-            try (WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 walName = walWriter.getWalName();
             }
@@ -734,7 +750,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
-            try (WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 assertSqlCursors(tableCopyName, tableName);
 
@@ -769,7 +785,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter = engine.getWalWriter(tableToken)
             ) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -798,7 +814,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter = engine.getWalWriter(tableToken)
             ) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -832,9 +848,8 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter = engine.getWalWriter(tableToken)
             ) {
-
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -866,16 +881,13 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
-                    WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter = engine.getWalWriter(tableToken)
             ) {
-
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                try (
-                        WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tableToken)
-                ) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     rnd.reset();
                     start += rowCount * tsIncrement - Timestamps.HOUR_MICROS / 2 + 1;
                     addRowsToWalAndApplyToTable(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter2, true);
@@ -916,7 +928,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private int addRowsToWal(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalColFirstWriter walWriter, boolean inOrder) {
+    private int addRowsToWal(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
         final int tableId;
         try (
                 TableWriter copyWriter = getWriter(tableCopyName);
@@ -956,7 +968,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         return tableId;
     }
 
-    private int addRowsToWalAndApplyToTable(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalColFirstWriter walWriter, boolean inOrder) {
+    private int addRowsToWalAndApplyToTable(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
         final int tableId = addRowsToWal(iteration, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, startTs, rnd, walWriter, inOrder);
         drainWalQueue();
         return tableId;
@@ -1026,7 +1038,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
 
             final String walName;
-            try (WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableToken)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 walName = walWriter.getWalName();
             }

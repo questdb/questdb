@@ -60,7 +60,7 @@ import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
  * TODO: the API of this writer is not very efficient; we should introduce a separate
  *       column-first API that would accept batches, e.g. lists of arrays of column values.
  */
-public class WalColFirstWriter implements TableWriterAPI {
+public class WalColFirstWriter implements WalWriter {
     public static final int NEW_COL_RECORD_SIZE = 6;
     private static final long COLUMN_DELETED_NULL_FLAG = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(WalColFirstWriter.class);
@@ -354,6 +354,7 @@ public class WalColFirstWriter implements TableWriterAPI {
         return symbolMapReaders.getQuick(columnIndex);
     }
 
+    @Override
     public TableToken getTableToken() {
         return tableToken;
     }
@@ -363,11 +364,12 @@ public class WalColFirstWriter implements TableWriterAPI {
         return segmentRowCount - currentTxnStartRowNum;
     }
 
+    @Override
     public int getWalId() {
         return walId;
     }
 
-    @TestOnly
+    @Override
     public String getWalName() {
         return walName;
     }

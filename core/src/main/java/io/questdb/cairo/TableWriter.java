@@ -5819,9 +5819,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
 
                     // Check that the value is not 0 (or another unreasonable value) because of reading beyond written range.
-                    if (o3Timestamp < Math.min(o3TimestampMin, Math.max(txWriter.getMinTimestamp(), 0))) {
-                        System.out.println("...");
-                    }
                     assert o3Timestamp >= Math.min(o3TimestampMin, Math.max(txWriter.getMinTimestamp(), 0));
 
                     final long srcOooHi;

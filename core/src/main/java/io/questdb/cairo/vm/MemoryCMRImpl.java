@@ -37,7 +37,7 @@ import io.questdb.std.str.LPSZ;
 
 import static io.questdb.cairo.vm.Vm.PARANOIA_MODE;
 
-//contiguous mapped readable 
+// contiguous mapped readable
 public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
     protected int fd = -1;

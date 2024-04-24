@@ -917,6 +917,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWalDefaultFormat() {
+        return WalFormat.WAL_FORMAT_ROW_FIRST;
+    }
+
+    @Override
     public boolean getWalEnabledDefault() {
         return false;
     }
