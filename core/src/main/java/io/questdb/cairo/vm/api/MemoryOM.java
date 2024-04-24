@@ -39,6 +39,8 @@ public interface MemoryOM extends MemoryM {
 
     long getOffset();
 
+    long getSizeWithOffset();
+
     default void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         ofOffset(ff, name, 0L, size, memoryTag, opts);
     }

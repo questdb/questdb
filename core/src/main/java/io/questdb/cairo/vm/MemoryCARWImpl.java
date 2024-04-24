@@ -62,7 +62,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     @Override
     public long appendAddressFor(long offset, long bytes) {
-        checkAndExtend(pageAddress + offset + bytes);
+        checkAndExtend(pageAddress + offset - shiftAddressRight + bytes);
         return addressOf(offset);
     }
 
@@ -119,6 +119,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
      */
     @Override
     public void jumpTo(long offset) {
+        offset -= shiftAddressRight;
         checkAndExtend(pageAddress + offset);
         appendAddress = pageAddress + offset;
     }

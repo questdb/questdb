@@ -6639,7 +6639,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         .put(", walRowId=").put(rowId)
                                         .put(']');
                             }
-                            o3SymbolColumn.putInt((rowId - rowLo) << 2, newKey);
+                            o3SymbolColumn.putInt(rowId << 2, newKey);
                         }
                     }
                 }

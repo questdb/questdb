@@ -44,8 +44,8 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
+    protected long shiftAddressRight = 0;
     protected long size = 0;
-    private long shiftAddressRight = 0;
 
     public AbstractMemoryCR(boolean stableStrings) {
         if (stableStrings) {
@@ -159,7 +159,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return size;
     }
 
-    private DirectUtf8String getVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
+    protected DirectUtf8String getVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
         long addr = addressOf(offset);
         assert addr > 0;
         if (size + offset <= size()) {

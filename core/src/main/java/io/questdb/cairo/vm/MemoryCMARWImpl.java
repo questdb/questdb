@@ -67,6 +67,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public long appendAddressFor(long offset, long bytes) {
+        offset -= shiftAddressRight;
         checkAndExtend(pageAddress + offset + bytes);
         return pageAddress + offset;
     }
@@ -159,6 +160,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void jumpTo(long offset) {
+        offset -= shiftAddressRight;
         checkAndExtend(pageAddress + offset);
         appendAddress = pageAddress + offset;
         assert appendAddress <= lim;
