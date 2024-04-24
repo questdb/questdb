@@ -37,6 +37,7 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
@@ -63,6 +64,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 public class PropServerConfiguration implements ServerConfiguration {
 
@@ -495,6 +497,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
     private boolean useLegacyStringDefault;
+    private Supplier<UsernamePasswordMatcher> usernamePasswordMatcherSupplier;
 
     public PropServerConfiguration(
             String root,
@@ -537,6 +540,31 @@ public class PropServerConfiguration implements ServerConfiguration {
                 fpf,
                 true
         );
+    }
+
+    public PropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Map<String, String> env,
+            Log log,
+            final BuildInformation buildInformation,
+            FilesFacade filesFacade,
+            MicrosecondClock microsecondClock,
+            FactoryProviderFactory fpf,
+            Supplier<UsernamePasswordMatcher> usernamePasswordMatcherSupplier
+    ) throws ServerConfigurationException, JsonException {
+        this(
+                root,
+                properties,
+                env,
+                log,
+                buildInformation,
+                filesFacade,
+                microsecondClock,
+                fpf,
+                true
+        );
+        this.usernamePasswordMatcherSupplier = usernamePasswordMatcherSupplier;
     }
 
     public PropServerConfiguration(
@@ -1262,6 +1290,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
         this.allowTableRegistrySharedWrite = getBoolean(properties, env, PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE, false);
         this.enableTestFactories = getBoolean(properties, env, PropertyKey.DEBUG_ENABLE_TEST_FACTORIES, false);
+        this.usernamePasswordMatcherSupplier = () -> new DynamicUsernamePasswordMatcher(this);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -1330,6 +1359,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return pgWireConfiguration;
+    }
+
+    @Override
+    public UsernamePasswordMatcher getUsernamePasswordMatcher() {
+        return this.usernamePasswordMatcherSupplier.get();
     }
 
     @Override

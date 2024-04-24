@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.DynamicUsernamePasswordMatcher;
 import io.questdb.FactoryProvider;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoConfiguration;
@@ -35,10 +36,7 @@ import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
@@ -144,6 +142,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
             @Override
             public PGWireConfiguration getPGWireConfiguration() {
                 return configuration;
+            }
+
+            @Override
+            public UsernamePasswordMatcher getUsernamePasswordMatcher() {
+                return new DynamicUsernamePasswordMatcher(this);
             }
 
             @Override

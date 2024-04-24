@@ -25,16 +25,11 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.*;
-import io.questdb.cutlass.pgwire.CleartextPasswordPgWireAuthenticator;
-import io.questdb.cutlass.pgwire.CustomCloseActionPasswordMatcherDelegate;
-import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.BootstrapTest;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -45,6 +40,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 public class PGErrorHandlingTest extends BootstrapTest {
 
@@ -101,6 +97,10 @@ public class PGErrorHandlingTest extends BootstrapTest {
 
     @Test
     public void testUnexpectedErrorOutsideSQLExecutionResultsInDisconnect() throws Exception {
+        Supplier<UsernamePasswordMatcher> supplier = () -> {
+            throw new RuntimeException("error outside of sql execution");
+        };
+
         final Bootstrap bootstrap = new Bootstrap(
                 new PropBootstrapConfiguration() {
                     @Override
@@ -113,12 +113,12 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                 bootstrap.getBuildInformation(),
                                 FilesFacadeImpl.INSTANCE,
                                 bootstrap.getMicrosecondClock(),
-                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration)
+                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration),
+                                supplier
                         );
                     }
                 },
 
-                // todo: figure out how to inject a matcher that always throws an error
                 getServerMainArgs()
         );
 

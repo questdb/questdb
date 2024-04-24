@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.ObjObjHashMap;
@@ -64,4 +65,6 @@ public interface ServerConfiguration {
     default boolean isLineTcpEnabled() {
         return true;
     }
+
+    UsernamePasswordMatcher getUsernamePasswordMatcher();
 }

@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.mp.Job;
@@ -244,6 +245,11 @@ public class WorkerPoolManagerTest {
 
             @Override
             public PGWireConfiguration getPGWireConfiguration() {
+                return null;
+            }
+
+            @Override
+            public UsernamePasswordMatcher getUsernamePasswordMatcher() {
                 return null;
             }
 

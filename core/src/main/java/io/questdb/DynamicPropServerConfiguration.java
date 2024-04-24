@@ -8,6 +8,7 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.MetricsConfiguration;
@@ -199,5 +200,10 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     @Override
     public boolean isLineTcpEnabled() {
         return delegate.get().isLineTcpEnabled();
+    }
+
+    @Override
+    public UsernamePasswordMatcher getUsernamePasswordMatcher() {
+        return delegate.get().getUsernamePasswordMatcher();
     }
 }

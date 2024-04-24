@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.DynamicUsernamePasswordMatcher;
 import io.questdb.FactoryProvider;
 import io.questdb.PropertyKey;
 import io.questdb.ServerConfiguration;
@@ -40,6 +41,7 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.log.Log;
@@ -134,8 +136,8 @@ public class PGJobContextTest extends BasePGTest {
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
-    private static String stringTypeName;
     private static List<Object[]> datesArr;
+    private static String stringTypeName;
     private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
 
@@ -8145,95 +8147,6 @@ create table tab as (
     }
 
     @Test
-    public void testSimpleVarcharInsert() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            PreparedStatement tbl = connection.prepareStatement("create table x as (" +
-                    "select " +
-                    "rnd_varchar('A','B','C') v, " +
-                    "rnd_str('A','B','C') s, " +
-                    "from long_sequence(5)" +
-                    ")");
-            tbl.execute();
-
-            PreparedStatement insert2 = connection.prepareStatement("insert into x(v,s) values ('F','F'),('G','G'),('H','H')");
-            insert2.execute();
-
-            PreparedStatement stmnt = connection.prepareStatement("select * from x");
-            ResultSet rs = stmnt.executeQuery();
-
-            final String expected = "v[VARCHAR],s[VARCHAR]\n" +
-                    "A,A\n" +
-                    "B,C\n" +
-                    "C,C\n" +
-                    "C,B\n" +
-                    "A,B\n" +
-                    "F,F\n" +
-                    "G,G\n" +
-                    "H,H\n";
-            assertResultSet(expected, sink, rs);
-        });
-    }
-
-    @Test
-    public void testStringyColEqVarcharBindvar() throws Exception {
-        testVarcharBindVars(
-                "select v,s from x where v != ?::varchar and s != ?::varchar");
-    }
-
-    @Test
-    public void testVarcharBindvarEqStringyCol() throws Exception {
-        testVarcharBindVars(
-                "select v,s from x where ?::varchar != v and ?::varchar != s");
-    }
-
-    @Test
-    public void testStringyColEqStringBindvar() throws Exception {
-        testVarcharBindVars("select v,s from x where v != ? and s != ?");
-    }
-
-    @Test
-    public void testStringBindvarEqStringyCol() throws Exception {
-        testVarcharBindVars("select v,s from x where ? != v and ? != s");
-    }
-
-    private void testVarcharBindVars(String query) throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            PreparedStatement tbl = connection.prepareStatement("create table x as (" +
-                    "select " +
-                    "rnd_varchar('A','ABCDEFGHI','abcdefghijk') v, " +
-                    "rnd_str('A','ABCDEFGHI','abcdefghijk') s, " +
-                    "from long_sequence(5)" +
-                    ")");
-            tbl.execute();
-
-            PreparedStatement insert = connection.prepareStatement("insert into x(v,s) values (?,?)");
-            for (int i = 0; i < 5; i++) {
-                insert.setString(1, String.valueOf((char) ('D' + i)));
-                insert.setString(2, String.valueOf((char) ('D' + i)));
-                insert.execute();
-            }
-
-            PreparedStatement stmnt = connection.prepareStatement(query);
-            stmnt.setString(1, "D");
-            stmnt.setString(2, "D");
-
-            ResultSet rs = stmnt.executeQuery();
-
-            final String expected = "v[VARCHAR],s[VARCHAR]\n" +
-                    "A,A\n" +
-                    "ABCDEFGHI,abcdefghijk\n" +
-                    "abcdefghijk,abcdefghijk\n" +
-                    "abcdefghijk,ABCDEFGHI\n" +
-                    "A,ABCDEFGHI\n" +
-                    "E,E\n" +
-                    "F,F\n" +
-                    "G,G\n" +
-                    "H,H\n";
-            assertResultSet(expected, sink, rs);
-        });
-    }
-
-    @Test
     public void testSimpleAlterTable() throws Exception {
         // we are going to:
         // 1. create a table
@@ -8414,6 +8327,36 @@ create table tab as (
                 // dump metadata
                 assertResultSet(expected, sink, rs);
             }
+        });
+    }
+
+    @Test
+    public void testSimpleVarcharInsert() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            PreparedStatement tbl = connection.prepareStatement("create table x as (" +
+                    "select " +
+                    "rnd_varchar('A','B','C') v, " +
+                    "rnd_str('A','B','C') s, " +
+                    "from long_sequence(5)" +
+                    ")");
+            tbl.execute();
+
+            PreparedStatement insert2 = connection.prepareStatement("insert into x(v,s) values ('F','F'),('G','G'),('H','H')");
+            insert2.execute();
+
+            PreparedStatement stmnt = connection.prepareStatement("select * from x");
+            ResultSet rs = stmnt.executeQuery();
+
+            final String expected = "v[VARCHAR],s[VARCHAR]\n" +
+                    "A,A\n" +
+                    "B,C\n" +
+                    "C,C\n" +
+                    "C,B\n" +
+                    "A,B\n" +
+                    "F,F\n" +
+                    "G,G\n" +
+                    "H,H\n";
+            assertResultSet(expected, sink, rs);
         });
     }
 
@@ -8881,6 +8824,22 @@ create table tab as (
                 rs1.close();
             }
         });
+    }
+
+    @Test
+    public void testStringBindvarEqStringyCol() throws Exception {
+        testVarcharBindVars("select v,s from x where ? != v and ? != s");
+    }
+
+    @Test
+    public void testStringyColEqStringBindvar() throws Exception {
+        testVarcharBindVars("select v,s from x where v != ? and s != ?");
+    }
+
+    @Test
+    public void testStringyColEqVarcharBindvar() throws Exception {
+        testVarcharBindVars(
+                "select v,s from x where v != ?::varchar and s != ?::varchar");
     }
 
     @Test
@@ -9466,10 +9425,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAsync() throws Exception {
         testUpdateAsync(null, writer -> {
@@ -9566,10 +9521,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateNoAutoCommit() throws Exception {
@@ -9729,6 +9680,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdatePreparedRenameUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -9780,6 +9735,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateWithNowAndSystimestamp() throws Exception {
@@ -9924,6 +9883,68 @@ create table tab as (
                 }
             }
         });
+    }
+
+    @Test
+    public void testVarcharBindVarMixedAscii() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table x (a varchar, ts timestamp) timestamp(ts) partition by day");
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("insert into x values (?, ?)")) {
+                Timestamp bTs = new Timestamp(0);
+                ps.setString(1, "a");
+                ps.setTimestamp(2, bTs);
+                ps.execute();
+
+                ps.setString(1, "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:");
+                ps.setTimestamp(2, bTs);
+                ps.execute();
+
+                ps.setString(1, "d9INVpegZ\"N");
+                ps.setTimestamp(2, bTs);
+                ps.execute();
+
+                ps.setString(1, "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*");
+                ps.setTimestamp(2, bTs);
+                ps.execute();
+            }
+            drainWalQueue();
+
+            try (Statement statement = connection.createStatement()) {
+                ResultSet rs = statement.executeQuery("select * from x");
+                assertResultSet(
+                        "a[VARCHAR],ts[TIMESTAMP]\n" +
+                                "a,1970-01-01 00:00:00.0\n" +
+                                "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:,1970-01-01 00:00:00.0\n" +
+                                "d9INVpegZ\"N,1970-01-01 00:00:00.0\n" +
+                                "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*,1970-01-01 00:00:00.0\n",
+                        sink,
+                        rs
+                );
+            }
+
+            sink.clear();
+
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    "x",
+                    sink,
+                    "a\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000Z\n" +
+                            "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:\t1970-01-01T00:00:00.000000Z\n" +
+                            "d9INVpegZ\"N\t1970-01-01T00:00:00.000000Z\n" +
+                            "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*\t1970-01-01T00:00:00.000000Z\n"
+            );
+        });
+    }
+
+    @Test
+    public void testVarcharBindvarEqStringyCol() throws Exception {
+        testVarcharBindVars(
+                "select v,s from x where ?::varchar != v and ?::varchar != s");
     }
 
     private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {
@@ -10231,6 +10252,11 @@ create table tab as (
             @Override
             public PGWireConfiguration getPGWireConfiguration() {
                 return conf;
+            }
+
+            @Override
+            public UsernamePasswordMatcher getUsernamePasswordMatcher() {
+                return new DynamicUsernamePasswordMatcher(this);
             }
 
             @Override
@@ -11744,62 +11770,6 @@ create table tab as (
         }
     }
 
-    @Test
-    public void testVarcharBindVarMixedAscii() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (Statement statement = connection.createStatement()) {
-                statement.execute("create table x (a varchar, ts timestamp) timestamp(ts) partition by day");
-            }
-
-            try (PreparedStatement ps = connection.prepareStatement("insert into x values (?, ?)")) {
-                Timestamp bTs = new Timestamp(0);
-                ps.setString(1, "a");
-                ps.setTimestamp(2, bTs);
-                ps.execute();
-
-                ps.setString(1, "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:");
-                ps.setTimestamp(2, bTs);
-                ps.execute();
-
-                ps.setString(1, "d9INVpegZ\"N");
-                ps.setTimestamp(2, bTs);
-                ps.execute();
-
-                ps.setString(1, "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*");
-                ps.setTimestamp(2, bTs);
-                ps.execute();
-            }
-            drainWalQueue();
-
-            try (Statement statement = connection.createStatement()) {
-                ResultSet rs = statement.executeQuery("select * from x");
-                assertResultSet(
-                        "a[VARCHAR],ts[TIMESTAMP]\n" +
-                                "a,1970-01-01 00:00:00.0\n" +
-                                "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:,1970-01-01 00:00:00.0\n" +
-                                "d9INVpegZ\"N,1970-01-01 00:00:00.0\n" +
-                                "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*,1970-01-01 00:00:00.0\n",
-                        sink,
-                        rs
-                );
-            }
-
-            sink.clear();
-
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "x",
-                    sink,
-                    "a\tts\n" +
-                            "a\t1970-01-01T00:00:00.000000Z\n" +
-                            "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:\t1970-01-01T00:00:00.000000Z\n" +
-                            "d9INVpegZ\"N\t1970-01-01T00:00:00.000000Z\n" +
-                            "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*\t1970-01-01T00:00:00.000000Z\n"
-            );
-        });
-    }
-
     private void testQuery(String s, String s2) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -11964,6 +11934,43 @@ create table tab as (
                     }
                 }
             }
+        });
+    }
+
+    private void testVarcharBindVars(String query) throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            PreparedStatement tbl = connection.prepareStatement("create table x as (" +
+                    "select " +
+                    "rnd_varchar('A','ABCDEFGHI','abcdefghijk') v, " +
+                    "rnd_str('A','ABCDEFGHI','abcdefghijk') s, " +
+                    "from long_sequence(5)" +
+                    ")");
+            tbl.execute();
+
+            PreparedStatement insert = connection.prepareStatement("insert into x(v,s) values (?,?)");
+            for (int i = 0; i < 5; i++) {
+                insert.setString(1, String.valueOf((char) ('D' + i)));
+                insert.setString(2, String.valueOf((char) ('D' + i)));
+                insert.execute();
+            }
+
+            PreparedStatement stmnt = connection.prepareStatement(query);
+            stmnt.setString(1, "D");
+            stmnt.setString(2, "D");
+
+            ResultSet rs = stmnt.executeQuery();
+
+            final String expected = "v[VARCHAR],s[VARCHAR]\n" +
+                    "A,A\n" +
+                    "ABCDEFGHI,abcdefghijk\n" +
+                    "abcdefghijk,abcdefghijk\n" +
+                    "abcdefghijk,ABCDEFGHI\n" +
+                    "A,ABCDEFGHI\n" +
+                    "E,E\n" +
+                    "F,F\n" +
+                    "G,G\n" +
+                    "H,H\n";
+            assertResultSet(expected, sink, rs);
         });
     }
 

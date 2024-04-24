@@ -24,8 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.DynamicUsernamePasswordMatcher;
-import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -154,13 +152,12 @@ public class PGWireServer implements Closeable {
                                 circuitBreaker
                         );
 
-                        UsernamePasswordMatcher matcher = new DynamicUsernamePasswordMatcher(configuration);
                         Authenticator authenticator = new CleartextPasswordPgWireAuthenticator(
                                 configuration.getPGWireConfiguration(),
                                 circuitBreaker,
                                 registry,
                                 pgConnectionContext,
-                                matcher,
+                                configuration.getUsernamePasswordMatcher(),
                                 true
                         );
                         pgConnectionContext.setAuthenticator(authenticator);
