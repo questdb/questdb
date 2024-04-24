@@ -17,6 +17,26 @@ on:
 # and pushes them to the current branch.
 
 jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build Rust on Windows
+        run: |
+          cd core/rust/qdbr
+          cargo build --release
+      - name: log git status
+        run: |
+          git status
+      - name: Copy Windows Rust Library to the final directory
+        run: |
+          cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
+      - name: Save Windows Rust Library to Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
+          key: nativelibs-windows-rust-${{ github.sha }}
   build-freebsd:
     runs-on: ubuntu-latest
     steps:
@@ -29,20 +49,24 @@ jobs:
           release: 13.2
           usesh: true
           prepare: |
-            pkg install -y curl cmake gcc git nasm openjdk17
+            pkg install -y curl cmake gcc git nasm openjdk17 rust
           run: |
             export JAVA_HOME=/usr/local/openjdk17
             cd core
             cmake -B build/release -DCMAKE_BUILD_TYPE=Release
             cmake --build build/release --config Release
+            cd rust/qdbr
+            cargo build --release
+            cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd/
       - name: log git status
         run: |
           git status
-      - name: Save FreeBSD binary to Cache
+      - name: Save FreeBSD Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/freebsd/libquestdb.so
+            core/src/main/resources/io/questdb/bin/freebsd/libquestdbr.so
           key: nativelibs-freebsd-${{ github.sha }}
   build-macos:
     strategy:
@@ -57,25 +81,39 @@ jobs:
       - name: Install tooling
         run: |
           brew install make cmake gcc nasm
-      - name: Build MacOS
+      - name: Build MacOS C/C++ Library
         run: |
           cd core
           cmake -B build/release -DCMAKE_BUILD_TYPE=Release
           cmake --build build/release --config Release
-          cd ..
-      - name: Save ARM MacOS binary to Cache
+      - name: Build MacOS Rust Library
+        run: |
+          cd core/rust/qdbr
+          cargo clean
+          cargo build --release
+      - name: Copy ARM MacOS Rust Library to the final directory
+        if: ${{ matrix.os == 'macos-14' }}
+        run: |
+          cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/armosx/
+      - name: Copy x64 MacOS Rust Library to the final directory
+        if: ${{ matrix.os == 'macos-latest' }}
+        run: |
+          cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/osx/
+      - name: Save ARM MacOS Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
+            core/src/main/resources/io/questdb/bin/armosx/libquestdbr.dylib
           key: nativelibs-armosx-${{ github.sha }}
-      - name: Save x64 MacOS binary to Cache
+      - name: Save x64 MacOS Libraries to Cache
         if: ${{ matrix.os == 'macos-latest' }}
         uses: actions/cache/save@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
+            core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           key: nativelibs-osx-${{ github.sha }}
   build-others:
     runs-on: ubuntu-20.04
@@ -88,33 +126,48 @@ jobs:
           sudo sysctl -w fs.file-max=500000
           sudo apt-get update -y
           sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64 g++-mingw-w64
+      - name: Install rs-cross
+        run: |
+          cargo install cross
       - name: Generate Makefiles
         run: |
           cd ./core
           cmake -G "$generator" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
-      - name: Build x64 Linux
+      - name: Build x64 Linux C/C++ Library
         run: |
-          cd ./core
+          cd core
           cmake --build cmake-build-release --config Release
+      - name: Build x64 Linux Rust Library
+        run: |
+          cd core/rust/qdbr
+          cargo clean
+          cargo build --release
+          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
       - name: CMAKE ARM Linux
         run: |
           cd ./core
           cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DARM_TOOLCHAIN_PATH=/usr/bin/ -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
-      - name: Build ARM Linux
+      - name: Build ARM Linux C/C++ Library
         run: |
-          cd ./core
+          cd core
           cmake --build cmake-build-release-arm64 --config Release
+      - name: Build ARM Linux Rust Library
+        run: |
+          cd core/rust/qdbr
+          cargo clean
+          cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
+          cp target/aarch64-unknown-linux-gnu/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/
       - name: Download windows jni_md.h from JDK 11
         run: |
-          cd ./core
+          cd core
           curl https://raw.githubusercontent.com/AdoptOpenJDK/openjdk-jdk11/master/src/java.base/windows/native/include/jni_md.h > $JAVA_HOME/include/jni_md.h
       - name: CMake Windows
         run: |
-          cd ./core
+          cd core
           cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/windows-x86_64.cmake -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-win64
-      - name: Build Windows
+      - name: Build Windows C/C++ Library
         run: |
-          cd ./core
+          cd core
           cmake --build cmake-build-release-win64 --config Release
       - name: Check C++ runtime dependency
         run: |
@@ -126,78 +179,97 @@ jobs:
       - name: Check git status
         run: |
           git status
-      - name: Save x64 Linux binary to Cache
+      - name: Save x64 Linux Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/linux/libquestdb.so
+            core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
-      - name: Save ARM Linux binary to Cache
+      - name: Save ARM Linux Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
+            core/src/main/resources/io/questdb/bin/armlinux/libquestdbr.so
           key: nativelibs-armlinux-${{ github.sha }}
-      - name: Save Windows binary to Cache
+      - name: Save Windows C/C++ Library to Cache
         uses: actions/cache/save@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
           key: nativelibs-windows-${{ github.sha }}
   collect-commit-and-push:
-    needs: [ build-freebsd, build-macos, build-others ]
+    needs: [ build-freebsd, build-macos, build-others, build-windows ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - name: Print file sizes before
         run: |
           find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
-      - name: Restore FreeBSD binary from Cache
+      - name: Restore FreeBSD Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/freebsd/libquestdb.so
+            core/src/main/resources/io/questdb/bin/freebsd/libquestdbr.so
           key: nativelibs-freebsd-${{ github.sha }}
-      - name: Restore ARM MacOS binary from Cache
+      - name: Restore ARM MacOS Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
+            core/src/main/resources/io/questdb/bin/armosx/libquestdbr.dylib
           key: nativelibs-armosx-${{ github.sha }}
-      - name: Restore x64 MacOS binary from Cache
+      - name: Restore x64 MacOS Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
+            core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           key: nativelibs-osx-${{ github.sha }}
-      - name: Restore x64 Linux binary from Cache
+      - name: Restore x64 Linux Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/linux/libquestdb.so
+            core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
-      - name: Restore ARM Linux binary from Cache
+      - name: Restore ARM Linux Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
+            core/src/main/resources/io/questdb/bin/armlinux/libquestdbr.so
           key: nativelibs-armlinux-${{ github.sha }}
-      - name: Restore Windows binary from Cache
+      - name: Restore Windows C/C++ Library from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
           key: nativelibs-windows-${{ github.sha }}
+      - name: Restore Windows Rust Library from Cache
+        uses: actions/cache/restore@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
+          key: nativelibs-windows-rust-${{ github.sha }}
       - name: Commit the files
         run: |
           git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
           git config --global user.email 'jaromir@questdb.io'
           git add core/src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
+          git add core/src/main/resources/io/questdb/bin/armosx/libquestdbr.dylib
           git add core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
+          git add core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           git add core/src/main/resources/io/questdb/bin/freebsd/libquestdb.so
+          git add core/src/main/resources/io/questdb/bin/freebsd/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/linux/libquestdb.so
+          git add core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
+          git add core/src/main/resources/io/questdb/bin/armlinux/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
+          git add core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
           git commit -m "chore(build): Rebuild Native Libraries"
       - name: Check git status
         run: |
