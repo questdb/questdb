@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.util.Arrays;
 
 public abstract class AbstractCharSequenceHashSet implements Mutable {
@@ -53,11 +55,11 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
         free = capacity;
     }
 
-    public boolean contains(CharSequence key) {
+    public boolean contains(@NotNull CharSequence key) {
         return keyIndex(key) < 0;
     }
 
-    public boolean excludes(CharSequence key) {
+    public boolean excludes(@NotNull CharSequence key) {
         return keyIndex(key) > -1;
     }
 
@@ -69,23 +71,19 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
         return keys[-index - 1];
     }
 
-    public int keyIndex(CharSequence key) {
+    public int keyIndex(@NotNull CharSequence key) {
         int index = Hash.spread(Chars.hashCode(key)) & mask;
-
         if (keys[index] == noEntryKey) {
             return index;
         }
-
         if (Chars.equals(key, keys[index])) {
             return -index - 1;
         }
-
         return probe(key, index);
     }
 
-    public int keyIndex(CharSequence key, int lo, int hi) {
+    public int keyIndex(@NotNull CharSequence key, int lo, int hi) {
         int index = Hash.spread(Chars.hashCode(key, lo, hi)) & mask;
-
         if (keys[index] == noEntryKey) {
             return index;
         }
@@ -96,7 +94,7 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
         return probe(key, lo, hi, index);
     }
 
-    public int remove(CharSequence key) {
+    public int remove(@NotNull CharSequence key) {
         int index = keyIndex(key);
         if (index < 0) {
             removeAt(index);

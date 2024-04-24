@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -81,23 +82,23 @@ public class Utf8StringIntHashMap implements Mutable {
         Arrays.fill(values, noEntryValue);
     }
 
-    public boolean contains(DirectUtf8Sequence key) {
+    public boolean contains(@NotNull DirectUtf8Sequence key) {
         return keyIndex(key) < 0;
     }
 
-    public boolean excludes(DirectUtf8Sequence key) {
+    public boolean excludes(@NotNull DirectUtf8Sequence key) {
         return keyIndex(key) > -1;
     }
 
-    public int get(DirectUtf8Sequence key) {
+    public int get(@NotNull DirectUtf8Sequence key) {
         return valueAt(keyIndex(key));
     }
 
-    public int get(Utf8String key) {
+    public int get(@NotNull Utf8String key) {
         return valueAt(keyIndex(key));
     }
 
-    public int keyIndex(DirectUtf8Sequence key) {
+    public int keyIndex(@NotNull DirectUtf8Sequence key) {
         int hashCode = Hash.hashUtf8(key);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
@@ -109,7 +110,7 @@ public class Utf8StringIntHashMap implements Mutable {
         return probe(key, hashCode, index);
     }
 
-    public int keyIndex(Utf8String key) {
+    public int keyIndex(@NotNull Utf8String key) {
         int hashCode = Hash.hashUtf8(key);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
@@ -121,11 +122,11 @@ public class Utf8StringIntHashMap implements Mutable {
         return probe(key, hashCode, index);
     }
 
-    public boolean put(Utf8String key, int value) {
+    public boolean put(@NotNull Utf8String key, int value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean putAt(int index, Utf8String key, int value) {
+    public boolean putAt(int index, @NotNull Utf8String key, int value) {
         if (index < 0) {
             values[-index - 1] = value;
             return false;
@@ -134,7 +135,7 @@ public class Utf8StringIntHashMap implements Mutable {
         return true;
     }
 
-    public int remove(DirectUtf8Sequence key) {
+    public int remove(@NotNull DirectUtf8Sequence key) {
         int index = keyIndex(key);
         if (index < 0) {
             removeAt(index);

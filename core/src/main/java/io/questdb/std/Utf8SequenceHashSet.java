@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
@@ -61,7 +62,7 @@ public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements 
      * @param key immutable sequence of characters.
      * @return false if key is already in the set and true otherwise.
      */
-    public boolean add(Utf8Sequence key) {
+    public boolean add(@Nullable Utf8Sequence key) {
         if (key == null) {
             return addNull();
         }
@@ -75,13 +76,13 @@ public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements 
         return true;
     }
 
-    public final void addAll(Utf8SequenceHashSet that) {
+    public final void addAll(@NotNull Utf8SequenceHashSet that) {
         for (int i = 0, k = that.size(); i < k; i++) {
             add(that.get(i));
         }
     }
 
-    public void addAt(int index, Utf8Sequence key) {
+    public void addAt(int index, @NotNull Utf8Sequence key) {
         final Utf8String s = Utf8s.toUtf8String(key);
         keys[index] = s;
         hashCodes[index] = Utf8s.hashCode(key);
@@ -110,12 +111,12 @@ public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements 
     }
 
     @Override
-    public boolean contains(Utf8Sequence key) {
+    public boolean contains(@Nullable Utf8Sequence key) {
         return key == null ? hasNull : keyIndex(key) < 0;
     }
 
     @Override
-    public boolean excludes(Utf8Sequence key) {
+    public boolean excludes(@Nullable Utf8Sequence key) {
         return key == null ? !hasNull : keyIndex(key) > -1;
     }
 
@@ -131,15 +132,6 @@ public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements 
         return list;
     }
 
-    public int getListIndexAt(int keyIndex) {
-        int index = -keyIndex - 1;
-        return list.indexOf(keys[index]);
-    }
-
-    public int getListIndexOf(Utf8Sequence cs) {
-        return getListIndexAt(keyIndex(cs));
-    }
-
     @Override
     public Utf8Sequence keyAt(int index) {
         int index1 = -index - 1;
@@ -147,7 +139,7 @@ public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements 
     }
 
     @Override
-    public int remove(Utf8Sequence key) {
+    public int remove(@Nullable Utf8Sequence key) {
         if (key == null) {
             return removeNull();
         }
