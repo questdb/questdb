@@ -60,6 +60,7 @@ jobs:
             cd rust/qdbr
             cargo build --release
             cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd/
+            cd ../../../
       - name: log git status
         run: |
           git status
