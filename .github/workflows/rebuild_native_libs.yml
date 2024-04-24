@@ -49,9 +49,7 @@ jobs:
           release: 13.2
           usesh: true
           prepare: |
-            pkg install -y curl cmake gcc git nasm openjdk17
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            cat "$HOME/.cargo/env"
+            pkg install -y curl cmake gcc git nasm openjdk17 rust
           run: |
             export JAVA_HOME=/usr/local/openjdk17
             cd core
