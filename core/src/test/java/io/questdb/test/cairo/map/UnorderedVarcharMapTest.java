@@ -50,6 +50,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
              UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE, 128 * 1024, 4 * Numbers.SIZE_1GB)
         ) {
             putStable("foo", 42, map, sinkA, true);
+            putUnstable("foo", 42, map, false);
             Assert.assertEquals(42, get("foo", map));
             Assert.assertEquals(1, map.size());
             map.clear();
@@ -57,6 +58,25 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
             Assert.assertEquals(0, map.size());
         }
     }
+
+    @Test
+    public void testClearFreeHeapMemory() {
+        SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+        try (UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE, 1024, 4 * Numbers.SIZE_1GB)) {
+            long memUsedBefore = Unsafe.getMemUsed();
+            for (int i = 0; i < 10_000; i++) {
+                putUnstable("foo" + i, 42, map, true);
+            }
+            long memUsedAfterInsert = Unsafe.getMemUsed();
+            Assert.assertTrue(memUsedAfterInsert > memUsedBefore);
+
+            map.clear();
+            map.restoreInitialCapacity();
+            long memUsedAfterClear = Unsafe.getMemUsed();
+            Assert.assertEquals(memUsedAfterClear, memUsedBefore);
+        }
+    }
+
 
     @Test
     public void testCursor() throws Exception {

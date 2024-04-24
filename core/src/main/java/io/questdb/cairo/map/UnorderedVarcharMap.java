@@ -187,6 +187,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         mapSize = 0;
         nResizes = 0;
         Vect.memset(memStart, memLimit - memStart, 0);
+        allocator.close(); // free all memory, but allocator remains usable for further allocations
     }
 
     @Override
