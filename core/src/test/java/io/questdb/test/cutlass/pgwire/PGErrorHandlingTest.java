@@ -98,7 +98,12 @@ public class PGErrorHandlingTest extends BootstrapTest {
     @Test
     public void testUnexpectedErrorOutsideSQLExecutionResultsInDisconnect() throws Exception {
         Supplier<UsernamePasswordMatcher> supplier = () -> {
-            throw new RuntimeException("error outside of sql execution");
+            return new UsernamePasswordMatcher() {
+                @Override
+                public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
+                    throw new RuntimeException("error outside of sql execution");
+                }
+            };
         };
 
         final Bootstrap bootstrap = new Bootstrap(
