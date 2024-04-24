@@ -61,7 +61,7 @@ jobs:
       - name: log git status
         run: |
           git status
-      - name: Save FreeBSD binary to Cache
+      - name: Save FreeBSD Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
@@ -186,7 +186,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/linux/libquestdb.so
             core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
-      - name: Save ARM Linux binary to Cache
+      - name: Save ARM Linux Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
@@ -207,35 +207,35 @@ jobs:
       - name: Print file sizes before
         run: |
           find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
-      - name: Restore FreeBSD binary from Cache
+      - name: Restore FreeBSD Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/freebsd/libquestdb.so
             core/src/main/resources/io/questdb/bin/freebsd/libquestdbr.so
           key: nativelibs-freebsd-${{ github.sha }}
-      - name: Restore ARM MacOS binary from Cache
+      - name: Restore ARM MacOS Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
             core/src/main/resources/io/questdb/bin/armosx/libquestdbr.dylib
           key: nativelibs-armosx-${{ github.sha }}
-      - name: Restore x64 MacOS binary from Cache
+      - name: Restore x64 MacOS Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
             core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           key: nativelibs-osx-${{ github.sha }}
-      - name: Restore x64 Linux binary from Cache
+      - name: Restore x64 Linux Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/linux/libquestdb.so
             core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
-      - name: Restore ARM Linux binary from Cache
+      - name: Restore ARM Linux Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
@@ -263,6 +263,7 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
           git add core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           git add core/src/main/resources/io/questdb/bin/freebsd/libquestdb.so
+          git add core/src/main/resources/io/questdb/bin/freebsd/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/linux/libquestdb.so
           git add core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
