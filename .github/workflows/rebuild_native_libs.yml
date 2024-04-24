@@ -51,7 +51,8 @@ jobs:
           prepare: |
             pkg install -y curl cmake gcc git nasm openjdk17
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            . "$HOME/.cargo/env"
+            set path = (/sbin /bin /usr/sbin /usr/bin /usr/local/sbin /usr/local/bin $HOME/bin $HOME/.cargo/bin)
+            which cargo
           run: |
             export JAVA_HOME=/usr/local/openjdk17
             cd core
@@ -60,7 +61,6 @@ jobs:
             cd rust/qdbr
             cargo build --release
             cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd/
-            cd ../../../
       - name: log git status
         run: |
           git status
