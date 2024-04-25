@@ -43,7 +43,12 @@ import org.junit.Test;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class SettingsEndpointTest extends AbstractBootstrapTest {
-    private static final String SETTINGS_PAYLOAD = "{" +
+    private static final String OSS_PAYLOAD = "{" +
+            "\"release.type\":\"OSS\"," +
+            "\"release.version\":\"[DEVELOPMENT]\"" +
+            "}";
+
+    private static final String TEST_PAYLOAD = "{" +
             "\"cairo.snapshot.instance.id\":\"db\"," +
             "\"cairo.max.file.name.length\":127," +
             "\"cairo.wal.supported\":true" +
@@ -63,7 +68,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertSettingsRequest(httpClient, "{}");
+                    assertSettingsRequest(httpClient, OSS_PAYLOAD);
                 }
             }
         });
@@ -108,7 +113,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertSettingsRequest(httpClient, SETTINGS_PAYLOAD);
+                    assertSettingsRequest(httpClient, TEST_PAYLOAD);
                 }
             }
         });
