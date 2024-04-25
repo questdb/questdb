@@ -21,14 +21,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Build Rust on Windows
+      - name: Build Rust Library
         run: |
           cd core/rust/qdbr
           cargo build --release
       - name: log git status
         run: |
           git status
-      - name: Copy Windows Rust Library to the final directory
+      - name: Copy Rust Library to the final directory
         run: |
           cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
       - name: Save Windows Rust Library to Cache
@@ -116,7 +116,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           key: nativelibs-osx-${{ github.sha }}
   build-others:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     container: debian:buster
     env:
       generator: "CodeBlocks - Unix Makefiles"
@@ -125,11 +125,10 @@ jobs:
       - name: Install toolchains (C/C++/NASM/Rust)
         run: |
           apt-get update -y
-          apt install nasm python3 wget ca-certificates build-essential gcc-mingw-w64 g++-mingw-w64 -y
+          apt install nasm python3 wget ca-certificates cmake gcc-mingw-w64 g++-mingw-w64 -y
           python3 ./.github/prepare_rust_env.py
           export PATH=$HOME/.cargo/bin:$PATH
           export CARGO_HOME=$HOME/.cargo
-          cargo install cross
       - name: Generate Makefiles
         run: |
           cd ./core
@@ -144,20 +143,20 @@ jobs:
           cargo clean
           cargo build --release
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
-      - name: CMAKE ARM Linux
-        run: |
-          cd ./core
-          cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DARM_TOOLCHAIN_PATH=/usr/bin/ -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
-      - name: Build ARM Linux C/C++ Library
-        run: |
-          cd core
-          cmake --build cmake-build-release-arm64 --config Release
-      - name: Build ARM Linux Rust Library
-        run: |
-          cd core/rust/qdbr
-          cargo clean
-          cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
-          cp target/aarch64-unknown-linux-gnu/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/
+#      - name: CMAKE ARM Linux
+#        run: |
+#          cd ./core
+#          cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DARM_TOOLCHAIN_PATH=/usr/bin/ -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
+#      - name: Build ARM Linux C/C++ Library
+#        run: |
+#          cd core
+#          cmake --build cmake-build-release-arm64 --config Release
+#      - name: Build ARM Linux Rust Library
+#        run: |
+#          cd core/rust/qdbr
+#          cargo clean
+#          cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
+#          cp target/aarch64-unknown-linux-gnu/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/
       - name: Download windows jni_md.h from JDK 11
         run: |
           cd core
