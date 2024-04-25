@@ -127,6 +127,9 @@ jobs:
           apt-get update -y
           apt install nasm python3 wget ca-certificates -y
           python3 ./.github/prepare_rust_env.py
+          export PATH=$HOME/.cargo/bin:$PATH
+          export CARGO_HOME=$HOME/.cargo
+          ls -la .
       - name: Generate Makefiles
         run: |
           cd ./core
