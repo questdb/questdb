@@ -122,9 +122,6 @@ jobs:
       generator: "CodeBlocks - Unix Makefiles"
     steps:
       - uses: actions/checkout@v3
-      - name: Increase file count and install tooling
-        run: |
-          apt-get install -y nasm
       - name: Install rs-cross
         run: |
           cargo install cross
