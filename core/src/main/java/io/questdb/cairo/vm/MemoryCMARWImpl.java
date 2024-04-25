@@ -26,7 +26,6 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
@@ -38,10 +37,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 // contiguous mapped appendable readable writable
-public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, MemoryCARW, MemoryMAR {
+public class MemoryCMARWImpl extends AbstractMemoryCARW implements MemoryCMARW, MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
-    private long appendAddress = 0;
     private long extendSegmentMsb;
     private int fd = -1;
     private int madviseOpts = -1;
@@ -63,13 +61,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         final long result = appendAddress;
         appendAddress += bytes;
         return result;
-    }
-
-    @Override
-    public long appendAddressFor(long offset, long bytes) {
-        offset -= shiftAddressRight;
-        checkAndExtend(pageAddress + offset + bytes);
-        return pageAddress + offset;
     }
 
     @Override
@@ -139,11 +130,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public long getAppendOffset() {
-        return appendAddress - pageAddress;
-    }
-
-    @Override
     public long getExtendSegmentSize() {
         return extendSegmentMsb;
     }
@@ -156,14 +142,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public boolean isFileBased() {
         return true;
-    }
-
-    @Override
-    public void jumpTo(long offset) {
-        offset -= shiftAddressRight;
-        checkAndExtend(pageAddress + offset);
-        appendAddress = pageAddress + offset;
-        assert appendAddress <= lim;
     }
 
     @Override
@@ -287,13 +265,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         Vect.memset(pageAddress, baseLength, 0);
     }
 
-    private void checkAndExtend(long address) {
-        if (address <= lim) {
-            return;
-        }
-        extend0(address - pageAddress);
-    }
-
     private void extend0(long newSize) {
         long nPages = (newSize >>> extendSegmentMsb) + 1;
         newSize = nPages << extendSegmentMsb;
@@ -337,6 +308,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         close();
         this.ff = ff;
         fd = TableUtils.openFileRWOrFail(ff, name, opts);
+    }
+
+    @Override
+    protected void checkAndExtend(long address) {
+        if (address <= lim) {
+            return;
+        }
+        extend0(address - pageAddress);
     }
 
     protected void map(FilesFacade ff, @Nullable Utf8Sequence name, long size, int memoryTag) {

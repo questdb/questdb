@@ -55,10 +55,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.*;
 
 @RunWith(Parameterized.class)
-public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
+public class WalWriterFuzzTest extends AbstractMultiNodeTest {
     private final WalFormat walFormat;
 
-    public WalTableWriterFuzzTest(WalFormat walFormat) {
+    public WalWriterFuzzTest(WalFormat walFormat) {
         this.walFormat = walFormat;
     }
 

@@ -30,6 +30,11 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
@@ -48,13 +53,28 @@ import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABL
 // There are already measures to prevent invalid data generation, but it still can happen.
 // In order to verify that the test is not broken we check that there are no duplicate
 // timestamps for the record where the comparison fails.
-public class WalColFirstWriterFuzzTest extends AbstractFuzzTest {
+@RunWith(Parameterized.class)
+public class WalWriterFuzzTest extends AbstractFuzzTest {
+    private final WalFormat walFormat;
+
+    public WalWriterFuzzTest(WalFormat walFormat) {
+        this.walFormat = walFormat;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalFormat.ROW_FIRST},
+                {WalFormat.COL_FIRST}
+        });
+    }
 
     @Before
     public void setUp() {
         super.setUp();
         // We disable mixed I/O on some OSes and FSes (wink-wink Windows).
         node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, 512 * 1024);
+        node1.setProperty(PropertyKey.CAIRO_WAL_DEFAULT_FORMAT, walFormat == WalFormat.ROW_FIRST ? "row" : "column");
         setFuzzProperties(100, 1000, 2);
     }
 
@@ -70,7 +90,6 @@ public class WalColFirstWriterFuzzTest extends AbstractFuzzTest {
                 ") timestamp(ts) PARTITION by day WAL");
         insert("insert batch 2 into chunk_seq \n" +
                 "  select x, timestamp_sequence('2024-01-01', 312312) from long_sequence(1000)");
-
 
         runWalPurgeJob();
 

@@ -3719,7 +3719,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
             try {
                 long srcLag = Math.abs(lagAddr);
-                destMem.shiftAddressRight(0);
+                destMem.shiftOffsetRight(0);
                 final long dest = destMem.addressOf(0);
                 if (srcLag == 0 && lagRows != 0) {
                     throw CairoException.critical(0)
@@ -6385,11 +6385,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         auxMem.jumpTo(0);
                         final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                         columnTypeDriver.configureAuxMemO3RSS(auxMem);
-                        auxMem.shiftAddressRight(columnTypeDriver.auxRowsToBytes(rowLo));
+                        auxMem.shiftOffsetRight(columnTypeDriver.auxRowsToBytes(rowLo));
                     } else {
                         MemoryCARW primaryMem = o3MemColumns1.getQuick(getPrimaryColumnIndex(columnIndex));
                         primaryMem.jumpTo(0);
-                        primaryMem.shiftAddressRight(rowLo << sizeBitsPow2);
+                        primaryMem.shiftOffsetRight(rowLo << sizeBitsPow2);
                     }
                 }
             }
@@ -6561,7 +6561,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     symbolColumnDest = o3MemColumns1.get(primaryColumnIndex);
                     // If rowLo != 0 then we
-                    symbolColumnDest.shiftAddressRight(0);
+                    symbolColumnDest.shiftOffsetRight(0);
                     symbolColumnDest.jumpTo((rowHi - rowLo) << 2);
 
                     o3ColumnOverrides.setQuick(primaryColumnIndex, symbolColumnDest);
@@ -6584,7 +6584,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                         symbolColumnDest.putInt((rowId - rowLo) << 2, symKey);
                     }
-                    symbolColumnDest.shiftAddressRight(rowLo << 2);
+                    symbolColumnDest.shiftOffsetRight(rowLo << 2);
                 }
             }
         }

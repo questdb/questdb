@@ -44,7 +44,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
-    protected long shiftAddressRight = 0;
     protected long size = 0;
 
     public AbstractMemoryCR(boolean stableStrings) {
@@ -62,7 +61,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     }
 
     public long addressOf(long offset) {
-        offset -= shiftAddressRight;
         assert offset <= size : "offset=" + offset + ", size=" + size;
         return pageAddress + offset;
     }
@@ -150,19 +148,15 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return pageAddress;
     }
 
-    public void shiftAddressRight(long shiftRightOffset) {
-        this.shiftAddressRight = shiftRightOffset;
-    }
-
     @Override
     public long size() {
         return size;
     }
 
-    protected DirectUtf8String getVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
+    private DirectUtf8String getVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
         long addr = addressOf(offset);
         assert addr > 0;
-        if (size + offset <= size()) {
+        if (hasBytes(offset, size)) {
             return u8view.of(addr, addr + size, ascii);
         }
         throw CairoException.critical(0)

@@ -268,5 +268,5 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         value.writeTo(appendAddressFor(offset, hi - lo), lo, hi);
     }
 
-    void shiftAddressRight(long shiftRightOffset);
+    void shiftOffsetRight(long shiftRightOffset);
 }

@@ -108,7 +108,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
     default DirectString getStr(long offset, DirectString view) {
         long addr = addressOf(offset);
         assert addr > 0;
-        if (Vm.PARANOIA_MODE && offset + 4 > size()) {
+        if (Vm.PARANOIA_MODE && !hasBytes(offset, 4)) {
             throw CairoException.critical(0)
                     .put("String is outside of file boundary [offset=")
                     .put(offset)
@@ -119,7 +119,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
 
         final int len = Unsafe.getUnsafe().getInt(addr);
         if (len != TableUtils.NULL_LEN) {
-            if (Vm.getStorageLength(len) + offset <= size()) {
+            if (hasBytes(offset, Vm.getStorageLength(len))) {
                 return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
             }
             throw CairoException.critical(0)
@@ -136,6 +136,10 @@ public interface MemoryCR extends MemoryC, MemoryR {
 
     default int getStrLen(long offset) {
         return getInt(offset);
+    }
+
+    default boolean hasBytes(long offset, long bytes) {
+        return bytes + offset <= size();
     }
 
     default boolean isFileBased() {

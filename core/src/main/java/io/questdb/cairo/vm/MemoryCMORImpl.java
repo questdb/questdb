@@ -31,7 +31,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 
 // Contiguous mapped with offset readable memory
@@ -75,11 +74,6 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     @Override
     public long getOffset() {
         return offset;
-    }
-
-    @Override
-    public long getSizeWithOffset() {
-        return size + mapFileOffset;
     }
 
     @Override
@@ -150,23 +144,6 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
             close();
             throw e;
         }
-    }
-
-    @Override
-    protected DirectUtf8String getVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
-        long addr = addressOf(offset);
-        assert addr > 0;
-        if (size + offset <= getSizeWithOffset()) {
-            return u8view.of(addr, addr + size, ascii);
-        }
-        throw CairoException.critical(0)
-                .put("String is outside of file boundary [offset=")
-                .put(offset)
-                .put(", size=")
-                .put(size)
-                .put(", getSizeWithOffset()=")
-                .put(getSizeWithOffset())
-                .put(']');
     }
 
     protected void map(FilesFacade ff, LPSZ name, final long size, final long mapOffset) {
