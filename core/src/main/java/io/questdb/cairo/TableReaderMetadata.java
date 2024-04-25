@@ -28,16 +28,17 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
+import static io.questdb.cairo.TableUtils.validationException;
+
 public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
+    private final IntList columnOrderMap = new IntList();
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
-    private final IntList columnOrderMap = new IntList();
     private boolean isSoftLink;
     private int maxUncommittedRows;
     private MemoryMR metaMem;
@@ -281,17 +282,19 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                             new TableColumnMetadata(
                                     colName,
                                     columnType,
-                                    TableUtils.isColumnIndexed(metaMem, i),
-                                    TableUtils.getIndexBlockCapacity(metaMem, i),
+                                    TableUtils.isColumnIndexed(metaMem, writerIndex),
+                                    TableUtils.getIndexBlockCapacity(metaMem, writerIndex),
                                     true,
                                     null,
                                     writerIndex,
-                                    TableUtils.isColumnDedupKey(metaMem, i),
+                                    TableUtils.isColumnDedupKey(metaMem, writerIndex),
                                     denseSymbolIndex
                             )
                     );
                     int denseIndex = columnMetadata.size() - 1;
-                    columnNameIndexMap.put(colName, denseIndex);
+                    if (!columnNameIndexMap.put(colName, denseIndex)) {
+                        throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
+                    }
                     if (writerIndex == timestampIndex) {
                         this.timestampIndex = denseIndex;
                     }
@@ -406,13 +409,21 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.tableToken = tableToken;
     }
 
-    private void buildWriterOrderMap(MemoryR newMeta, int newColumnCount) {
+    private void buildWriterOrderMap(MemoryMR newMeta, int newColumnCount) {
         int nameOffset = (int) TableUtils.getColumnNameOffset(newColumnCount);
         columnOrderMap.clear();
 
         int denseSymbolIndex = 0;
         for (int i = 0; i < newColumnCount; i++) {
-            int nameLen = (int) Vm.getStorageLength(newMeta.getInt(nameOffset));
+            int strLen = TableUtils.getInt(newMeta, newMeta.size(), nameOffset);
+            if (strLen == TableUtils.NULL_LEN) {
+                throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
+            }
+            if (strLen < 1 || strLen > 255) {
+                // EXT4 and many others do not allow file name length > 255 bytes
+                throw validationException(metaMem).put("String length of ").put(strLen).put(" is invalid at offset ").put(nameOffset);
+            }
+            int nameLen = (int) Vm.getStorageLength(strLen);
             int newOrderIndex = TableUtils.getReplacingColumnIndex(newMeta, i);
             boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(newMeta, i));
 
@@ -438,9 +449,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
-    private TransitionIndex createTransitionIndex(
-            MemoryR newMeta
-    ) {
+    private TransitionIndex createTransitionIndex(MemoryMR newMeta) {
         if (transitionIndex == null) {
             transitionIndex = new TransitionIndex();
         } else {
