@@ -125,13 +125,11 @@ jobs:
       - name: Install toolchains (C/C++/NASM/Rust)
         run: |
           apt-get update -y
-          apt install nasm python3 wget ca-certificates gcc-mingw-w64 g++-mingw-w64 -y
+          apt install nasm python3 wget ca-certificates build-essential gcc-mingw-w64 g++-mingw-w64 -y
           python3 ./.github/prepare_rust_env.py
           export PATH=$HOME/.cargo/bin:$PATH
           export CARGO_HOME=$HOME/.cargo
-          ls -la .
-          ls -la $HOME/.cargo/
-          cargo
+          cargo install cross
       - name: Generate Makefiles
         run: |
           cd ./core
