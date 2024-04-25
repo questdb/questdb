@@ -91,15 +91,15 @@ jobs:
           cd core/rust/qdbr
           cargo clean
           cargo build --release
-      - name: Copy ARM MacOS Rust Library to the final directory
+      - name: Copy darwin-aarch64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-14' }}
         run: |
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/armosx/
-      - name: Copy x64 MacOS Rust Library to the final directory
+      - name: Copy darwin-amd64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-latest' }}
         run: |
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/osx/
-      - name: Save ARM MacOS Libraries to Cache
+      - name: Save darwin-aarch64 Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
         with:
@@ -107,7 +107,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
             core/src/main/resources/io/questdb/bin/armosx/libquestdbr.dylib
           key: nativelibs-armosx-${{ github.sha }}
-      - name: Save x64 MacOS Libraries to Cache
+      - name: Save darwin-amd64 Libraries to Cache
         if: ${{ matrix.os == 'macos-latest' }}
         uses: actions/cache/save@v3
         with:
@@ -121,8 +121,6 @@ jobs:
     # everything has to be installed on it manually
     container:
       image: debian:buster
-      volumes:
-        - /github/home:/root
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchains (CXX/NASM/Rust)
@@ -147,17 +145,17 @@ jobs:
         run: |
           cd ./core
           cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
-      - name: Build Linux-amd64 CXX Library
+      - name: Build linux-amd64 CXX Library
         run: |
           cd core
           cmake --build cmake-build-release --config Release
-      - name: Build Linux-amd64 Rust Library
+      - name: Build linux-amd64 Rust Library
         run: |
           cd core/rust/qdbr
           cargo clean
           cargo build --release
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
-      - name: Save Linux-amd64 Libraries to Cache
+      - name: Save linux-amd64 Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
@@ -182,15 +180,15 @@ jobs:
         run: |
           cd ./core
           cmake -G "$generator" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
-      - name: CMAKE ARM Linux
+      - name: CMAKE linux-aarch64
         run: |
           cd ./core
           cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DARM_TOOLCHAIN_PATH=/usr/bin/ -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
-      - name: Build ARM Linux C/C++ Library
+      - name: Build linux-aarch64 CXX Library
         run: |
           cd core
           cmake --build cmake-build-release-arm64 --config Release
-      - name: Build ARM Linux Rust Library
+      - name: Build linux-aarch64 Rust Library
         run: |
           cd core/rust/qdbr
           cargo clean
@@ -218,7 +216,7 @@ jobs:
       - name: Check git status
         run: |
           git status
-      - name: Save ARM Linux Libraries to Cache
+      - name: Save linux-aarch64 Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
@@ -238,6 +236,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Print file sizes before
         run: |
+          pwd
           find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
       - name: Restore FreeBSD Libraries from Cache
         uses: actions/cache/restore@v3
@@ -246,35 +245,35 @@ jobs:
             core/src/main/resources/io/questdb/bin/freebsd/libquestdb.so
             core/src/main/resources/io/questdb/bin/freebsd/libquestdbr.so
           key: nativelibs-freebsd-${{ github.sha }}
-      - name: Restore ARM MacOS Libraries from Cache
+      - name: Restore darwin-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
             core/src/main/resources/io/questdb/bin/armosx/libquestdbr.dylib
           key: nativelibs-armosx-${{ github.sha }}
-      - name: Restore x64 MacOS Libraries from Cache
+      - name: Restore darwin-amd64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
             core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           key: nativelibs-osx-${{ github.sha }}
-      - name: Restore x64 Linux Libraries from Cache
+      - name: Restore linux-amd64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/linux/libquestdb.so
             core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
-      - name: Restore ARM Linux Libraries from Cache
+      - name: Restore linux-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
             core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
             core/src/main/resources/io/questdb/bin/armlinux/libquestdbr.so
           key: nativelibs-armlinux-${{ github.sha }}
-      - name: Restore Windows C/C++ Library from Cache
+      - name: Restore Windows CXX Library from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
