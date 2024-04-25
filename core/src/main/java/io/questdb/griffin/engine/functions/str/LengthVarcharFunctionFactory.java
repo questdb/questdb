@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -34,7 +33,7 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 public class LengthVarcharFunctionFactory implements FunctionFactory {
 
@@ -68,30 +67,7 @@ public class LengthVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
-            if (value == null) {
-                return TableUtils.NULL_LEN;
-            }
-            final int size = value.size();
-
-            int continuationByteCount = 0;
-            int i = 0;
-            for (; i <= size - Long.BYTES; i += Long.BYTES) {
-                long c = value.longAt(i);
-                long x = c & 0x8080808080808080L;
-                long y = (~c & 0x4040404040404040L) << 1;
-                long swarDelta = x & y;
-                int delta = Long.bitCount(swarDelta);
-                continuationByteCount += delta;
-            }
-            for (; i < size; i++) {
-                int c = value.byteAt(i);
-                int x = c & 0x80;
-                int y = (~c & 0x40) << 1;
-                int delta = (x & y) >>> 7;
-                continuationByteCount += delta;
-            }
-            return size - continuationByteCount;
+            return Utf8s.length(arg.getVarcharA(rec));
         }
 
         @Override
@@ -99,4 +75,5 @@ public class LengthVarcharFunctionFactory implements FunctionFactory {
             return "length";
         }
     }
+
 }

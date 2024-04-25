@@ -25,6 +25,7 @@
 package io.questdb.std.str;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -638,6 +639,32 @@ public final class Utf8s {
             }
         }
         return -1;
+    }
+
+    public static int length(Utf8Sequence value) {
+        if (value == null) {
+            return TableUtils.NULL_LEN;
+        }
+        final int size = value.size();
+
+        int continuationByteCount = 0;
+        int i = 0;
+        for (; i <= size - Long.BYTES; i += Long.BYTES) {
+            long c = value.longAt(i);
+            long x = c & 0x8080808080808080L;
+            long y = (~c & 0x4040404040404040L) << 1;
+            long swarDelta = x & y;
+            int delta = Long.bitCount(swarDelta);
+            continuationByteCount += delta;
+        }
+        for (; i < size; i++) {
+            int c = value.byteAt(i);
+            int x = c & 0x80;
+            int y = (~c & 0x40) << 1;
+            int delta = (x & y) >>> 7;
+            continuationByteCount += delta;
+        }
+        return size - continuationByteCount;
     }
 
     /**
