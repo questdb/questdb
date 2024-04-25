@@ -124,7 +124,7 @@ jobs:
       - uses: actions/checkout@v3
       - name: Increase file count and install tooling
         run: |
-          sudo apt install nasm -y
+          apt install nasm -y
       - name: Install rs-cross
         run: |
           cargo install cross
