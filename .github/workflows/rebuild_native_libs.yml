@@ -131,12 +131,9 @@ jobs:
           export CARGO_HOME=$HOME/.cargo
       - name: Install up-to-date CMake
         run: |
-          wget https://github.com/Kitware/CMake/releases/download/v3.20.0/cmake-3.20.0.tar.gz
-          tar -zxvf cmake-3.20.0.tar.gz
-          cd cmake-3.20.0
-          ./bootstrap
-          make
-          sudo make install
+          wget https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
+          tar -zxvf cmake-3.29.2-linux-x86_64.tar.gz
+          export PATH=`pwd`/cmake-3.29.2-linux-x86_64/bin/:$PATH
           cmake --version
       - name: Generate Makefiles
         run: |
