@@ -327,6 +327,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowStoreMaxPages;
     private final int sqlWindowStorePageSize;
     private final int sqlWindowTreeKeyMaxPages;
+    private final String sqlOperatorPrecedenceCompatMode;
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
     private final int systemO3ColumnMemorySize;
@@ -1106,6 +1107,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, sqlWindowTreeKeyPageSize));
             int sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES, sqlWindowTreeKeyMaxPages);
+            this.sqlOperatorPrecedenceCompatMode = getString(properties, env, PropertyKey.TEMP_7_4_3_CAIRO_SQL_OPERATOR_PRECEDENCE, PropertyKey.CompatModeCurrent);
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATESTBY_QUEUE_CAPACITY, 32));
@@ -2668,6 +2670,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlWindowTreeKeyMaxPages() {
             return sqlWindowTreeKeyMaxPages;
+        }
+
+        @Override
+        public String getSqlOperatorPrecedenceCompatMode() {
+            return sqlOperatorPrecedenceCompatMode;
         }
 
         @Override

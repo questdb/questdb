@@ -826,6 +826,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public String getSqlOperatorPrecedenceCompatMode() {
+        return getDelegate().getSqlOperatorPrecedenceCompatMode();
+    }
+
+    @Override
     public int getSqlWindowTreeKeyPageSize() {
         return getDelegate().getSqlWindowTreeKeyPageSize();
     }

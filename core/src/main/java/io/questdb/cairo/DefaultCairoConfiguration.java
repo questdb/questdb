@@ -827,6 +827,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public String getSqlOperatorPrecedenceCompatMode() {
+        return PropertyKey.CompatModeCurrent;
+    }
+
+    @Override
     public int getSqlWindowTreeKeyPageSize() {
         return 4 * 1024;
     }

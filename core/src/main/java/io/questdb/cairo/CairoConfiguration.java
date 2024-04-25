@@ -464,6 +464,8 @@ public interface CairoConfiguration {
 
     int getSqlWindowTreeKeyMaxPages();
 
+    String getSqlOperatorPrecedenceCompatMode();
+
     int getSqlWindowTreeKeyPageSize();
 
     int getStrFunctionMaxBufferLength();
