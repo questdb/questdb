@@ -652,7 +652,7 @@ public final class Utf8s {
         for (; i <= size - Long.BYTES; i += Long.BYTES) {
             long c = value.longAt(i);
             long x = c & 0x8080808080808080L;
-            long y = (~c & 0x4040404040404040L) << 1;
+            long y = ~c << 1;
             long swarDelta = x & y;
             int delta = Long.bitCount(swarDelta);
             continuationByteCount += delta;
