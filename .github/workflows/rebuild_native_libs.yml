@@ -228,7 +228,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
           key: nativelibs-windows-${{ github.sha }}
   collect-commit-and-push:
-    needs: [ build-freebsd, build-macos, build-others, build-windows, build-linux-amd64-GLIBC_2_28 ]
+    needs: [ build-freebsd, build-macos, build-others, build-windows, build-linux-amd64 ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
