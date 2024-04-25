@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 
 public class LengthVarcharFunctionFactory implements FunctionFactory {
 
@@ -73,7 +72,26 @@ public class LengthVarcharFunctionFactory implements FunctionFactory {
             if (value == null) {
                 return TableUtils.NULL_LEN;
             }
-            return Utf8s.validateUtf8(value);
+            final int size = value.size();
+
+            int continuationByteCount = 0;
+            int i = 0;
+            for (; i <= size - Long.BYTES; i += Long.BYTES) {
+                long c = value.longAt(i);
+                long x = c & 0x8080808080808080L;
+                long y = (~c & 0x4040404040404040L) << 1;
+                long swarDelta = x & y;
+                int delta = Long.bitCount(swarDelta);
+                continuationByteCount += delta;
+            }
+            for (; i < size; i++) {
+                int c = value.byteAt(i);
+                int x = c & 0x80;
+                int y = (~c & 0x40) << 1;
+                int delta = (x & y) >>> 7;
+                continuationByteCount += delta;
+            }
+            return size - continuationByteCount;
         }
 
         @Override
