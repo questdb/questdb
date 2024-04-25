@@ -127,14 +127,19 @@ jobs:
           ldd --version
           apt-get update -y
           apt-get upgrade -y
-          apt install git nasm python3 wget ca-certificates build-essential openjdk-17-jdk -y
+          apt install git nasm python3 wget ca-certificates build-essential -y
           python3 ./.github/prepare_rust_env.py
           ldd --version
       - name: Install up-to-date CMake
         run: |
           wget https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
-          tar -zxvf cmake-3.29.2-linux-x86_64.tar.gz
+          tar -zxf cmake-3.29.2-linux-x86_64.tar.gz
           echo "PATH=`pwd`/cmake-3.29.2-linux-x86_64/bin/:$PATH" >> "$GITHUB_ENV"
+      - name: Install JDK17 (for jni.h)
+        run: |
+          wget https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
+          tar xfz OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
+          ls -la OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9
       - name: Generate Makefiles
         run: |
           cd ./core
