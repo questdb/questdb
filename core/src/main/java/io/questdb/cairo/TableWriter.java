@@ -895,6 +895,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // close old column files
             freeColumnMemory(existingColIndex);
 
+            // remove symbol map writer or entry for such
+            removeSymbolMapWriter(existingColIndex);
+
             // remove old column to in-memory metadata object and add new one
             metadata.removeColumn(existingColIndex);
             metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey);

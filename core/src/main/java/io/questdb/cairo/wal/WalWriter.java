@@ -810,6 +810,11 @@ public class WalWriter implements TableWriterAPI {
         // Apply to itself.
         try {
             alterOp.apply(metaWriterSvc, true);
+            LOG.info().$("committed structural metadata change [wal=").$(path).$(Files.SEPARATOR).$(segmentId)
+                    .$(", segmentTxn=").$(lastSegmentTxn)
+                    .$(", seqTxn=").$(txn)
+                    .I$();
+
         } catch (Throwable th) {
             LOG.critical().$("Exception during alter [ex=").$(th).I$();
             distressed = true;
@@ -850,7 +855,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void closeSegmentSwitchFiles(SegmentColumnRollSink newColumnFiles, int columnsToRoll) {
         int commitMode = configuration.getCommitMode();
-        for (int columnIndex = 0; columnIndex < columnsToRoll; columnIndex++) {
+        for (int columnIndex = 0, n = newColumnFiles.count(); columnIndex < n; columnIndex++) {
             final int primaryFd = newColumnFiles.getDestPrimaryFd(columnIndex);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsyncAndClose(primaryFd);
@@ -1559,11 +1564,14 @@ public class WalWriter implements TableWriterAPI {
 
     private void switchColumnsToNewSegment(SegmentColumnRollSink rollSink, int columnsToRoll, int convertColumnIndex) {
         for (int i = 0; i < columnsToRoll; i++) {
-            if (i != convertColumnIndex) {
-                switchColumnsToNewSegmentRollColumn(rollSink, i, i);
-            } else {
-                // Column is converted, the destination column objects are for the last added column
-                switchColumnsToNewSegmentRollColumn(rollSink, i, columnCount - 1);
+            final int columnType = metadata.getColumnType(i);
+            if (columnType > 0) {
+                if (i != convertColumnIndex) {
+                    switchColumnsToNewSegmentRollColumn(rollSink, i, i);
+                } else {
+                    // Column is converted, the destination column objects are for the last added column
+                    switchColumnsToNewSegmentRollColumn(rollSink, i, columnCount - 1);
+                }
             }
         }
     }
@@ -1679,12 +1687,13 @@ public class WalWriter implements TableWriterAPI {
             symbols.clear();
             symbolHashMap = writer.symbolMaps.getQuick(columnIndex);
 
-            if (symbolHashMap.size() > 0) {
-                symbols.setPos(symbolHashMap.size());
+            int remapSize = writer.localSymbolIds.get(columnIndex);
+            if (remapSize > 0) {
+                symbols.setPos(remapSize);
                 for (int i = 0, n = symbolHashMap.size(); i < n; i++) {
                     CharSequence symbolValue = symbolHashMap.keys().get(i);
-                    int index = symbolHashMap.get(symbolValue) - symbolCountWatermark;
-                    symbols.set(index, i);
+                    int index = symbolHashMap.get(symbolValue);
+                    symbols.extendAndSet(index, i);
                 }
             }
         }
@@ -1865,7 +1874,6 @@ public class WalWriter implements TableWriterAPI {
                 }
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
-                    // TODO: this should be some kind of warning probably that different WALs adding the same column concurrently
                     LOG.info().$("column has already been added by another WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
                 } else {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
@@ -1906,7 +1914,11 @@ public class WalWriter implements TableWriterAPI {
                             removeSymbolMapReader(existingColumnIndex);
                         }
                         markColumnRemoved(existingColumnIndex);
-                        LOG.info().$("change column type in WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
+                        LOG.info().$("change column type in WAL [path=").$(path.trimTo(rootLen)).$(Files.SEPARATOR).$(segmentId)
+                                .$(", columnName=").utf8(columnName)
+                                .$(", from=").$(ColumnType.nameOf(existingColumnType))
+                                .$(", to=").$(ColumnType.nameOf(newType))
+                                .I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
                                 .put("' was removed, cannot apply commit because of concurrent table definition change");
