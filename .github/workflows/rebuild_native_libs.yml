@@ -119,12 +119,16 @@ jobs:
     runs-on: ubuntu-latest
     # this is very bare container, we use it to restrict GLIBC to 2.28
     # everything has to be installed on it manually
-    container: debian:buster
+    container:
+      image: debian:buster
+      volumes:
+        - /github/home:/root
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchains (CXX/NASM/Rust)
         run: |
           ldd --version
+          pwd
           apt-get update -y
           apt install git nasm python3 wget ca-certificates build-essential -y
           python3 ./.github/prepare_rust_env.py
@@ -147,7 +151,7 @@ jobs:
         run: |
           cd core
           cmake --build cmake-build-release --config Release
-      - name: Build Linux-amd4 Rust Library
+      - name: Build Linux-amd64 Rust Library
         run: |
           cd core/rust/qdbr
           cargo clean
