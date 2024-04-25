@@ -30,6 +30,25 @@ import org.junit.Test;
 public class VarcharFunctionsTest extends AbstractCairoTest {
 
     @Test
+    public void testLength() throws Exception {
+        assertQuery(
+                // This argument doesn't assert any meaningful result, the cols are different at this point:
+                "count\n8015\n",
+                "select count() from x where length(v_str) <> length(v_varchar)",
+                "create table x as (" +
+                        "select rnd_varchar(null, '', 'a', 'aa', 'čćšđěščřžýáíé123') v_varchar, '' v_str" +
+                        " from long_sequence(10000))",
+                null,
+                "update x set v_str = v_varchar",
+                // This is the actual assertion, all lengths must be equal:
+                "count\n0\n",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testLtrim() throws Exception {
         assertQuery(
                 "k\tltrim\n" +
