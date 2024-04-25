@@ -1832,7 +1832,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: trips\n"
             );
 
-            assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
+            assertPlan("select s, count() from trips where (l > 100 or l != 0) and s is not null",
                     "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
@@ -1842,7 +1842,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: trips\n"
             );
 
-            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', 'A2000')",
+            assertPlan("select s, count() from trips where (l > 100 or l != 0) and s not in (null, 'A1000', 'A2000')",
                     "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
@@ -1854,7 +1854,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A500");
-            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
+            assertPlan("select s, count() from trips where (l > 100 or l != 0) and s not in (null, 'A1000', :s1)",
                     "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
@@ -1965,7 +1965,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: trips\n"
             );
 
-            assertPlan("select s, count() from trips where l > 100 or l != 0 and s is not null",
+            assertPlan("select s, count() from trips where (l > 100 or l != 0) and s is not null",
                     "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
@@ -1977,7 +1977,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A500");
-            assertPlan("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
+            assertPlan("select s, count() from trips where (l > 100 or l != 0) and s not in (null, 'A1000', :s1)",
                     "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +

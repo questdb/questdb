@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
@@ -103,8 +104,9 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         final StringSink expression1 = new StringSink();
         final StringSink expression2 = new StringSink();
 
-        final boolean setOperation = OperatorExpression.getOperatorType(name) == OperatorExpression.SET;
-        final boolean operator = OperatorExpression.isOperator(name);
+        OperatorRegistry registry = OperatorExpression.getRegistry(PropertyKey.CompatModeNext);
+        final boolean setOperation = registry.getOperatorType(name) == OperatorExpression.SET;
+        final boolean operator = registry.isOperator(name);
 
         if (operator && !setOperation) {
             switch (argCount) {

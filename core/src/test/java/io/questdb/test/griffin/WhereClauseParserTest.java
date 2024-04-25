@@ -2389,7 +2389,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testIntrinsicPickup() throws Exception {
         assertFilter(modelOf("timestamp = '2014-06-20T13:25:00.000Z;10m;2d;4' and sym in ('A', 'B') or ex = 'D'"), "'D' ex = 'B' 'A' sym in '2014-06-20T13:25:00.000Z;10m;2d;4' timestamp = and or");
-        assertFilter(modelOf("timestamp = '2014-06-20T13:25:00.000Z;10m;2d;4' or ex = 'D' and sym in ('A', 'B')"), "'D' ex = '2014-06-20T13:25:00.000Z;10m;2d;4' timestamp = or");
+        assertFilter(modelOf("(timestamp = '2014-06-20T13:25:00.000Z;10m;2d;4' or ex = 'D') and sym in ('A', 'B')"), "'D' ex = '2014-06-20T13:25:00.000Z;10m;2d;4' timestamp = or");
     }
 
     @Test(expected = SqlException.class)
@@ -2803,7 +2803,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testOrNullSearch() throws Exception {
-        IntrinsicModel m = modelOf("sym = null or sym != null and ex != 'blah'");
+        IntrinsicModel m = modelOf("(sym = null or sym != null) and ex != 'blah'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         assertFilter(m, "null sym != null sym = or");
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
@@ -2812,7 +2812,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testOrNullSearch2() throws Exception {
-        IntrinsicModel m = modelOf("sym = null or sym != null and ex = 'blah'");
+        IntrinsicModel m = modelOf("(sym = null or sym != null) and ex = 'blah'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         assertFilter(m, "null sym != null sym = or");
         Assert.assertEquals("[blah]", keyValueFuncsToString(m.keyValueFuncs));
