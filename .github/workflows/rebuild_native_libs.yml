@@ -124,9 +124,12 @@ jobs:
       - uses: actions/checkout@v3
       - name: Install toolchains (C/C++/NASM/Rust)
         run: |
+          ldd --version
           apt-get update -y
+          apt-get upgrade -y
           apt install git nasm python3 wget ca-certificates build-essential openjdk-17-jdk -y
           python3 ./.github/prepare_rust_env.py
+          ldd --version
       - name: Install up-to-date CMake
         run: |
           wget https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
