@@ -213,6 +213,41 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongKeyRecordHashAndSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+            int keyLength = 20_000_000;
+            try (Map map = newDefaultMap(valueType);
+                 DirectUtf8Sink sinkA = new DirectUtf8Sink(keyLength)) {
+
+                for (int i = 0; i < keyLength; i++) {
+                    sinkA.put('k');
+                }
+                MapKey mapKey = map.withKey();
+                DirectUtf8String directUtf8 = new DirectUtf8String(true);
+                directUtf8.of(sinkA.lo(), sinkA.hi(), true);
+                mapKey.putVarchar(directUtf8);
+                mapKey.commit();
+                long hashCode1 = mapKey.hash();
+
+                MapValue value = mapKey.createValue();
+                Assert.assertTrue(value.isNew());
+
+                RecordCursor cursor = map.getCursor();
+                MapRecord record = map.getRecord();
+                Assert.assertTrue(cursor.hasNext());
+                int size = record.getVarcharSize(1);
+                Assert.assertEquals(keyLength, size);
+
+                long hashcode2 = record.keyHashCode();
+                Assert.assertEquals(hashCode1, hashcode2);
+
+                Assert.assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
     public void testMerge() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);

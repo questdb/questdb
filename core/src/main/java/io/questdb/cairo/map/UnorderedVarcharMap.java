@@ -73,7 +73,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     static final byte FLAG_IS_ASCII = (byte) (1 << 7);
     static final byte FLAG_IS_NULL = (byte) (1 << 6);
     static final long KEY_HEADER_SIZE = 2 * Long.BYTES;
-    static final int MASK_FLAGS_FROM_SIZE = ~(FLAG_IS_ASCII | FLAG_IS_NULL);
+    static final int MASK_FLAGS_FROM_SIZE = 0x3FFFFFFF; // clear top 2 bits: ascii and null
     static final long PTR_UNSTABLE_MASK = 0x8000000000000000L; // 63 bits
     static final long PTR_MASK = ~PTR_UNSTABLE_MASK;
     static final int SIZE_IS_NULL = 1 << 30;
