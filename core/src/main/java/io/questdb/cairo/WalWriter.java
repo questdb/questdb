@@ -24,9 +24,13 @@
 
 package io.questdb.cairo;
 
+import org.jetbrains.annotations.NotNull;
+
 public interface WalWriter extends TableWriterAPI {
 
     int getWalId();
 
     String getWalName();
+
+    long renameTable(@NotNull CharSequence oldName, String newTableName);
 }

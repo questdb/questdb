@@ -456,6 +456,7 @@ public class WalColFirstWriter implements WalWriter {
         }
     }
 
+    @Override
     public long renameTable(@NotNull CharSequence oldName, String newTableName) {
         if (!Chars.equalsIgnoreCaseNc(oldName, tableToken.getTableName())) {
             throw CairoException.tableDoesNotExist(oldName);

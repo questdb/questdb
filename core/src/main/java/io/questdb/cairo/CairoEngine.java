@@ -1056,7 +1056,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (toTableToken != null) {
                     boolean renamed = false;
                     try {
-                        try (WalColFirstWriter walWriter = getWalColFirstWriter(fromTableToken)) {
+                        try (WalWriter walWriter = getWalWriter(fromTableToken)) {
                             long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr);
                             LOG.info().$("renaming table [from='").utf8(fromTableName)
                                     .$("', to='").utf8(toTableName)
