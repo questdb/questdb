@@ -117,7 +117,7 @@ jobs:
           key: nativelibs-osx-${{ github.sha }}
   build-others:
     runs-on: ubuntu-20.04
-    container: quay.io/pypa/manylinux2010_x86_64
+    container: quay.io/pypa/manylinux_2_24_x86_64
     env:
       generator: "CodeBlocks - Unix Makefiles"
     steps:
