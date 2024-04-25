@@ -142,7 +142,7 @@ jobs:
       - name: Generate Makefiles
         run: |
           cd ./core
-          cmake -G "$generator" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: Build x64 Linux CXX Library
         run: |
           cd core
