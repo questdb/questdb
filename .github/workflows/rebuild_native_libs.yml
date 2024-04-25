@@ -117,6 +117,7 @@ jobs:
           key: nativelibs-osx-${{ github.sha }}
   build-others:
     runs-on: ubuntu-20.04
+    container: quay.io/pypa/manylinux2010_x86_64
     env:
       generator: "CodeBlocks - Unix Makefiles"
     steps:
@@ -140,9 +141,8 @@ jobs:
       - name: Build x64 Linux Rust Library
         run: |
           cd core/rust/qdbr
-          rustup target add x86_64-unknown-linux-musl
           cargo clean
-          cargo build --target x86_64-unknown-linux-musl --release
+          cargo build --release
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
       - name: CMAKE ARM Linux
         run: |
