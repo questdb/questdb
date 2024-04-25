@@ -118,8 +118,6 @@ jobs:
   build-others:
     runs-on: ubuntu-20.04
     container: quay.io/pypa/manylinux_2_24_x86_64
-    env:
-      generator: "CodeBlocks - Unix Makefiles"
     steps:
       - uses: actions/checkout@v3
       - name: Increase file count and install tooling
