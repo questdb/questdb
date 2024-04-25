@@ -115,18 +115,24 @@ jobs:
             core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
             core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           key: nativelibs-osx-${{ github.sha }}
-  build-linux-amd64-GLIBC_2_28:
+  build-linux-amd64:
     runs-on: ubuntu-latest
+    # this is very bare container, we use it to restrict GLIBC to 2.28
+    # everything has to be installed on it manually
     container: debian:buster
     steps:
       - uses: actions/checkout@v3
       - name: Install toolchains (CXX/NASM/Rust)
         run: |
           ldd --version
+#          not possible to install anything on this image without "update"
           apt-get update -y
-          apt-get upgrade -y
+#          "build-essential" installs CXX toolchain, but not CMake
+#          "ca-certificates" are required for any HTTPS request out
           apt install git nasm python3 wget ca-certificates build-essential -y
+#          there is no Rust in "apt" repository, we have do download and install manually     
           python3 ./.github/prepare_rust_env.py
+#          "PATH" set this way is ineffective for the current steo, but visible for the next steps     
           echo "PATH=/github/home/.cargo/bin/:$PATH" >> "$GITHUB_ENV"
       - name: Install up-to-date CMake
         run: |
