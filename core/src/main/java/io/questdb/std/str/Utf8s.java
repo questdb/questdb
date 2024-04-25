@@ -660,7 +660,7 @@ public final class Utf8s {
         for (; i < size; i++) {
             int c = value.byteAt(i);
             int x = c & 0x80;
-            int y = (~c & 0x40) << 1;
+            int y = ~c << 1;
             int delta = (x & y) >>> 7;
             continuationByteCount += delta;
         }
