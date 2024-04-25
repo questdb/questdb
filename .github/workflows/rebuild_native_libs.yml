@@ -78,15 +78,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
-      - name: Install tooling
+      - name: Install toolchains (CXX/NASM)
         run: |
           brew install make cmake gcc nasm
-      - name: Build MacOS C/C++ Library
+      - name: Build CXX Library
         run: |
           cd core
           cmake -B build/release -DCMAKE_BUILD_TYPE=Release
           cmake --build build/release --config Release
-      - name: Build MacOS Rust Library
+      - name: Build Rust Library
         run: |
           cd core/rust/qdbr
           cargo clean
@@ -115,14 +115,14 @@ jobs:
             core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
             core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           key: nativelibs-osx-${{ github.sha }}
-  build-others:
+  build-linux-amd64-GLIBC_2_28:
     runs-on: ubuntu-latest
     container: debian:buster
     env:
       generator: "CodeBlocks - Unix Makefiles"
     steps:
       - uses: actions/checkout@v3
-      - name: Install toolchains (C/C++/NASM/Rust)
+      - name: Install toolchains (CXX/NASM/Rust)
         run: |
           ldd --version
           apt-get update -y
@@ -154,20 +154,48 @@ jobs:
           cargo clean
           cargo build --release
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
-#      - name: CMAKE ARM Linux
-#        run: |
-#          cd ./core
-#          cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DARM_TOOLCHAIN_PATH=/usr/bin/ -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
-#      - name: Build ARM Linux C/C++ Library
-#        run: |
-#          cd core
-#          cmake --build cmake-build-release-arm64 --config Release
-#      - name: Build ARM Linux Rust Library
-#        run: |
-#          cd core/rust/qdbr
-#          cargo clean
-#          cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
-#          cp target/aarch64-unknown-linux-gnu/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/
+      - name: Check git status
+        run: |
+          git status
+      - name: Save x64 Linux Libraries to Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/main/resources/io/questdb/bin/linux/libquestdb.so
+            core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
+          key: nativelibs-linux-${{ github.sha }}
+  build-others:
+    runs-on: ubuntu-20.04
+    env:
+      generator: "CodeBlocks - Unix Makefiles"
+    steps:
+      - uses: actions/checkout@v3
+      - name: Increase file count and install tooling
+        run: |
+          sudo sysctl -w fs.file-max=500000
+          sudo apt-get update -y
+          sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64 g++-mingw-w64
+      - name: Install rs-cross
+        run: |
+          cargo install cross
+      - name: Generate Makefiles
+        run: |
+          cd ./core
+          cmake -G "$generator" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+      - name: CMAKE ARM Linux
+        run: |
+          cd ./core
+          cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DARM_TOOLCHAIN_PATH=/usr/bin/ -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
+      - name: Build ARM Linux C/C++ Library
+        run: |
+          cd core
+          cmake --build cmake-build-release-arm64 --config Release
+      - name: Build ARM Linux Rust Library
+        run: |
+          cd core/rust/qdbr
+          cargo clean
+          cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
+          cp target/aarch64-unknown-linux-gnu/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/
       - name: Download windows jni_md.h from JDK 11
         run: |
           cd core
@@ -190,13 +218,6 @@ jobs:
       - name: Check git status
         run: |
           git status
-      - name: Save x64 Linux Libraries to Cache
-        uses: actions/cache/save@v3
-        with:
-          path: |
-            core/src/main/resources/io/questdb/bin/linux/libquestdb.so
-            core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
-          key: nativelibs-linux-${{ github.sha }}
       - name: Save ARM Linux Libraries to Cache
         uses: actions/cache/save@v3
         with:
@@ -211,7 +232,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
           key: nativelibs-windows-${{ github.sha }}
   collect-commit-and-push:
-    needs: [ build-freebsd, build-macos, build-others, build-windows ]
+    needs: [ build-freebsd, build-macos, build-others, build-windows, build-linux-amd64-GLIBC_2_28 ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
