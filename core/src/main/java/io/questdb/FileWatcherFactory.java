@@ -2,16 +2,16 @@ package io.questdb;
 
 import io.questdb.std.Os;
 
-public class DirWatcherFactory {
+public class FileWatcherFactory {
 
-    public static DirWatcher getDirWatcher(CharSequence dirPath) {
+    public static FileWatcher getFileWatcher(CharSequence filePath) {
         if (Os.isOSX() || Os.isFreeBSD()) {
-            return new KqueueDirWatcher(dirPath);
+            return new KqueueFileWatcher(filePath);
         } else if (Os.isWindows()) {
             // todo: implement Windows dirWatcher
             return null;
         } else {
-            return new InotifyDirWatcher(dirPath);
+            return new InotifyFileWatcher(filePath);
         }
     }
 }

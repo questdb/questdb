@@ -7,7 +7,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
-public class KqueueDirWatcher implements DirWatcher {
+public class KqueueFileWatcher implements FileWatcher {
     private final int bufferSize;
     private final long event;
     private final long eventList;
@@ -15,12 +15,12 @@ public class KqueueDirWatcher implements DirWatcher {
     private final int kq;
     private boolean closed;
 
-    public KqueueDirWatcher(CharSequence dirPath) {
+    public KqueueFileWatcher(CharSequence filePath) {
         try (Path p = new Path()) {
-            p.of(dirPath).$();
+            p.of(filePath).$();
             this.fd = Files.openRO(p);
             if (this.fd < 0) {
-                throw CairoException.critical(this.fd).put("could not open directory [path=").put(dirPath).put(']');
+                throw CairoException.critical(this.fd).put("could not open file [path=").put(filePath).put(']');
             }
         }
 
@@ -65,20 +65,20 @@ public class KqueueDirWatcher implements DirWatcher {
     }
 
     @Override
-    public void waitForChange(DirWatcherCallback callback) throws DirWatcherException{
-            // Blocks until there is a change in the watched dir
-            int res = KqueueAccessor.keventGetBlocking(
-                    kq,
-                    eventList,
-                    1
-            );
-            if (closed) {
-                return;
-            }
-            if (res < 0) {
-                throw new DirWatcherException("kevent", res);
-            }
-            callback.onDirChanged();
+    public void waitForChange(FileWatcherCallback callback) throws FileWatcherException {
+        // Blocks until there is a change in the watched dir
+        int res = KqueueAccessor.keventGetBlocking(
+                kq,
+                eventList,
+                1
+        );
+        if (closed) {
+            return;
+        }
+        if (res < 0) {
+            throw new FileWatcherException("kevent", res);
+        }
+        callback.onFileChanged();
 
     }
 }

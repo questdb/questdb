@@ -13,7 +13,7 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ConfigReloader implements QuietCloseable, DirWatcherCallback {
+public class ConfigReloader implements QuietCloseable, FileWatcherCallback {
 
     private static final Log LOG = LogFactory.getLog(ConfigReloader.class);
     private final java.nio.file.Path confPath;
@@ -26,26 +26,26 @@ public class ConfigReloader implements QuietCloseable, DirWatcherCallback {
             PropertyKey.PG_RO_PASSWORD
     ));
     private boolean closed;
-    private DirWatcher dirWatcher;
+    private FileWatcher filewatcher;
     private long lastModified;
     private Properties properties;
 
     public ConfigReloader(DynamicServerConfiguration config) {
         this.config = config;
         this.confPath = Paths.get(this.config.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
-        this.dirWatcher = DirWatcherFactory.getDirWatcher(this.config.getConfRoot());
+        this.filewatcher = FileWatcherFactory.getFileWatcher(this.confPath.toString());
     }
 
     @Override
     public void close() {
         if (!closed) {
-            this.dirWatcher = Misc.free(dirWatcher);
+            this.filewatcher = Misc.free(filewatcher);
         }
         closed = true;
     }
 
     @Override
-    public void onDirChanged() {
+    public void onFileChanged() {
         try (Path p = new Path()) {
             p.of(this.confPath.toString()).$();
 
@@ -125,8 +125,8 @@ public class ConfigReloader implements QuietCloseable, DirWatcherCallback {
                 return;
             }
             try {
-                this.dirWatcher.waitForChange(this);
-            } catch (DirWatcherException exc) {
+                this.filewatcher.waitForChange(this);
+            } catch (FileWatcherException exc) {
                 LOG.error().$(exc).$();
             }
         } while (true);
