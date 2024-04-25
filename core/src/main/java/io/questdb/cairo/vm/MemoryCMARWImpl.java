@@ -74,11 +74,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void close(boolean truncate, byte truncateMode) {
-        int underlyingFd = this.fd;
-        if (underlyingFd < -1) {
-            underlyingFd = -fd - 1;
-            fd = -1;
-        }
         if (pageAddress != 0) {
             final long truncateSize;
             if (truncate) {
@@ -91,12 +86,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                         // If this is a lazy close of unused memory the underlying file can already be truncated
                         //  using another fd and memset can lead to SIGBUS on Linux.
                         // Check the physical file length before trying to memset to the mapped memory.
-                        sz = Math.min(sz, ff.length(underlyingFd));
+                        sz = Math.min(sz, ff.length(fd));
                         if (appendOffset < sz) {
                             Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
                         }
                     } catch (CairoException e) {
-                        LOG.error().$("cannot determine file length to safely truncate [fd=").$(underlyingFd)
+                        LOG.error().$("cannot determine file length to safely truncate [fd=").$(fd)
                                 .$(", errno=").$(e.getErrno())
                                 .$(", error=").$(e.getFlyweightMessage())
                                 .I$();

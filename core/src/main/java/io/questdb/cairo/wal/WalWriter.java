@@ -38,6 +38,7 @@ import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -91,6 +92,8 @@ public class WalWriter implements TableWriterAPI {
     private SegmentColumnRollSink columnConversionSink;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
+    private ConversionSymbolMapWriter conversionSymbolMap;
+    private ConversionSymbolTable conversionSymbolTable;
     private long currentTxnStartRowNum = -1;
     private boolean distressed;
     private boolean isCommittingData;
@@ -506,6 +509,18 @@ public class WalWriter implements TableWriterAPI {
                             final MemoryMA secondaryColumn = getAuxColumn(columnIndex);
                             final String columnName = metadata.getColumnName(columnIndex);
 
+                            SymbolMapWriterLite symbolMapWriter = null;
+                            SymbolTable symbolTable = null;
+                            if (columnIndex == convertColumnIndex) {
+                                if (ColumnType.isSymbol(convertToColumnType)) {
+                                    // New column destination is the column with last index
+                                    symbolMapWriter = getConversionSymbolMapWriter(columnCount - 1);
+                                }
+                                if (ColumnType.isSymbol(columnType)) {
+                                    symbolTable = getConversionSymbolMapReader(columnIndex);
+                                }
+                            }
+
                             int type = columnIndex == timestampIndex ? -columnType : columnType;
                             CopyWalSegmentUtils.rollColumnToSegment(
                                     ff,
@@ -519,9 +534,10 @@ public class WalWriter implements TableWriterAPI {
                                     currentTxnStartRowNum,
                                     uncommittedRows,
                                     columnRollSink,
-                                    columnIndex,
                                     commitMode,
-                                    columnIndex == convertColumnIndex ? convertToColumnType : type
+                                    columnIndex == convertColumnIndex ? convertToColumnType : type,
+                                    symbolTable,
+                                    symbolMapWriter
                             );
                         } else {
                             rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
@@ -1107,6 +1123,22 @@ public class WalWriter implements TableWriterAPI {
         return metadata.getMetadataVersion();
     }
 
+    private SymbolTable getConversionSymbolMapReader(int columnIndex) {
+        if (conversionSymbolTable == null) {
+            conversionSymbolTable = new ConversionSymbolTable();
+        }
+        conversionSymbolTable.of(this, columnIndex);
+        return conversionSymbolTable;
+    }
+
+    private SymbolMapWriterLite getConversionSymbolMapWriter(int columnIndex) {
+        if (conversionSymbolMap == null) {
+            conversionSymbolMap = new ConversionSymbolMapWriter();
+        }
+        conversionSymbolMap.of(this, columnIndex);
+        return conversionSymbolMap;
+    }
+
     private long getDataAppendPageSize() {
         return tableToken.isSystem() ? configuration.getSystemWalDataAppendPageSize() : configuration.getWalDataAppendPageSize();
     }
@@ -1573,6 +1605,90 @@ public class WalWriter implements TableWriterAPI {
         events.sync();
     }
 
+    private static class ConversionSymbolMapWriter implements SymbolMapWriterLite {
+        private int columnIndex;
+        private IntList localSymbolIds;
+        private CharSequenceIntHashMap symbolHashMap;
+        private SymbolMapReader symbolMapReader;
+
+        @Override
+        public int resolveSymbol(CharSequence value) {
+            return putSym0(columnIndex, value, symbolMapReader);
+        }
+
+        private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
+            int key;
+            if (utf16Value != null) {
+                final CharSequenceIntHashMap utf16Map = symbolHashMap;
+                final int index = utf16Map.keyIndex(utf16Value);
+                if (index > -1) {
+                    key = symbolMapReader.keyOf(utf16Value);
+                    if (key == SymbolTable.VALUE_NOT_FOUND) {
+                        // Add it to in-memory symbol map
+                        // Locally added symbols must have a continuous range of keys
+                        key = localSymbolIds.postIncrement(columnIndex);
+                    }
+                    // Chars.toString used as value is a parser buffer memory slice or mapped memory of symbolMapReader
+                    utf16Map.putAt(index, Chars.toString(utf16Value), key);
+                } else {
+                    key = utf16Map.valueAt(index);
+                }
+            } else {
+                key = SymbolTable.VALUE_IS_NULL;
+            }
+            return key;
+        }
+
+        void of(WalWriter writer, int columnIndex) {
+            this.columnIndex = columnIndex;
+            this.symbolMapReader = writer.getSymbolMapReader(columnIndex);
+            this.symbolHashMap = writer.symbolMaps.getQuick(columnIndex);
+            this.localSymbolIds = writer.localSymbolIds;
+        }
+    }
+
+
+    private static class ConversionSymbolTable implements SymbolTable {
+        private final IntList symbols = new IntList();
+        private int symbolCountWatermark;
+        private CharSequenceIntHashMap symbolHashMap;
+        private SymbolMapReader symbolMapReader;
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            if (key == SymbolTable.VALUE_IS_NULL) {
+                return null;
+            }
+            if (key < symbolCountWatermark) {
+                return symbolMapReader.valueOf(key);
+            } else {
+                int keyIndex = symbols.get(key - symbolCountWatermark);
+                return symbolHashMap.keys().get(keyIndex);
+            }
+        }
+
+        void of(WalWriter writer, int columnIndex) {
+            this.symbolMapReader = writer.getSymbolMapReader(columnIndex);
+            this.symbolCountWatermark = writer.getSymbolCountWatermark(columnIndex);
+
+            symbols.clear();
+            symbolHashMap = writer.symbolMaps.getQuick(columnIndex);
+
+            if (symbolHashMap.size() > 0) {
+                symbols.setPos(symbolHashMap.size());
+                for (int i = 0, n = symbolHashMap.size(); i < n; i++) {
+                    CharSequence symbolValue = symbolHashMap.keys().get(i);
+                    int index = symbolHashMap.get(symbolValue) - symbolCountWatermark;
+                    symbols.set(index, i);
+                }
+            }
+        }
+    }
     private class MetadataValidatorService implements MetadataServiceStub {
         public long structureVersion;
 
@@ -1768,7 +1884,7 @@ public class WalWriter implements TableWriterAPI {
                     // Configure new column, it will be used if the uncommitted data is rolled to a new segment
                     configureColumn(columnCount, newType);
                     if (ColumnType.isSymbol(newType)) {
-                        configureSymbolMapWriter(newType, columnName, 0, -1);
+                        configureSymbolMapWriter(columnCount, columnName, 0, -1);
                     }
                     columnCount++;
                     if (currentTxnStartRowNum > 0) {

@@ -25,12 +25,15 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.griffin.ColumnTypeConverter;
+import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.*;
 
@@ -50,9 +53,10 @@ public class CopyWalSegmentUtils {
             long startRowNumber,
             long rowCount,
             SegmentColumnRollSink newColumnFiles,
-            int columnIndex,
             int commitMode,
-            int newColumnType
+            int newColumnType,
+            @Nullable SymbolTable symbolTable,
+            @Nullable SymbolMapWriterLite symbolMapWriter
     ) {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment);
         int setPathRoot = newSegPath.size();
@@ -103,52 +107,49 @@ public class CopyWalSegmentUtils {
                         startRowNumber,
                         rowCount,
                         newColumnFiles,
-                        columnIndex,
                         commitMode
                 );
             }
         } else {
             try {
-                if (ColumnType.isVarSize(columnType)) {
-                    int srcFixFd = secondaryColumn.getFd();
-                    int srcVarFd = primaryColumn.getFd();
-                    int dstFixFd = secondaryFd;
-                    int dstVarFd = primaryFd;
+                int srcFixFd;
+                int srcVarFd;
 
-                    success = ColumnTypeConverter.convertColumn(
-                            startRowNumber,
-                            rowCount,
-                            columnType,
-                            srcFixFd,
-                            srcVarFd,
-                            null,
-                            newColumnType,
-                            dstFixFd,
-                            dstVarFd,
-                            null,
-                            ff,
-                            primaryColumn.getExtendSegmentSize(),
-                            newColumnFiles
-                    );
+                if (ColumnType.isVarSize(columnType)) {
+                    srcFixFd = secondaryColumn.getFd();
+                    srcVarFd = primaryColumn.getFd();
                 } else {
-                    int srcFd = primaryColumn.getFd();
-                    int dstFd = primaryFd;
-                    success = ColumnTypeConverter.convertColumn(
-                            startRowNumber,
-                            rowCount,
-                            columnType,
-                            srcFd,
-                            -1,
-                            null,
-                            newColumnType,
-                            dstFd,
-                            -1,
-                            null,
-                            ff,
-                            primaryColumn.getExtendSegmentSize(),
-                            newColumnFiles
-                    );
+                    srcFixFd = primaryColumn.getFd();
+                    srcVarFd = -1;
                 }
+
+                int dstFixFd;
+                int dstVarFd;
+
+                if (ColumnType.isVarSize(newColumnType)) {
+                    dstFixFd = secondaryFd;
+                    dstVarFd = primaryFd;
+                } else {
+                    dstFixFd = primaryFd;
+                    dstVarFd = -1;
+                }
+
+                success = ColumnTypeConverter.convertColumn(
+                        startRowNumber,
+                        rowCount,
+                        columnType,
+                        srcFixFd,
+                        srcVarFd,
+                        symbolTable,
+                        newColumnType,
+                        dstFixFd,
+                        dstVarFd,
+                        symbolMapWriter,
+                        ff,
+                        primaryColumn.getExtendSegmentSize(),
+                        newColumnFiles
+                );
+
             } catch (Throwable th) {
                 LOG.critical().$("Failed to convert column [name=").$(newSegPath).$(", error=").$(th).I$();
                 success = false;
@@ -198,7 +199,6 @@ public class CopyWalSegmentUtils {
             long rowOffset,
             long rowCount,
             SegmentColumnRollSink newOffsets,
-            int columnIndex,
             int commitMode
     ) {
         // Designated timestamp column is written as 2 long values
