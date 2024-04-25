@@ -139,11 +139,10 @@ jobs:
           cmake --build cmake-build-release --config Release
       - name: Build x64 Linux Rust Library
         run: |
-          ldd --version
-          ls -la /lib64/libc-*
           cd core/rust/qdbr
+          rustup target add x86_64-unknown-linux-musl
           cargo clean
-          cargo build --release
+          cargo build --target x86_64-unknown-linux-musl --release
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
       - name: CMAKE ARM Linux
         run: |
@@ -156,7 +155,6 @@ jobs:
       - name: Build ARM Linux Rust Library
         run: |
           cd core/rust/qdbr
-          ldd --version
           cargo clean
           cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
           cp target/aarch64-unknown-linux-gnu/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/
