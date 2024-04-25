@@ -118,8 +118,6 @@ jobs:
   build-linux-amd64-GLIBC_2_28:
     runs-on: ubuntu-latest
     container: debian:buster
-    env:
-      generator: "CodeBlocks - Unix Makefiles"
     steps:
       - uses: actions/checkout@v3
       - name: Install toolchains (CXX/NASM/Rust)
@@ -144,7 +142,7 @@ jobs:
         run: |
           cd ./core
           cmake -G "$generator" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
-      - name: Build x64 Linux C/C++ Library
+      - name: Build x64 Linux CXX Library
         run: |
           cd core
           cmake --build cmake-build-release --config Release
@@ -154,9 +152,6 @@ jobs:
           cargo clean
           cargo build --release
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
-      - name: Check git status
-        run: |
-          git status
       - name: Save x64 Linux Libraries to Cache
         uses: actions/cache/save@v3
         with:
