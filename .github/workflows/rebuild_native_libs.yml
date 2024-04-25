@@ -116,7 +116,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
           key: nativelibs-osx-${{ github.sha }}
   build-linux-aarch64:
-      runs-on: macos-14
+      runs-on: ubuntu-latest
       # this is very bare container, we use it to restrict GLIBC to 2.28
       # everything has to be installed on it manually
       container: arm64v8/debian:buster
