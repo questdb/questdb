@@ -133,7 +133,6 @@ jobs:
           echo "CARGO_HOME: $CARGO_HOME"
           echo "PATH: $PATH"
           ls -la .
-          cargo install cross
       - name: Generate Makefiles
         run: |
           cd ./core
