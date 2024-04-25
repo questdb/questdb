@@ -374,10 +374,12 @@ public class WalColFirstWriter implements WalWriter {
         return walName;
     }
 
+    @Override
     public void goActive() {
         goActive(Long.MAX_VALUE);
     }
 
+    @Override
     public boolean goActive(long maxStructureVersion) {
         try {
             applyMetadataChangeLog(maxStructureVersion);

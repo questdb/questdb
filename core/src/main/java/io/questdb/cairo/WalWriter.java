@@ -32,5 +32,9 @@ public interface WalWriter extends TableWriterAPI {
 
     String getWalName();
 
+    void goActive();
+
+    boolean goActive(long maxStructureVersion);
+
     long renameTable(@NotNull CharSequence oldName, String newTableName);
 }
