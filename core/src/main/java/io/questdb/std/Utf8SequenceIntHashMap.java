@@ -28,6 +28,7 @@ package io.questdb.std;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -60,7 +61,7 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
         Arrays.fill(values, noEntryValue);
     }
 
-    public int get(Utf8Sequence key) {
+    public int get(@NotNull Utf8Sequence key) {
         return valueAt(keyIndex(key));
     }
 
@@ -68,15 +69,15 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
         return list;
     }
 
-    public boolean put(Utf8String key, int value) {
+    public boolean put(@NotNull Utf8String key, int value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean put(Utf8Sequence key, int value) {
+    public boolean put(@NotNull Utf8Sequence key, int value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public void putAll(Utf8SequenceIntHashMap other) {
+    public void putAll(@NotNull Utf8SequenceIntHashMap other) {
         Utf8Sequence[] otherKeys = other.keys;
         int[] otherValues = other.values;
         for (int i = 0, n = otherKeys.length; i < n; i++) {
@@ -86,7 +87,7 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
         }
     }
 
-    public boolean putAt(int index, Utf8Sequence key, int value) {
+    public boolean putAt(int index, @NotNull Utf8Sequence key, int value) {
         if (index < 0) {
             values[-index - 1] = value;
             return false;
@@ -102,7 +103,7 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
         return true;
     }
 
-    public boolean putAt(int index, Utf8String key, int value) {
+    public boolean putAt(int index, @NotNull Utf8String key, int value) {
         if (index < 0) {
             values[-index - 1] = value;
             return false;
