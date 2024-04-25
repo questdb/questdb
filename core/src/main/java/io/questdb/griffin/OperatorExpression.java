@@ -56,7 +56,7 @@ public final class OperatorExpression {
         add(new OperatorExpression("||", 5, true, BINARY));
         // bitwise operators
         add(new OperatorExpression("&", 8, true, BINARY));
-        add(new OperatorExpression("^", 9, false, BINARY));
+        add(new OperatorExpression("^", 9, true, BINARY));
         add(new OperatorExpression("|", 10, true, BINARY));
         // set operators
         add(new OperatorExpression("in", 7, true, SET, false));
