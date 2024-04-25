@@ -26,12 +26,14 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 
 import static io.questdb.griffin.OperatorExpression.*;
 
 public class ExpressionParser {
-
+    private static final Log LOG = LogFactory.getLog(ExpressionParser.class);
     private static final int BRANCH_BETWEEN_END = 14;
     private static final int BRANCH_BETWEEN_START = 13;
     private static final int BRANCH_CASE_CONTROL = 10;
@@ -67,12 +69,20 @@ public class ExpressionParser {
     private final IntStack caseBraceCountStack = new IntStack();
     private final IntStack castBraceCountStack = new IntStack();
     private final CharacterStore characterStore;
+    private final OperatorRegistry activeRegistry;
+    private final OperatorRegistry shadowRegistry;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ObjStack<ExpressionNode> opStack = new ObjStack<>();
     private final IntStack paramCountStack = new IntStack();
     private final SqlParser sqlParser;
 
-    ExpressionParser(ObjectPool<ExpressionNode> expressionNodePool, SqlParser sqlParser, CharacterStore characterStore) {
+    ExpressionParser(OperatorRegistry activeRegistry,
+                     OperatorRegistry shadowRegistry,
+                     ObjectPool<ExpressionNode> expressionNodePool,
+                     SqlParser sqlParser,
+                     CharacterStore characterStore) {
+        this.activeRegistry = activeRegistry;
+        this.shadowRegistry = shadowRegistry;
         this.expressionNodePool = expressionNodePool;
         this.sqlParser = sqlParser;
         this.characterStore = characterStore;
@@ -210,6 +220,7 @@ public class ExpressionParser {
 
     void parseExpr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback) throws SqlException {
         try {
+            int shadowParseMismatchFirstPosition = -1;
             int paramCount = 0;
             int braceCount = 0;
             int bracketCount = 0;
@@ -964,7 +975,7 @@ public class ExpressionParser {
 
                 if (processDefaultBranch) {
                     OperatorExpression op;
-                    if ((op = OperatorExpression.opMap.get(tok)) != null) {
+                    if ((op = activeRegistry.map.get(tok)) != null) {
 
                         thisBranch = BRANCH_OPERATOR;
 
@@ -979,10 +990,10 @@ public class ExpressionParser {
                                 case BRANCH_BETWEEN_END: // handle unary minus for second operand of BETWEEN operator: BETWEEN x AND -y
                                     // we have unary minus or unary complement, update op completely because it will change precedence
                                     if (thisChar == '-') {
-                                        op = UnaryMinus;
+                                        op = activeRegistry.unaryMinus;
                                     }
                                     if (thisChar == '~') {
-                                        op = UnaryComplement;
+                                        op = activeRegistry.unaryComplement;
                                     }
                                     break;
                                 default:
@@ -999,8 +1010,8 @@ public class ExpressionParser {
                             final CharSequence lastToken = GenericLexer.immutableOf(tok);
                             final CharSequence nextToken = SqlUtil.fetchNext(lexer);
                             OperatorExpression nextOp;
-                            if (nextToken != null && (nextOp = opMap.get(nextToken)) != null && nextOp.type == OperatorExpression.SET) {
-                                op = SetOperationNegation;
+                            if (nextToken != null && (nextOp = activeRegistry.map.get(nextToken)) != null && nextOp.type == OperatorExpression.SET) {
+                                op = activeRegistry.setOperationNegation;
                                 unaryOperator = false; // NOT is part of multi-ary set operation negation
                             }
                             lexer.backTo(lastTokenPosition + lastToken.length(), lastToken);
@@ -1014,11 +1025,35 @@ public class ExpressionParser {
                         //        then pop o2 off the operator stack, onto the output queue;
                         // push o1 onto the operator stack.
                         while ((other = opStack.peek()) != null) {
-                            boolean greaterPrecedence = (op.leftAssociative && op.precedence >= other.precedence) || (!op.leftAssociative && op.precedence > other.precedence);
+                            boolean greaterPrecedence = op.greaterPrecedence(other.precedence);
                             // NOT unary infix operator can't pop binary operator from the left, although it has very high precedence (that's to allow usage of subexpressions like `y = FALSE AND NOT x = TRUE`)
                             if (unaryOperator && other.paramCount > 0) {
                                 break;
                             }
+
+                            /*
+                                Validate consistency of query parsing with active & shadow precedence tables
+                                On the high level, process looks like following:
+                                1. We need to find "op" operator in the shadow registry: shadowOp
+                                2. We need to find "other" operator in the shadow registry: shadowOther
+                                3. Then we need to compare precedence of shadowOp & shadowOther (taking into account associativity rules)
+                                4. If comparison differs from greaterPrecedence result from above - there is a mismatch in parsing
+
+                                The procedure is not that straightforward because we don't have exact operator type for other op.
+                                This is only a problem for ambiguous operators like minus('-'), complement('~') and set negation(e.g. 'not within')
+                                In order to partially resolve this issue we "guess" operator by its token and precedence - this helps to distinguish between minus and complement, but not for set negation
+                             */
+                            if (shadowRegistry != null) {
+                                OperatorExpression activeOtherGuess = activeRegistry.tryGuessOperator(other.token, other.precedence);
+                                OperatorExpression shadowOp = shadowRegistry.tryGetOperator(op.operator);
+                                if (shadowOp != null && activeOtherGuess != null) {
+                                    OperatorExpression shadowOther = shadowRegistry.tryGetOperator(activeOtherGuess.operator);
+                                    if (shadowOther != null && greaterPrecedence != shadowOp.greaterPrecedence(shadowOther.precedence)) {
+                                        shadowParseMismatchFirstPosition = lexer.lastTokenPosition();
+                                    }
+                                }
+                            }
+
                             if (greaterPrecedence) {
                                 argStackDepth = onNode(listener, other, argStackDepth, false);
                                 opStack.pop();
@@ -1028,7 +1063,7 @@ public class ExpressionParser {
                         }
                         node = expressionNodePool.next().of(
                                 op.type == OperatorExpression.SET ? ExpressionNode.SET_OPERATION : ExpressionNode.OPERATION,
-                                op.token,
+                                op.operator.token,
                                 op.precedence,
                                 lastPos
                         );
@@ -1202,7 +1237,7 @@ public class ExpressionParser {
                             }
                         } else if (prevBranch == BRANCH_DOT_DEREFERENCE) {
                             argStackDepth++;
-                            final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, Dot.token, Dot.precedence, lastPos);
+                            final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, activeRegistry.dot.operator.token, activeRegistry.dot.precedence, lastPos);
                             dotDereference.paramCount = 2;
                             opStack.push(dotDereference);
                             opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
@@ -1324,6 +1359,16 @@ public class ExpressionParser {
                 argStackDepth = onNode(listener, node, argStackDepth, caseCount == 0);
             }
 
+            if (shadowParseMismatchFirstPosition != -1) {
+                // todo (sivukhin): Can we add full query here? Or maybe some trace id?
+                // todo (sivukhin): Also, we can add link to the doc/migration guide
+                LOG.advisory()
+                        .$("operator precedence compat mode: detected expression parsing behaviour change for query=[")
+                        .$(lexer.getContent())
+                        .$("] at position=")
+                        .$(shadowParseMismatchFirstPosition)
+                        .$();
+            }
         } catch (SqlException e) {
             opStack.clear();
             backupCastBraceCountStack.clear();

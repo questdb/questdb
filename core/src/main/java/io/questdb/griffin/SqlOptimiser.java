@@ -3514,8 +3514,8 @@ public class SqlOptimiser implements Mutable {
         }
         count.position = agg.position;
 
-        OperatorExpression mulOp = OperatorExpression.opMap.get("*");
-        ExpressionNode mul = expressionNodePool.next().of(OPERATION, mulOp.token, mulOp.precedence, agg.position);
+        OperatorExpression mulOp = OperatorExpression.getRegistry(configuration.getSqlOperatorPrecedenceCompatMode()).map.get("*");
+        ExpressionNode mul = expressionNodePool.next().of(OPERATION, mulOp.operator.token, mulOp.precedence, agg.position);
         mul.paramCount = 2;
         mul.lhs = count;
         mul.rhs = constant;
@@ -3840,8 +3840,8 @@ public class SqlOptimiser implements Mutable {
             nullExpr.token = "null";
             nullExpr.precedence = 0;
 
-            OperatorExpression neqOp = OperatorExpression.opMap.get("!=");
-            ExpressionNode node = expressionNodePool.next().of(OPERATION, neqOp.token, neqOp.precedence, 0);
+            OperatorExpression neqOp = OperatorExpression.getRegistry(configuration.getSqlOperatorPrecedenceCompatMode()).map.get("!=");
+            ExpressionNode node = expressionNodePool.next().of(OPERATION, neqOp.operator.token, neqOp.precedence, 0);
             node.paramCount = 2;
             node.lhs = nullExpr;
             node.rhs = distinctExpr;

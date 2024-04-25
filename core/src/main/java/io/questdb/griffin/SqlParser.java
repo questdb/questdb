@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -103,7 +104,24 @@ public class SqlParser {
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
         this.optimiser = optimiser;
-        this.expressionParser = new ExpressionParser(expressionNodePool, this, characterStore);
+        String sqlOperatorPrecedenceCompatMode = configuration.getSqlOperatorPrecedenceCompatMode();
+        if (sqlOperatorPrecedenceCompatMode.equals(PropertyKey.CompatModeValidation)) {
+            this.expressionParser = new ExpressionParser(
+                    OperatorExpression.getRegistry(PropertyKey.CompatModeCurrent),
+                    OperatorExpression.getRegistry(PropertyKey.CompatModeNext),
+                    expressionNodePool,
+                    this,
+                    characterStore
+            );
+        } else {
+            this.expressionParser = new ExpressionParser(
+                    OperatorExpression.getRegistry(sqlOperatorPrecedenceCompatMode),
+                    null,
+                    expressionNodePool,
+                    this,
+                    characterStore
+            );
+        }
         this.digit = 1;
         this.column = "column";
     }

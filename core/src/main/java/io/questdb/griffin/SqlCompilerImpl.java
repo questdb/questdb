@@ -364,10 +364,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         for (int i = 0, k = sqlControlSymbols.size(); i < k; i++) {
             lexer.defineSymbol(sqlControlSymbols.getQuick(i));
         }
-        for (int i = 0, k = OperatorExpression.operators.size(); i < k; i++) {
-            OperatorExpression op = OperatorExpression.operators.getQuick(i);
+        OperatorRegistry registry = OperatorExpression.getRegistry(PropertyKey.CompatModeNext); // it's ok to take "next" registry as we only need tokens - not precedence
+        for (int i = 0, k = registry.operators.size(); i < k; i++) {
+            OperatorExpression op = registry.operators.getQuick(i);
             if (op.symbol) {
-                lexer.defineSymbol(op.token);
+                lexer.defineSymbol(op.operator.token);
             }
         }
     }

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
@@ -906,8 +907,9 @@ public class SqlUtil {
     }
 
     static {
-        for (int i = 0, n = OperatorExpression.operators.size(); i < n; i++) {
-            SqlUtil.disallowedAliases.add(OperatorExpression.operators.getQuick(i).token);
+        OperatorRegistry registry = OperatorExpression.getRegistry(PropertyKey.CompatModeNext);
+        for (int i = 0, n = registry.operators.size(); i < n; i++) {
+            SqlUtil.disallowedAliases.add(registry.operators.getQuick(i).operator.token);
         }
         SqlUtil.disallowedAliases.add("");
 
