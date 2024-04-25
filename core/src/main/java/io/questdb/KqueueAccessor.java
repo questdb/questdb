@@ -28,7 +28,13 @@ public class KqueueAccessor {
     public static final short EVFILT_READ;
     public static final short SIZEOF_KEVENT;
     public static final short EVFILT_VNODE;
+    public static final short NOTE_DELETE;
     public static final short NOTE_WRITE;
+    public static final short NOTE_EXTEND;
+    public static final short NOTE_ATTRIB;
+    public static final short NOTE_LINK;
+    public static final short NOTE_RENAME;
+    public static final short NOTE_REVOKE;
     public static final short DATA_OFFSET;
     public static final short EVFILT_WRITE;
     public static final short EV_ADD;
@@ -38,21 +44,21 @@ public class KqueueAccessor {
     public static final short FD_OFFSET;
     public static final short FILTER_OFFSET;
     public static final short FLAGS_OFFSET;
-
     public static native short getDataOffset();
-
     public static native short getEvAdd();
-
     public static native short getEvDelete();
     public static native short getEvClear();
-
     public static native short getEvOneshot();
-
     public static native short getEvfiltRead();
-
     public static native short getEvfiltWrite();
     public static native short getEvfiltVnode();
+    public static native short getNoteDelete();
     public static native short getNoteWrite();
+    public static native short  getNoteExtend();
+    public static native short  getNoteAttrib();
+    public static native short getNoteLink();
+    public static native short  getNoteRename();
+    public static native short  getNoteRevoke();
 
     public static native short getFdOffset();
 
@@ -79,7 +85,13 @@ public class KqueueAccessor {
         EVFILT_READ = getEvfiltRead();
         EVFILT_WRITE = getEvfiltWrite();
         EVFILT_VNODE = getEvfiltVnode();
+        NOTE_DELETE = getNoteDelete();
         NOTE_WRITE = getNoteWrite();
+        NOTE_EXTEND = getNoteExtend();
+        NOTE_ATTRIB = getNoteAttrib();
+        NOTE_LINK = getNoteLink();
+        NOTE_RENAME = getNoteRename();
+        NOTE_REVOKE = getNoteRevoke();
         SIZEOF_KEVENT = getSizeofKevent();
         FD_OFFSET = getFdOffset();
         FILTER_OFFSET = getFilterOffset();

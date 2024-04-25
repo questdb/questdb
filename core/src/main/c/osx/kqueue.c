@@ -45,9 +45,33 @@ JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getEvfiltVnode
     return EVFILT_VNODE;
 }
 
+JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteDelete
+        (JNIEnv *e, jclass cl) {
+    return NOTE_DELETE;
+}
 JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteWrite
         (JNIEnv *e, jclass cl) {
     return NOTE_WRITE;
+}
+JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteExtend
+        (JNIEnv *e, jclass cl) {
+    return NOTE_EXTEND;
+}
+JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteAttrib
+        (JNIEnv *e, jclass cl) {
+    return NOTE_ATTRIB;
+}
+JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteLink
+        (JNIEnv *e, jclass cl) {
+    return NOTE_LINK;
+}
+JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteRename
+        (JNIEnv *e, jclass cl) {
+    return NOTE_RENAME;
+}
+JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteRevoke
+        (JNIEnv *e, jclass cl) {
+    return NOTE_REVOKE;
 }
 JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getSizeofKevent
         (JNIEnv *e, jclass cl) {

@@ -305,9 +305,13 @@ public class ServerMain implements Closeable {
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
 
         if (config instanceof DynamicServerConfiguration) {
-            configReloader = new ConfigReloader((DynamicServerConfiguration) config);
-            Thread reloadThread = new Thread(configReloader::watch);
-            reloadThread.start();
+            try {
+                configReloader = new ConfigReloader((DynamicServerConfiguration) config);
+                Thread reloadThread = new Thread(configReloader::watch);
+                reloadThread.start();
+            } catch(FileWatcherException exc) {
+                bootstrap.getLog().errorW().$("Unable to start ConfigReloader: ").$(exc).$();
+            }
         }
 
         workerPoolManager = new WorkerPoolManager(config, metrics) {

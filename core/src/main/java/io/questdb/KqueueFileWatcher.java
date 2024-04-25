@@ -9,46 +9,76 @@ import io.questdb.std.str.Path;
 
 public class KqueueFileWatcher implements FileWatcher {
     private final int bufferSize;
-    private final long event;
+    private final long fileEvent;
+    private final long dirEvent;
     private final long eventList;
-    private final int fd;
+    private final int fileFd;
+    private final int dirFd;
     private final int kq;
     private boolean closed;
 
-    public KqueueFileWatcher(CharSequence filePath) {
+    public KqueueFileWatcher(CharSequence filePath) throws FileWatcherException {
         try (Path p = new Path()) {
             p.of(filePath).$();
-            this.fd = Files.openRO(p);
-            if (this.fd < 0) {
-                throw CairoException.critical(this.fd).put("could not open file [path=").put(filePath).put(']');
+            this.fileFd = Files.openRO(p);
+            if (this.fileFd < 0) {
+                throw CairoException.critical(this.fileFd).put("could not open file [path=").put(filePath).put(']');
+            }
+
+            this.dirFd = Files.openRO(p.parent());
+            if (this.dirFd < 0) {
+                throw CairoException.critical(this.dirFd).put("could not open dir [path=").put(p.parent()).put(']');
             }
         }
 
-        this.event = KqueueAccessor.evSet(
-                this.fd,
+        this.fileEvent = KqueueAccessor.evSet(
+                this.fileFd,
                 KqueueAccessor.EVFILT_VNODE,
                 KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
-                KqueueAccessor.NOTE_WRITE,
+                KqueueAccessor.NOTE_DELETE | KqueueAccessor.NOTE_WRITE |
+                        KqueueAccessor.NOTE_ATTRIB | KqueueAccessor.NOTE_EXTEND |
+                        KqueueAccessor.NOTE_LINK | KqueueAccessor.NOTE_RENAME |
+                        KqueueAccessor.NOTE_REVOKE,
+                0
+        );
+
+        this.dirEvent = KqueueAccessor.evSet(
+                this.dirFd,
+                KqueueAccessor.EVFILT_VNODE,
+                KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
+                KqueueAccessor.NOTE_DELETE | KqueueAccessor.NOTE_WRITE |
+                KqueueAccessor.NOTE_ATTRIB | KqueueAccessor.NOTE_EXTEND |
+                KqueueAccessor.NOTE_LINK | KqueueAccessor.NOTE_RENAME |
+                KqueueAccessor.NOTE_REVOKE,
                 0
         );
 
         kq = KqueueAccessor.kqueue();
         if (kq < 0) {
-            throw NetworkError.instance(kq, "could not create kqueue");
+            throw new FileWatcherException("kqueue", kq);
         }
         Files.bumpFileCount(this.kq);
 
         this.bufferSize = KqueueAccessor.SIZEOF_KEVENT;
         this.eventList = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
 
-        // Register event with queue
-        int res = KqueueAccessor.keventRegister(
+        // Register events with queue
+        int fileRes = KqueueAccessor.keventRegister(
                 kq,
-                event,
+                fileEvent,
                 1
         );
-        if (res < 0) {
-            throw NetworkError.instance(kq, "could not create new event");
+        if (fileRes < 0) {
+            throw new FileWatcherException("keventRegister (fileEvent)", fileRes);
+        }
+
+        int dirRes = KqueueAccessor.keventRegister(
+                kq,
+                dirEvent,
+                1
+        );
+        if (dirRes < 0) {
+            throw new FileWatcherException("keventRegister (dirEvent)", dirRes);
         }
 
     }
@@ -58,9 +88,11 @@ public class KqueueFileWatcher implements FileWatcher {
         if (!closed) {
             closed = true;
             Files.close(kq);
-            Files.close(fd);
+            Files.close(fileFd);
+            Files.close(dirFd);
             Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-            Unsafe.free(this.event, KqueueAccessor.SIZEOF_KEVENT, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+            Unsafe.free(this.fileEvent, KqueueAccessor.SIZEOF_KEVENT, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+            Unsafe.free(this.dirEvent, KqueueAccessor.SIZEOF_KEVENT, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
         }
     }
 

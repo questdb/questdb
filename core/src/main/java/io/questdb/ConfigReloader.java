@@ -30,7 +30,7 @@ public class ConfigReloader implements QuietCloseable, FileWatcherCallback {
     private long lastModified;
     private Properties properties;
 
-    public ConfigReloader(DynamicServerConfiguration config) {
+    public ConfigReloader(DynamicServerConfiguration config) throws FileWatcherException {
         this.config = config;
         this.confPath = Paths.get(this.config.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
         this.filewatcher = FileWatcherFactory.getFileWatcher(this.confPath.toString());
