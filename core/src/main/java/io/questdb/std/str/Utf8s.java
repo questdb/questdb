@@ -641,6 +641,12 @@ public final class Utf8s {
         return -1;
     }
 
+    /**
+     * Returns the length of the UTF-8 sequence as the count of code points.
+     * NOTE: this number is different from the length of the equivalent Java String,
+     * which counts UTF-16 code words. A surrogate pair encodes one code point, but
+     * counts as two in the length of a Java String.
+     */
     public static int length(Utf8Sequence value) {
         if (value == null) {
             return TableUtils.NULL_LEN;
