@@ -127,8 +127,9 @@ jobs:
           apt-get update -y
           apt install nasm python3 wget ca-certificates -y
           python3 ./.github/prepare_rust_env.py
-          echo "/root/cargo-install" >> $CARGO_INSTALL_PATH
-          echo "/root/cargo-install/bin" >> $PATH
+          echo "/root/.cargo" >> $CARGO_INSTALL_PATH
+          echo "/root/.cargo" >> $CARGO_HOME
+          echo "/root/.cargo/bin" >> $PATH
           cargo install cross
       - name: Generate Makefiles
         run: |
