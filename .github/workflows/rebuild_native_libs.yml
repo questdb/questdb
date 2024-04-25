@@ -20,7 +20,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Build Rust Library
         run: |
           cd core/rust/qdbr
@@ -40,7 +40,7 @@ jobs:
   build-freebsd:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Build in FreeBSD
         # @d44bf830e7d is the same as the tag v1, but it's guaranteed to be immutable.
         uses: vmactions/freebsd-vm@d44bf830e7d850111d27aa120d468c905e5980f4
@@ -77,7 +77,7 @@ jobs:
         os: [ macos-14, macos-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install toolchains (CXX/NASM)
         run: |
           brew install make cmake gcc nasm
@@ -121,7 +121,7 @@ jobs:
     # everything has to be installed on it manually
     container: debian:buster
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install toolchains (CXX/NASM/Rust)
         run: |
           ldd --version
@@ -165,7 +165,7 @@ jobs:
     env:
       generator: "CodeBlocks - Unix Makefiles"
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Increase file count and install tooling
         run: |
           sudo sysctl -w fs.file-max=500000
@@ -231,7 +231,7 @@ jobs:
     needs: [ build-freebsd, build-macos, build-others, build-windows, build-linux-amd64 ]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Print file sizes before
         run: |
           find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
@@ -308,7 +308,7 @@ jobs:
       - name: Push the files to the current branch
         uses: ad-m/github-push-action@d91a481090679876dfc4178fef17f286781251df
         # Why do we use a commit hash instead of a tag for the github-push-action?
-        # ad-m/github-push-action is not as well-known repo as e.g. actions/checkout and therefore we trust it less.
+        # ad-m/github-push-action is not as well-known repo as e.g. actions/checkout, and therefore we trust it less.
         # d91a48109 is the same as the tag v0.8.0, but it's guaranteed to be immutable.
         # So even if a bad actor takes over the repo, and rewrites tags to point to malicious commits, we will still be safe.
         with:
