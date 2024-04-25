@@ -125,12 +125,12 @@ jobs:
       - name: Install toolchains (C/C++/NASM/Rust)
         run: |
           apt-get update -y
-# git - required to pull submodules (asmjit)
-# nasm - assembler compiler, required to build C/C++ library
-# cmake - required to build C/C++ library
-# build-essential - C/C++ compilers, required to build C/C++ library
-# python3 - required by Rust setup script (our script)
-# wget - required by Rust setup
+#         git - required to pull submodules (asmjit)
+#         nasm - assembler compiler, required to build C/C++ library
+#         cmake - required to build C/C++ library
+#         build-essential - C/C++ compilers, required to build C/C++ library
+#         python3 - required by Rust setup script (our script)
+#         wget - required by Rust setup
           apt install git nasm python3 wget ca-certificates cmake build-essential -y
           python3 ./.github/prepare_rust_env.py
           export PATH=$HOME/.cargo/bin:$PATH
