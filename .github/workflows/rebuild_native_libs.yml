@@ -125,7 +125,7 @@ jobs:
       - name: Install toolchains (C/C++/NASM/Rust)
         run: |
           apt-get update -y
-          apt install nasm python3 wget ca-certificates cmake gcc-mingw-w64 g++-mingw-w64 -y
+          apt install nasm python3 wget ca-certificates cmake build-essential -y
           python3 ./.github/prepare_rust_env.py
           export PATH=$HOME/.cargo/bin:$PATH
           export CARGO_HOME=$HOME/.cargo
