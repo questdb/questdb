@@ -139,6 +139,7 @@ jobs:
           cmake --build cmake-build-release --config Release
       - name: Build x64 Linux Rust Library
         run: |
+          ldd --version
           cd core/rust/qdbr
           cargo clean
           cargo build --release
