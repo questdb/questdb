@@ -130,6 +130,9 @@ jobs:
           echo "/root/.cargo" >> $CARGO_INSTALL_PATH
           echo "/root/.cargo" >> $CARGO_HOME
           echo "/root/.cargo/bin" >> $PATH
+          echo $CARGO_HOME
+          echo $PATH
+          ls -la
           cargo install cross
       - name: Generate Makefiles
         run: |
