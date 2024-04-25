@@ -33,13 +33,13 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sink;
 
 public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, QuietCloseable {
-    private final ServerConfiguration serverConfiguration;
-    private final SimpleReadWriteLock lock;
     private final DirectUtf8Sink defaultUserPasswordSink;
-    private int defaultUserPasswordLen;
+    private final SimpleReadWriteLock lock;
     private final DirectUtf8Sink readOnlyUserPasswordSink;
-    private int readOnlyUserPasswordLen;
+    private final ServerConfiguration serverConfiguration;
+    private int defaultUserPasswordLen;
     private PGWireConfiguration pgwireConfiguration;
+    private int readOnlyUserPasswordLen;
 
     public DynamicUsernamePasswordMatcher(ServerConfiguration serverConfiguration) {
         this.serverConfiguration = serverConfiguration;
@@ -88,7 +88,7 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, 
                 return false;
             }
             if (Chars.equals(username, this.pgwireConfiguration.getDefaultUsername())) {
-                return passwordLen == this.defaultUserPasswordLen &&  Vect.memeq(this.defaultUserPasswordSink.ptr(), passwordPtr, passwordLen);
+                return passwordLen == this.defaultUserPasswordLen && Vect.memeq(this.defaultUserPasswordSink.ptr(), passwordPtr, passwordLen);
             } else if (Chars.equals(username, this.pgwireConfiguration.getReadOnlyUsername())) {
                 if (!this.pgwireConfiguration.isReadOnlyUserEnabled()) {
                     return false;
@@ -98,8 +98,7 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, 
                 return false;
             }
 
-        }
-        finally {
+        } finally {
             this.lock.readLock().unlock();
         }
     }

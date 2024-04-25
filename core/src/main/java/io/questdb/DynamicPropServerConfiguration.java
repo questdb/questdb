@@ -10,7 +10,6 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
@@ -26,15 +25,15 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class DynamicPropServerConfiguration implements DynamicServerConfiguration {
 
-    private final AtomicReference<PropServerConfiguration> delegate;
-    private final String root;
-    private final @Nullable Map<String, String> env;
-    private final Log log;
     private final BuildInformation buildInformation;
+    private final AtomicReference<PropServerConfiguration> delegate;
+    private final @Nullable Map<String, String> env;
     private final FilesFacade filesFacade;
-    private final MicrosecondClock microsecondClock;
     private final FactoryProviderFactory fpf;
     private final boolean loadAdditionalConfigurations;
+    private final Log log;
+    private final MicrosecondClock microsecondClock;
+    private final String root;
 
     public DynamicPropServerConfiguration(
             String root,
@@ -64,7 +63,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                 buildInformation,
                 filesFacade,
                 microsecondClock,
-                fpf ,
+                fpf,
                 loadAdditionalConfigurations
         );
         this.delegate = new AtomicReference<>(serverConfig);
@@ -113,38 +112,14 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         );
     }
 
-    public void reload(Properties properties) {
-        PropServerConfiguration newConfig;
-        try {
-            newConfig = new PropServerConfiguration(
-                    this.root,
-                    properties,
-                    this.env,
-                    this.log,
-                    this.buildInformation,
-                    this.filesFacade,
-                    this.microsecondClock,
-                    this.fpf,
-                    this.loadAdditionalConfigurations
-            );
-        }
-        catch (ServerConfigurationException|JsonException e){
-            this.log.error().$(e);
-            return;
-        }
-
-        delegate.set(newConfig);
+    @Override
+    public CairoConfiguration getCairoConfiguration() {
+        return delegate.get().getCairoConfiguration();
     }
 
     @Override
     public CharSequence getConfRoot() {
         return delegate.get().getCairoConfiguration().getConfRoot();
-    }
-
-
-    @Override
-    public CairoConfiguration getCairoConfiguration() {
-        return delegate.get().getCairoConfiguration();
     }
 
     @Override
@@ -183,6 +158,11 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     }
 
     @Override
+    public UsernamePasswordMatcher getUsernamePasswordMatcher() {
+        return new DynamicUsernamePasswordMatcher(this);
+    }
+
+    @Override
     public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
         return delegate.get().getWalApplyPoolConfiguration();
     }
@@ -202,8 +182,25 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         return delegate.get().isLineTcpEnabled();
     }
 
-    @Override
-    public UsernamePasswordMatcher getUsernamePasswordMatcher() {
-        return delegate.get().getUsernamePasswordMatcher();
+    public void reload(Properties properties) {
+        PropServerConfiguration newConfig;
+        try {
+            newConfig = new PropServerConfiguration(
+                    this.root,
+                    properties,
+                    this.env,
+                    this.log,
+                    this.buildInformation,
+                    this.filesFacade,
+                    this.microsecondClock,
+                    this.fpf,
+                    this.loadAdditionalConfigurations
+            );
+        } catch (ServerConfigurationException | JsonException e) {
+            this.log.error().$(e);
+            return;
+        }
+
+        delegate.set(newConfig);
     }
 }
