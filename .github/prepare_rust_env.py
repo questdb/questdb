@@ -53,7 +53,7 @@ def install_rust():
             'rustup-init.exe',
             ['rustup-init.exe', '-y', '--profile', 'minimal'],
         ),
-    }['unix']
+    }[platform_key]
     try:
         download_file(download_url, file_name)
         subprocess.check_call(install_cmd, stderr=subprocess.STDOUT)
