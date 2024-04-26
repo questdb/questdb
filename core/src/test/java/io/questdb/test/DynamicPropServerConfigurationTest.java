@@ -24,13 +24,15 @@
 
 package io.questdb.test;
 
-import io.questdb.ServerMain;
+import io.questdb.*;
+import io.questdb.std.FilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
 import java.io.File;
 import java.io.FileWriter;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -39,11 +41,10 @@ import java.sql.SQLException;
 import java.util.Properties;
 
 public class DynamicPropServerConfigurationTest extends AbstractTest {
+
     @Test
     public void TestPgWireCredentialsReloadByDeletingProp() throws Exception {
-        File tmp = temp.newFolder();
-
-        Path serverConfPath = Path.of(tmp.getAbsolutePath(), "conf", "server.conf");
+        Path serverConfPath = Path.of(temp.getRoot().getAbsolutePath(), "dbroot", "conf", "server.conf");
         Files.createDirectories(serverConfPath.getParent());
         File serverConf = serverConfPath.toFile();
         try (FileWriter w = new FileWriter(serverConf)) {
@@ -51,7 +52,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             w.write("pg.password=sklar\n");
         }
 
-        try (ServerMain serverMain = new ServerMain("-d", tmp.getAbsolutePath())) {
+        try (ServerMain serverMain = new ServerMain(getBootstrap())) {
             serverMain.start();
 
             try (Connection conn = getConnection("steven", "sklar")) {
@@ -74,9 +75,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     @Test
     public void TestPgWireCredentialsReloadWithChangedProp() throws Exception {
-        File tmp = temp.newFolder();
-
-        Path serverConfPath = Path.of(tmp.getAbsolutePath(), "conf", "server.conf");
+        Path serverConfPath = Path.of(temp.getRoot().getAbsolutePath(), "dbroot", "conf", "server.conf");
         Files.createDirectories(serverConfPath.getParent());
         File serverConf = serverConfPath.toFile();
         try (FileWriter w = new FileWriter(serverConf)) {
@@ -85,7 +84,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         }
 
 
-        try (ServerMain serverMain = new ServerMain("-d", tmp.getAbsolutePath())) {
+        try (ServerMain serverMain = new ServerMain(getBootstrap())) {
             serverMain.start();
 
             try (Connection conn = getConnection("steven", "sklar")) {
@@ -110,10 +109,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     @Test
     public void TestPgWireCredentialsReloadWithChangedPropAfterRecreatedFile() throws Exception {
-        File tmp = temp.newFolder();
-        Path serverConfPath = Path.of(tmp.getAbsolutePath(), "conf", "server.conf");
-
-        try (ServerMain serverMain = new ServerMain("-d", tmp.getAbsolutePath())) {
+        Path serverConfPath = Path.of(temp.getRoot().getAbsolutePath(), "dbroot", "conf", "server.conf");
+        try (ServerMain serverMain = new ServerMain(getBootstrap())) {
             serverMain.start();
 
             try (Connection conn = getConnection("admin", "quest")) {
@@ -140,11 +137,9 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     @Test
     public void TestPgWireCredentialsReloadWithNewProp() throws Exception {
-        File tmp = temp.newFolder();
+        try (ServerMain serverMain = new ServerMain(getBootstrap())) {
 
-        try (ServerMain serverMain = new ServerMain("-d", tmp.getAbsolutePath())) {
-
-            Path serverConfPath = Path.of(tmp.getAbsolutePath(), "conf", "server.conf");
+            Path serverConfPath = Path.of(temp.getRoot().getAbsolutePath(), "dbroot", "conf", "server.conf");
             File serverConf = serverConfPath.toFile();
             Assert.assertTrue(serverConf.exists());
 
@@ -171,11 +166,68 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         }
     }
 
+    public Bootstrap getBootstrap() {
+        return new Bootstrap(
+                getBootstrapConfig(),
+                Bootstrap.getServerMainArgs(root)
+        );
+    }
+
+    public BootstrapConfiguration getBootstrapConfig() {
+        return new DefaultBootstrapConfiguration() {
+            @Override
+            public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) {
+                try {
+                    return new DynamicPropServerConfiguration(
+                            bootstrap.getRootDirectory(),
+                            bootstrap.loadProperties(),
+                            getEnv(),
+                            bootstrap.getLog(),
+                            bootstrap.getBuildInformation(),
+                            FilesFacadeImpl.INSTANCE,
+                            bootstrap.getMicrosecondClock(),
+                            FactoryProviderFactoryImpl.INSTANCE,
+                            true,
+                            SynchronizedConfigReloader::new
+                    );
+                } catch (Exception exc) {
+                    Assert.fail(exc.getMessage());
+                    return null;
+                }
+            }
+        };
+    }
+
     private static Connection getConnection(String user, String pass) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", user);
         properties.setProperty("password", pass);
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", 8812);
         return DriverManager.getConnection(url, properties);
+    }
+
+    private class SynchronizedConfigReloader implements FileEventCallback {
+        private ConfigReloader delegate;
+
+        public SynchronizedConfigReloader(DynamicServerConfiguration config) {
+            try {
+                delegate = new ConfigReloader(config);
+            } catch (IOException exc) {
+                Assert.fail(exc.getMessage());
+            }
+
+        }
+
+        @Override
+        public void onFileEvent() {
+            if (delegate == null) {
+                Assert.fail();
+            }
+
+            delegate.onFileEvent();
+            // todo: synchronize here
+
+        }
+
     }
 }

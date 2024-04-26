@@ -18,10 +18,11 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.IOException;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
 
 public class DynamicPropServerConfiguration implements DynamicServerConfiguration {
@@ -35,7 +36,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     private final Log log;
     private final MicrosecondClock microsecondClock;
     private final String root;
-    private Callable<ConfigReloader> configReloaderCallable;
+    private FileEventCallback fileEventCallback;
 
     public DynamicPropServerConfiguration(
             String root,
@@ -47,7 +48,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf,
             boolean loadAdditionalConfigurations
-    ) throws ServerConfigurationException, JsonException {
+    ) throws ServerConfigurationException, JsonException, IOException {
         this.root = root;
         this.env = env;
         this.log = log;
@@ -69,35 +70,9 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                 loadAdditionalConfigurations
         );
         this.delegate = new AtomicReference<>(serverConfig);
-        this.configReloaderCallable = () -> new ConfigReloader(this);
+        this.fileEventCallback = new ConfigReloader(this);
     }
 
-    public DynamicPropServerConfiguration(
-            String root,
-            Properties properties,
-            @Nullable Map<String, String> env,
-            Log log,
-            BuildInformation buildInformation,
-            FilesFacade filesFacade,
-            MicrosecondClock microsecondClock,
-            FactoryProviderFactory fpf,
-            boolean loadAdditionalConfigurations,
-            Callable<ConfigReloader> configReloaderCallable
-    ) throws ServerConfigurationException, JsonException {
-        this(
-                root,
-                properties,
-                env,
-                log,
-                buildInformation,
-                filesFacade,
-                microsecondClock,
-                fpf,
-                loadAdditionalConfigurations
-        );
-
-        this.configReloaderCallable = configReloaderCallable;
-    }
 
     public DynamicPropServerConfiguration(
             String root,
@@ -108,7 +83,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             FilesFacade filesFacade,
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf
-    ) throws ServerConfigurationException, JsonException {
+    ) throws ServerConfigurationException, JsonException, IOException {
         this(
                 root,
                 properties,
@@ -128,7 +103,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             @Nullable Map<String, String> env,
             Log log,
             final BuildInformation buildInformation
-    ) throws ServerConfigurationException, JsonException {
+    ) throws ServerConfigurationException, JsonException, IOException {
         this(
                 root,
                 properties,
@@ -142,19 +117,46 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         );
     }
 
+    public DynamicPropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Map<String, String> env,
+            Log log,
+            BuildInformation buildInformation,
+            FilesFacade filesFacade,
+            MicrosecondClock microsecondClock,
+            FactoryProviderFactory fpf,
+            boolean loadAdditionalConfigurations,
+            Function<DynamicPropServerConfiguration, FileEventCallback> fileEventCallbackFunction
+    ) throws ServerConfigurationException, JsonException, IOException {
+        this(
+                root,
+                properties,
+                env,
+                log,
+                buildInformation,
+                filesFacade,
+                microsecondClock,
+                fpf,
+                loadAdditionalConfigurations
+        );
+
+        this.fileEventCallback = fileEventCallbackFunction.apply(this);
+    }
+
     @Override
     public CairoConfiguration getCairoConfiguration() {
         return delegate.get().getCairoConfiguration();
     }
 
     @Override
-    public ConfigReloader getConfigReloader() {
-        return null;
+    public FactoryProvider getFactoryProvider() {
+        return delegate.get().getFactoryProvider();
     }
 
     @Override
-    public FactoryProvider getFactoryProvider() {
-        return delegate.get().getFactoryProvider();
+    public FileEventCallback getFileEventCallback() {
+        return this.fileEventCallback;
     }
 
     @Override
