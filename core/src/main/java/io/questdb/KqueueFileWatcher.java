@@ -1,7 +1,6 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.network.NetworkError;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -9,23 +8,24 @@ import io.questdb.std.str.Path;
 
 public class KqueueFileWatcher implements FileWatcher {
     private final int bufferSize;
-    private final long fileEvent;
     private final long dirEvent;
-    private final long eventList;
-    private final int fileFd;
     private final int dirFd;
+    private final long eventList;
+    private final long fileEvent;
+    private final int fileFd;
     private final int kq;
     private boolean closed;
 
     public KqueueFileWatcher(CharSequence filePath) throws FileWatcherException {
         try (Path p = new Path()) {
+
             p.of(filePath).$();
             this.fileFd = Files.openRO(p);
             if (this.fileFd < 0) {
                 throw CairoException.critical(this.fileFd).put("could not open file [path=").put(filePath).put(']');
             }
 
-            this.dirFd = Files.openRO(p.parent());
+            this.dirFd = Files.openRO(p.parent().$());
             if (this.dirFd < 0) {
                 throw CairoException.critical(this.dirFd).put("could not open dir [path=").put(p.parent()).put(']');
             }
@@ -47,9 +47,9 @@ public class KqueueFileWatcher implements FileWatcher {
                 KqueueAccessor.EVFILT_VNODE,
                 KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
                 KqueueAccessor.NOTE_DELETE | KqueueAccessor.NOTE_WRITE |
-                KqueueAccessor.NOTE_ATTRIB | KqueueAccessor.NOTE_EXTEND |
-                KqueueAccessor.NOTE_LINK | KqueueAccessor.NOTE_RENAME |
-                KqueueAccessor.NOTE_REVOKE,
+                        KqueueAccessor.NOTE_ATTRIB | KqueueAccessor.NOTE_EXTEND |
+                        KqueueAccessor.NOTE_LINK | KqueueAccessor.NOTE_RENAME |
+                        KqueueAccessor.NOTE_REVOKE,
                 0
         );
 
