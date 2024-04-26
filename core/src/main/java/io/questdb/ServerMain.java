@@ -309,7 +309,7 @@ public class ServerMain implements Closeable {
             try {
                 Path configPath = Path.of(cairoConfig.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
                 fileWatcher = new FileWatcher(
-                        new ConfigReloader((DynamicServerConfiguration) config),
+                        ((DynamicServerConfiguration) config).getConfigReloader(),
                         FileEventNotifierFactory.getFileWatcher(configPath.toString())
                 );
                 fileWatcher.watch();
