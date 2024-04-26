@@ -1107,7 +1107,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, sqlWindowTreeKeyPageSize));
             int sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES, sqlWindowTreeKeyMaxPages);
-            this.sqlOperatorPrecedenceCompatMode = getString(properties, env, PropertyKey.TEMP_7_4_3_CAIRO_SQL_OPERATOR_PRECEDENCE, PropertyKey.CompatModeValidation);
+            this.sqlOperatorPrecedenceCompatMode = getString(properties, env, PropertyKey.TEMP_7_4_3_CAIRO_SQL_OPERATOR_PRECEDENCE, PropertyKey.CompatModeCurrent);
             if (!this.sqlOperatorPrecedenceCompatMode.equals(PropertyKey.CompatModeCurrent) && !this.sqlOperatorPrecedenceCompatMode.equals(PropertyKey.CompatModeNext) && !this.sqlOperatorPrecedenceCompatMode.equals(PropertyKey.CompatModeValidation)) {
                 log.advisory().$("invalid property value: key=[").$(PropertyKey.TEMP_7_4_3_CAIRO_SQL_OPERATOR_PRECEDENCE).$("], value=[").$(this.sqlOperatorPrecedenceCompatMode).$("]").$();
                 this.sqlOperatorPrecedenceCompatMode = PropertyKey.CompatModeCurrent;
