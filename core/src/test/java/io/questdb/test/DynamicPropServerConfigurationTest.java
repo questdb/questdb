@@ -51,7 +51,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             w.write("pg.password=sklar\n");
         }
 
-
         try (ServerMain serverMain = new ServerMain("-d", tmp.getAbsolutePath())) {
             serverMain.start();
 
@@ -69,40 +68,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             try (Connection conn = getConnection("admin", "quest")) {
                 Assert.assertFalse(conn.isClosed());
             }
-
-        }
-    }
-
-    @Test
-    public void TestPgWireCredentialsReloadWithChangedPropAfterRecreatedFile() throws Exception {
-        File tmp = temp.newFolder();
-        Path serverConfPath = Path.of(tmp.getAbsolutePath(), "conf", "server.conf");
-
-        try (ServerMain serverMain = new ServerMain("-d", tmp.getAbsolutePath())) {
-            serverMain.start();
-
-            try (Connection conn = getConnection("admin", "quest")) {
-                Assert.assertFalse(conn.isClosed());
-            }
-
-            File serverConf = serverConfPath.toFile();
-            Assert.assertTrue(serverConf.delete());
-            Assert.assertTrue(serverConf.createNewFile());
-
-            try (FileWriter w = new FileWriter(serverConf)) {
-                w.write("pg.user=steven\n");
-                w.write("pg.password=sklar\n");
-            }
-            Thread.sleep(2000);
-
-            try (Connection conn = getConnection("steven", "sklar")) {
-                Assert.assertFalse(conn.isClosed());
-            }
-
-            Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
-
-
-
 
         }
     }
@@ -140,6 +105,36 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
             Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
 
+        }
+    }
+
+    @Test
+    public void TestPgWireCredentialsReloadWithChangedPropAfterRecreatedFile() throws Exception {
+        File tmp = temp.newFolder();
+        Path serverConfPath = Path.of(tmp.getAbsolutePath(), "conf", "server.conf");
+
+        try (ServerMain serverMain = new ServerMain("-d", tmp.getAbsolutePath())) {
+            serverMain.start();
+
+            try (Connection conn = getConnection("admin", "quest")) {
+                Assert.assertFalse(conn.isClosed());
+            }
+
+            File serverConf = serverConfPath.toFile();
+            Assert.assertTrue(serverConf.delete());
+            Assert.assertTrue(serverConf.createNewFile());
+
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.user=steven\n");
+                w.write("pg.password=sklar\n");
+            }
+            Thread.sleep(2000);
+
+            try (Connection conn = getConnection("steven", "sklar")) {
+                Assert.assertFalse(conn.isClosed());
+            }
+
+            Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
         }
     }
 
