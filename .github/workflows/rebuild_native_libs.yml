@@ -126,7 +126,6 @@ jobs:
     container:
       image: amazonlinux
     steps:
-      - uses: actions/checkout@v3
       - name: Install toolchains (CXX/NASM/Rust)
         run: |
           ldd --version
@@ -144,6 +143,7 @@ jobs:
           wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
           tar xfz OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
           echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v3
       - name: Generate Makefiles
         run: |
           cd ./core
