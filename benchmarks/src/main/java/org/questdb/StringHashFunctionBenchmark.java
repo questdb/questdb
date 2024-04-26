@@ -80,13 +80,8 @@ public class StringHashFunctionBenchmark {
     }
 
     @Benchmark
-    public long testHashFixedSizeMem64() {
-        return Hash.hashFixedSizeMem64(utf8String.ptr(), utf8String.size());
-    }
-
-    @Benchmark
-    public long testHashVarSizeMem64() {
-        return Hash.hashVarSizeMem64(utf8String.ptr(), utf8String.size());
+    public long testHashMem64() {
+        return Hash.hashMem64(utf8String.ptr(), utf8String.size());
     }
 
     @Benchmark

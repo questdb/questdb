@@ -301,7 +301,7 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
         int size = lenAndFlags & UnorderedVarcharMap.MASK_FLAGS_FROM_SIZE;
         if (size > 0) {
-            return Hash.hashVarSizeMem64(ptr, size);
+            return Hash.hashMem64(ptr, size);
         }
         // null or empty key -> hash is 0
         return 0;

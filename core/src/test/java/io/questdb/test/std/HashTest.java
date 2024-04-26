@@ -40,23 +40,13 @@ import static org.junit.Assert.assertEquals;
 public class HashTest {
 
     @Test
-    public void testHashMemEnglishWordsCorpus_hashFixedSizeMem64() throws IOException {
-        testHashMemEnglishWordsCorpus(Hash::hashFixedSizeMem64);
+    public void testHashMemEnglishWordsCorpus_hashMem64() throws IOException {
+        testHashMemEnglishWordsCorpus(Hash::hashMem64);
     }
 
     @Test
-    public void testHashMemEnglishWordsCorpus_hashVarSizeMem64() throws IOException {
-        testHashMemEnglishWordsCorpus(Hash::hashVarSizeMem64);
-    }
-
-    @Test
-    public void testHashMemRandomCorpus_hashFixedSizeMem64() {
-        testHashMemRandomCorpus(Hash::hashFixedSizeMem64);
-    }
-
-    @Test
-    public void testHashMemRandomCorpus_hashVarSizeMem64() {
-        testHashMemRandomCorpus(Hash::hashVarSizeMem64);
+    public void testHashMemRandomCorpus_hashMem64() {
+        testHashMemRandomCorpus(Hash::hashMem64);
     }
 
     @Test

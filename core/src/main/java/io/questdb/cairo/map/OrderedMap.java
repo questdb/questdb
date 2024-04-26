@@ -606,7 +606,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public long hash() {
-            return Hash.hashFixedSizeMem64(startAddress, keySize);
+            return Hash.hashMem64(startAddress, keySize);
         }
 
         public FixedSizeKey init() {
@@ -861,7 +861,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public long hash() {
-            return Hash.hashVarSizeMem64(startAddress + keyOffset, len);
+            return Hash.hashMem64(startAddress + keyOffset, len);
         }
 
         @Override

@@ -529,7 +529,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
         @Override
         public MapValue createValue() {
-            long hash = Hash.hashVarSizeMem64(ptr, size);
+            long hash = Hash.hashMem64(ptr, size);
             return createValue(hash);
         }
 
@@ -569,7 +569,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
         @Override
         public long hash() {
-            return Hash.hashVarSizeMem64(ptr, size);
+            return Hash.hashMem64(ptr, size);
         }
 
         public Key init() {
@@ -707,7 +707,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         }
 
         private MapValue findValue(long ptr, int size, byte flags, UnorderedVarcharMapValue value) {
-            long hash = Hash.hashVarSizeMem64(ptr, size);
+            long hash = Hash.hashMem64(ptr, size);
             long index = hash & mask;
             long startAddress = getStartAddress(index);
 
