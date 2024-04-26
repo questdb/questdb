@@ -177,7 +177,6 @@ public class WalTxnDetails {
             long runningMaxTimestamp = maxCommittedTimestamp;
             int i = 0;
             while (i++ < maxLookahead && transactionLogCursor.hasNext()) {
-
                 final int walId = transactionLogCursor.getWalId();
                 final int segmentId = transactionLogCursor.getSegmentId();
                 final int segmentTxn = transactionLogCursor.getSegmentTxn();
@@ -232,7 +231,6 @@ public class WalTxnDetails {
         long runningMaxTimestamp = maxCommittedTimestamp;
         int i = 0;
         while (i++ < maxLookahead && transactionLogCursor.hasNext()) {
-
             final int walId = transactionLogCursor.getWalId();
             final int segmentId = transactionLogCursor.getSegmentId();
             if (startSeqTxn == -1) {

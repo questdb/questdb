@@ -631,8 +631,8 @@ public class WalRowFirstWriter implements WalWriter {
 
     private void applyMetadataChangeLog(long structureVersionHi) {
         try (TableMetadataChangeLog log = sequencer.getMetadataChangeLog(tableToken, getColumnStructureVersion())) {
-            long structVer = getColumnStructureVersion();
-            while (log.hasNext() && structVer < structureVersionHi) {
+            long structVersion = getColumnStructureVersion();
+            while (log.hasNext() && structVersion < structureVersionHi) {
                 TableMetadataChange chg = log.next();
                 try {
                     chg.apply(metaWriterSvc, true);
@@ -641,7 +641,7 @@ public class WalRowFirstWriter implements WalWriter {
                     throw e;
                 }
 
-                if (++structVer != getColumnStructureVersion()) {
+                if (++structVersion != getColumnStructureVersion()) {
                     distressed = true;
                     throw CairoException.critical(0)
                             .put("could not apply table definition changes to the current transaction, version unchanged");

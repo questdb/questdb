@@ -6419,12 +6419,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            // Copy the column values from the segment.
+            // Copy the column values from the WAL segment.
             int nonNullColumns = 0;
             rowValueIsNotNull.fill(0, columnCount, 0);
             long offset = startOffset;
             for (long rowId = rowLo; rowId < rowHi; ) {
-                int columnIndex = walRowMemory.getInt(offset);
+                final int columnIndex = walRowMemory.getInt(offset);
                 offset += Integer.BYTES;
                 if (columnIndex == WalRowFirstWriter.NEW_ROW_SEPARATOR) {
                     if (nonNullColumns < columnCount) {
@@ -6439,7 +6439,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     rowId++;
                     continue;
                 }
-                // TODO(puzpuzpuz): wal column indexes are different
                 offset += copyWalRowValue(columnIndex, timestampIndex, offset, walRowMemory);
                 rowValueIsNotNull.setQuick(columnIndex, 1);
                 nonNullColumns++;
