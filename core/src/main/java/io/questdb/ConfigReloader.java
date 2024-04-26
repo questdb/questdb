@@ -28,7 +28,7 @@ public class ConfigReloader implements FileEventCallback {
 
     public ConfigReloader(DynamicServerConfiguration config) throws IOException {
         this.config = config;
-        this.confPath = Paths.get(this.config.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
+        this.confPath = Paths.get(this.config.getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
 
         try (Path p = new Path()) {
             p.of(this.confPath.toString()).$();

@@ -20,6 +20,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicReference;
 
 
@@ -34,6 +35,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     private final Log log;
     private final MicrosecondClock microsecondClock;
     private final String root;
+    private Callable<ConfigReloader> configReloaderCallable;
 
     public DynamicPropServerConfiguration(
             String root,
@@ -67,6 +69,34 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                 loadAdditionalConfigurations
         );
         this.delegate = new AtomicReference<>(serverConfig);
+        this.configReloaderCallable = () -> new ConfigReloader(this);
+    }
+
+    public DynamicPropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Map<String, String> env,
+            Log log,
+            BuildInformation buildInformation,
+            FilesFacade filesFacade,
+            MicrosecondClock microsecondClock,
+            FactoryProviderFactory fpf,
+            boolean loadAdditionalConfigurations,
+            Callable<ConfigReloader> configReloaderCallable
+    ) throws ServerConfigurationException, JsonException {
+        this(
+                root,
+                properties,
+                env,
+                log,
+                buildInformation,
+                filesFacade,
+                microsecondClock,
+                fpf,
+                loadAdditionalConfigurations
+        );
+
+        this.configReloaderCallable = configReloaderCallable;
     }
 
     public DynamicPropServerConfiguration(
@@ -118,8 +148,8 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     }
 
     @Override
-    public CharSequence getConfRoot() {
-        return delegate.get().getCairoConfiguration().getConfRoot();
+    public ConfigReloader getConfigReloader() {
+        return null;
     }
 
     @Override
