@@ -121,11 +121,12 @@ jobs:
           key: nativelibs-osx-${{ github.sha }}
   build-all-linux-amd64:
     runs-on: ubuntu-latest
-    # this is very bare container, we use it to restrict GLIBC to 2.25
+    # this is very bare container, we use it to restrict GLIBC to 2.28
     # everything has to be installed on it manually
     container:
-      image: amazonlinux
+      image: debian:buster
     steps:
+      - uses: actions/checkout@v4
       - name: Install toolchains (CXX/NASM/Rust)
         run: |
           ldd --version
@@ -143,7 +144,6 @@ jobs:
           wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
           tar xfz OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
           echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
-      - uses: actions/checkout@v3
       - name: Generate Makefiles
         run: |
           cd ./core
