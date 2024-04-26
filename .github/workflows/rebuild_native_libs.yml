@@ -30,7 +30,7 @@ jobs:
           git status
       - name: Copy Rust Library to the final directory
         run: |
-          mkdir -p core/src/main/resources/io/questdb/bin/windows
+          if not exist "core/src/main/resources/io/questdb/bin/windows" mkdir core/src/main/resources/io/questdb/bin/windows
           cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
       - name: Save Windows Rust Library to Cache
         uses: actions/cache/save@v3
@@ -124,9 +124,9 @@ jobs:
     # this is very bare container, we use it to restrict GLIBC to 2.28
     # everything has to be installed on it manually
     container:
-      image: amazonlinux:2
+      image: debian:buster
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Install toolchains (CXX/NASM/Rust)
         run: |
           ldd --version
