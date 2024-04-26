@@ -122,23 +122,24 @@ jobs:
 
       - name: build
         uses: docker://debian:buster
-        run: |
-          apt-get update -y
-          apt install git nasm python3 wget ca-certificates build-essential -y
-          python3 ./.github/prepare_rust_env.py
-          wget -nv https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
-          tar -zxf cmake-3.29.2-linux-x86_64.tar.gz          
-          export PATH=`pwd`/cmake-3.29.2-linux-x86_64/bin/:$PATH
-          wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
-          tar xfz OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
-          export JAVA_HOME=`pwd`/jdk-17.0.11+9/
-          cd ./core
-          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
-          cmake --build cmake-build-release --config Release
-          cd rust/qdbr
-          cargo clean
-          cargo build --release
-          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
+        with:
+          run: |
+            apt-get update -y
+            apt install git nasm python3 wget ca-certificates build-essential -y
+            python3 ./.github/prepare_rust_env.py
+            wget -nv https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
+            tar -zxf cmake-3.29.2-linux-x86_64.tar.gz          
+            export PATH=`pwd`/cmake-3.29.2-linux-x86_64/bin/:$PATH
+            wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
+            tar xfz OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
+            export JAVA_HOME=`pwd`/jdk-17.0.11+9/
+            cd ./core
+            cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+            cmake --build cmake-build-release --config Release
+            cd rust/qdbr
+            cargo clean
+            cargo build --release
+            cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
 
       - name: log git status
         run: |
