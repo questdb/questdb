@@ -117,20 +117,14 @@ namespace questdb::avx2 {
 
         Gp varsize_aux_address = c.newInt64("varsize_aux_address");
         c.mov(varsize_aux_address, ptr(varsize_aux_ptr, 8 * column_idx, 8));
-        Ymm index_data = c.newYmm();
-        Ymm length_data = c.newYmm();
+        Ymm index_data = c.newYmm("index_data");
+        Ymm next_index_data = c.newYmm("next_index_data");
+        Ymm length_data = c.newYmm("length_data");
 
         // Load data from the aux vector at input_index to index_data
         c.vmovdqu(index_data, ymmword_ptr(varsize_aux_address, input_index, offset_shift, 0));
-
-        // Load data from the aux vector at input_index + 1 to next_index_data.
-        // Achieve it by reusing the three qwords already loaded into index_data.
-        Gp next_index_qword = c.newInt64("next_index_qword");
-        c.mov(next_index_qword, qword_ptr(varsize_aux_address, input_index, offset_shift, 32));
-        Ymm next_index_data = c.newYmm();
-        c.vmovdqa(next_index_data, index_data);
-        c.vpinsrq(next_index_data.xmm(), next_index_data.xmm(), next_index_qword, 0);
-        c.vpermq(next_index_data, next_index_data, 0b00111001);
+        // Load data from the aux vector at input_index + 1 to next_index_data
+        c.vmovdqu(next_index_data, ymmword_ptr(varsize_aux_address, input_index, offset_shift, 1 << offset_shift));
 
         // Subtract the data at input_index from data at input_index + 1
         c.vpsubq(length_data, next_index_data, index_data);
@@ -200,9 +194,10 @@ namespace questdb::avx2 {
         // Combine the four header values into length_data
         c.vpinsrq(length_data.xmm(), length_data.xmm(), header_0, 0);
         c.vpinsrq(length_data.xmm(), length_data.xmm(), header_1, 1);
-        c.vpinsrq(next_index_data.xmm(), next_index_data.xmm(), header_2, 0);
-        c.vpinsrq(next_index_data.xmm(), next_index_data.xmm(), header_3, 1);
-        c.vinserti128(length_data, length_data, next_index_data.xmm(), 1);
+        Ymm acc = c.newYmm("acc");
+        c.vpinsrq(acc.xmm(), acc.xmm(), header_2, 0);
+        c.vpinsrq(acc.xmm(), acc.xmm(), header_3, 1);
+        c.vinserti128(length_data, length_data, acc.xmm(), 1);
 
         c.bind(l_nonzero);
         return {length_data, data_type_t::i64, data_kind_t::kMemory};
