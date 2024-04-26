@@ -128,7 +128,7 @@ jobs:
           ldd --version
           env
           apt-get update -y
-          apt install git nasm python3 wget ca-certificates build-essential zstd-y
+          apt install git nasm python3 wget ca-certificates build-essential zstd -y
           python3 ./.github/prepare_rust_env.py
           echo "PATH=/github/home/.cargo/bin/:$PATH" >> "$GITHUB_ENV"
       - name: Install up-to-date CMake
