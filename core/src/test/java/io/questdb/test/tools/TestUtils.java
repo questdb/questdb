@@ -389,7 +389,7 @@ public final class TestUtils {
         }
 
         if (expected != null && actual == null) {
-            Assert.fail("Expected: \n`" + expected + "`but have NULL");
+            Assert.fail("Expected: \n`" + expected + "`\nbut have NULL");
         }
 
         if (expected == null) {

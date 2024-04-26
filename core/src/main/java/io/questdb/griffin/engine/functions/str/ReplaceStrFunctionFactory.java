@@ -36,8 +36,8 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class ReplaceStrFunctionFactory implements FunctionFactory {
@@ -110,6 +110,14 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, Utf16Sink utf16Sink) {
+            final CharSequence value = this.value.getStrB(rec);
+            if (value != null) {
+                replace(value, oldSubStr.getStrA(rec), newSubStr.getStrA(rec), utf16Sink);
+            }
+        }
+
+        @Override
         public CharSequence getStrA(Record rec) {
             final CharSequence value = this.value.getStrA(rec);
             if (value != null) {
@@ -117,14 +125,6 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
                 return (CharSequence) replace(value, oldSubStr.getStrA(rec), newSubStr.getStrA(rec), sink);
             }
             return null;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            final CharSequence value = this.value.getStrB(rec);
-            if (value != null) {
-                replace(value, oldSubStr.getStrA(rec), newSubStr.getStrA(rec), utf16Sink);
-            }
         }
 
         @Override
@@ -138,8 +138,8 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return value.isConstant() && oldSubStr.isConstant() && newSubStr.isConstant();
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override

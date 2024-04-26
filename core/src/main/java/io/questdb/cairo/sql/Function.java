@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -168,6 +169,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     @Nullable Utf8Sequence getVarcharB(Record rec);
 
+    /**
+     * @return size of the varchar value or {@link TableUtils#NULL_LEN} in case of NULL
+     */
     int getVarcharSize(Record rec);
 
     default boolean isConstant() {
