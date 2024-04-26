@@ -173,7 +173,7 @@ jobs:
           env
           sudo sysctl -w fs.file-max=500000
           sudo apt-get update -y
-          sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64 g++-mingw-w64
+          sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu
       - name: Install rs-cross
         run: |
           cargo install cross
@@ -216,10 +216,7 @@ jobs:
           env
           sudo sysctl -w fs.file-max=500000
           sudo apt-get update -y
-          sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64 g++-mingw-w64
-      - name: Install rs-cross
-        run: |
-          cargo install cross
+          sudo apt-get install -y nasm gcc-mingw-w64 g++-mingw-w64
       - name: Generate Makefiles
         run: |
           cd ./core
