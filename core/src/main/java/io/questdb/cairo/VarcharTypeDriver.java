@@ -174,6 +174,80 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     /**
+     * Returns a Utf8Sequence set up to point to the varchar data in either the
+     * auxiliary vector (for short strings <= 9 bytes), or the data vector.
+     *
+     * @param rowNum  the row number to read
+     * @param dataMem base pointer of the data vector
+     * @param auxMem  base pointer of the auxiliary vector
+     * @param ab      whether to return the A or B flyweight
+     * @return a Utf8Sequence representing the value at rowNum
+     */
+    public static DirectUtf8Sequence getDirectValue(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
+        final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
+        int raw = auxMem.getInt(auxOffset);
+        assert raw != 0;
+
+        if (hasNullFlag(raw)) {
+            return null;
+        }
+
+        boolean isAscii = hasAsciiFlag(raw);
+
+        if (hasInlinedFlag(raw)) {
+            int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
+            return ab == 1
+                    ? auxMem.getVarcharA(auxOffset + 1, size, isAscii)
+                    : auxMem.getVarcharB(auxOffset + 1, size, isAscii);
+        }
+
+        long dataOffset = getDataOffset(auxMem, auxOffset);
+        int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
+        return ab == 1
+                ? dataMem.getVarcharA(dataOffset, size, isAscii)
+                : dataMem.getVarcharB(dataOffset, size, isAscii);
+    }
+
+    /**
+     * Sets up the supplied DirectUtf8String to point to the varchar data in either the
+     * auxiliary vector (for short string <= 9 bytes), or the data vector.
+     *
+     * @param auxAddr  base pointer of the auxiliary vector
+     * @param dataAddr base pointer of the data vector
+     * @param rowNum   the row number to access
+     * @param utf8View will contain the string
+     * @return utf8View set up to point to the string, or null if the value is null
+     */
+    public static DirectUtf8String getDirectValue(
+            long auxAddr,
+            long dataAddr,
+            long rowNum,
+            DirectUtf8String utf8View
+    ) {
+        long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
+        int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        assert raw != 0;
+
+        if (hasNullFlag(raw)) {
+            return null;
+        }
+
+        boolean ascii = hasAsciiFlag(raw);
+
+        if (hasInlinedFlag(raw)) {
+            long lo = auxEntry + FULLY_INLINED_STRING_OFFSET;
+            int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
+            return utf8View.of(lo, lo + (byte) size, ascii);
+        }
+        long lo = dataAddr + getDataOffset(auxEntry);
+        return utf8View.of(
+                lo,
+                lo + ((raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK),
+                ascii
+        );
+    }
+
+    /**
      * Reads UTF8 varchar type from the memory with a header.
      *
      * @param dataMem memory with header and UTF8 bytes
@@ -244,9 +318,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param dataMem base pointer of the data vector
      * @param auxMem  base pointer of the auxiliary vector
      * @param ab      whether to return the A or B flyweight
-     * @return a Utf8Sequence representing the value at rowNum
+     * @return a Utf8Sequence representing the value at rowNum, or null if the value is null
      */
-    public static Utf8Sequence getValue(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
+    public static Utf8Sequence getSplitValue(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
         final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
         int raw = auxMem.getInt(auxOffset);
         assert raw != 0;
@@ -258,12 +332,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         boolean isAscii = hasAsciiFlag(raw);
 
         if (hasInlinedFlag(raw)) {
-            // inlined string
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
-            return ab == 1 ? auxMem.getVarcharA(auxOffset + 1, size, isAscii) : auxMem.getVarcharB(auxOffset + 1, size, isAscii);
+            return ab == 1
+                    ? auxMem.getVarcharA(auxOffset + 1, size, isAscii)
+                    : auxMem.getVarcharB(auxOffset + 1, size, isAscii);
         }
 
-        // string is split, prefix is duplicated in auxMem
         long auxLo = auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET);
         long dataLo = dataMem.addressOf(getDataOffset(auxMem, auxOffset));
         int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
@@ -278,15 +352,15 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param auxAddr       base pointer of the auxiliary vector
      * @param dataAddr      base pointer of the data vector
      * @param rowNum        the row number to read
-     * @param utf8view      flyweight for the inlined string
+     * @param utf8View      flyweight for the inlined string
      * @param utf8SplitView flyweight for the split string
-     * @return utf8view or utf8SplitView loaded with the read value
+     * @return utf8View or utf8SplitView loaded with the read value, or null if the value is null
      */
-    public static Utf8Sequence getValue(
+    public static Utf8Sequence getSplitValue(
             long auxAddr,
             long dataAddr,
             long rowNum,
-            InlinedVarchar utf8view,
+            DirectUtf8String utf8View,
             Utf8SplitString utf8SplitView
     ) {
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
@@ -300,11 +374,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         boolean ascii = hasAsciiFlag(raw);
 
         if (hasInlinedFlag(raw)) {
-            // inlined string
+            long lo = auxEntry + FULLY_INLINED_STRING_OFFSET;
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
-            return utf8view.of(auxEntry + FULLY_INLINED_STRING_OFFSET, (byte) size, ascii);
+            return utf8View.of(lo, lo + (byte) size, ascii);
         }
-        // string is split, prefix is in aux mem and the full string is in data mem
         return utf8SplitView.of(
                 auxEntry + INLINED_PREFIX_OFFSET,
                 dataAddr + getDataOffset(auxEntry),
