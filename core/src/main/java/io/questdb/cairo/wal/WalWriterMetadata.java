@@ -151,7 +151,15 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public void of(TableToken tableToken, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
+    public void of(
+            TableToken tableToken,
+            int tableId,
+            int timestampIndex,
+            int compressedTimestampIndex,
+            boolean suspended,
+            long structureVersion,
+            int columnCount
+    ) {
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.timestampIndex = timestampIndex;

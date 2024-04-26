@@ -155,7 +155,6 @@ public class WalTxnDetails {
         // Avoid O3 commits with existing data. Start from beginning and set commit to timestamp to be min infinity until
         // the all future min timestamp are greater than current max timestamp.
         for (int i = 0, n = transactionMeta.size(); i < n; i += TXN_METADATA_LONGS_SIZE) {
-
             long commitToTimestamp = transactionMeta.get(i);
             if (commitToTimestamp < maxCommittedTimestamp) {
                 transactionMeta.set(i, Long.MIN_VALUE);
@@ -170,7 +169,6 @@ public class WalTxnDetails {
 
     private void loadTransactionDetailsV1(Path tempPath, TransactionLogCursor transactionLogCursor, int rootLen, long maxCommittedTimestamp) {
         try (WalEventReader eventReader = walEventReader) {
-
             int prevWalId = Integer.MIN_VALUE;
             int prevSegmentId = Integer.MIN_VALUE;
             int prevSegmentTxn = Integer.MIN_VALUE;

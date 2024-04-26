@@ -1043,14 +1043,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().incrementCommits();
             metrics.tableWriter().addCommittedRows(rowsAdded);
 
-            shrinkO3Mem();
+            shrinkMem();
             return rowsAdded;
         }
 
         // Nothing was committed to the table, only copied to LAG.
         // Keep in memory last committed seq txn, but do not write it to _txn file.
         txWriter.setLagTxnCount((int) (seqTxn - txWriter.getSeqTxn()));
-        shrinkO3Mem();
+        shrinkMem();
         return 0L;
     }
 
@@ -1708,8 +1708,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        assert maxTimestamp == Long.MIN_VALUE ||
-                txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi) == txWriter.getPartitionTimestampByTimestamp(txWriter.maxTimestamp);
+        assert maxTimestamp == Long.MIN_VALUE
+                || txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi) == txWriter.getPartitionTimestampByTimestamp(txWriter.maxTimestamp);
 
         lastPartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi);
 
@@ -7243,7 +7243,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         TableUtils.setPathForPartition(path, partitionBy, timestamp, partitionTxnName);
     }
 
-    private void shrinkO3Mem() {
+    private void shrinkMem() {
         for (int i = 0, n = o3MemColumns1.size(); i < n; i++) {
             MemoryCARW o3mem = o3MemColumns1.getQuick(i);
             if (o3mem != null) {
