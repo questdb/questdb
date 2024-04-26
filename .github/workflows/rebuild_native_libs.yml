@@ -259,6 +259,7 @@ jobs:
       - name: Print file sizes before
         run: |
           pwd
+          mkdir -p ./core/src/main/resources/io/questdb/bin/
           find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
       - name: Restore FreeBSD Libraries from Cache
         uses: actions/cache/restore@v3
