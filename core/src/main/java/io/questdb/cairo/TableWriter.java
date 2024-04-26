@@ -3447,8 +3447,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         metadata.setMetadataVersion(txWriter.getMetadataVersion() + 1);
     }
 
-    private long copyWalRowValue(int columnIndex, int timestampIndex, long offset, MemoryCMOR srcMem) {
-        final int columnType = metadata.getColumnType(columnIndex);
+    private long copyWalRowValue(int columnIndex, int timestampIndex, int columnType, long offset, MemoryCMOR srcMem) {
         final int size = ColumnType.sizeOfWalDataColumn(columnType, columnIndex == timestampIndex);
         if (size > 0) {
             // fixed-size column
@@ -3716,12 +3715,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             final int primaryColumnIndex = getPrimaryColumnIndex(columnIndex);
             final MemoryMA lagMem = columns.getQuick(primaryColumnIndex);
-            final MemoryCR mappedMem = o3Columns.getQuick(primaryColumnIndex);
+            final MemoryCR walMem = o3Columns.getQuick(primaryColumnIndex);
             final MemoryCARW destMem = o3MemColumns2.getQuick(primaryColumnIndex);
 
             final int shl = ColumnType.pow2SizeOf(columnType);
             destMem.jumpTo(mergeCount << shl);
-            final long srcMapped = mappedMem.addressOf(mappedRowLo << shl) - (mappedRowLo << shl);
+            final long srcMapped = walMem.addressOf(mappedRowLo << shl) - (mappedRowLo << shl);
             long lagMemOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl;
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
             try {
@@ -3807,8 +3806,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int primaryIndex = getPrimaryColumnIndex(columnIndex);
             final int secondaryIndex = primaryIndex + 1;
 
-            final MemoryCR o3dataMem = o3Columns.getQuick(primaryIndex);
-            final MemoryCR o3auxMem = o3Columns.getQuick(secondaryIndex);
+            final MemoryCR walDataMem = o3Columns.getQuick(primaryIndex);
+            final MemoryCR walAuxMem = o3Columns.getQuick(secondaryIndex);
             final MemoryMA lagDataMem = columns.getQuick(primaryIndex);
             final MemoryMA lagAuxMem = columns.getQuick(secondaryIndex);
 
@@ -3817,11 +3816,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
-            final long srcMappedDataAddr = o3dataMem.addressOf(0);
-            final long srcMappedAuxAddr = o3auxMem.addressOf(0);
+            final long srcMappedDataAddr = walDataMem.addressOf(0);
+            final long srcMappedAuxAddr = walAuxMem.addressOf(0);
 
             final long src1DataSize = columnTypeDriver.getDataVectorSize(srcMappedAuxAddr, mappedRowLo, mappedRowHi - 1);
-            assert o3dataMem.size() >= src1DataSize;
+            assert walDataMem.size() >= src1DataSize;
             final long lagAuxOffset = columnTypeDriver.getAuxVectorOffset(txWriter.getTransientRowCount() - getColumnTop(columnIndex));
             final long lagAuxSize = columnTypeDriver.getAuxVectorSize(lagRows);
             final long signedLagAuxAddr = lagRows > 0 ? mapAppendColumnBuffer(lagAuxMem, lagAuxOffset, lagAuxSize, false) : 0;
@@ -6439,7 +6438,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     rowId++;
                     continue;
                 }
-                offset += copyWalRowValue(columnIndex, timestampIndex, offset, walRowMemory);
+                final int columnType = metadata.getColumnType(columnIndex);
+                if (columnType > -1) {
+                    offset += copyWalRowValue(columnIndex, timestampIndex, columnType, offset, walRowMemory);
+                } else {
+                    offset += skipWalRowValue(columnIndex, timestampIndex, Math.abs(columnType), offset, walRowMemory);
+                }
                 rowValueIsNotNull.setQuick(columnIndex, 1);
                 nonNullColumns++;
             }
@@ -7258,6 +7262,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         if (walTimestampMem != null) {
             walTimestampMem.truncate();
+        }
+    }
+
+    private long skipWalRowValue(int columnIndex, int timestampIndex, int columnType, long offset, MemoryCMOR srcMem) {
+        final int size = ColumnType.sizeOfWalDataColumn(columnType, columnIndex == timestampIndex);
+        if (size > 0) {
+            return size;
+        } else {
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.VARCHAR:
+                    final Utf8Sequence us = VarcharTypeDriver.getPlainValue(srcMem, offset, 1);
+                    return VarcharTypeDriver.getPlainValueByteCount(us);
+                case ColumnType.STRING:
+                    final CharSequence cs = srcMem.getStrA(offset);
+                    return StringTypeDriver.getPlainValueByteCount(cs);
+                case ColumnType.BINARY:
+                    final BinarySequence bs = srcMem.getBin(offset);
+                    return BinaryTypeDriver.getPlainValueByteCount(bs);
+                default:
+                    throw CairoException.nonCritical()
+                            .put("Column type ").put(ColumnType.nameOf(columnType))
+                            .put(" not supported by WAL apply");
+            }
         }
     }
 

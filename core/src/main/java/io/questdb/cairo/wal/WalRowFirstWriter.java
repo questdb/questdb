@@ -1327,7 +1327,6 @@ public class WalRowFirstWriter implements WalWriter {
 
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
                 if (currentTxnStartRowNum > 0) {
-                    // TODO: do we need this in row-first format???
                     // Roll last transaction to new segment
                     rollUncommittedToNewSegment();
                 }
@@ -1397,7 +1396,6 @@ public class WalRowFirstWriter implements WalWriter {
                 int type = metadata.getColumnType(columnIndex);
                 if (type > 0) {
                     if (currentTxnStartRowNum > 0) {
-                        // TODO: do we need this in row-first format???
                         // Roll last transaction to new segment
                         rollUncommittedToNewSegment();
                     }

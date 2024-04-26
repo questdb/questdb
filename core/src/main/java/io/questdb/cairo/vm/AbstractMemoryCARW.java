@@ -37,7 +37,7 @@ public abstract class AbstractMemoryCARW extends AbstractMemoryCR implements Mem
     @Override
     public long addressOf(long offset) {
         offset -= shiftRightOffset;
-        assert offset <= size : "offset=" + offset + ", size=" + size;
+        assert offset >= 0 && offset <= size : "offset=" + offset + ", size=" + size;
         return pageAddress + offset;
     }
 
