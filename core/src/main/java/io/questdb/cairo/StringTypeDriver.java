@@ -67,7 +67,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
                 opts,
                 madviseOpts
         );
-        auxMem.putLong(0L);
+        auxMem.putLong(0);
     }
 
     @Override

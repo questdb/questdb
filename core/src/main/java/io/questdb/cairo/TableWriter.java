@@ -3600,8 +3600,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Var dataVectorCopySize column
                 final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
-                final long committedAuxOffset = columnTypeDriver.getAuxVectorOffset(columnRowCount);
-                final long walSrcAuxMemAddr = walSrcAuxMem.addressOf(committedAuxOffset) - committedAuxOffset;
+                final long walSrcAuxMemAddr = walSrcAuxMem.addressOf(0);
                 walSrcDataOffset = columnTypeDriver.getDataVectorOffset(walSrcAuxMemAddr, columnRowCount);
                 dataVectorCopySize = columnTypeDriver.getDataVectorSize(walSrcAuxMemAddr, columnRowCount, columnRowCount + copyRowCount - 1);
 
@@ -3616,7 +3615,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // move count + 1 rows, to make sure index column remains n+1
                 // the data is copied back to start of the buffer, no need to set dataVectorCopySize first
-                long o3DstAuxAddr = mapAppendColumnBuffer(dstAuxMem, o3DstAuxOffset, o3DstAuxSize, true);
+                final long o3DstAuxAddr = mapAppendColumnBuffer(dstAuxMem, o3DstAuxOffset, o3DstAuxSize, true);
+                final long committedAuxOffset = columnTypeDriver.getAuxVectorOffset(columnRowCount);
                 assert o3DstAuxAddr != 0;
                 try {
                     final long shift = walSrcDataOffset - walDstDataOffset;
@@ -3732,7 +3732,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final int shl = ColumnType.pow2SizeOf(columnType);
             destMem.jumpTo(mergeCount << shl);
-            final long srcMapped = walMem.addressOf(walRowLo << shl) - (walRowLo << shl);
+            final long srcMapped = walMem.addressOf(0);
             long lagMemOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl;
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
             try {
@@ -3828,10 +3828,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
-            final long srcAuxLoOffset = columnTypeDriver.getAuxVectorOffset(walRowLo);
-            final long srcWalAuxAddr = walAuxMem.addressOf(srcAuxLoOffset) - srcAuxLoOffset;
-            final long srcDataLoOffset = columnTypeDriver.getDataVectorOffset(srcWalAuxAddr, walRowLo);
-            final long srcWalDataAddr = walDataMem.addressOf(srcDataLoOffset) - srcDataLoOffset;
+            final long srcWalDataAddr = walDataMem.addressOf(0);
+            final long srcWalAuxAddr = walAuxMem.addressOf(0);
 
             final long src1DataSize = columnTypeDriver.getDataVectorSize(srcWalAuxAddr, walRowLo, walRowHi - 1);
             assert walDataMem.size() >= src1DataSize;
@@ -3922,10 +3920,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final MemoryMA colAuxMem = getSecondaryColumn(columnIndex);
                     final long colAuxMemOffset = columnTypeDriver.getAuxVectorOffset(committedRowCount);
                     long colAuxMemRequiredSize = columnTypeDriver.getAuxVectorSize(transientRowsAdded);
-                    long o3auxMemAppendOffset = o3AuxMem.getAppendOffset();
+                    long o3AuxMemAppendOffset = o3AuxMem.getAppendOffset();
 
                     // ensure memory is available
-                    long offsetLimit = o3auxMemAppendOffset + columnTypeDriver.getAuxVectorOffset(transientRowsAdded);
+                    long offsetLimit = o3AuxMemAppendOffset + columnTypeDriver.getAuxVectorOffset(transientRowsAdded);
                     o3AuxMem.jumpTo(offsetLimit);
                     long colAuxMemAddr = colAuxMem.map(colAuxMemOffset, colAuxMemRequiredSize);
                     boolean locallyMapped = colAuxMemAddr == 0;
@@ -3941,7 +3939,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     colDataOffset = columnTypeDriver.getDataVectorOffset(colAuxMemAddr + alignedExtraLen, 0);
-                    long dstAddr = o3AuxMem.addressOf(o3auxMemAppendOffset) - columnTypeDriver.getMinAuxVectorSize();
+                    long dstAddr = o3AuxMem.addressOf(o3AuxMemAppendOffset) - columnTypeDriver.getMinAuxVectorSize();
                     long dstAddrLimit = o3AuxMem.addressOf(offsetLimit);
                     long dstAddrSize = dstAddrLimit - dstAddr;
 
@@ -6402,11 +6400,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (columnType > 0) {
                     final int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
                     if (ColumnType.isVarSize(columnType)) {
-                        MemoryCARW dataMem = o3MemColumns1.getQuick(getPrimaryColumnIndex(columnIndex));
+                        final MemoryCARW dataMem = o3MemColumns1.getQuick(getPrimaryColumnIndex(columnIndex));
                         walColumns.add(dataMem);
                         dataMem.jumpTo(0);
 
-                        MemoryCARW auxMem = o3MemColumns1.getQuick(getSecondaryColumnIndex(columnIndex));
+                        final MemoryCARW auxMem = o3MemColumns1.getQuick(getSecondaryColumnIndex(columnIndex));
                         walColumns.add(auxMem);
                         auxMem.jumpTo(0);
                         final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);

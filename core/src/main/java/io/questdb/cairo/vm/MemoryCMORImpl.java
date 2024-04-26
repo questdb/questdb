@@ -45,9 +45,8 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
 
     @Override
     public long addressOf(long offset) {
-        offset -= mapFileOffset;
-        assert offset >= 0 && offset <= size : "offset=" + offset + ", size=" + size + ", mapFileOffset=" + mapFileOffset + ", fd=" + fd;
-        return pageAddress + offset;
+        assert offset - mapFileOffset <= size : "offset=" + offset + ", size=" + size + ", mapFileOffset=" + mapFileOffset + ", fd=" + fd;
+        return pageAddress + offset - mapFileOffset;
     }
 
     @Override
