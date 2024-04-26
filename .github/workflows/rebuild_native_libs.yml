@@ -119,6 +119,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: build
         uses: docker://debian:buster
         run: |
@@ -138,6 +139,7 @@ jobs:
           cargo clean
           cargo build --release
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
+
       - name: log git status
         run: |
           git status
