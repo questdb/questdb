@@ -126,7 +126,6 @@ jobs:
       - name: Install toolchains (CXX/NASM/Rust)
         run: |
           ldd --version
-          env
           apt-get update -y
           apt install git nasm python3 wget ca-certificates build-essential zstd -y
           python3 ./.github/prepare_rust_env.py
@@ -170,7 +169,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Increase file count and install tooling
         run: |
-          env
           sudo sysctl -w fs.file-max=500000
           sudo apt-get update -y
           sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu
@@ -213,7 +211,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Increase file count and install tooling
         run: |
-          env
           sudo sysctl -w fs.file-max=500000
           sudo apt-get update -y
           sudo apt-get install -y nasm gcc-mingw-w64 g++-mingw-w64
