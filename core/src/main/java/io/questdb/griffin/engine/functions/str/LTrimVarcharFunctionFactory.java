@@ -22,14 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.griffin.engine.functions.str;
 
-public interface BuildInformation {
-    String getCommitHash();
+public class LTrimVarcharFunctionFactory extends TrimVarcharFunctionFactory {
+    @Override
+    public String getSignature() {
+        return "ltrim(Ø)";
+    }
 
-    String getJdkVersion();
-
-    String getSwName();
-
-    String getSwVersion();
+    @Override
+    protected TrimType trimType() {
+        return TrimType.LTRIM;
+    }
 }

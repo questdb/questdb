@@ -61,6 +61,11 @@ public class TrimConstFunction extends StrFunction implements UnaryFunction {
     }
 
     @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val('\'').val(sink1).val('\'');
     }

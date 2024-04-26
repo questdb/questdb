@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -59,11 +60,11 @@ public abstract class AbstractUtf8SequenceHashSet implements Mutable {
         free = capacity;
     }
 
-    public boolean contains(Utf8Sequence key) {
+    public boolean contains(@NotNull Utf8Sequence key) {
         return keyIndex(key) < 0;
     }
 
-    public boolean excludes(Utf8Sequence key) {
+    public boolean excludes(@NotNull Utf8Sequence key) {
         return keyIndex(key) > -1;
     }
 
@@ -71,7 +72,7 @@ public abstract class AbstractUtf8SequenceHashSet implements Mutable {
         return keys[-index - 1];
     }
 
-    public int keyIndex(Utf8Sequence key) {
+    public int keyIndex(@NotNull Utf8Sequence key) {
         int hashCode = Utf8s.hashCode(key);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == noEntryKey) {
@@ -83,7 +84,7 @@ public abstract class AbstractUtf8SequenceHashSet implements Mutable {
         return probe(key, hashCode, index);
     }
 
-    public int keyIndex(Utf8Sequence key, int lo, int hi) {
+    public int keyIndex(@NotNull Utf8Sequence key, int lo, int hi) {
         int hashCode = Utf8s.hashCode(key, lo, hi);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == noEntryKey) {
@@ -96,7 +97,7 @@ public abstract class AbstractUtf8SequenceHashSet implements Mutable {
         return probe(key, hashCode, lo, hi, index);
     }
 
-    public int remove(Utf8Sequence key) {
+    public int remove(@NotNull Utf8Sequence key) {
         int index = keyIndex(key);
         if (index < 0) {
             removeAt(index);

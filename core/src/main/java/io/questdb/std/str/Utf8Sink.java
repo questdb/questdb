@@ -112,8 +112,12 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     }
 
     /**
-     * Writes out bytes (8bits) to physical storage verbatim. This method is not commonly implemented on
-     * {@link CharSink}. For writing ASCII (8-byte) characters please see {@link #putAscii(char)}
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * Appends a non-ASCII byte, dropping the `isAscii()` status.
+     * To append a known-ASCII byte, call {@link #putAscii(char)}.
+     * <br/>
+     * For impls that don't care about the ASCII/non-ASCII distinction:
+     * Appends any kind of byte.
      *
      * @param b byte value
      * @return this sink for daisy-chaining
@@ -121,8 +125,13 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     Utf8Sink put(byte b);
 
     /**
-     * Encodes the given char sequence from UTF-16 to UTF-8 and writes it to the sink.
+     * Encodes the given char sequence to UTF-8 and appends it to this sink.
+     * <br/>
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * If the sequence's `isAscii` status is false, this sink's `isAscii` status
+     * drops to false as well.
      */
+    @Override
     default Utf8Sink put(@Nullable CharSequence cs) {
         if (cs != null) {
             put(cs, 0, cs.length());
@@ -131,8 +140,12 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     }
 
     /**
-     * Encodes the given UTF-16 char to UTF-8 and writes it to the sink.
+     * Encodes the given char to UTF-8 and appends it to this sink.
+     * <br/>
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * If it is a non-ASCII char, this sink's `isAscii` status drops to false.
      */
+    @Override
     default Utf8Sink put(char c) {
         if (c < 128) {
             putAscii(c);
@@ -146,16 +159,44 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         return this;
     }
 
+    /**
+     * Appends the supplied sequence of UTF-8 bytes to this sink.
+     * <br/>
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * Assumes the sequence is non-ASCII and drops the `isAscii` status of this sink.
+     */
     default Utf8Sink put(@Nullable DirectUtf8Sequence dus) {
         if (dus != null) {
-            putUtf8(dus.lo(), dus.hi());
+            putNonAscii(dus.lo(), dus.hi());
         }
         return this;
     }
 
     /**
-     * Encodes the given segment of a char sequence from UTF-16 to UTF-8 and writes it to the sink.
+     * Appends the specified range of UTF-8 bytes from the supplied sequence
+     * to this sink.
+     * <br/>
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * Assumes the sequence is non-ASCII and drops the `isAscii` status of this sink.
      */
+    default Utf8Sink put(Utf8Sequence seq, int lo, int hi) {
+        if (seq != null) {
+            for (int i = lo; i < hi; i++) {
+                put(seq.byteAt(i));
+            }
+        }
+        return this;
+    }
+
+    /**
+     * Encodes the given segment of a char sequence to UTF-8 and appends it
+     * to this sink.
+     * <br/>
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * If any appended char is non-ASCII, this sink's `isAscii` status drops
+     * to false.
+     */
+    @Override
     default Utf8Sink put(@NotNull CharSequence cs, int lo, int hi) {
         int i = lo;
         while (i < hi) {
@@ -169,21 +210,70 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         return this;
     }
 
-    @Override
-    default Utf8Sink putAscii(@Nullable CharSequence cs) {
-        if (cs != null) {
-            int l = cs.length();
-            for (int i = 0; i < l; i++) {
-                putAscii(cs.charAt(i));
-            }
+    /**
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * Appends a general UTF-8 byte. If the byte is non-ASCII, this sink's `isAscii`
+     * status drops to false.
+     * <br/>
+     * For impls that don't care about the ASCII/non-ASCII distinction:
+     * Synonymous with {@link #put(byte)}.
+     */
+    default Utf8Sink putAny(byte b) {
+        // This works for impls that don't care about the ASCII/non-ASCII distinction.
+        // Must override in impls that do care, and properly update the `isAscii` status.
+        return put(b);
+    }
+
+    /**
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * Appends the specified range of a general UTF-8 sequence. If the range
+     * contains a non-ASCII byte, this sink's `isAscii` status drops to false.
+     * <br/>
+     * For impls that don't care about the ASCII/non-ASCII distinction:
+     * Synonymous with, but likely less performant than
+     * {@link #put(Utf8Sequence, int, int)}.
+     */
+    default Utf8Sink putAny(@Nullable Utf8Sequence us) {
+        if (us == null) {
+            return this;
+        }
+        return putAny(us, 0, us.size());
+    }
+
+    /**
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * Appends a general UTF-8 sequence. If the sequence contains a non-ASCII byte,
+     * this sink's `isAscii` status drops to false.
+     * <br/>
+     * For impls that don't care about the ASCII/non-ASCII distinction:
+     * Synonymous with, but likely less performant than
+     * {@link #put(Utf8Sequence, int, int)}.
+     */
+    default Utf8Sink putAny(Utf8Sequence seq, int lo, int hi) {
+        for (int i = lo; i < hi; i++) {
+            putAny(seq.byteAt(i));
         }
         return this;
     }
 
     @Override
     default Utf8Sink putAscii(char c) {
-        // todo: have function that accepts ascii byte
+        // This works for impls that don't care about the ASCII/non-ASCII distinction.
+        // In impls that do care, calling put(byte) would drop the `isAscii` status,
+        // and therefore such impls must override it.
         return put((byte) c);
+    }
+
+    @Override
+    default Utf8Sink putAscii(@Nullable CharSequence cs) {
+        if (cs == null) {
+            return this;
+        }
+        int l = cs.length();
+        for (int i = 0; i < l; i++) {
+            putAscii(cs.charAt(i));
+        }
+        return this;
     }
 
     default Utf8Sink putQuote() {
@@ -191,6 +281,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         return this;
     }
 
+    @Override
     default Utf8Sink putQuoted(@NotNull CharSequence cs) {
         putAscii('\"').put(cs).putAscii('\"');
         return this;

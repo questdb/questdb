@@ -22,14 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.griffin.engine.functions.str;
 
-public interface BuildInformation {
-    String getCommitHash();
-
-    String getJdkVersion();
-
-    String getSwName();
-
-    String getSwVersion();
+public class PositionVarcharFunctionFactory extends StrPosVarcharFunctionFactory {
+    @Override
+    public String getSignature() {
+        return "position(ØØ)";
+    }
 }
