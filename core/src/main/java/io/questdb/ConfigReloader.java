@@ -3,8 +3,6 @@ package io.questdb;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
-import io.questdb.std.Misc;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 
 import java.io.IOException;
@@ -13,11 +11,12 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ConfigReloader implements QuietCloseable, FileWatcherCallback {
+public class ConfigReloader implements FileEventCallback {
 
     private static final Log LOG = LogFactory.getLog(ConfigReloader.class);
     private final java.nio.file.Path confPath;
     private final DynamicServerConfiguration config;
+    private final Properties properties;
     private final Set<PropertyKey> reloadableProps = new HashSet<>(List.of(
             PropertyKey.PG_USER,
             PropertyKey.PG_PASSWORD,
@@ -25,27 +24,26 @@ public class ConfigReloader implements QuietCloseable, FileWatcherCallback {
             PropertyKey.PG_RO_USER,
             PropertyKey.PG_RO_PASSWORD
     ));
-    private boolean closed;
-    private FileWatcher filewatcher;
     private long lastModified;
-    private Properties properties;
 
-    public ConfigReloader(DynamicServerConfiguration config) throws FileWatcherException {
+    public ConfigReloader(DynamicServerConfiguration config) throws IOException {
         this.config = config;
         this.confPath = Paths.get(this.config.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
-        this.filewatcher = FileWatcherFactory.getFileWatcher(this.confPath.toString());
-    }
 
-    @Override
-    public void close() {
-        if (!closed) {
-            this.filewatcher = Misc.free(filewatcher);
+        try (Path p = new Path()) {
+            p.of(this.confPath.toString()).$();
+            this.lastModified = Files.getLastModified(p);
         }
-        closed = true;
+
+        this.properties = new Properties();
+        try (InputStream is = java.nio.file.Files.newInputStream(this.confPath)) {
+            this.properties.load(is);
+        }
     }
 
+
     @Override
-    public void onFileChanged() {
+    public void onFileEvent() {
         try (Path p = new Path()) {
             p.of(this.confPath.toString()).$();
 
@@ -106,30 +104,4 @@ public class ConfigReloader implements QuietCloseable, FileWatcherCallback {
         }
     }
 
-    public void watch() {
-        try (Path p = new Path()) {
-            p.of(this.confPath.toString()).$();
-            this.lastModified = Files.getLastModified(p);
-        }
-
-        this.properties = new Properties();
-        try (InputStream is = java.nio.file.Files.newInputStream(this.confPath)) {
-            this.properties.load(is);
-        } catch (IOException exc) {
-            LOG.error().$(exc).$();
-            return;
-        }
-
-        do {
-            if (closed) {
-                return;
-            }
-            try {
-                this.filewatcher.waitForChange(this);
-            } catch (FileWatcherException exc) {
-                LOG.error().$(exc).$();
-            }
-        } while (true);
-
-    }
 }

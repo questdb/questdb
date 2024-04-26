@@ -55,6 +55,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.io.File;
+import java.nio.file.Path;
 import java.security.PublicKey;
 import java.util.HashMap;
 import java.util.Map;
@@ -67,7 +68,7 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
-    private ConfigReloader configReloader;
+    private FileWatcher fileWatcher;
     private HttpServer httpServer;
     private boolean initialized;
     private WorkerPoolManager workerPoolManager;
@@ -222,7 +223,7 @@ public class ServerMain implements Closeable {
         if (closed.compareAndSet(false, true)) {
             if (initialized) {
                 workerPoolManager.halt();
-                configReloader = Misc.free(configReloader);
+                fileWatcher = Misc.free(fileWatcher);
             }
             freeOnExit.close();
         }
@@ -306,11 +307,14 @@ public class ServerMain implements Closeable {
 
         if (config instanceof DynamicServerConfiguration) {
             try {
-                configReloader = new ConfigReloader((DynamicServerConfiguration) config);
-                Thread reloadThread = new Thread(configReloader::watch);
-                reloadThread.start();
-            } catch(FileWatcherException exc) {
-                bootstrap.getLog().errorW().$("Unable to start ConfigReloader: ").$(exc).$();
+                Path configPath = Path.of(cairoConfig.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
+                fileWatcher = new FileWatcher(
+                        new ConfigReloader((DynamicServerConfiguration) config),
+                        FileEventNotifierFactory.getFileWatcher(configPath.toString())
+                );
+                fileWatcher.watch();
+            } catch (Exception exc) {
+                bootstrap.getLog().errorW().$("Unable to start FileWatcher: ").$(exc).$();
             }
         }
 

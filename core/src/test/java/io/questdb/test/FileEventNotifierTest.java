@@ -1,9 +1,9 @@
 package io.questdb.test;
 
-import io.questdb.FileWatcher;
-import io.questdb.FileWatcherCallback;
-import io.questdb.FileWatcherException;
-import io.questdb.FileWatcherFactory;
+import io.questdb.FileEventCallback;
+import io.questdb.FileEventNotifier;
+import io.questdb.FileEventNotifierException;
+import io.questdb.FileEventNotifierFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
 import org.junit.Assert;
@@ -13,7 +13,7 @@ import java.io.File;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 
-public class FileWatcherTest extends AbstractTest {
+public class FileEventNotifierTest extends AbstractTest {
 
     private SOCountDownLatch threadLatch;
 
@@ -23,7 +23,7 @@ public class FileWatcherTest extends AbstractTest {
         final File targetFile = temp.newFile();
         SOCountDownLatch threadLatch = new SOCountDownLatch(1);
 
-        try (final FileWatcher dw = FileWatcherFactory.getFileWatcher(temp.getRoot().getAbsolutePath())) {
+        try (final FileEventNotifier dw = FileEventNotifierFactory.getFileWatcher(temp.getRoot().getAbsolutePath())) {
             Assert.assertNotNull(dw);
             FileChangedCallback callback = new FileChangedCallback(threadLatch);
 
@@ -31,7 +31,7 @@ public class FileWatcherTest extends AbstractTest {
                 try {
                     dw.waitForChange(callback);
 
-                } catch (FileWatcherException exc) {
+                } catch (FileEventNotifierException exc) {
                     Assert.fail(exc.getMessage());
                 }
             });
@@ -44,7 +44,7 @@ public class FileWatcherTest extends AbstractTest {
         }
     }
 
-    static class FileChangedCallback implements FileWatcherCallback {
+    static class FileChangedCallback implements FileEventCallback {
 
         SOCountDownLatch latch;
 
@@ -53,7 +53,7 @@ public class FileWatcherTest extends AbstractTest {
         }
 
         @Override
-        public void onFileChanged() {
+        public void onFileEvent() {
             this.latch.countDown();
         }
     }

@@ -6,7 +6,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
-public class KqueueFileWatcher implements FileWatcher {
+public class KqueueFileEventNotifier implements FileEventNotifier {
     private final int bufferSize;
     private final long dirEvent;
     private final int dirFd;
@@ -16,7 +16,7 @@ public class KqueueFileWatcher implements FileWatcher {
     private final int kq;
     private boolean closed;
 
-    public KqueueFileWatcher(CharSequence filePath) throws FileWatcherException {
+    public KqueueFileEventNotifier(CharSequence filePath) throws FileEventNotifierException {
         try (Path p = new Path()) {
 
             p.of(filePath).$();
@@ -55,7 +55,7 @@ public class KqueueFileWatcher implements FileWatcher {
 
         kq = KqueueAccessor.kqueue();
         if (kq < 0) {
-            throw new FileWatcherException("kqueue", kq);
+            throw new FileEventNotifierException("kqueue", kq);
         }
         Files.bumpFileCount(this.kq);
 
@@ -69,7 +69,7 @@ public class KqueueFileWatcher implements FileWatcher {
                 1
         );
         if (fileRes < 0) {
-            throw new FileWatcherException("keventRegister (fileEvent)", fileRes);
+            throw new FileEventNotifierException("keventRegister (fileEvent)", fileRes);
         }
 
         int dirRes = KqueueAccessor.keventRegister(
@@ -78,7 +78,7 @@ public class KqueueFileWatcher implements FileWatcher {
                 1
         );
         if (dirRes < 0) {
-            throw new FileWatcherException("keventRegister (dirEvent)", dirRes);
+            throw new FileEventNotifierException("keventRegister (dirEvent)", dirRes);
         }
 
     }
@@ -97,7 +97,7 @@ public class KqueueFileWatcher implements FileWatcher {
     }
 
     @Override
-    public void waitForChange(FileWatcherCallback callback) throws FileWatcherException {
+    public void waitForChange(FileEventCallback callback) throws FileEventNotifierException {
         // Blocks until there is a change in the watched dir
         int res = KqueueAccessor.keventGetBlocking(
                 kq,
@@ -108,9 +108,9 @@ public class KqueueFileWatcher implements FileWatcher {
             return;
         }
         if (res < 0) {
-            throw new FileWatcherException("kevent", res);
+            throw new FileEventNotifierException("kevent", res);
         }
-        callback.onFileChanged();
+        callback.onFileEvent();
 
     }
 }

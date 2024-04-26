@@ -2,12 +2,12 @@ package io.questdb;
 
 import io.questdb.std.str.Path;
 
-public final class InotifyFileWatcher implements FileWatcher {
+public final class InotifyFileEventNotifier implements FileEventNotifier {
 
     private final long filewatcherPtr;
     private boolean closed;
 
-    public InotifyFileWatcher(CharSequence dirPath) {
+    public InotifyFileEventNotifier(CharSequence dirPath) {
         try (Path p = new Path()) {
             p.of(dirPath).$();
             this.filewatcherPtr = setup(p.ptr());
@@ -21,7 +21,7 @@ public final class InotifyFileWatcher implements FileWatcher {
     }
 
     @Override
-    public void waitForChange(FileWatcherCallback callback) throws FileWatcherException {
+    public void waitForChange(FileEventCallback callback) throws FileEventNotifierException {
         long result;
 
         result = waitForChange(filewatcherPtr);
@@ -29,9 +29,9 @@ public final class InotifyFileWatcher implements FileWatcher {
             return;
         }
         if (result < 0) {
-            throw new FileWatcherException("inotify read", (int) result);
+            throw new FileEventNotifierException("inotify read", (int) result);
         }
-        callback.onFileChanged();
+        callback.onFileEvent();
     }
 
     static native long setup(long path);
