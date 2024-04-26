@@ -252,7 +252,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                     // lower 32 bits of hash, size, and flags match, let's compare keys.
                     long dstPtrWithUnstableFlags = Unsafe.getUnsafe().getLong(destAddr + 8);
 
-                    if (srcPtrWithUnstableFlags == dstPtrWithUnstableFlags || Vect.memeq(srcPtrWithUnstableFlags & PTR_MASK, dstPtrWithUnstableFlags & PTR_MASK, srcSize)) {
+                    if (Vect.memeq(srcPtrWithUnstableFlags & PTR_MASK, dstPtrWithUnstableFlags & PTR_MASK, srcSize)) {
                         // Match found, merge values.
                         mergeFunc.merge(
                                 valueAt(destAddr),
@@ -353,7 +353,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 long loadedHashSizeFlags = Unsafe.getUnsafe().getLong(startAddress);
                 if (loadedHashSizeFlags == newEntryPackedHashSizeFlags) {
                     long entryPtrWithUnstableFlag = Unsafe.getUnsafe().getLong(startAddress + 8);
-                    if (entryPtrWithUnstableFlag == ptrWithUnstableFlag || Vect.memeq(entryPtrWithUnstableFlag & PTR_MASK, ptr, size)) {
+                    if (Vect.memeq(entryPtrWithUnstableFlag & PTR_MASK, ptr, size)) {
                         break;
                     }
                 }
@@ -391,7 +391,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             }
             if (loadedHashSizeFlags == packedHashSizeFlagsToFind) {
                 long currentEntryPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
-                if (ptr == currentEntryPtr || Vect.memeq(currentEntryPtr, ptr, size)) {
+                if (Vect.memeq(currentEntryPtr, ptr, size)) {
                     return valueOf(startAddress, false, value);
                 }
             }
@@ -407,7 +407,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             }
             if (loadedHashSizeFlags == packedHashSizeFlagsToFind) {
                 long currentEntryPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
-                if (ptr == currentEntryPtr || Vect.memeq(currentEntryPtr, ptr, size)) {
+                if (Vect.memeq(currentEntryPtr, ptr, size)) {
                     return valueOf(startAddress, false, value);
                 }
             }
@@ -718,7 +718,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long packedHashSizeFlags = packHashSizeFlags(hash, size, flags);
             if (loadedHashSizeFlags == packedHashSizeFlags) {
                 long currentPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
-                if (currentPtr == ptr || Vect.memeq(currentPtr, ptr, size)) {
+                if (Vect.memeq(currentPtr, ptr, size)) {
                     return valueOf(startAddress, false, value);
                 }
             }
