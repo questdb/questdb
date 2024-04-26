@@ -38,6 +38,7 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
           key: nativelibs-windows-rust-${{ github.sha }}
+          enableCrossOsArchive: true
   build-all-freebsd:
     runs-on: ubuntu-latest
     steps:
@@ -98,7 +99,7 @@ jobs:
           mkdir -p core/src/main/resources/io/questdb/bin/armosx/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/armosx/
       - name: Copy darwin-amd64 Rust Library to the final directory
-        if: ${{ matrix.os == 'macos-latest' }}
+        if: ${{ matrix.os == 'macos-13' }}
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/osx/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/osx/
@@ -111,7 +112,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/armosx/libquestdbr.dylib
           key: nativelibs-armosx-${{ github.sha }}
       - name: Save darwin-amd64 Libraries to Cache
-        if: ${{ matrix.os == 'macos-latest' }}
+        if: ${{ matrix.os == 'macos-13' }}
         uses: actions/cache/save@v3
         with:
           path: |
@@ -308,6 +309,7 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
           key: nativelibs-windows-rust-${{ github.sha }}
+          enableCrossOsArchive: true
       - name: Commit the files
         run: |
           git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
