@@ -117,33 +117,44 @@ jobs:
           key: nativelibs-osx-${{ github.sha }}
   build-linux-amd64:
     runs-on: ubuntu-latest
+    # this is very bare container, we use it to restrict GLIBC to 2.28
+    # everything has to be installed on it manually
+    container:
+      image: debian:buster
     steps:
       - uses: actions/checkout@v4
-
-      - name: build
-        uses: docker://debian:buster
-        with:
-          run: |
-            apt-get update -y
-            apt install git nasm python3 wget ca-certificates build-essential -y
-            python3 ./.github/prepare_rust_env.py
-            wget -nv https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
-            tar -zxf cmake-3.29.2-linux-x86_64.tar.gz          
-            export PATH=`pwd`/cmake-3.29.2-linux-x86_64/bin/:$PATH
-            wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
-            tar xfz OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
-            export JAVA_HOME=`pwd`/jdk-17.0.11+9/
-            cd ./core
-            cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
-            cmake --build cmake-build-release --config Release
-            cd rust/qdbr
-            cargo clean
-            cargo build --release
-            cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
-
-      - name: log git status
+      - name: Install toolchains (CXX/NASM/Rust)
         run: |
-          git status
+          ldd --version
+          pwd
+          apt-get update -y
+          apt install git nasm python3 wget ca-certificates build-essential -y
+          python3 ./.github/prepare_rust_env.py
+          echo "PATH=/github/home/.cargo/bin/:$PATH" >> "$GITHUB_ENV"
+      - name: Install up-to-date CMake
+        run: |
+          wget -nv https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
+          tar -zxf cmake-3.29.2-linux-x86_64.tar.gz
+          echo "PATH=`pwd`/cmake-3.29.2-linux-x86_64/bin/:$PATH" >> "$GITHUB_ENV"
+      - name: Install JDK17 (for jni.h)
+        run: |
+          wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
+          tar xfz OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
+          echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
+      - name: Generate Makefiles
+        run: |
+          cd ./core
+          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+      - name: Build linux-amd64 CXX Library
+        run: |
+          cd core
+          cmake --build cmake-build-release --config Release
+      - name: Build linux-amd64 Rust Library
+        run: |
+          cd core/rust/qdbr
+          cargo clean
+          cargo build --release
+          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
       - name: Save linux-amd64 Libraries to Cache
         uses: actions/cache/save@v3
         with:
@@ -257,7 +268,6 @@ jobs:
             core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
           enableCrossOsArchive: true
-          fail-on-cache-miss: true
       - name: Restore linux-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
