@@ -532,6 +532,15 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             closeFunctions();
         }
 
+        public void andAssertUtf8(CharSequence expectedString) {
+            Utf8Sequence expected = utf8(expectedString);
+            if (ColumnType.tagOf(function1.getType()) == ColumnType.VARCHAR) {
+                assertUtf8(function1, expected);
+                assertUtf8(function2, expected);
+            }
+            closeFunctions();
+        }
+
         public Invocation andInit(SqlExecutionContext context) throws SqlException {
             function1.init(null, context);
             function2.init(null, context);
@@ -564,6 +573,32 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 func.getStr(record, sink);
                 TestUtils.assertEquals(expected, sink);
                 Assert.assertEquals(expected.length(), func.getStrLen(record));
+            }
+        }
+
+        private void assertUtf8(Function func, Utf8Sequence expected) {
+            if (expected == null) {
+                Assert.assertNull(func.getVarcharA(record));
+                Assert.assertNull(func.getVarcharB(record));
+                utf8Sink.clear();
+                func.getVarchar(record, utf8Sink);
+                Assert.assertEquals(0, utf8Sink.size());
+            } else {
+                Utf8Sequence a = func.getVarcharA(record);
+                Utf8Sequence b = func.getVarcharB(record);
+                if (!func.isConstant() && a != null) {
+                    Assert.assertNotSame(a, b);
+                }
+                TestUtils.assertEquals(expected, a);
+                TestUtils.assertEquals(expected, b);
+
+                // repeat call to make sure there is correct object reuse
+                TestUtils.assertEquals(expected, func.getVarcharA(record));
+                TestUtils.assertEquals(expected, func.getVarcharB(record));
+
+                utf8Sink.clear();
+                func.getVarchar(record, utf8Sink);
+                TestUtils.assertEquals(expected, utf8Sink);
             }
         }
 

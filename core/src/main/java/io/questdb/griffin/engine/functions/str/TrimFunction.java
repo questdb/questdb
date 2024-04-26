@@ -91,4 +91,9 @@ public class TrimFunction extends StrFunction implements UnaryFunction {
         trim(type, getArg().getStrA(rec), sink1);
         return sink1.length();
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }
