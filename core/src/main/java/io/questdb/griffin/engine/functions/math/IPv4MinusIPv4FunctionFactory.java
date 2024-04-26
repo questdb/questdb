@@ -73,7 +73,7 @@ public class IPv4MinusIPv4FunctionFactory implements FunctionFactory {
             final long l = Numbers.ipv4ToLong(left.getIPv4(rec));
             final long r = Numbers.ipv4ToLong(right.getIPv4(rec));
 
-            return l != Numbers.IPv4_NULL && r != Numbers.IPv4_NULL ? (l - r) : Numbers.LONG_NaN;
+            return l != Numbers.IPv4_NULL && r != Numbers.IPv4_NULL ? (l - r) : Numbers.LONG_NULL;
         }
 
         @Override

@@ -62,7 +62,7 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            if (value == Numbers.INT_NULL) {
                 return SymbolTable.VALUE_IS_NULL;
             }
             return getInt0(value);
@@ -71,7 +71,7 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getSymbol(Record rec) {
             final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            if (value == Numbers.INT_NULL) {
                 return null;
             }
             return getSymbol0(value);

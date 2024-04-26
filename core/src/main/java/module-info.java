@@ -594,6 +594,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.InLongFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory,
+            io.questdb.griffin.engine.functions.bool.InTimestampVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.bool.BetweenTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory,

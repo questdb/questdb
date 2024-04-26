@@ -185,7 +185,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                     if (col == segmentTxnColumn) {
                         return logCursor.getSegmentTxn();
                     }
-                    return Numbers.INT_NaN;
+                    return Numbers.INT_NULL;
                 }
 
                 @Override
@@ -201,10 +201,10 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                                 && logCursor.getTxnRowCount() > 0) {
                             return logCursor.getTxnRowCount();
                         } else {
-                            return Numbers.LONG_NaN;
+                            return Numbers.LONG_NULL;
                         }
                     }
-                    return Numbers.LONG_NaN;
+                    return Numbers.LONG_NULL;
                 }
 
                 @Override
@@ -227,7 +227,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                                 && logCursor.getTxnRowCount() > 0) {
                             return logCursor.getTxnMinTimestamp();
                         } else {
-                            return Numbers.LONG_NaN;
+                            return Numbers.LONG_NULL;
                         }
                     }
                     if (col == maxTimestampColumn) {
@@ -235,10 +235,10 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                                 && logCursor.getTxnRowCount() > 0) {
                             return logCursor.getTxnMaxTimestamp();
                         } else {
-                            return Numbers.LONG_NaN;
+                            return Numbers.LONG_NULL;
                         }
                     }
-                    return Numbers.LONG_NaN;
+                    return Numbers.LONG_NULL;
                 }
             }
         }

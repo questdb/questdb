@@ -426,7 +426,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 case STATE_START:
                     prevSamplePeriodOffset = samplePeriodIndexOffset = 0;
                     crossRowState = NONE;
-                    samplePeriodStart = Numbers.LONG_NaN;
+                    samplePeriodStart = Numbers.LONG_NULL;
                     // Fall through to STATE_FETCH_NEXT_DATA_FRAME;
 
                 case STATE_FETCH_NEXT_DATA_FRAME:
@@ -464,7 +464,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         // Fall through, search code will figure that this is special case
                     }
 
-                    if (samplePeriodStart == Numbers.LONG_NaN) {
+                    if (samplePeriodStart == Numbers.LONG_NULL) {
                         long rowId = indexFrameAddress > 0 ? Unsafe.getUnsafe().getLong(indexFrameAddress) : dataFrameLo;
                         long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
                         samplePeriodStart = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
@@ -893,7 +893,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     if (pageAddress > 0) {
                         return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
                     } else {
-                        return Numbers.INT_NaN;
+                        return Numbers.INT_NULL;
                     }
                 }
 
@@ -909,7 +909,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         // It's the value of the beginning of the group, not where the first row found
                         return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);
                     } else {
-                        return Numbers.LONG_NaN;
+                        return Numbers.LONG_NULL;
                     }
                 }
 

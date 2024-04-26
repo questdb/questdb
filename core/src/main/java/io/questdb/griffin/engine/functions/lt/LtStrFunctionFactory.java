@@ -93,11 +93,11 @@ public class LtStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final CharSequence r = right.getStrB(rec);
-            if (r == null) {
-                return false;
-            }
-            return negated == (Chars.compare(constant, r) >= 0);
+            return Chars.lessThan(
+                    constant,
+                    right.getStrB(rec),
+                    negated
+            );
         }
 
         @Override
@@ -137,11 +137,11 @@ public class LtStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final CharSequence l = left.getStrB(rec);
-            if (l == null) {
-                return false;
-            }
-            return negated == (Chars.compare(l, constant) >= 0);
+            return Chars.lessThan(
+                    left.getStrB(rec),
+                    constant,
+                    negated
+            );
         }
 
         @Override
@@ -179,12 +179,11 @@ public class LtStrFunctionFactory implements FunctionFactory {
             // important to compare A and B strings in case
             // these are columns of the same record
             // records have re-usable character sequences
-            final CharSequence l = left.getStrA(rec);
-            final CharSequence r = right.getStrB(rec);
-            if (l == null || r == null) {
-                return false;
-            }
-            return negated == (Chars.compare(l, r) >= 0);
+            return Chars.lessThan(
+                    left.getStrA(rec),
+                    right.getStrB(rec),
+                    negated
+            );
         }
 
         @Override

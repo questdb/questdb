@@ -52,7 +52,7 @@ public class CastLongToCharFunctionFactory implements FunctionFactory {
         @Override
         public char getChar(Record rec) {
             final long value = arg.getLong(rec);
-            return value != Numbers.LONG_NaN ? (char) value : 0;
+            return value != Numbers.LONG_NULL ? (char) value : 0;
         }
     }
 }

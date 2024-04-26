@@ -84,7 +84,7 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             if ((rnd.nextInt() % nanRate) == 1) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             return lo + rnd.nextPositiveInt() % range;
         }

@@ -60,10 +60,20 @@ public class CursorPrinter {
                 TimestampFormatUtils.appendDateTimeUSec(sink, record.getTimestamp(columnIndex));
                 break;
             case ColumnType.DOUBLE:
-                sink.put(record.getDouble(columnIndex), Numbers.MAX_SCALE);
+                double v = record.getDouble(columnIndex);
+                if (Numbers.isFinite(v)) {
+                    sink.put(v);
+                } else {
+                    sink.put("null");
+                }
                 break;
             case ColumnType.FLOAT:
-                sink.put(record.getFloat(columnIndex), 4);
+                float f = record.getFloat(columnIndex);
+                if (Numbers.isFinite(f)) {
+                    sink.put(f, 4);
+                } else {
+                    sink.put("null");
+                }
                 break;
             case ColumnType.INT:
                 sink.put(record.getInt(columnIndex));

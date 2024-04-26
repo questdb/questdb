@@ -41,16 +41,16 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 public class MinIntVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
 
     public static final LongBinaryOperator MIN = (long l1, long l2) -> {
-        if (l1 == Numbers.INT_NaN) {
+        if (l1 == Numbers.INT_NULL) {
             return l2;
         }
-        if (l2 == Numbers.INT_NaN) {
+        if (l2 == Numbers.INT_NULL) {
             return l1;
         }
         return Math.min(l1, l2);
     };
     private final LongAccumulator accumulator = new LongAccumulator(
-            MIN, Numbers.INT_NaN
+            MIN, Numbers.INT_NULL
     );
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
@@ -72,7 +72,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
             final int value = Vect.minInt(address, addressSize / Integer.BYTES);
-            if (value != Numbers.INT_NaN) {
+            if (value != Numbers.INT_NULL) {
                 accumulator.accumulate(value);
             }
         }
@@ -114,7 +114,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Numbers.INT_NaN);
+        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Numbers.INT_NULL);
     }
 
     @Override

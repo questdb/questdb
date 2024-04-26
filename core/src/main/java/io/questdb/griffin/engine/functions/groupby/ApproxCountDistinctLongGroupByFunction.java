@@ -66,7 +66,7 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long val = arg.getLong(record);
-        if (val != Numbers.LONG_NaN) {
+        if (val != Numbers.LONG_NULL) {
             final long hash = Hash.murmur3ToLong(val);
             long cardinality = hllA.of(0).addAndComputeCardinalityFast(hash);
             mapValue.putLong(hllPtrIndex, hllA.ptr());
@@ -81,7 +81,7 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long val = arg.getLong(record);
-        if (val != Numbers.LONG_NaN) {
+        if (val != Numbers.LONG_NULL) {
             final long hash = Hash.murmur3ToLong(val);
             long ptr = mapValue.getLong(hllPtrIndex);
             long cardinality = hllA.of(ptr).addAndComputeCardinalityFast(hash);
@@ -152,7 +152,7 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     public void merge(MapValue destValue, MapValue srcValue) {
         if (srcValue.getBool(overwrittenFlagIndex)) {
             long srcCount = srcValue.getLong(valueIndex);
-            if (srcCount == 0 || srcCount == Numbers.LONG_NaN) {
+            if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
                 return;
             }
             // If reached here, it would mean that the value has been overwritten by interpolation
@@ -169,7 +169,7 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
 
         if (destValue.getBool(overwrittenFlagIndex)) {
             long dstCount = destValue.getLong(valueIndex);
-            if (dstCount == 0 || dstCount == Numbers.LONG_NaN) {
+            if (dstCount == 0 || dstCount == Numbers.LONG_NULL) {
                 destValue.putBool(overwrittenFlagIndex, false);
                 destValue.putLong(hllPtrIndex, srcPtr);
                 destValue.putLong(valueIndex, NULL_VALUE);
@@ -214,7 +214,7 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
 
     @Override
     public void setNull(MapValue mapValue) {
-        overwrite(mapValue, Numbers.LONG_NaN);
+        overwrite(mapValue, Numbers.LONG_NULL);
     }
 
     @Override

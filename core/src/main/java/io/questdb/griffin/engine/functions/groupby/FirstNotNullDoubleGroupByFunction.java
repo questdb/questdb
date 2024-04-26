@@ -38,7 +38,7 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Double.isNaN(mapValue.getDouble(valueIndex + 1))) {
+        if (Numbers.isNull(mapValue.getDouble(valueIndex + 1))) {
             computeFirst(mapValue, record, rowId);
         }
     }
@@ -51,15 +51,14 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcVal = srcValue.getDouble(valueIndex + 1);
-        if (Double.isNaN(srcVal)) {
-            return;
-        }
-        long srcRowId = srcValue.getLong(valueIndex);
-        long destRowId = destValue.getLong(valueIndex);
-        // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
-            destValue.putLong(valueIndex, srcRowId);
-            destValue.putDouble(valueIndex + 1, srcVal);
+        if (Numbers.isFinite(srcVal)) {
+            long srcRowId = srcValue.getLong(valueIndex);
+            long destRowId = destValue.getLong(valueIndex);
+            // srcRowId is non-null at this point since we know that the value is non-null
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+                destValue.putLong(valueIndex, srcRowId);
+                destValue.putDouble(valueIndex + 1, srcVal);
+            }
         }
     }
 }

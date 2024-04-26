@@ -68,7 +68,7 @@ public class NegIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final int value = arg.getInt(rec);
-            return value != Numbers.INT_NaN ? -value : Numbers.INT_NaN;
+            return value != Numbers.INT_NULL ? -value : Numbers.INT_NULL;
         }
 
         @Override

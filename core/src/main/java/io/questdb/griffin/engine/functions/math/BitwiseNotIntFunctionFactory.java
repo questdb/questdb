@@ -68,7 +68,7 @@ public class BitwiseNotIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final int val = value.getInt(rec);
-            return val != Numbers.INT_NaN ? ~val : Numbers.INT_NaN;
+            return val != Numbers.INT_NULL ? ~val : Numbers.INT_NULL;
         }
 
         @Override

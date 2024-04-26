@@ -87,7 +87,7 @@ public class SubStringVarcharFunctionFactoryTest extends AbstractFunctionFactory
     public void testZeroOrInvalidLength() throws Exception {
         call(new Utf8String("foo"), 3, 0).andAssert("");
         call(null, 3, 0).andAssert(null);
-        call(new Utf8String("foo"), 3, Numbers.INT_NaN).andAssert(null);
+        call(new Utf8String("foo"), 3, Numbers.INT_NULL).andAssert(null);
 
         try {
             call(new Utf8String("foo"), 3, -1).andAssert(null);

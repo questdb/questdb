@@ -30,17 +30,20 @@ import org.junit.Test;
 public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testCovarSampleOneColumnAllNull() throws Exception {
+    public void testCovarSampleAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "covar_samp\nNaN\n", "select covar_samp(x, y) from (select cast(null as double) x, x as y from long_sequence(100))"
+                "covar_samp\nnull\n", "select covar_samp(x, y) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))"
         ));
     }
 
     @Test
-    public void testCovarSampleAllNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "covar_samp\nNaN\n", "select covar_samp(x, y) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))"
-        ));
+    public void testCovarSampleNoValues() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tbl1(x int, y int)");
+            assertSql(
+                    "covar_samp\nnull\n", "select covar_samp(x, y) from tbl1"
+            );
+        });
     }
 
     @Test
@@ -96,13 +99,10 @@ public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCovarSampleNoValues() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tbl1(x int, y int)");
-            assertSql(
-                    "covar_samp\nNaN\n", "select covar_samp(x, y) from tbl1"
-            );
-        });
+    public void testCovarSampleOneColumnAllNull() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "covar_samp\nnull\n", "select covar_samp(x, y) from (select cast(null as double) x, x as y from long_sequence(100))"
+        ));
     }
 
     @Test
@@ -112,7 +112,7 @@ public class CovarSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
             insert("insert into 'tbl1' VALUES " +
                     "(17.2151920, 17.2151920)");
             assertSql(
-                    "covar_samp\nNaN\n", "select covar_samp(x, y) from tbl1"
+                    "covar_samp\nnull\n", "select covar_samp(x, y) from tbl1"
             );
         });
     }

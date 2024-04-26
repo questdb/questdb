@@ -245,7 +245,7 @@ public class IntervalUtilsTest {
         // B
         add(intervals, 1, 2);
 
-        runTestInvertInplace(intervals, 2, "[NaN,0], [3,9223372036854775807]");
+        runTestInvertInplace(intervals, 2, "[null,0], [3,9223372036854775807]");
     }
 
     @Test
@@ -258,7 +258,7 @@ public class IntervalUtilsTest {
         add(intervals, 2, 100);
         add(intervals, 200, Long.MAX_VALUE);
 
-        runTestInvertInplace(intervals, 1, "[NaN,1], [101,199]");
+        runTestInvertInplace(intervals, 1, "[null,1], [101,199]");
     }
 
     @Test

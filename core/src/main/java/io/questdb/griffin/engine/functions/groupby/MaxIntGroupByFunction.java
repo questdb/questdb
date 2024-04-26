@@ -110,7 +110,7 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, Numbers.INT_NaN);
+        mapValue.putInt(valueIndex, Numbers.INT_NULL);
     }
 
     @Override

@@ -34,6 +34,6 @@ public class LongTypeConstant extends LongFunction implements TypeConstant {
 
     @Override
     public long getLong(Record rec) {
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 }

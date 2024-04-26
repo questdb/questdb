@@ -107,7 +107,7 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
         final CharSequence offset = offsetFunc.getStrA(null);
         if (offset != null) {
             final long val = Timestamps.parseOffset(offset);
-            if (val == Numbers.LONG_NaN) {
+            if (val == Numbers.LONG_NULL) {
                 // bad value for offset
                 throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
             }

@@ -356,8 +356,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testNullConstantMixedIntegerColumns() throws Exception {
         serialize("anint + along <> null or null <> along + anint");
-        assertIR("(i32 anint)(i64 along)(+)(i64 " + Numbers.LONG_NaN + "L)(<>)" +
-                "(i64 " + Numbers.LONG_NaN + "L)(i64 along)(i32 anint)(+)(<>)" +
+        assertIR("(i32 anint)(i64 along)(+)(i64 " + Numbers.LONG_NULL + "L)(<>)" +
+                "(i64 " + Numbers.LONG_NULL + "L)(i64 along)(i32 anint)(+)(<>)" +
                 "(||)(ret)");
     }
 
@@ -370,8 +370,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testNullConstantValues() throws Exception {
         String[][] columns = new String[][]{
-                {"anint", "i32", Numbers.INT_NaN + "L"},
-                {"along", "i64", Numbers.LONG_NaN + "L"},
+                {"anint", "i32", Numbers.INT_NULL + "L"},
+                {"along", "i64", Numbers.LONG_NULL + "L"},
                 {"ageobyte", "i8", GeoHashes.BYTE_NULL + "L"},
                 {"ageoshort", "i16", GeoHashes.SHORT_NULL + "L"},
                 {"ageoint", "i32", GeoHashes.INT_NULL + "L"},

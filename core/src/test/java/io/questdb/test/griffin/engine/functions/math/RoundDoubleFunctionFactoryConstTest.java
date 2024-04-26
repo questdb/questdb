@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions.math;
 
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
@@ -34,7 +34,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     public void testLargeNegScale() throws SqlException {
         assertQuery(
                 "round\n" +
-                        "NaN\n",
+                        "null\n",
                 "select round(14.7778, -18) from long_sequence(1)",
                 null,
                 true,
@@ -46,7 +46,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     public void testLargePosScale() throws SqlException {
         assertQuery(
                 "round\n" +
-                        "NaN\n",
+                        "null\n",
                 "select round(14.7778, 17) from long_sequence(1)",
                 null,
                 true,

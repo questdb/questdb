@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
@@ -51,7 +52,7 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         float max = mapValue.getFloat(valueIndex);
         float next = arg.getFloat(record);
-        if (next > max || Float.isNaN(max)) {
+        if (next > max || Numbers.isNull(max)) {
             mapValue.putFloat(valueIndex, next);
         }
     }
@@ -101,7 +102,7 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void merge(MapValue destValue, MapValue srcValue) {
         float srcMax = srcValue.getFloat(valueIndex);
         float destMax = destValue.getFloat(valueIndex);
-        if (srcMax > destMax || Float.isNaN(destMax)) {
+        if (srcMax > destMax || Numbers.isNull(destMax)) {
             destValue.putFloat(valueIndex, srcMax);
         }
     }

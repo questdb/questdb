@@ -57,9 +57,9 @@ public class CastSymbolToDateFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             final CharSequence value = arg.getSymbol(rec);
             try {
-                return value == null ? Numbers.LONG_NaN : DateFormatUtils.parseUTCDate(value);
+                return value == null ? Numbers.LONG_NULL : DateFormatUtils.parseUTCDate(value);
             } catch (NumericException e) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
         }
     }

@@ -90,7 +90,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         @Override
         public final long getTimestamp(Record rec) {
             long micros = arg.getTimestamp(rec);
-            return micros == Numbers.LONG_NaN ? Numbers.LONG_NaN : ceil(micros);
+            return micros == Numbers.LONG_NULL ? Numbers.LONG_NULL : ceil(micros);
         }
 
         @Override

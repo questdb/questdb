@@ -631,7 +631,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(float value, int scale) {
-            if (Float.isNaN(value) || Float.isInfinite(value)) {
+            if (Numbers.isNull(value)) {
                 putAscii("null");
                 return this;
             }
@@ -640,7 +640,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(double value, int scale) {
-            if (Double.isNaN(value) || Double.isInfinite(value)) {
+            if (Numbers.isNull(value)) {
                 putAscii("null");
                 return this;
             }

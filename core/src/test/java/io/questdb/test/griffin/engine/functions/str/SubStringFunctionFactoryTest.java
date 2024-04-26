@@ -86,7 +86,7 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testZeroOrInvalidLength() throws Exception {
         call("foo", 3, 0).andAssert("");
         call(null, 3, 0).andAssert(null);
-        call("foo", 3, Numbers.INT_NaN).andAssert(null);
+        call("foo", 3, Numbers.INT_NULL).andAssert(null);
 
         try {
             call("foo", 3, -1).andAssert(null);

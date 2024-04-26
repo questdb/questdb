@@ -288,7 +288,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 assertTableSizeEventually(engine, "mytable", 1);
                 try (TableReader reader = getReader("mytable")) {
                     TestUtils.assertReader("negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp\n" +
-                            "-Infinity\tInfinity\tNaN\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+                            "null\tnull\tnull\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
                 }
             }
         });
@@ -660,7 +660,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             assertTableSizeEventually(engine, table, 1);
             try (TableReader reader = getReader(table)) {
                 TestUtils.assertReader("max\tmin\ttimestamp\n" +
-                        "9223372036854775807\tNaN\t2023-02-22T00:00:00.000000Z\n", reader, new StringSink());
+                        "9223372036854775807\tnull\t2023-02-22T00:00:00.000000Z\n", reader, new StringSink());
             }
         });
     }

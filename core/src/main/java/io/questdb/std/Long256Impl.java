@@ -53,7 +53,7 @@ public class Long256Impl implements Long256, Sinkable {
     }
 
     public static boolean isNull(long l0, long l1, long l2, long l3) {
-        return l0 == Numbers.LONG_NaN && l1 == Numbers.LONG_NaN && l2 == Numbers.LONG_NaN && l3 == Numbers.LONG_NaN;
+        return l0 == Numbers.LONG_NULL && l1 == Numbers.LONG_NULL && l2 == Numbers.LONG_NULL && l3 == Numbers.LONG_NULL;
     }
 
     public static void putNull(long appendPointer) {
@@ -137,10 +137,10 @@ public class Long256Impl implements Long256, Sinkable {
 
     static {
         NULL_LONG256.setAll(
-                Numbers.LONG_NaN,
-                Numbers.LONG_NaN,
-                Numbers.LONG_NaN,
-                Numbers.LONG_NaN
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL
         );
         ZERO_LONG256.setAll(0, 0, 0, 0);
     }

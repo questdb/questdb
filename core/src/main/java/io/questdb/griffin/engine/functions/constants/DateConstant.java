@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.std.Numbers;
 
 public class DateConstant extends DateFunction implements ConstantFunction {
-    public static final DateConstant NULL = new DateConstant(Numbers.LONG_NaN);
+    public static final DateConstant NULL = new DateConstant(Numbers.LONG_NULL);
     private final long value;
 
     public DateConstant(long value) {
@@ -38,7 +38,7 @@ public class DateConstant extends DateFunction implements ConstantFunction {
     }
 
     public static DateConstant newInstance(long value) {
-        return value != Numbers.LONG_NaN ? new DateConstant(value) : NULL;
+        return value != Numbers.LONG_NULL ? new DateConstant(value) : NULL;
     }
 
     @Override
@@ -48,7 +48,7 @@ public class DateConstant extends DateFunction implements ConstantFunction {
 
     @Override
     public boolean isNullConstant() {
-        return value == Numbers.LONG_NaN;
+        return value == Numbers.LONG_NULL;
     }
 
     @Override

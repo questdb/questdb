@@ -53,7 +53,7 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery("avg\n" +
-                        "NaN\n", "select avg(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 123 from long_sequence(1)", "avg\n" +
+                "null\n", "select avg(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 123 from long_sequence(1)", "avg\n" +
                         "123.0\n", false, true, false);
     }
 

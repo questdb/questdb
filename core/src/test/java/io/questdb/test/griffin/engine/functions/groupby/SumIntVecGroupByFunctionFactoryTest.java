@@ -63,7 +63,7 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testAllNullThenOne() throws Exception {
         assertQuery(
                 "sum\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(f) from tab",
                 "create table tab as (select cast(null as int) f from long_sequence(33))",
                 null,

@@ -290,6 +290,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        sink.clear();
         printToSink(sink, rs, null);
         TestUtils.assertEquals(message, expected, sink);
     }

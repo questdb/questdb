@@ -1846,25 +1846,25 @@ public class OrderedMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
             Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(Numbers.INT_NaN, record.getInt(keyColumnOffset + 2));
+                Assert.assertEquals(Numbers.INT_NULL, record.getInt(keyColumnOffset + 2));
             } else {
                 Assert.assertEquals(rnd.nextInt(), record.getInt(keyColumnOffset + 2));
             }
 
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(Numbers.LONG_NaN, record.getLong(keyColumnOffset + 3));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getLong(keyColumnOffset + 3));
             } else {
                 Assert.assertEquals(rnd.nextLong(), record.getLong(keyColumnOffset + 3));
             }
 
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(Numbers.LONG_NaN, record.getDate(keyColumnOffset + 4));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getDate(keyColumnOffset + 4));
             } else {
                 Assert.assertEquals(rnd.nextLong(), record.getDate(keyColumnOffset + 4));
             }
 
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(Numbers.LONG_NaN, record.getTimestamp(keyColumnOffset + 5));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getTimestamp(keyColumnOffset + 5));
             } else {
                 Assert.assertEquals(rnd.nextLong(), record.getTimestamp(keyColumnOffset + 5));
             }
@@ -1916,8 +1916,8 @@ public class OrderedMapTest extends AbstractCairoTest {
             }
 
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Hi(keyColumnOffset + 12));
-                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Lo(keyColumnOffset + 12));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getLong128Hi(keyColumnOffset + 12));
+                Assert.assertEquals(Numbers.LONG_NULL, record.getLong128Lo(keyColumnOffset + 12));
             } else {
                 Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(keyColumnOffset + 12));
                 Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(keyColumnOffset + 12));
@@ -2083,25 +2083,25 @@ public class OrderedMapTest extends AbstractCairoTest {
                 row.putShort(1, rnd.nextShort());
 
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putInt(2, Numbers.INT_NaN);
+                    row.putInt(2, Numbers.INT_NULL);
                 } else {
                     row.putInt(2, rnd.nextInt());
                 }
 
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putLong(3, Numbers.LONG_NaN);
+                    row.putLong(3, Numbers.LONG_NULL);
                 } else {
                     row.putLong(3, rnd.nextLong());
                 }
 
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putLong(4, Numbers.LONG_NaN);
+                    row.putLong(4, Numbers.LONG_NULL);
                 } else {
                     row.putDate(4, rnd.nextLong());
                 }
 
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putLong(5, Numbers.LONG_NaN);
+                    row.putLong(5, Numbers.LONG_NULL);
                 } else {
                     row.putTimestamp(5, rnd.nextLong());
                 }
@@ -2141,7 +2141,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
                 // UUID
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putLong128(12, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                    row.putLong128(12, Numbers.LONG_NULL, Numbers.LONG_NULL);
                 } else {
                     row.putLong128(12, rnd.nextLong(), rnd.nextLong());
                 }

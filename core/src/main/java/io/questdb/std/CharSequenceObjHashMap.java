@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.util.Arrays;
 import java.util.Comparator;
 
@@ -53,7 +55,7 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         list.clear();
     }
 
-    public V get(CharSequence key) {
+    public V get(@NotNull CharSequence key) {
         return valueAt(keyIndex(key));
     }
 
@@ -61,11 +63,11 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         return list;
     }
 
-    public boolean put(CharSequence key, V value) {
+    public boolean put(@NotNull CharSequence key, V value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public void putAll(CharSequenceObjHashMap<V> other) {
+    public void putAll(@NotNull CharSequenceObjHashMap<V> other) {
         CharSequence[] otherKeys = other.keys;
         V[] otherValues = other.values;
         for (int i = 0, n = otherKeys.length; i < n; i++) {
@@ -75,7 +77,7 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         }
     }
 
-    public boolean putAt(int index, CharSequence key, V value) {
+    public boolean putAt(int index, @NotNull CharSequence key, V value) {
         assert value != null;
         if (putAt0(index, key, value)) {
             list.add(key);

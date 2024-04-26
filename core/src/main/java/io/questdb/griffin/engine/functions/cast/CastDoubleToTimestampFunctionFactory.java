@@ -52,7 +52,7 @@ public class CastDoubleToTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final double value = arg.getDouble(rec);
-            return Double.isNaN(value) ? Numbers.LONG_NaN : (long) value;
+            return Numbers.isNull(value) ? Numbers.LONG_NULL : (long) value;
         }
     }
 }

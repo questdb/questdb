@@ -270,13 +270,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             Assert.assertTrue(isWalTable(tablePartitioned));
             String expected = "ts\twindspeed\ttimetocycle\n" +
                     "1990-01-01T02:13:20.000000Z\t3.0\t0.0\n" +
-                    "1990-01-01T05:00:00.000000Z\t4.0\tNaN\n";
+                    "1990-01-01T05:00:00.000000Z\t4.0\tnull\n";
             assertTable(expected, tablePartitioned);
 
             // WAL is not supported on non-partitioned tables, so we create a non-WAL table as a fallback.
             Assert.assertFalse(isWalTable(tableNonPartitioned));
             expected = "windspeed\ttimestamp\ttimetocycle\n" +
-                    "2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                    "2.0\t1989-12-31T23:26:40.000000Z\tnull\n" +
                     "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n";
             assertTable(expected, tableNonPartitioned);
         });
@@ -426,9 +426,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             String expected =
                     "windspeed\ttimestamp\ttimetocycle\n" +
-                            "2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                            "2.0\t1989-12-31T23:26:40.000000Z\tnull\n" +
                             "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
-                            "4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+                            "4.0\t1990-01-01T05:00:00.000000Z\tnull\n";
             assertTable(expected, "weather");
         });
     }
@@ -450,10 +450,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
             String expected =
                     "windspeed\ttimestamp\ttimetocycle\n" +
-                            "2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
-                            "1.0\t1990-01-01T00:00:00.000000Z\tNaN\n" +
+                            "2.0\t1989-12-31T23:26:40.000000Z\tnull\n" +
+                            "1.0\t1990-01-01T00:00:00.000000Z\tnull\n" +
                             "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
-                            "4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+                            "4.0\t1990-01-01T05:00:00.000000Z\tnull\n";
             assertTable(expected, "weather");
         });
     }
@@ -475,10 +475,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
             String expected =
                     "dir\twindspeed\ttimestamp\ttimetocycle\n" +
-                            "South\t2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
-                            "NA\t1.0\t1990-01-01T00:00:00.000000Z\tNaN\n" +
+                            "South\t2.0\t1989-12-31T23:26:40.000000Z\tnull\n" +
+                            "NA\t1.0\t1990-01-01T00:00:00.000000Z\tnull\n" +
                             "North\t3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
-                            "SSW\t4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+                            "SSW\t4.0\t1990-01-01T05:00:00.000000Z\tnull\n";
             assertTable(expected, "weather");
         });
     }
@@ -711,11 +711,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             assertEventually(() -> {
                 String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
-                        "west1\t10.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
-                        "west2\t20.0\t2016-06-13T17:43:50.100500Z\t\tNaN\n" +
-                        "east3\t30.0\t2016-06-13T17:43:50.100600Z\t\tNaN\n" +
-                        "west4\tNaN\t2016-06-13T17:43:50.100700Z\tsensor1\t40.0\n" +
-                        "south\t80.0\t2016-06-13T17:43:50.101000Z\t\tNaN\n";
+                        "west1\t10.0\t2016-06-13T17:43:50.100400Z\t\tnull\n" +
+                        "west2\t20.0\t2016-06-13T17:43:50.100500Z\t\tnull\n" +
+                        "east3\t30.0\t2016-06-13T17:43:50.100600Z\t\tnull\n" +
+                        "west4\tnull\t2016-06-13T17:43:50.100700Z\tsensor1\t40.0\n" +
+                        "south\t80.0\t2016-06-13T17:43:50.101000Z\t\tnull\n";
                 assertTable(expected, meteorology);
 
                 expected = "location\tsource\ttemp\ttimestamp\n" +
@@ -1439,10 +1439,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
             String expected =
                     "out\ttimestamp\tin\n" +
-                            "1.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
-                            "NaN\t1990-01-01T00:00:00.000000Z\t2.0\n" +
-                            "NaN\t1990-01-01T02:13:20.000000Z\t3.0\n" +
-                            "NaN\t1990-01-01T05:00:00.000000Z\t4.0\n";
+                            "1.0\t1989-12-31T23:26:40.000000Z\tnull\n" +
+                            "null\t1990-01-01T00:00:00.000000Z\t2.0\n" +
+                            "null\t1990-01-01T02:13:20.000000Z\t3.0\n" +
+                            "null\t1990-01-01T05:00:00.000000Z\t4.0\n";
             assertTable(expected, "up");
         });
     }
@@ -1803,7 +1803,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 Assert.assertTrue(isWalTable("doubles"));
             }
             String expected = "d0\td1\td2\td3\td4\td5\td6\tdNaN\tdmNan\tdInf\tdmInf\ttimestamp\n" +
-                    "0.0\t1.23E-10\t0.00123\t1.23E10\t12.3\t1.23E10\t12.3\tNaN\tNaN\tInfinity\t-Infinity\t1970-01-01T00:00:00.000000Z\n";
+                    "0.0\t1.23E-10\t0.00123\t1.23E10\t12.3\t1.23E10\t12.3\tnull\tnull\tnull\tnull\t1970-01-01T00:00:00.000000Z\n";
             assertTable(expected, "doubles");
         });
     }

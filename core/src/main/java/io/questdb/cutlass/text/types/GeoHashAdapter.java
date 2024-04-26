@@ -60,7 +60,7 @@ public final class GeoHashAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
-        row.putGeoStr(column, SqlKeywords.isNullKeyword(value) ? null : value.asAsciiCharSequence());
+        row.putGeoVarchar(column, SqlKeywords.isNullKeyword(value) ? null : value);
     }
 
     static {

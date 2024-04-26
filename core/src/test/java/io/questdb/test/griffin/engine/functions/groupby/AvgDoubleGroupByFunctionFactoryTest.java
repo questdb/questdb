@@ -43,7 +43,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
             ddl("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));");
             assertSql(
                     "sum\tavg\tmax\tmin\tksum\tnsum\tstddev_samp\n" +
-                            "44.0\t1.0\tInfinity\t1.0\t44.0\t44.0\t0.0\n", "select sum(1/val) , avg(1/val), max(1/val), min(1/val), ksum(1/val), nsum(1/val), stddev_samp(1/val) from test2"
+                            "44.0\t1.0\tnull\t1.0\t44.0\t44.0\t0.0\n", "select sum(1/val) , avg(1/val), max(1/val), min(1/val), ksum(1/val), nsum(1/val), stddev_samp(1/val) from test2"
             );
         });
     }
@@ -68,11 +68,11 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
             insert("insert into fill_options values(to_timestamp('2020-01-01:14:00:00', 'yyyy-MM-dd:HH:mm:ss'), 5);");
 
             assertQuery("ts\tmin\tmax\tavg\tstddev_samp\n" +
-                            "2020-01-01T10:00:00.000000Z\t1\t1\t1.0\tNaN\n" +
-                            "2020-01-01T11:00:00.000000Z\t2\t2\t2.0\tNaN\n" +
-                            "2020-01-01T12:00:00.000000Z\t3\t3\t3.0\tNaN\n" +
-                            "2020-01-01T13:00:00.000000Z\t4\t4\t4.0\tNaN\n" +
-                            "2020-01-01T14:00:00.000000Z\t5\t5\t5.0\tNaN\n",
+                            "2020-01-01T10:00:00.000000Z\t1\t1\t1.0\tnull\n" +
+                            "2020-01-01T11:00:00.000000Z\t2\t2\t2.0\tnull\n" +
+                            "2020-01-01T12:00:00.000000Z\t3\t3\t3.0\tnull\n" +
+                            "2020-01-01T13:00:00.000000Z\t4\t4\t4.0\tnull\n" +
+                            "2020-01-01T14:00:00.000000Z\t5\t5\t5.0\tnull\n",
                     "select ts, min(price) min, max(price) max, avg(price) avg, stddev_samp(price) stddev_samp\n" +
                             "from fill_options\n" +
                             "sample by 1h\n" +

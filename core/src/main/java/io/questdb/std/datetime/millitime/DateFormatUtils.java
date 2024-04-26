@@ -286,7 +286,7 @@ public class DateFormatUtils {
      */
     public static long parseDate(CharSequence value) throws NumericException {
         if (value == null) {
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
 
         final int hi = value.length();

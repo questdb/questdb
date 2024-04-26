@@ -98,7 +98,7 @@ public final class SerialCsvFileImporter implements Closeable {
 
         final long startMs = getCurrentTimeMs();
 
-        updateImportStatus(CopyTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
+        updateImportStatus(CopyTask.STATUS_STARTED, Numbers.LONG_NULL, Numbers.LONG_NULL, 0);
         setupTextLoaderFromModel();
 
         final int sqlCopyBufferSize = cairoEngine.getConfiguration().getSqlCopyBufferSize();

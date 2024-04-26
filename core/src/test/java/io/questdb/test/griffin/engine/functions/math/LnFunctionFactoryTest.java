@@ -37,7 +37,7 @@ public class LnFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLnDoubleNull() throws Exception {
-        assertLog("select ln(NaN)", "NaN\n");
+        assertLog("select ln(NaN)", "null\n");
     }
 
     @Test

@@ -53,7 +53,7 @@ public class CastIntToDateFunctionFactory implements FunctionFactory {
         @Override
         public long getDate(Record rec) {
             final int value = arg.getInt(rec);
-            return value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;
+            return value != Numbers.INT_NULL ? value : Numbers.LONG_NULL;
         }
     }
 }

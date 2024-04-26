@@ -351,8 +351,8 @@ class LineTcpMeasurementEvent implements Closeable {
                             final long entityValue = entity.getLongValue();
                             if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
                                 offset = buffer.addInt(offset, (int) entityValue);
-                            } else if (entityValue == Numbers.LONG_NaN) {
-                                offset = buffer.addInt(offset, Numbers.INT_NaN);
+                            } else if (entityValue == Numbers.LONG_NULL) {
+                                offset = buffer.addInt(offset, Numbers.INT_NULL);
                             } else {
                                 throw boundsError(entityValue, ColumnType.INT, tud.getTableNameUtf16(), nEntity);
                             }
@@ -362,7 +362,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             final long entityValue = entity.getLongValue();
                             if (entityValue >= Short.MIN_VALUE && entityValue <= Short.MAX_VALUE) {
                                 offset = buffer.addShort(offset, (short) entityValue);
-                            } else if (entityValue == Numbers.LONG_NaN) {
+                            } else if (entityValue == Numbers.LONG_NULL) {
                                 offset = buffer.addShort(offset, (short) 0);
                             } else {
                                 throw boundsError(entityValue, ColumnType.SHORT, tud.getTableNameUtf16(), nEntity);
@@ -373,7 +373,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             final long entityValue = entity.getLongValue();
                             if (entityValue >= Byte.MIN_VALUE && entityValue <= Byte.MAX_VALUE) {
                                 offset = buffer.addByte(offset, (byte) entityValue);
-                            } else if (entityValue == Numbers.LONG_NaN) {
+                            } else if (entityValue == Numbers.LONG_NULL) {
                                 offset = buffer.addByte(offset, (byte) 0);
                             } else {
                                 throw boundsError(entityValue, ColumnType.BYTE, tud.getTableNameUtf16(), nEntity);

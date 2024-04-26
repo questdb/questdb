@@ -638,14 +638,14 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\tnew_column\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n", tableName);
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tnull\n", tableName);
 
             fail.set(false);
             insert("insert into " + tableName +
                     " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\tnew_column\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tnull\n" +
                     "102\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t123\n", tableName);
         });
     }
@@ -867,7 +867,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             // No SQL applied
             assertSql("x\tsym\tts\tsym2\tabcd\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n", tableName.getTableName());
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tnull\n", tableName.getTableName());
         });
     }
 
@@ -1427,8 +1427,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql("x\tsym\tstr\tts\tsym2\tnew_column\n" +
-                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
-                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
+                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
+                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
                     "103\tdfd\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd\t1234\n", tableName);
         });
     }

@@ -66,19 +66,19 @@ public abstract class TimestampFunction implements ScalarFunction {
     @Override
     public final long getDate(Record rec) {
         final long value = getTimestamp(rec);
-        return value == Numbers.LONG_NaN ? value : value / 1000L;
+        return value == Numbers.LONG_NULL ? value : value / 1000L;
     }
 
     @Override
     public final double getDouble(Record rec) {
         final long val = getTimestamp(rec);
-        return val != Numbers.LONG_NaN ? val : Double.NaN;
+        return val != Numbers.LONG_NULL ? val : Double.NaN;
     }
 
     @Override
     public final float getFloat(Record rec) {
         final long val = getTimestamp(rec);
-        return val != Numbers.LONG_NaN ? val : Float.NaN;
+        return val != Numbers.LONG_NULL ? val : Float.NaN;
     }
 
     @Override

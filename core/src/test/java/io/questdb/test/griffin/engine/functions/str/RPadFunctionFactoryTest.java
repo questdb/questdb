@@ -47,8 +47,8 @@ public class RPadFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaNLength() throws SqlException {
-        call("abc", Numbers.INT_NaN).andAssert(null);
-        call("pqrs", Numbers.INT_NaN).andAssert(null);
+        call("abc", Numbers.INT_NULL).andAssert(null);
+        call("pqrs", Numbers.INT_NULL).andAssert(null);
     }
 
     @Test

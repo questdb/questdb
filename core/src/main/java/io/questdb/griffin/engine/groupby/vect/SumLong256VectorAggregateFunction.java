@@ -166,10 +166,10 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
             final long l2 = Unsafe.getUnsafe().getLong(address + offset + Long.BYTES * 2);
             final long l3 = Unsafe.getUnsafe().getLong(address + offset + Long.BYTES * 3);
 
-            boolean isNull = l0 == Numbers.LONG_NaN &&
-                    l1 == Numbers.LONG_NaN &&
-                    l2 == Numbers.LONG_NaN &&
-                    l3 == Numbers.LONG_NaN;
+            boolean isNull = l0 == Numbers.LONG_NULL &&
+                    l1 == Numbers.LONG_NULL &&
+                    l2 == Numbers.LONG_NULL &&
+                    l3 == Numbers.LONG_NULL;
 
             if (!isNull) {
                 Long256Util.add(sum, l0, l1, l2, l3);

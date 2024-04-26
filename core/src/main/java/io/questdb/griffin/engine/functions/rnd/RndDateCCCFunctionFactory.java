@@ -76,7 +76,7 @@ public class RndDateCCCFunctionFactory implements FunctionFactory {
         @Override
         public long getDate(Record rec) {
             if ((rnd.nextInt() % nanRate) == 1) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
             return lo + rnd.nextPositiveLong() % range;
         }

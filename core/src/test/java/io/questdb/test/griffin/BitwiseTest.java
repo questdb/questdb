@@ -36,12 +36,12 @@ public class BitwiseTest extends AbstractCairoTest {
 
     @Test
     public void testIntAndLeftNull() throws Exception {
-        assertBitwiseOp("select NaN & 4", "NaN\n");
+        assertBitwiseOp("select NaN & 4", "null\n");
     }
 
     @Test
     public void testIntAndRightNull() throws Exception {
-        assertBitwiseOp("select 2 & NaN", "NaN\n");
+        assertBitwiseOp("select 2 & NaN", "null\n");
     }
 
     @Test
@@ -51,7 +51,7 @@ public class BitwiseTest extends AbstractCairoTest {
 
     @Test
     public void testIntNotNull() throws Exception {
-        assertBitwiseOp("select ~cast(NaN as int)", "NaN\n");
+        assertBitwiseOp("select ~cast(NaN as int)", "null\n");
     }
 
     @Test
@@ -61,12 +61,12 @@ public class BitwiseTest extends AbstractCairoTest {
 
     @Test
     public void testIntOrLeftNull() throws Exception {
-        assertBitwiseOp("select NaN | 4", "NaN\n");
+        assertBitwiseOp("select NaN | 4", "null\n");
     }
 
     @Test
     public void testIntOrRightNull() throws Exception {
-        assertBitwiseOp("select 2 | NaN", "NaN\n");
+        assertBitwiseOp("select 2 | NaN", "null\n");
     }
 
     @Test
@@ -76,12 +76,12 @@ public class BitwiseTest extends AbstractCairoTest {
 
     @Test
     public void testIntXorLeftNull() throws Exception {
-        assertBitwiseOp("select NaN ^ 4", "NaN\n");
+        assertBitwiseOp("select NaN ^ 4", "null\n");
     }
 
     @Test
     public void testIntXorRightNull() throws Exception {
-        assertBitwiseOp("select 2 ^ NaN", "NaN\n");
+        assertBitwiseOp("select 2 ^ NaN", "null\n");
     }
 
     @Test
@@ -91,12 +91,12 @@ public class BitwiseTest extends AbstractCairoTest {
 
     @Test
     public void testLongAndLeftNull() throws Exception {
-        assertBitwiseOp("select NaN & 4L", "NaN\n");
+        assertBitwiseOp("select NaN & 4L", "null\n");
     }
 
     @Test
     public void testLongAndRightNull() throws Exception {
-        assertBitwiseOp("select 2L & NaN", "NaN\n");
+        assertBitwiseOp("select 2L & NaN", "null\n");
     }
 
     @Test
@@ -106,7 +106,7 @@ public class BitwiseTest extends AbstractCairoTest {
 
     @Test
     public void testLongNotNull() throws Exception {
-        assertBitwiseOp("select ~cast(NaN as long)", "NaN\n");
+        assertBitwiseOp("select ~cast(NaN as long)", "null\n");
     }
 
     @Test
@@ -116,12 +116,12 @@ public class BitwiseTest extends AbstractCairoTest {
 
     @Test
     public void testLongOrLeftNull() throws Exception {
-        assertBitwiseOp("select NaN | 4L", "NaN\n");
+        assertBitwiseOp("select NaN | 4L", "null\n");
     }
 
     @Test
     public void testLongOrRightNull() throws Exception {
-        assertBitwiseOp("select 2L | NaN", "NaN\n");
+        assertBitwiseOp("select 2L | NaN", "null\n");
     }
 
     @Test
@@ -131,12 +131,12 @@ public class BitwiseTest extends AbstractCairoTest {
 
     @Test
     public void testLongXorLeftNull() throws Exception {
-        assertBitwiseOp("select NaN ^ 4L", "NaN\n");
+        assertBitwiseOp("select NaN ^ 4L", "null\n");
     }
 
     @Test
     public void testLongXorRightNull() throws Exception {
-        assertBitwiseOp("select 2L ^ NaN", "NaN\n");
+        assertBitwiseOp("select 2L ^ NaN", "null\n");
     }
 
     private void assertBitwiseOp(String sql, String expected) throws Exception {

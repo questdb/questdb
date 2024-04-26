@@ -35,7 +35,6 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -122,7 +121,7 @@ public class StrFunctionTest {
 
     @Test
     public void testCastToDateNull() {
-        Assert.assertEquals(Numbers.LONG_NaN, new StrConstant(null).getDate(null));
+        Assert.assertEquals(Numbers.LONG_NULL, new StrConstant(null).getDate(null));
     }
 
     @Test
@@ -282,7 +281,7 @@ public class StrFunctionTest {
 
     @Test
     public void testCastToIntNull() {
-        Assert.assertEquals(Numbers.INT_NaN, new StrConstant(null).getInt(null));
+        Assert.assertEquals(Numbers.INT_NULL, new StrConstant(null).getInt(null));
     }
 
     @Test
@@ -327,7 +326,7 @@ public class StrFunctionTest {
 
     @Test
     public void testCastToLongNull() {
-        Assert.assertEquals(Numbers.LONG_NaN, new StrConstant(null).getLong(null));
+        Assert.assertEquals(Numbers.LONG_NULL, new StrConstant(null).getLong(null));
     }
 
     @Test
@@ -412,7 +411,7 @@ public class StrFunctionTest {
 
     @Test
     public void testCastToTimestampNull() {
-        Assert.assertEquals(Numbers.LONG_NaN, new StrConstant(null).getTimestamp(null));
+        Assert.assertEquals(Numbers.LONG_NULL, new StrConstant(null).getTimestamp(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

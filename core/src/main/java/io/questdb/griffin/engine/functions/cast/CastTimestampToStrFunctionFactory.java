@@ -64,7 +64,7 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
         public CharSequence getStrA(Record rec) {
             sinkA.clear();
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return null;
             }
             TimestampFormatUtils.appendDateTimeUSec(sinkA, value);
@@ -74,7 +74,7 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
         @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return;
             }
             TimestampFormatUtils.appendDateTimeUSec(utf16Sink, value);
@@ -84,7 +84,7 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return null;
             }
             TimestampFormatUtils.appendDateTimeUSec(sinkB, value);

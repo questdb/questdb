@@ -37,7 +37,7 @@ public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByF
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NaN) {
+        if (mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL) {
             computeFirst(mapValue, record, rowId);
         }
     }
@@ -50,13 +50,13 @@ public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByF
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcVal = srcValue.getTimestamp(valueIndex + 1);
-        if (srcVal == Numbers.LONG_NaN) {
+        if (srcVal == Numbers.LONG_NULL) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcVal);
         }

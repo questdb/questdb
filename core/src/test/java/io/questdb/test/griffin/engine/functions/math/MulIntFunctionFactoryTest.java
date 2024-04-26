@@ -34,12 +34,12 @@ import org.junit.Test;
 public class MulIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testBothNan() throws SqlException {
-        call(Numbers.INT_NaN, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+        call(Numbers.INT_NULL, Numbers.INT_NULL).andAssert(Numbers.INT_NULL);
     }
 
     @Test
     public void testLeftNan() throws SqlException {
-        call(Numbers.INT_NaN, 5).andAssert(Numbers.INT_NaN);
+        call(Numbers.INT_NULL, 5).andAssert(Numbers.INT_NULL);
     }
 
     @Test
@@ -49,7 +49,7 @@ public class MulIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testRightNan() throws SqlException {
-        call(123, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+        call(123, Numbers.INT_NULL).andAssert(Numbers.INT_NULL);
     }
 
     @Test

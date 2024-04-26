@@ -59,7 +59,7 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
                 return StrConstant.NULL;
             } else if (indexFunc.isConstant()) {
                 int index = indexFunc.getInt(null);
-                if (index == Numbers.INT_NaN) {
+                if (index == Numbers.INT_NULL) {
                     return StrConstant.NULL;
                 } else if (index == 0) {
                     throw SqlException.$(indexPosition, "field position must not be zero");
@@ -72,7 +72,7 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
         if (indexFunc.isConstant()) {
             int index = indexFunc.getInt(null);
-            if (index == Numbers.INT_NaN) {
+            if (index == Numbers.INT_NULL) {
                 return StrConstant.NULL;
             } else if (index == 0) {
                 throw SqlException.$(indexPosition, "field position must not be zero");
@@ -151,7 +151,7 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
             CharSequence str = strFunc.getStrA(rec);
             char delimiter = getDelimiter(rec);
             int index = getIndex(rec);
-            if (str == null || delimiter == CharConstant.ZERO.getChar(null) || index == Numbers.INT_NaN) {
+            if (str == null || delimiter == CharConstant.ZERO.getChar(null) || index == Numbers.INT_NULL) {
                 return null;
             }
             if (index == 0) {

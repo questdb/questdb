@@ -24,12 +24,12 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -63,7 +63,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int );");
             final String query = "select x1, sum(x1) from (select x x1 from y)";
-            final QueryModel model = compileModel(query, ExecutionModel.QUERY);
+            final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
@@ -84,7 +84,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int );");
             final String query = "select concat(lpad(cast(x1 as string), 5)), x1, sum(x1) from (select x x1 from y)";
-            final QueryModel model = compileModel(query, ExecutionModel.QUERY);
+            final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by concat, x1, sum(x1) sum from (select-virtual [concat(lpad(cast(x1,string),5)) concat, x1] concat(lpad(cast(x1,string),5)) concat, x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
@@ -109,7 +109,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int );");
             final String query = "select concat(lpad(cast(x1 as string), 5)), x1 from (select x x1 from y) group by x1";
-            final QueryModel model = compileModel(query, ExecutionModel.QUERY);
+            final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-virtual concat(lpad(cast(x1,string),5)) concat, x1 from (select-group-by [x1] x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
@@ -129,11 +129,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAliasAppearsInFuncArgs4() throws Exception {
-        // check aliases are case insensitive
+        // check aliases are case-insensitive
         assertMemoryLeak(() -> {
             ddl("create table y ( x int );");
             final String query = "select x1, sum(x1), max(X1) from (select x X1 from y)";
-            final QueryModel model = compileModel(query, ExecutionModel.QUERY);
+            final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by x1, sum(x1) sum, max(x1) max from (select-choose [x X1] x X1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
@@ -155,7 +155,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int );");
             final String query = "select sum(x1) from (select x x1 from y)";
-            final QueryModel model = compileModel(query, ExecutionModel.QUERY);
+            final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
@@ -176,7 +176,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int );");
             final String query = "select x1 from (select x x1 from y)";
-            final QueryModel model = compileModel(query, ExecutionModel.QUERY);
+            final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose x1 from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
             ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
             assert !aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
@@ -510,7 +510,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
 
             assertSql("CreateDate\tId\tTenantId\tUserId\tEventTypeId\tCreateDate1\tWorkflowEventId\tActionTypeId\tMessage\tCreateDate2\tWorkflowEventId1\tActionTypeId1\tMessage1\n" +
-                            "2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t24024\t19\t1\t2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t13\t2\t\t\tNaN\t\n",
+                            "2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t24024\t19\t1\t2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t13\t2\t\t\tnull\t\n",
 
                     "SELECT  *\n" +
                             "FROM    WorkflowEvent el\n" +
@@ -1347,8 +1347,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        Row forward scan\n" +
                     "        Frame forward scan on: t1\n");
 
-            try (RecordCursorFactory ignored = select(query, sqlExecutionContext)) {
-            }
+            Misc.free(select(query, sqlExecutionContext));
         });
     }
 
@@ -1370,8 +1369,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        Row forward scan\n" +
                     "        Frame forward scan on: t1\n");
 
-            try (RecordCursorFactory ignored = select(query, sqlExecutionContext)) {
-            }
+            Misc.free(select(query, sqlExecutionContext));
         });
     }
 
@@ -1393,8 +1391,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        Row forward scan\n" +
                     "        Frame forward scan on: t1\n");
 
-            try (RecordCursorFactory ignored = select(query, sqlExecutionContext)) {
-            }
+            Misc.free(select(query, sqlExecutionContext));
         });
     }
 
@@ -1450,10 +1447,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-    protected QueryModel compileModel(String query, int modelType) throws SqlException {
+    protected QueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
-            Assert.assertEquals(model.getModelType(), modelType);
+            Assert.assertEquals(model.getModelType(), ExecutionModel.QUERY);
             return (QueryModel) model;
         }
     }
