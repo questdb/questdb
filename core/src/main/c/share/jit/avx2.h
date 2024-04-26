@@ -129,7 +129,7 @@ namespace questdb::avx2 {
         c.mov(next_index_qword, qword_ptr(varsize_aux_address, input_index, offset_shift, 32));
         Ymm next_index_data = c.newYmm();
         c.vmovdqa(next_index_data, index_data);
-        c.pinsrq(next_index_data.xmm(), next_index_qword, 0);
+        c.vpinsrq(next_index_data.xmm(), next_index_data.xmm(), next_index_qword, 0);
         c.vpermq(next_index_data, next_index_data, 0b00111001);
 
         // Subtract the data at input_index from data at input_index + 1
@@ -198,10 +198,10 @@ namespace questdb::avx2 {
         }
 
         // Combine the four header values into length_data
-        c.pinsrq(length_data.xmm(), header_0, 0);
-        c.pinsrq(length_data.xmm(), header_1, 1);
-        c.pinsrq(next_index_data.xmm(), header_2, 0);
-        c.pinsrq(next_index_data.xmm(), header_3, 1);
+        c.vpinsrq(length_data.xmm(), length_data.xmm(), header_0, 0);
+        c.vpinsrq(length_data.xmm(), length_data.xmm(), header_1, 1);
+        c.vpinsrq(next_index_data.xmm(), next_index_data.xmm(), header_2, 0);
+        c.vpinsrq(next_index_data.xmm(), next_index_data.xmm(), header_3, 1);
         c.vinserti128(length_data, length_data, next_index_data.xmm(), 1);
 
         c.bind(l_nonzero);
