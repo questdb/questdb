@@ -348,7 +348,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
+        public Utf8Sink putNonAscii(long lo, long hi) {
             final int size = Bytes.checkedLoHiSize(lo, hi, 0);
             final long dest = getWriteAddress(size);
             Vect.memcpy(dest, lo, size);
@@ -492,7 +492,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         public int writeBytes(long srcAddr, int len) {
             assert len > 0;
             len = (int) Math.min(len, buffer.getWriteNAvailable());
-            putUtf8(srcAddr, srcAddr + len);
+            putNonAscii(srcAddr, srcAddr + len);
             return len;
         }
     }
@@ -560,8 +560,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
-            buffer.putUtf8(lo, hi);
+        public Utf8Sink putNonAscii(long lo, long hi) {
+            buffer.putNonAscii(lo, hi);
             return this;
         }
 
@@ -648,8 +648,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
-            buffer.putUtf8(lo, hi);
+        public Utf8Sink putNonAscii(long lo, long hi) {
+            buffer.putNonAscii(lo, hi);
             return this;
         }
 
