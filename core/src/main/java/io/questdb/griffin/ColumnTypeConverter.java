@@ -142,7 +142,9 @@ public class ColumnTypeConverter {
     ) {
         long symbolMapAddressRaw;
         columnSizesSink.setSrcOffsets(skipRows * Integer.BYTES, -1);
-        symbolMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * Integer.BYTES, rowCount * Integer.BYTES, false, memoryTag);
+        symbolMapAddressRaw = rowCount > 0 ?
+                TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * Integer.BYTES, rowCount * Integer.BYTES, false, memoryTag)
+                : 0;
 
         try {
             long symbolMapAddress = Math.abs(symbolMapAddressRaw);

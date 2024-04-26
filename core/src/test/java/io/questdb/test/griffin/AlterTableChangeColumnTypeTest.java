@@ -88,6 +88,41 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeMultipleTimesReleaseWriters() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            drainWalQueue();
+            engine.releaseInactive();
+            ddl("alter table x alter column ik type varchar", sqlExecutionContext);
+            ddl("alter table x alter column ik type string", sqlExecutionContext);
+            ddl("alter table x alter column ik type symbol index", sqlExecutionContext);
+            ddl("alter table x alter column ik type string", sqlExecutionContext);
+            drainWalQueue();
+
+            insert("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ik\nabc\n", "select ik from x limit -1");
+        });
+    }
+
+    @Test
+    public void testChangeSymbolToVarcharReleaseWriters() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            drainWalQueue();
+            engine.releaseInactive();
+            ddl("alter table x alter column ik type varchar", sqlExecutionContext);
+            drainWalQueue();
+
+            insert("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ik\nabc\n", "select ik from x limit -1");
+        });
+    }
+
+    @Test
     public void testChangeStringToIndexedSymbol() throws Exception {
         assertMemoryLeak(() -> {
             createX();

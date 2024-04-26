@@ -24,16 +24,35 @@
 
 package io.questdb.cairo;
 
-public interface DdlListener {
+import io.questdb.cairo.sql.RecordMetadata;
+import org.jetbrains.annotations.Nullable;
 
-    void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName);
+public class TableReaderMetadataColumn extends TableColumnMetadata {
+    private final int denseSymbolIndex;
+    private final int stableIndex;
 
-    void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName);
+    public TableReaderMetadataColumn(
+            String name,
+            int type,
+            boolean indexed,
+            int indexValueBlockCapacity,
+            boolean symbolTableStatic,
+            @Nullable RecordMetadata metadata,
+            int writerIndex,
+            boolean dedupKeyFlag,
+            int denseSymbolIndex,
+            int stableIndex
+    ) {
+        super(name, type, indexed, indexValueBlockCapacity, symbolTableStatic, metadata, writerIndex, dedupKeyFlag);
+        this.denseSymbolIndex = denseSymbolIndex;
+        this.stableIndex = stableIndex;
+    }
 
-    void onTableCreated(SecurityContext securityContext, TableToken tableToken);
+    public int getDenseSymbolIndex() {
+        return denseSymbolIndex;
+    }
 
-    void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken);
-
-    default void onColumnTypeChanged(SecurityContext securityContext, TableToken tableToken, CharSequence columnName, int oldColumnType, int newColumnType) {
+    public int getStableIndex() {
+        return stableIndex;
     }
 }

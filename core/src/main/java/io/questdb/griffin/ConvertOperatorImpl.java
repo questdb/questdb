@@ -49,6 +49,7 @@ public class ConvertOperatorImpl implements Closeable {
     private final long fileOpenOpts;
     private final Path path;
     private final PurgingOperator purgingOperator;
+    private final ColumnVersionWriter columnVersionWriter;
     private final int rootLen;
     private final TableWriter tableWriter;
     private final ColumnConversionOffsetSink noopConversionOffsetSink = new ColumnConversionOffsetSink() {
@@ -65,9 +66,10 @@ public class ConvertOperatorImpl implements Closeable {
     private SymbolMapReaderImpl symbolMapReader;
     private SymbolMapper symbolMapper;
 
-    public ConvertOperatorImpl(CairoConfiguration configuration, TableWriter tableWriter, Path path, int rootLen, PurgingOperator purgingOperator) {
+    public ConvertOperatorImpl(CairoConfiguration configuration, TableWriter tableWriter, ColumnVersionWriter columnVersionWriter, Path path, int rootLen, PurgingOperator purgingOperator) {
         this.configuration = configuration;
         this.tableWriter = tableWriter;
+        this.columnVersionWriter = columnVersionWriter;
         this.rootLen = rootLen;
         this.purgingOperator = purgingOperator;
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
@@ -80,7 +82,7 @@ public class ConvertOperatorImpl implements Closeable {
     public void close() throws IOException {
     }
 
-    public void convertColumn(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType) {
+    public void convertColumn(@NotNull CharSequence columnName, int existingColIndex, int existingType, int columnIndex, int newType, ColumnVersionWriter columnVersionWriter) {
         clear();
         partitionUpdated = 0;
         convertColumn0(columnName, existingColIndex, existingType, columnIndex, newType);
@@ -136,7 +138,7 @@ public class ConvertOperatorImpl implements Closeable {
                 final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
                 final long maxRow = tableWriter.getPartitionSize(partitionIndex);
 
-                final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, existingColIndex);
                 if (columnTop != -1) {
                     long rowCount = maxRow - columnTop;
                     long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
@@ -154,10 +156,6 @@ public class ConvertOperatorImpl implements Closeable {
                         srcVarFd = Numbers.decodeHighInt(srcFds);
                         dstFixFd = Numbers.decodeLowInt(dstFds);
                         dstVarFd = Numbers.decodeHighInt(dstFds);
-
-                        if (columnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {
-                            tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
-                        }
 
                         LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen))
                                 .$(", column=").$(columnName)
@@ -182,6 +180,13 @@ public class ConvertOperatorImpl implements Closeable {
                     long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);
                     purgingOperator.add(existingColIndex, existingColTxnVer, partitionTimestamp, partitionNameTxn);
                     partitionUpdated++;
+                }
+                if (columnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {
+                    if (columnTop != -1) {
+                        columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, columnTop);
+                    } else {
+                        columnVersionWriter.removeColumnTop(partitionTimestamp, columnIndex);
+                    }
                 }
             }
         } finally {
