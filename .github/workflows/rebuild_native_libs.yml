@@ -121,10 +121,10 @@ jobs:
           key: nativelibs-osx-${{ github.sha }}
   build-all-linux-amd64:
     runs-on: ubuntu-latest
-    # this is very bare container, we use it to restrict GLIBC to 2.28
+    # this is very bare container, we use it to restrict GLIBC to 2.25
     # everything has to be installed on it manually
     container:
-      image: debian:buster
+      image: debian:stretch
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchains (CXX/NASM/Rust)
