@@ -25,6 +25,7 @@
 package io.questdb.std.str;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -638,6 +639,38 @@ public final class Utf8s {
             }
         }
         return -1;
+    }
+
+    /**
+     * Returns the length of the UTF-8 sequence as the count of code points.
+     * NOTE: this number is different from the length of the equivalent Java String,
+     * which counts UTF-16 code words. A surrogate pair encodes one code point, but
+     * counts as two in the length of a Java String.
+     */
+    public static int length(Utf8Sequence value) {
+        if (value == null) {
+            return TableUtils.NULL_LEN;
+        }
+        final int size = value.size();
+
+        int continuationByteCount = 0;
+        int i = 0;
+        for (; i <= size - Long.BYTES; i += Long.BYTES) {
+            long c = value.longAt(i);
+            long x = c & 0x8080808080808080L;
+            long y = ~c << 1;
+            long swarDelta = x & y;
+            int delta = Long.bitCount(swarDelta);
+            continuationByteCount += delta;
+        }
+        for (; i < size; i++) {
+            int c = value.byteAt(i);
+            int x = c & 0x80;
+            int y = ~c << 1;
+            int delta = (x & y) >>> 7;
+            continuationByteCount += delta;
+        }
+        return size - continuationByteCount;
     }
 
     /**
