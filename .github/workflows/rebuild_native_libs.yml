@@ -30,6 +30,7 @@ jobs:
           git status
       - name: Copy Rust Library to the final directory
         run: |
+          mkdir -p core/src/main/resources/io/questdb/bin/windows
           cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
       - name: Save Windows Rust Library to Cache
         uses: actions/cache/save@v3
@@ -94,10 +95,12 @@ jobs:
       - name: Copy darwin-aarch64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-14' }}
         run: |
+          mkdir -p core/src/main/resources/io/questdb/bin/armosx/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/armosx/
       - name: Copy darwin-amd64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-latest' }}
         run: |
+          mkdir -p core/src/main/resources/io/questdb/bin/osx/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/osx/
       - name: Save darwin-aarch64 Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
@@ -153,6 +156,7 @@ jobs:
           cd core/rust/qdbr
           cargo clean
           cargo build --release
+          mkdir -p ../../src/main/resources/io/questdb/bin/linux/
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
       - name: Save linux-amd64 Libraries to Cache
         uses: actions/cache/save@v3
@@ -192,6 +196,7 @@ jobs:
           cd core/rust/qdbr
           cargo clean
           cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
+          mkdir -p ../../src/main/resources/io/questdb/bin/armlinux/
           cp target/aarch64-unknown-linux-gnu/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/
       - name: Check git status
         run: |
