@@ -178,12 +178,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 } else {
                     int toIndex = valueSet.keyIndex(value);
                     if (toIndex > -1) {
-                        int index = this.valueSet.keyIndex(value);
-                        if (index < 0) {
-                            valueSet.addAt(toIndex, this.valueSet.keyAt(index));
-                        } else {
-                            valueSet.addAt(toIndex, Chars.toString(value));
-                        }
+                        valueSet.addAt(toIndex, Chars.toString(value));
                     }
                 }
             }

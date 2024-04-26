@@ -28,6 +28,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -77,23 +78,23 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         list.clear();
     }
 
-    public boolean contains(DirectUtf8Sequence key) {
+    public boolean contains(@NotNull DirectUtf8Sequence key) {
         return keyIndex(key) < 0;
     }
 
-    public boolean excludes(DirectUtf8Sequence key) {
+    public boolean excludes(@NotNull DirectUtf8Sequence key) {
         return keyIndex(key) > -1;
     }
 
-    public V get(DirectUtf8Sequence key) {
+    public V get(@NotNull DirectUtf8Sequence key) {
         return valueAt(keyIndex(key));
     }
 
-    public V get(Utf8String key) {
+    public V get(@NotNull Utf8String key) {
         return valueAt(keyIndex(key));
     }
 
-    public int keyIndex(DirectUtf8Sequence key) {
+    public int keyIndex(@NotNull DirectUtf8Sequence key) {
         int hashCode = Hash.hashUtf8(key);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
@@ -105,7 +106,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         return probe(key, hashCode, index);
     }
 
-    public int keyIndex(Utf8String key) {
+    public int keyIndex(@NotNull Utf8String key) {
         int hashCode = Hash.hashUtf8(key);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
@@ -121,15 +122,15 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         return list;
     }
 
-    public boolean put(Utf8String key, V value) {
+    public boolean put(@NotNull Utf8String key, V value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean put(DirectUtf8String key, V value) {
+    public boolean put(@NotNull DirectUtf8String key, V value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean putAt(int index, Utf8String key, V value) {
+    public boolean putAt(int index, @NotNull Utf8String key, V value) {
         assert value != null;
         if (index < 0) {
             values[-index - 1] = value;
@@ -145,7 +146,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         return true;
     }
 
-    public boolean putAt(int index, DirectUtf8String key, V value) {
+    public boolean putAt(int index, @NotNull DirectUtf8String key, V value) {
         assert value != null;
         if (index < 0) {
             values[-index - 1] = value;
@@ -162,7 +163,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         return true;
     }
 
-    public int remove(Utf8String key) {
+    public int remove(@NotNull Utf8String key) {
         int index = keyIndex(key);
         if (index < 0) {
             removeAt(index);
