@@ -73,7 +73,7 @@ jobs:
     strategy:
       matrix:
         # macos-14 = ARM M1
-        # macos-latest = x64
+        # macos-13 = x64
         # if you change OS definitions then you need to change conditions in cache-save steps below
         os: [ macos-14, macos-13 ]
     runs-on: ${{ matrix.os }}
