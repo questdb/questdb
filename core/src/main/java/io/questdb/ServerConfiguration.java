@@ -33,10 +33,9 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.ObjObjHashMap;
-import org.jetbrains.annotations.Nullable;
 
 public interface ServerConfiguration {
+    String OSS = "OSS";
 
     CairoConfiguration getCairoConfiguration();
 
@@ -54,14 +53,14 @@ public interface ServerConfiguration {
 
     PGWireConfiguration getPGWireConfiguration();
 
+    default String getReleaseType() {
+        return OSS;
+    }
+
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 
     WorkerPoolConfiguration getWorkerPoolConfiguration();
 
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {
-    }
-
-    default boolean isLineTcpEnabled() {
-        return true;
     }
 }
