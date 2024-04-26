@@ -25,8 +25,10 @@
 package io.questdb.test;
 
 import io.questdb.*;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacadeImpl;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
@@ -42,11 +44,12 @@ import java.util.Properties;
 
 public class DynamicPropServerConfigurationTest extends AbstractTest {
 
+    SOCountDownLatch latch;
+    File serverConf;
+    Path serverConfPath;
+
     @Test
     public void TestPgWireCredentialsReloadByDeletingProp() throws Exception {
-        Path serverConfPath = Path.of(temp.getRoot().getAbsolutePath(), "dbroot", "conf", "server.conf");
-        Files.createDirectories(serverConfPath.getParent());
-        File serverConf = serverConfPath.toFile();
         try (FileWriter w = new FileWriter(serverConf)) {
             w.write("pg.user=steven\n");
             w.write("pg.password=sklar\n");
@@ -64,25 +67,20 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 w.write("\n");
             }
 
-            // todo: Somehow synchronize the config reloader callback with this test
-            Thread.sleep(2000);
+            latch.await();
+
             try (Connection conn = getConnection("admin", "quest")) {
                 Assert.assertFalse(conn.isClosed());
             }
-
         }
     }
 
     @Test
     public void TestPgWireCredentialsReloadWithChangedProp() throws Exception {
-        Path serverConfPath = Path.of(temp.getRoot().getAbsolutePath(), "dbroot", "conf", "server.conf");
-        Files.createDirectories(serverConfPath.getParent());
-        File serverConf = serverConfPath.toFile();
         try (FileWriter w = new FileWriter(serverConf)) {
             w.write("pg.user=steven\n");
             w.write("pg.password=sklar\n");
         }
-
 
         try (ServerMain serverMain = new ServerMain(getBootstrap())) {
             serverMain.start();
@@ -96,8 +94,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 w.write("pg.password=ralks\n");
             }
 
-            // todo: Somehow synchronize the config reloader callback with this test
-            Thread.sleep(2000);
+            latch.await();
+
             try (Connection conn = getConnection("nevets", "ralks")) {
                 Assert.assertFalse(conn.isClosed());
             }
@@ -109,7 +107,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     @Test
     public void TestPgWireCredentialsReloadWithChangedPropAfterRecreatedFile() throws Exception {
-        Path serverConfPath = Path.of(temp.getRoot().getAbsolutePath(), "dbroot", "conf", "server.conf");
+
         try (ServerMain serverMain = new ServerMain(getBootstrap())) {
             serverMain.start();
 
@@ -117,7 +115,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 Assert.assertFalse(conn.isClosed());
             }
 
-            File serverConf = serverConfPath.toFile();
             Assert.assertTrue(serverConf.delete());
             Assert.assertTrue(serverConf.createNewFile());
 
@@ -125,7 +122,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 w.write("pg.user=steven\n");
                 w.write("pg.password=sklar\n");
             }
-            Thread.sleep(2000);
+
+            latch.await();
 
             try (Connection conn = getConnection("steven", "sklar")) {
                 Assert.assertFalse(conn.isClosed());
@@ -138,11 +136,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     @Test
     public void TestPgWireCredentialsReloadWithNewProp() throws Exception {
         try (ServerMain serverMain = new ServerMain(getBootstrap())) {
-
-            Path serverConfPath = Path.of(temp.getRoot().getAbsolutePath(), "dbroot", "conf", "server.conf");
-            File serverConf = serverConfPath.toFile();
-            Assert.assertTrue(serverConf.exists());
-
             serverMain.start();
 
             try (Connection conn = getConnection("admin", "quest")) {
@@ -154,8 +147,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 w.write("pg.password=sklar\n");
             }
 
-            // todo: Somehow synchronize the config reloader callback with this test
-            Thread.sleep(2000);
+            latch.await();
 
             try (Connection conn = getConnection("steven", "sklar")) {
                 Assert.assertFalse(conn.isClosed());
@@ -198,6 +190,20 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         };
     }
 
+    @Before
+    public void setUp() {
+        latch = new SOCountDownLatch(1);
+        serverConfPath = Path.of(temp.getRoot().getAbsolutePath(), "dbroot", "conf", "server.conf");
+        try {
+            Files.createDirectories(serverConfPath.getParent());
+            serverConf = serverConfPath.toFile();
+            Assert.assertTrue(serverConf.createNewFile());
+        } catch (Exception e) {
+            Assert.fail(e.getMessage());
+        }
+        Assert.assertTrue(serverConf.exists());
+    }
+
     private static Connection getConnection(String user, String pass) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", user);
@@ -225,7 +231,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             }
 
             delegate.onFileEvent();
-            // todo: synchronize here
+            latch.countDown();
 
         }
 
