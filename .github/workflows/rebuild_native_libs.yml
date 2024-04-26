@@ -124,9 +124,9 @@ jobs:
     # this is very bare container, we use it to restrict GLIBC to 2.28
     # everything has to be installed on it manually
     container:
-      image: debian:buster
+      image: amazonlinux:2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v2
       - name: Install toolchains (CXX/NASM/Rust)
         run: |
           ldd --version
