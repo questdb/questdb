@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.maxDayOfMonth;
@@ -38,7 +38,7 @@ public class WeekOfYearFunctionFactoryTest extends AbstractCairoTest {
     public void testNull() throws Exception {
         assertQuery(
                 "week_of_year\n" +
-                        "NaN\n",
+                        "null\n",
                 "select week_of_year(null)",
                 null,
                 null,

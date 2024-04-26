@@ -33,7 +33,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -727,7 +730,7 @@ public class InsertTest extends AbstractCairoTest {
                     method.commit();
                 }
             }
-            String expected = "ts\ti\n" + "2010-01-04T10:00:00.000000Z\t1\n" + "2073-05-21T13:35:00.000000Z\tNaN\n";
+            String expected = "ts\ti\n" + "2010-01-04T10:00:00.000000Z\t1\n" + "2073-05-21T13:35:00.000000Z\tnull\n";
             assertReaderCheckWal(expected, "t");
         });
     }
@@ -992,7 +995,15 @@ public class InsertTest extends AbstractCairoTest {
     public void testInsertTimestampWithTimeZone_varchar() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table t (timestamp timestamp) timestamp(timestamp);");
-            insert("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00'::varchar)");
+
+            // We cannot cast '2020-12-31 15:15:51.663+00:00'::varchar,
+            // because it will act as (timestamp with time zone '2020-12-31 15:15:51.663+00:00')::varchar
+            // This creates a varchar constant whose value is the string representation of the timestamp in microseconds
+            // since the epoch. And such string constants cannot be inserted as timestamps. Only actual string/varchar timestamps
+            // can be inserted into a timestamp column.
+            // If you cast '2020-12-31 15:15:51.663+00:00'::string then it fails too.
+            // thus Varchar behaves the same as String in this case.
+            insert("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00')");
 
             String expected1 = "timestamp\n" + "2020-12-31T15:15:51.663000Z\n";
 
@@ -1055,11 +1066,11 @@ public class InsertTest extends AbstractCairoTest {
 
             ddl("insert into dest select ts, vch, vch, vch, vch, vch, vch, vch, vch, vch2, vch3, vch3, vch from src;");
 
-            String expected = "ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym\n" + "1970-01-01T00:00:00.000000Z\t1\t1\t1\t1\t1\t1\t1.0000\t1.0\t11111111-1111-1111-1111-111111111111\t2022-11-20T10:30:55.123Z\t2022-11-20T10:30:55.123000Z\t1\n" + "1970-01-01T00:00:00.020000Z\t\tNaN\t0\tNaN\t0\t\tNaN\tNaN\t\t\t\t\n" + "1970-01-01T00:00:00.030000Z\t2\t2\t2\t2\t2\t2\t2.0000\t2.0\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t1969-12-31T23:59:59.100Z\t1969-12-31T23:59:59.999100Z\t2\n";
+            String expected = "ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym\n" + "1970-01-01T00:00:00.000000Z\t1\t1\t1\t1\t1\t1\t1.0000\t1.0\t11111111-1111-1111-1111-111111111111\t2022-11-20T10:30:55.123Z\t2022-11-20T10:30:55.123000Z\t1\n" + "1970-01-01T00:00:00.020000Z\t\tnull\t0\tnull\t0\t\tnull\tnull\t\t\t\t\n" + "1970-01-01T00:00:00.030000Z\t2\t2\t2\t2\t2\t2\t2.0000\t2.0\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t1969-12-31T23:59:59.100Z\t1969-12-31T23:59:59.999100Z\t2\n";
             assertQueryCheckWal(expected);
 
             // check varchar null was inserted as a null string and not as an empty string
-            assertQuery("ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym\n" + "1970-01-01T00:00:00.020000Z\t\tNaN\t0\tNaN\t0\t\tNaN\tNaN\t\t\t\t\n", "select * from dest where s is null", "ts", true, false);
+            assertQuery("ts\ts\tl\tsh\ti\tb\tc\tf\td\tu\tdt\tts2\tsym\n" + "1970-01-01T00:00:00.020000Z\t\tnull\t0\tnull\t0\t\tnull\tnull\t\t\t\t\n", "select * from dest where s is null", "ts", true, false);
         });
     }
 

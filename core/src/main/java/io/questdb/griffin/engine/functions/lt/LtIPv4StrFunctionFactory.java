@@ -87,13 +87,7 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            if (constIPv4 != Numbers.IPv4_NULL) {
-                int ipv4 = arg.getIPv4(rec);
-                if (ipv4 != Numbers.IPv4_NULL) {
-                    return negated == (Numbers.ipv4ToLong(ipv4) >= Numbers.ipv4ToLong(constIPv4));
-                }
-            }
-            return false;
+            return Numbers.lessThanIPv4(arg.getIPv4(rec), constIPv4, negated);
         }
 
         @Override
@@ -120,13 +114,7 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            if (constIPv4 != Numbers.IPv4_NULL) {
-                int ipv4 = ipv4Func.getIPv4(rec);
-                if (ipv4 != Numbers.IPv4_NULL) {
-                    return negated == (Numbers.ipv4ToLong(ipv4) >= Numbers.ipv4ToLong(constIPv4));
-                }
-            }
-            return false;
+            return Numbers.lessThanIPv4(ipv4Func.getIPv4(rec), constIPv4, negated);
         }
 
         @Override

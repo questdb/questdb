@@ -72,7 +72,7 @@ public class IPv4PlusIntFunctionFactory implements FunctionFactory {
             if (sum >> 32 != 0) {
                 return Numbers.IPv4_NULL;
             }
-            return l != Numbers.IPv4_NULL && r != Numbers.INT_NaN ? (int) sum : Numbers.IPv4_NULL;
+            return l != Numbers.IPv4_NULL && r != Numbers.INT_NULL ? (int) sum : Numbers.IPv4_NULL;
         }
 
         @Override

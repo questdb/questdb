@@ -63,7 +63,7 @@ public final class IntAdapter extends AbstractTypeAdapter implements TimestampCo
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        row.putInt(column, SqlKeywords.isNullKeyword(value) ? Numbers.INT_NaN : parseInt(value));
+        row.putInt(column, SqlKeywords.isNullKeyword(value) ? Numbers.INT_NULL : parseInt(value));
     }
 
     private int parseInt(DirectUtf8Sequence value) throws NumericException {

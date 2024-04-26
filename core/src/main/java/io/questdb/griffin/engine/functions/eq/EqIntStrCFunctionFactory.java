@@ -54,7 +54,7 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
         try {
             final CharSequence value = args.getQuick(1).getStrA(null);
             if (value == null) {
-                return new Func(args.getQuick(0), Numbers.INT_NaN);
+                return new Func(args.getQuick(0), Numbers.INT_NULL);
             }
             return new Func(args.getQuick(0), Numbers.parseInt(value));
         } catch (NumericException e) {
@@ -88,7 +88,7 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
                 sink.val('!');
             }
             sink.val('=');
-            if (right != Numbers.INT_NaN) {
+            if (right != Numbers.INT_NULL) {
                 sink.val(right);
             } else {
                 sink.val("null");

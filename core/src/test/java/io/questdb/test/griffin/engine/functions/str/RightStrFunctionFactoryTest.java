@@ -144,7 +144,7 @@ public class RightStrFunctionFactoryTest extends AbstractCairoTest {
         assertQuery(
                 "k\tn\tright\n" +
                         "JWCPSWHYRXPEHNRX\t5\tEHNRX\n" +
-                        "\tNaN\t\n" +
+                        "\tnull\t\n" +
                         "IBBTGPGWFFYUDEY\t15\tIBBTGPGWFFYUDEY\n" +
                         "BHFOWLPDXY\t-1\tHFOWLPDXY\n" +
                         "UOJSHRUEDRQQULO\t9\tUEDRQQULO\n" +

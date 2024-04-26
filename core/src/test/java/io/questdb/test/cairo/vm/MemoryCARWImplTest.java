@@ -266,7 +266,7 @@ public class MemoryCARWImplTest {
     public void testDeadCodeForUtf8() {
         try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
             try {
-                mem.putStrUtf8(null, true);
+                mem.putStrUtf8(null);
                 Assert.fail();
             } catch (UnsupportedOperationException ignored) {
             }
@@ -656,10 +656,10 @@ public class MemoryCARWImplTest {
             long offset = 0;
             for (int i = 0; i < N; i++) {
                 mem.getLong256(offset, long256);
-                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong0());
-                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong1());
-                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong2());
-                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong3());
+                Assert.assertEquals(Numbers.LONG_NULL, long256.getLong0());
+                Assert.assertEquals(Numbers.LONG_NULL, long256.getLong1());
+                Assert.assertEquals(Numbers.LONG_NULL, long256.getLong2());
+                Assert.assertEquals(Numbers.LONG_NULL, long256.getLong3());
                 mem.getLong256(offset, sink);
                 Assert.assertEquals(0, sink.length());
                 offset += Long256.BYTES;

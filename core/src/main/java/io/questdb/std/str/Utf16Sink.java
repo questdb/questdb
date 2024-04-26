@@ -117,7 +117,7 @@ public interface Utf16Sink extends CharSink<Utf16Sink> {
         return put(cs);
     }
 
-    default Utf16Sink putUtf8(long lo, long hi) {
+    default Utf16Sink putNonAscii(long lo, long hi) {
         Utf8s.utf8ToUtf16(lo, hi, this);
         return this;
     }

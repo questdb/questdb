@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
-import org.jetbrains.annotations.NotNull;
 
 // contiguous readable
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
@@ -122,14 +121,12 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     }
 
     @Override
-    @NotNull
-    public Utf8Sequence getVarcharA(long offset, int size, boolean ascii) {
+    public DirectUtf8Sequence getVarcharA(long offset, int size, boolean ascii) {
         return getVarchar(offset, size, utf8viewA, ascii);
     }
 
     @Override
-    @NotNull
-    public Utf8Sequence getVarcharB(long offset, int size, boolean ascii) {
+    public DirectUtf8Sequence getVarcharB(long offset, int size, boolean ascii) {
         return getVarchar(offset, size, utf8viewB, ascii);
     }
 

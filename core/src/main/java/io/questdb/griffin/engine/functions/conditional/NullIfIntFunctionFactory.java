@@ -64,7 +64,7 @@ public class NullIfIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return intFunc1.getInt(rec) == intFunc2.getInt(rec) ? Numbers.INT_NaN : intFunc1.getInt(rec);
+            return intFunc1.getInt(rec) == intFunc2.getInt(rec) ? Numbers.INT_NULL : intFunc1.getInt(rec);
         }
 
         @Override

@@ -63,8 +63,8 @@ public class SignIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             int val = arg.getInt(rec);
-            if (Numbers.INT_NaN == val) {
-                return Numbers.INT_NaN;
+            if (Numbers.INT_NULL == val) {
+                return Numbers.INT_NULL;
             }
 
             return Integer.signum(val);

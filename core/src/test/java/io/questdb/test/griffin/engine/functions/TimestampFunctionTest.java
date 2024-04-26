@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.Utf16Sink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -128,7 +127,7 @@ public class TimestampFunctionTest {
         final TimestampFunction function = new TimestampFunction() {
             @Override
             public long getTimestamp(Record rec) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
 
             @Override
@@ -140,7 +139,7 @@ public class TimestampFunctionTest {
                 return true;
             }
         };
-        Assert.assertEquals(Numbers.LONG_NaN, function.getDate(null));
+        Assert.assertEquals(Numbers.LONG_NULL, function.getDate(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

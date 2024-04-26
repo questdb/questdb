@@ -61,7 +61,7 @@ public class LeftStrFunctionFactory implements FunctionFactory {
         final Function countFunc = args.getQuick(1);
         if (countFunc.isConstant()) {
             int count = countFunc.getInt(null);
-            if (count != Numbers.INT_NaN) {
+            if (count != Numbers.INT_NULL) {
                 return new ConstCountFunc(strFunc, count);
             } else {
                 return StrConstant.NULL;
@@ -171,7 +171,7 @@ public class LeftStrFunctionFactory implements FunctionFactory {
         public void getStr(Record rec, Utf16Sink utf16Sink) {
             final CharSequence str = strFunc.getStrA(rec);
             final int count = countFunc.getInt(rec);
-            if (str != null && count != Numbers.INT_NaN) {
+            if (str != null && count != Numbers.INT_NULL) {
                 final int len = str.length();
                 final int pos = getPos(len, count);
                 utf16Sink.put(str, 0, pos);
@@ -192,7 +192,7 @@ public class LeftStrFunctionFactory implements FunctionFactory {
         public int getStrLen(Record rec) {
             int count = countFunc.getInt(rec);
             int len = strFunc.getStrLen(rec);
-            if (len != TableUtils.NULL_LEN && count != Numbers.INT_NaN) {
+            if (len != TableUtils.NULL_LEN && count != Numbers.INT_NULL) {
                 return getPos(len, count);
             }
             return TableUtils.NULL_LEN;
@@ -202,7 +202,7 @@ public class LeftStrFunctionFactory implements FunctionFactory {
         private StringSink getStr0(Record rec, StringSink sink) {
             final CharSequence str = strFunc.getStrA(rec);
             final int count = countFunc.getInt(rec);
-            if (str != null && count != Numbers.INT_NaN) {
+            if (str != null && count != Numbers.INT_NULL) {
                 final int len = str.length();
                 final int pos = getPos(len, count);
                 sink.clear();

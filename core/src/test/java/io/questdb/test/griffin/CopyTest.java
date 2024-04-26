@@ -411,25 +411,25 @@ public class CopyTest extends AbstractCairoTest {
         CopyRunnable test = () -> {
             String query = "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log";
             assertSql("phase\tstatus\trows_handled\trows_imported\terrors\n" +
-                    "\tstarted\tNaN\tNaN\t0\n" +
-                    "analyze_file_structure\tstarted\tNaN\tNaN\t0\n" +
-                    "analyze_file_structure\tfinished\tNaN\tNaN\t0\n" +
-                    "boundary_check\tstarted\tNaN\tNaN\t0\n" +
-                    "boundary_check\tfinished\tNaN\tNaN\t0\n" +
-                    "indexing\tstarted\tNaN\tNaN\t0\n" +
-                    "indexing\tfinished\tNaN\tNaN\t0\n" +
-                    "partition_import\tstarted\tNaN\tNaN\t0\n" +
-                    "partition_import\tfinished\tNaN\tNaN\t0\n" +
-                    "symbol_table_merge\tstarted\tNaN\tNaN\t0\n" +
-                    "symbol_table_merge\tfinished\tNaN\tNaN\t0\n" +
-                    "update_symbol_keys\tstarted\tNaN\tNaN\t0\n" +
-                    "update_symbol_keys\tfinished\tNaN\tNaN\t0\n" +
-                    "build_symbol_index\tstarted\tNaN\tNaN\t0\n" +
-                    "build_symbol_index\tfinished\tNaN\tNaN\t0\n" +
-                    "move_partitions\tstarted\tNaN\tNaN\t0\n" +
-                    "move_partitions\tfinished\tNaN\tNaN\t0\n" +
-                    "attach_partitions\tstarted\tNaN\tNaN\t0\n" +
-                    "attach_partitions\tfinished\tNaN\tNaN\t0\n" +
+                    "\tstarted\tnull\tnull\t0\n" +
+                    "analyze_file_structure\tstarted\tnull\tnull\t0\n" +
+                    "analyze_file_structure\tfinished\tnull\tnull\t0\n" +
+                    "boundary_check\tstarted\tnull\tnull\t0\n" +
+                    "boundary_check\tfinished\tnull\tnull\t0\n" +
+                    "indexing\tstarted\tnull\tnull\t0\n" +
+                    "indexing\tfinished\tnull\tnull\t0\n" +
+                    "partition_import\tstarted\tnull\tnull\t0\n" +
+                    "partition_import\tfinished\tnull\tnull\t0\n" +
+                    "symbol_table_merge\tstarted\tnull\tnull\t0\n" +
+                    "symbol_table_merge\tfinished\tnull\tnull\t0\n" +
+                    "update_symbol_keys\tstarted\tnull\tnull\t0\n" +
+                    "update_symbol_keys\tfinished\tnull\tnull\t0\n" +
+                    "build_symbol_index\tstarted\tnull\tnull\t0\n" +
+                    "build_symbol_index\tfinished\tnull\tnull\t0\n" +
+                    "move_partitions\tstarted\tnull\tnull\t0\n" +
+                    "move_partitions\tfinished\tnull\tnull\t0\n" +
+                    "attach_partitions\tstarted\tnull\tnull\t0\n" +
+                    "attach_partitions\tfinished\tnull\tnull\t0\n" +
                     "\tfinished\t1000\t1000\t0\n", query);
         };
 
@@ -518,7 +518,7 @@ public class CopyTest extends AbstractCairoTest {
                 "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
                 "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
                 "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
-                "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
+                "CMP1\t7\t4486\tnull\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
                 "CMP2\t2\t6641\t0.0381825352087617\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
                 "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
                 "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
@@ -532,7 +532,7 @@ public class CopyTest extends AbstractCairoTest {
                 "CMP2\t4\t1253\t0.541768460534513\t2015-02-16T19:15:09.000Z\t2015-02-16T19:15:09.000Z\t2015-02-16T00:00:00.000Z\t4377\ttrue\t21383690\n" +
                 "CMP1\t4\t268\t3.09822975890711\t2015-02-17T19:15:09.000Z\t2015-02-17T19:15:09.000Z\t2015-02-17T00:00:00.000Z\t669\tfalse\t71326228\n" +
                 "CMP2\t8\t5548\t3.7650444637984\t2015-02-18T19:15:09.000Z\t2015-02-18T19:15:09.000Z\t2015-02-18T00:00:00.000Z\t7369\ttrue\t82105548\n" +
-                "CMP1\t4\tNaN\t9.31892040651292\t2015-02-19T19:15:09.000Z\t2015-02-19T19:15:09.000Z\t2015-02-19T00:00:00.000Z\t2022\tfalse\t16097569\n" +
+                "CMP1\t4\tnull\t9.31892040651292\t2015-02-19T19:15:09.000Z\t2015-02-19T19:15:09.000Z\t2015-02-19T00:00:00.000Z\t2022\tfalse\t16097569\n" +
                 "CMP2\t1\t1670\t9.44043743424118\t2015-02-20T19:15:09.000Z\t2015-02-20T19:15:09.000Z\t2015-02-20T00:00:00.000Z\t3235\ttrue\t88917951\n" +
                 "CMP1\t7\t5534\t5.78428176697344\t2015-02-21T19:15:09.000Z\t2015-02-21T19:15:09.000Z\t2015-02-21T00:00:00.000Z\t9650\tfalse\t10261372\n" +
                 "CMP2\t5\t8085\t5.49041963648051\t2015-02-22T19:15:09.000Z\t2015-02-22T19:15:09.000Z\t2015-02-22T00:00:00.000Z\t2211\ttrue\t28722529\n" +
@@ -605,15 +605,15 @@ public class CopyTest extends AbstractCairoTest {
                 "CMP1\t2\t5487\t3.5918223625049\t2015-04-30T19:15:09.000Z\t2015-04-30T19:15:09.000Z\t2015-04-30T00:00:00.000Z\t1421\tfalse\t60850489\n" +
                 "CMP2\t8\t4391\t2.72367869038135\t2015-05-01T19:15:09.000Z\t2015-05-01T19:15:09.000Z\t2015-05-01T00:00:00.000Z\t1296\ttrue\t80036797\n" +
                 "CMP1\t4\t2843\t5.22989432094619\t2015-05-02T19:15:09.000Z\t2015-05-02T19:15:09.000Z\t2015-05-02T00:00:00.000Z\t7773\tfalse\t88340142\n" +
-                "CMP2\tNaN\t2848\t5.32819046406075\t2015-05-03T19:15:09.000Z\t2015-05-03T19:15:09.000Z\t2015-05-03T00:00:00.000Z\t7628\ttrue\t36732064\n" +
-                "CMP1\tNaN\t2776\t5.30948682921007\t2015-05-04T19:15:09.000Z\t2015-05-04T19:15:09.000Z\t2015-05-04T00:00:00.000Z\t5917\tfalse\t59635623\n" +
+                "CMP2\tnull\t2848\t5.32819046406075\t2015-05-03T19:15:09.000Z\t2015-05-03T19:15:09.000Z\t2015-05-03T00:00:00.000Z\t7628\ttrue\t36732064\n" +
+                "CMP1\tnull\t2776\t5.30948682921007\t2015-05-04T19:15:09.000Z\t2015-05-04T19:15:09.000Z\t2015-05-04T00:00:00.000Z\t5917\tfalse\t59635623\n" +
                 "CMP2\t8\t5256\t8.02117716753855\t2015-05-05T19:15:09.000Z\t2015-05-05T19:15:09.000Z\t2015-05-05T00:00:00.000Z\t4088\ttrue\t50247928\n" +
                 "CMP1\t7\t9250\t0.850080533418804\t2015-05-06T19:15:09.000Z\t2015-05-06T19:15:09.000Z\t2015-05-06T00:00:00.000Z\t519\tfalse\t61373305\n" +
                 "CMP2\t2\t6675\t7.95846320921555\t2015-05-07T19:15:09.000Z\t2015-05-07T19:15:09.000Z\t2015-05-07T00:00:00.000Z\t7530\ttrue\t49634855\n" +
                 "CMP1\t5\t8367\t9.34185237856582\t2015-05-08T19:15:09.000Z\t2015-05-08T19:15:09.000Z\t2015-05-08T00:00:00.000Z\t9714\tfalse\t91106929\n" +
                 "CMP2\t4\t370\t7.84945336403325\t2015-05-09T19:15:09.000Z\t2015-05-09T19:15:09.000Z\t2015-05-09T00:00:00.000Z\t8590\ttrue\t89638043\n" +
                 "CMP1\t7\t4055\t6.49124878691509\t2015-05-10T19:15:09.000Z\t2015-05-10T19:15:09.000Z\t2015-05-10T00:00:00.000Z\t3484\tfalse\t58849380\n" +
-                "CMP2\tNaN\t6132\t2.01015920145437\t2015-05-11T19:15:09.000Z\t2015-05-11T19:15:09.000Z\t2015-05-11T00:00:00.000Z\t8132\ttrue\t51493476\n" +
+                "CMP2\tnull\t6132\t2.01015920145437\t2015-05-11T19:15:09.000Z\t2015-05-11T19:15:09.000Z\t2015-05-11T00:00:00.000Z\t8132\ttrue\t51493476\n" +
                 "CMP1\t6\t6607\t0.0829047034494579\t2015-05-12T19:15:09.000Z\t2015-05-12T19:15:09.000Z\t2015-05-12T00:00:00.000Z\t1685\tfalse\t88274174\n" +
                 "CMP2\t8\t1049\t9.39520388608798\t2015-05-13T19:15:09.000Z\t2015-05-13T19:15:09.000Z\t2015-05-13T00:00:00.000Z\t7164\ttrue\t49001539\n";
 
@@ -818,7 +818,7 @@ public class CopyTest extends AbstractCairoTest {
         CopyRunnable test = () -> {
             String query = "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log";
             assertSql("phase\tstatus\trows_handled\trows_imported\terrors\n" +
-                    "\tstarted\tNaN\tNaN\t0\n" +
+                    "\tstarted\tnull\tnull\t0\n" +
                     "\tfinished\t1000\t1000\t0\n", query);
         };
 
@@ -858,7 +858,7 @@ public class CopyTest extends AbstractCairoTest {
         CopyRunnable test = () -> {
             String query = "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log";
             assertSql("phase\tstatus\trows_handled\trows_imported\terrors\n" +
-                    "\tstarted\tNaN\tNaN\t0\n" +
+                    "\tstarted\tnull\tnull\t0\n" +
                     "\tfinished\t1000\t1000\t0\n", query);
         };
 
@@ -963,7 +963,7 @@ public class CopyTest extends AbstractCairoTest {
                 "\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
                 "CMP1\t7\t4256\t2.46553522534668\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
                 "CMP2\t4\t155\t5.08547495584935\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
-                "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
+                "CMP1\t7\t4486\tnull\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
                 "CMP1\t1\t3579\t0.849663221742958\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
                 "CMP2\t2\t4770\t2.85092033445835\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
                 "CMP1\t5\t4938\t4.42754498450086\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n" +
@@ -976,7 +976,7 @@ public class CopyTest extends AbstractCairoTest {
                 "CMP2\t4\t1253\t0.541768460534513\t2015-02-16T19:15:09.000Z\t2015-02-16T19:15:09.000Z\t2015-02-16T00:00:00.000Z\t4377\ttrue\t21383690\n" +
                 "CMP1\t4\t268\t3.09822975890711\t2015-02-17T19:15:09.000Z\t2015-02-17T19:15:09.000Z\t2015-02-17T00:00:00.000Z\t669\tfalse\t71326228\n" +
                 "CMP2\t8\t5548\t3.7650444637984\t2015-02-18T19:15:09.000Z\t2015-02-18T19:15:09.000Z\t2015-02-18T00:00:00.000Z\t7369\ttrue\t82105548\n" +
-                "CMP1\t4\tNaN\t9.31892040651292\t2015-02-19T19:15:09.000Z\t2015-02-19T19:15:09.000Z\t2015-02-19T00:00:00.000Z\t2022\tfalse\t16097569\n" +
+                "CMP1\t4\tnull\t9.31892040651292\t2015-02-19T19:15:09.000Z\t2015-02-19T19:15:09.000Z\t2015-02-19T00:00:00.000Z\t2022\tfalse\t16097569\n" +
                 "CMP2\t1\t1670\t9.44043743424118\t2015-02-20T19:15:09.000Z\t2015-02-20T19:15:09.000Z\t2015-02-20T00:00:00.000Z\t3235\ttrue\t88917951\n" +
                 "CMP1\t7\t5534\t5.78428176697344\t2015-02-21T19:15:09.000Z\t2015-02-21T19:15:09.000Z\t2015-02-21T00:00:00.000Z\t9650\tfalse\t10261372\n" +
                 "CMP2\t5\t8085\t5.49041963648051\t2015-02-22T19:15:09.000Z\t2015-02-22T19:15:09.000Z\t2015-02-22T00:00:00.000Z\t2211\ttrue\t28722529\n" +
@@ -1049,15 +1049,15 @@ public class CopyTest extends AbstractCairoTest {
                 "CMP1\t2\t5487\t3.5918223625049\t2015-04-30T19:15:09.000Z\t2015-04-30T19:15:09.000Z\t2015-04-30T00:00:00.000Z\t1421\tfalse\t60850489\n" +
                 "CMP2\t8\t4391\t2.72367869038135\t2015-05-01T19:15:09.000Z\t2015-05-01T19:15:09.000Z\t2015-05-01T00:00:00.000Z\t1296\ttrue\t80036797\n" +
                 "CMP1\t4\t2843\t5.22989432094619\t2015-05-02T19:15:09.000Z\t2015-05-02T19:15:09.000Z\t2015-05-02T00:00:00.000Z\t7773\tfalse\t88340142\n" +
-                "CMP2\tNaN\t2848\t5.32819046406075\t2015-05-03T19:15:09.000Z\t2015-05-03T19:15:09.000Z\t2015-05-03T00:00:00.000Z\t7628\ttrue\t36732064\n" +
-                "CMP1\tNaN\t2776\t5.30948682921007\t2015-05-04T19:15:09.000Z\t2015-05-04T19:15:09.000Z\t2015-05-04T00:00:00.000Z\t5917\tfalse\t59635623\n" +
+                "CMP2\tnull\t2848\t5.32819046406075\t2015-05-03T19:15:09.000Z\t2015-05-03T19:15:09.000Z\t2015-05-03T00:00:00.000Z\t7628\ttrue\t36732064\n" +
+                "CMP1\tnull\t2776\t5.30948682921007\t2015-05-04T19:15:09.000Z\t2015-05-04T19:15:09.000Z\t2015-05-04T00:00:00.000Z\t5917\tfalse\t59635623\n" +
                 "CMP2\t8\t5256\t8.02117716753855\t2015-05-05T19:15:09.000Z\t2015-05-05T19:15:09.000Z\t2015-05-05T00:00:00.000Z\t4088\ttrue\t50247928\n" +
                 "CMP1\t7\t9250\t0.850080533418804\t2015-05-06T19:15:09.000Z\t2015-05-06T19:15:09.000Z\t2015-05-06T00:00:00.000Z\t519\tfalse\t61373305\n" +
                 "CMP2\t2\t6675\t7.95846320921555\t2015-05-07T19:15:09.000Z\t2015-05-07T19:15:09.000Z\t2015-05-07T00:00:00.000Z\t7530\ttrue\t49634855\n" +
                 "CMP1\t5\t8367\t9.34185237856582\t2015-05-08T19:15:09.000Z\t2015-05-08T19:15:09.000Z\t2015-05-08T00:00:00.000Z\t9714\tfalse\t91106929\n" +
                 "CMP2\t4\t370\t7.84945336403325\t2015-05-09T19:15:09.000Z\t2015-05-09T19:15:09.000Z\t2015-05-09T00:00:00.000Z\t8590\ttrue\t89638043\n" +
                 "CMP1\t7\t4055\t6.49124878691509\t2015-05-10T19:15:09.000Z\t2015-05-10T19:15:09.000Z\t2015-05-10T00:00:00.000Z\t3484\tfalse\t58849380\n" +
-                "CMP2\tNaN\t6132\t2.01015920145437\t2015-05-11T19:15:09.000Z\t2015-05-11T19:15:09.000Z\t2015-05-11T00:00:00.000Z\t8132\ttrue\t51493476\n" +
+                "CMP2\tnull\t6132\t2.01015920145437\t2015-05-11T19:15:09.000Z\t2015-05-11T19:15:09.000Z\t2015-05-11T00:00:00.000Z\t8132\ttrue\t51493476\n" +
                 "CMP1\t6\t6607\t0.0829047034494579\t2015-05-12T19:15:09.000Z\t2015-05-12T19:15:09.000Z\t2015-05-12T00:00:00.000Z\t1685\tfalse\t88274174\n" +
                 "CMP2\t8\t1049\t9.39520388608798\t2015-05-13T19:15:09.000Z\t2015-05-13T19:15:09.000Z\t2015-05-13T00:00:00.000Z\t7164\ttrue\t49001539\n";
 
@@ -1065,7 +1065,7 @@ public class CopyTest extends AbstractCairoTest {
             assertSql(expected, "x");
             String query = "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log";
             assertSql("phase\tstatus\trows_handled\trows_imported\terrors\n" +
-                    "\tstarted\tNaN\tNaN\t0\n" +
+                    "\tstarted\tnull\tnull\t0\n" +
                     "\tfinished\t129\t127\t2\n", query);
         };
         testCopy(insert, assertion);

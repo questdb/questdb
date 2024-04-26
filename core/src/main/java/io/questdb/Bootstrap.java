@@ -79,6 +79,7 @@ public class Bootstrap {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
+        Os.init();
         banner = bootstrapConfiguration.getBanner();
         microsecondClock = bootstrapConfiguration.getMicrosecondClock();
         buildInformation = new BuildInformationHolder(bootstrapConfiguration.getClass());

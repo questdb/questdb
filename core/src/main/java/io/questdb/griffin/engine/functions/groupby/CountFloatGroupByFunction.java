@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
@@ -37,7 +38,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
-        if (!Float.isNaN(value)) {
+        if (!Numbers.isNull(value)) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -47,7 +48,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
-        if (!Float.isNaN(value)) {
+        if (!Numbers.isNull(value)) {
             mapValue.addLong(valueIndex, 1);
         }
     }

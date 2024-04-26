@@ -54,7 +54,7 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
     ) {
         long start = args.getQuick(0).getTimestamp(null);
         long end = args.getQuick(1).getTimestamp(null);
-        if (start == Numbers.LONG_NaN || end == Numbers.LONG_NaN) {
+        if (start == Numbers.LONG_NULL || end == Numbers.LONG_NULL) {
             return TimestampConstant.NULL;
         }
 

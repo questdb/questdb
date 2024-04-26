@@ -109,7 +109,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     private static void valTs(PlanSink sink, long l) {
-        if (l == Numbers.LONG_NaN) {
+        if (l == Numbers.LONG_NULL) {
             sink.val("MIN");
         } else if (l == Long.MAX_VALUE) {
             sink.val("MAX");
@@ -161,7 +161,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         }
                     }
 
-                    if (dynamicValue == Numbers.LONG_NaN || dynamicValue2 == Numbers.LONG_NaN) {
+                    if (dynamicValue == Numbers.LONG_NULL || dynamicValue2 == Numbers.LONG_NULL) {
                         // functions evaluated to null.
                         if (!negated) {
                             // return empty set if it's not negated
@@ -255,7 +255,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             try {
                 return IntervalUtils.parseFloorPartialTimestamp(value);
             } catch (NumericException e) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
         }
         return dynamicFunction.getTimestamp(null);

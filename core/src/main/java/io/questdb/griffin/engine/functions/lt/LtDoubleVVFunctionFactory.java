@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtDoubleVVFunctionFactory implements FunctionFactory {
@@ -62,9 +63,10 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated
-                    ? left.getDouble(rec) >= right.getDouble(rec)
-                    : left.getDouble(rec) < right.getDouble(rec);
+            final double l = left.getDouble(rec);
+            final double r = right.getDouble(rec);
+            final boolean eq = Numbers.equals(l, r);
+            return negated ? (eq || l > r) : (!eq && l < r);
         }
 
         @Override

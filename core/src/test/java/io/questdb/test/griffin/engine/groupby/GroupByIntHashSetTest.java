@@ -38,7 +38,7 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
 
     @Test
     public void testFuzzWithIntNullAsNoKeyValue() throws Exception {
-        testFuzz(Numbers.INT_NaN);
+        testFuzz(Numbers.INT_NULL);
     }
 
     @Test

@@ -222,7 +222,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
             MapValue value = key.createValue();
             if (value.isNew()) {
                 // timestamp is always stored in value field 0
-                value.putLong(0, Numbers.LONG_NaN);
+                value.putLong(0, Numbers.LONG_NULL);
                 // have functions reset their columns to "zero" state
                 // this would set values for when keys are not found right away
                 for (int i = 0; i < n; i++) {

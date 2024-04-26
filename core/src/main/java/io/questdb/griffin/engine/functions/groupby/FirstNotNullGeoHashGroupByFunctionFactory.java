@@ -93,7 +93,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putByte(valueIndex + 1, srcVal);
             }
@@ -126,7 +126,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putInt(valueIndex + 1, srcVal);
             }
@@ -159,7 +159,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putLong(valueIndex + 1, srcVal);
             }
@@ -192,7 +192,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NaN) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putShort(valueIndex + 1, srcVal);
             }

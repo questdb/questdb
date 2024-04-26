@@ -36,7 +36,7 @@ public class SizePrettyFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testSizes() throws SqlException {
         call(0L).andAssert("0.0 B");
-        call(Numbers.LONG_NaN).andAssert(null);
+        call(Numbers.LONG_NULL).andAssert(null);
         call(1L).andAssert("1.0 B");
         call(1024L).andAssert("1.0 KiB");
         call(1024L * 1024).andAssert("1.0 MiB");

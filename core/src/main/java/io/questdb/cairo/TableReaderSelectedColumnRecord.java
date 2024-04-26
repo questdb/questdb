@@ -251,7 +251,7 @@ public class TableReaderSelectedColumnRecord implements Record {
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
         long offset = reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex);
-        assert recordIndex != 0 || (offset == 0 || offset == Numbers.LONG_NaN);
+        assert recordIndex != 0 || (offset == 0 || offset == Numbers.LONG_NULL);
         return reader.getColumn(absoluteColumnIndex).getStrA(offset);
     }
 

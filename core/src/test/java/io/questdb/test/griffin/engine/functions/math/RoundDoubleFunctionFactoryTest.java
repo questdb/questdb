@@ -111,7 +111,7 @@ public class RoundDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testRightNan() throws SqlException {
-        call(123.65, Numbers.INT_NaN).andAssert(Double.NaN, 0.0001);
+        call(123.65, Numbers.INT_NULL).andAssert(Double.NaN, 0.0001);
     }
 
     @Test

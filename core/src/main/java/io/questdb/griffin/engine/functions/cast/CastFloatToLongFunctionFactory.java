@@ -58,7 +58,7 @@ public class CastFloatToLongFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             final float value = arg.getFloat(rec);
-            return Float.isNaN(value) ? Numbers.LONG_NaN : (long) value;
+            return Numbers.isNull(value) ? Numbers.LONG_NULL : (long) value;
         }
     }
 }

@@ -31,7 +31,7 @@ import io.questdb.std.Numbers;
  * and corresponding string values
  */
 public interface SymbolTable {
-    int VALUE_IS_NULL = Numbers.INT_NaN;
+    int VALUE_IS_NULL = Numbers.INT_NULL;
     int VALUE_NOT_FOUND = -2;
 
     /**

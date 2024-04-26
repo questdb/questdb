@@ -66,7 +66,7 @@ public class BitwiseOrIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final int l = left.getInt(rec);
             final int r = right.getInt(rec);
-            return l != Numbers.INT_NaN && r != Numbers.INT_NaN ? l | r : Numbers.INT_NaN;
+            return l != Numbers.INT_NULL && r != Numbers.INT_NULL ? l | r : Numbers.INT_NULL;
         }
 
         @Override

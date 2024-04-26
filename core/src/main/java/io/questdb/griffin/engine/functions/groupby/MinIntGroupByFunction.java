@@ -98,7 +98,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void merge(MapValue destValue, MapValue srcValue) {
         int srcMin = srcValue.getInt(valueIndex);
         int destMin = destValue.getInt(valueIndex);
-        if (srcMin != Numbers.INT_NaN && (srcMin < destMin || destMin == Numbers.INT_NaN)) {
+        if (srcMin != Numbers.INT_NULL && (srcMin < destMin || destMin == Numbers.INT_NULL)) {
             destValue.putInt(valueIndex, srcMin);
         }
     }
@@ -110,7 +110,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, Numbers.INT_NaN);
+        mapValue.putInt(valueIndex, Numbers.INT_NULL);
     }
 
     @Override

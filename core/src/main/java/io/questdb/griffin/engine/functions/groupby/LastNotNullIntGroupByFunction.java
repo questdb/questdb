@@ -37,7 +37,7 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (arg.getInt(record) != Numbers.INT_NaN) {
+        if (arg.getInt(record) != Numbers.INT_NULL) {
             computeFirst(mapValue, record, rowId);
         }
     }
@@ -50,7 +50,7 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         int srcVal = srcValue.getInt(valueIndex + 1);
-        if (srcVal == Numbers.INT_NaN) {
+        if (srcVal == Numbers.INT_NULL) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);

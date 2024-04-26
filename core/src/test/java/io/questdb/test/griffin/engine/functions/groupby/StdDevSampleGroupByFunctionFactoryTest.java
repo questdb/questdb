@@ -32,7 +32,7 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStddevSampAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "stddev_samp\nNaN\n", "select stddev_samp(x) from (select cast(null as double) x from long_sequence(100))"
+                "stddev_samp\nnull\n", "select stddev_samp(x) from (select cast(null as double) x from long_sequence(100))"
         ));
     }
 
@@ -103,7 +103,7 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl1(x int)");
             assertSql(
-                    "stddev_samp\nNaN\n", "select stddev_samp(x) from tbl1"
+                    "stddev_samp\nnull\n", "select stddev_samp(x) from tbl1"
             );
         });
     }
@@ -115,7 +115,7 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractCairoTest {
             insert("insert into 'tbl1' VALUES " +
                     "(17.2151920)");
             assertSql(
-                    "stddev_samp\nNaN\n", "select stddev_samp(x) from tbl1"
+                    "stddev_samp\nnull\n", "select stddev_samp(x) from tbl1"
             );
         });
     }

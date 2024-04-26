@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -95,11 +95,11 @@ public class LtStrVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final Utf8Sequence r = right.getVarcharB(rec);
-            if (r == null) {
-                return false;
-            }
-            return negated == (Utf8s.compare(constant, r) >= 0);
+            return Utf8s.lessThan(
+                    constant,
+                    right.getVarcharB(rec),
+                    negated
+            );
         }
 
         @Override

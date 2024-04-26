@@ -91,7 +91,7 @@ public class SumShortVectorAggregateFunction extends LongFunction implements Vec
         if (count.sum() > 0) {
             return sum.sum();
         }
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     @Override

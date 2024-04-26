@@ -60,12 +60,12 @@ public class RemIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             int l = this.left.getInt(rec);
-            if (l == Numbers.INT_NaN) {
-                return Numbers.INT_NaN;
+            if (l == Numbers.INT_NULL) {
+                return Numbers.INT_NULL;
             }
             int r = this.right.getInt(rec);
-            if (r == 0 || r == Numbers.INT_NaN) {
-                return Numbers.INT_NaN;
+            if (r == 0 || r == Numbers.INT_NULL) {
+                return Numbers.INT_NULL;
             }
             return l % r;
         }

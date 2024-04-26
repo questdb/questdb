@@ -58,7 +58,7 @@ public class CastDoubleToIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final double value = arg.getDouble(rec);
-            return value == value ? (int) value : Numbers.INT_NaN;
+            return value == value ? (int) value : Numbers.INT_NULL;
         }
     }
 }

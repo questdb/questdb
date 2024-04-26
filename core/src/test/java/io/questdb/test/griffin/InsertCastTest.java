@@ -501,7 +501,7 @@ public class InsertCastTest extends AbstractCairoTest {
             assertSql(
                     "a\n" +
                             "1.7E25\n" +
-                            "NaN\n", "y"
+                            "null\n", "y"
             );
         });
     }
@@ -535,7 +535,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "8\n" +
                         "20\n" +
                         "93\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "66\n" +
                         "80\n" +
                         "22\n" +
@@ -555,7 +555,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "8\n" +
                         "20\n" +
                         "93\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "66\n" +
                         "80\n" +
                         "22\n" +
@@ -978,7 +978,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "12.0\n" +
                         "31.0\n" +
-                        "NaN\n"
+                        "null\n"
         );
     }
 
@@ -1000,7 +1000,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "12.0000\n" +
                         "31.0000\n" +
-                        "NaN\n"
+                        "null\n"
         );
     }
 
@@ -1022,7 +1022,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "12\n" +
                         "31\n" +
-                        "NaN\n"
+                        "null\n"
         );
     }
 
@@ -1055,7 +1055,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "12\n" +
                         "31\n" +
-                        "NaN\n"
+                        "null\n"
         );
     }
 
@@ -1179,7 +1179,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "double",
                 "a\n" +
                         "8.0\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "8.8990229990007E13\n"
         );
     }
@@ -1190,7 +1190,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "float",
                 "a\n" +
                         "8.0000\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "8.8990229E13\n"
         );
     }
@@ -1201,7 +1201,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "int",
                 "a\n" +
                         "8\n" +
-                        "NaN\n"
+                        "null\n"
         );
     }
 
@@ -1227,7 +1227,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "long",
                 "a\n" +
                         "8\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "88990229990007\n"
         );
     }
@@ -1254,6 +1254,17 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastVarcharToDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab(d string, ts timestamp) timestamp(ts) partition by day");
+            insert("insert into tab values ('string', '2000'::string), ('varchar', '2000'::varchar);");
+            assertSql("d\tts\n" +
+                    "string\t2000-01-01T00:00:00.000000Z\n" +
+                    "varchar\t2000-01-01T00:00:00.000000Z\n", "select * from tab order by d");
+        });
+    }
+
+    @Test
     public void testInsertNullDateIntoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x(ts timestamp)");
@@ -1265,13 +1276,39 @@ public class InsertCastTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testNullStringToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab(ts timestamp) timestamp(ts)");
+            try {
+                insert("insert into tab values(null::string)");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "designated timestamp column cannot be NULL");
+            }
+        });
+    }
+
+    @Test
+    public void testNullVarcharToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab(ts timestamp) timestamp(ts)");
+            try {
+                insert("insert into tab values(null::varchar)");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "designated timestamp column cannot be NULL");
+            }
+        });
+    }
+
     private void assertCastFloatTab(String type, String expected, float outOfRangeLeft, float outOfRangeRight) throws Exception {
         assertMemoryLeak(() -> {
             // insert table
             ddl("create table y(a " + type + ");");
             ddl("create table x as (select rnd_float()*100 a from long_sequence(5));");
             ddl("insert into y select rnd_float()*100 a from long_sequence(5);");
-            insert("insert into y values (cast ('NaN' as float));");
+            insert("insert into y values (cast ('null' as float));");
             // execute insert statement for each value of reference table
             ddl("insert into y select a from x");
 
@@ -1384,7 +1421,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 bindVariableService.setInt(0, 3); // compatible with everything
                 insert.execute(sqlExecutionContext);
 
-                bindVariableService.setInt(0, Numbers.INT_NaN);
+                bindVariableService.setInt(0, Numbers.INT_NULL);
                 insert.execute(sqlExecutionContext);
 
                 try {
@@ -1410,7 +1447,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 bindVariableService.setLong(0, 8); // compatible with everything
                 insert.execute(sqlExecutionContext);
 
-                bindVariableService.setLong(0, Numbers.LONG_NaN);
+                bindVariableService.setLong(0, Numbers.LONG_NULL);
                 insert.execute(sqlExecutionContext);
 
                 try {
@@ -1525,7 +1562,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 bindVariableService.setTimestamp(0, 8); // compatible with everything
                 insert.execute(sqlExecutionContext);
 
-                bindVariableService.setTimestamp(0, Numbers.LONG_NaN);
+                bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
                 insert.execute(sqlExecutionContext);
 
                 try {
@@ -1551,7 +1588,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 bindVariableService.setTimestamp(0, 8); // compatible with everything
                 insert.execute(sqlExecutionContext);
 
-                bindVariableService.setTimestamp(0, Numbers.LONG_NaN);
+                bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
                 insert.execute(sqlExecutionContext);
 
                 bindVariableService.setTimestamp(0, 88990229990007L);

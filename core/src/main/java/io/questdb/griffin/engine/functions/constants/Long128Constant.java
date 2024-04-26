@@ -31,7 +31,7 @@ import io.questdb.std.Numbers;
 
 public class Long128Constant extends Long128Function implements ConstantFunction {
 
-    public static final Long128Constant NULL = new Long128Constant(Numbers.LONG_NaN, Numbers.LONG_NaN);
+    public static final Long128Constant NULL = new Long128Constant(Numbers.LONG_NULL, Numbers.LONG_NULL);
 
     private final long hi;
     private final long lo;
@@ -49,6 +49,11 @@ public class Long128Constant extends Long128Function implements ConstantFunction
     @Override
     public long getLong128Lo(Record rec) {
         return lo;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return hi == Numbers.LONG_NULL && lo == Numbers.LONG_NULL;
     }
 
     @Override

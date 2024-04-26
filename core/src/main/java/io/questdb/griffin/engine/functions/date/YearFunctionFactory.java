@@ -65,10 +65,10 @@ public class YearFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getYear(value);
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
 
         @Override

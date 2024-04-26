@@ -223,7 +223,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     @Test
     public void testNoKeyGroupBy() throws Exception {
         assertQuery(
-                "column\nNaN\n",
+                "column\nnull\n",
                 "select sum(price) / count() from x where price > 0",
                 "create table x (\n" +
                         "    sym symbol index,\n" +

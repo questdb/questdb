@@ -62,7 +62,7 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         ddl("create table tab (a0 double, a1 double)");
         insert("insert into tab values (null,null),(null,1),(1,null)");
         assertSql("vwap\n" +
-                        "NaN\n",
+                        "null\n",
                 "select vwap(a0, a1) from tab"
         );
 

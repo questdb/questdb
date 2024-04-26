@@ -34,10 +34,9 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.ObjObjHashMap;
-import org.jetbrains.annotations.Nullable;
 
 public interface ServerConfiguration {
+    String OSS = "OSS";
 
     CairoConfiguration getCairoConfiguration();
 
@@ -55,6 +54,12 @@ public interface ServerConfiguration {
 
     PGWireConfiguration getPGWireConfiguration();
 
+    default String getReleaseType() {
+        return OSS;
+    }
+
+    UsernamePasswordMatcher getUsernamePasswordMatcher();
+
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 
     WorkerPoolConfiguration getWorkerPoolConfiguration();
@@ -66,5 +71,4 @@ public interface ServerConfiguration {
         return true;
     }
 
-    UsernamePasswordMatcher getUsernamePasswordMatcher();
 }

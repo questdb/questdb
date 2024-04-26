@@ -242,6 +242,21 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testGetUtf8SequenceType() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
+            Assert.assertEquals(0, Utf8s.getUtf8SequenceType(sink.lo(), sink.hi()));
+            sink.put("abc");
+            Assert.assertEquals(0, Utf8s.getUtf8SequenceType(sink.lo(), sink.hi()));
+            sink.put("привет мир");
+            Assert.assertEquals(1, Utf8s.getUtf8SequenceType(sink.lo(), sink.hi()));
+            // invalid UTF-8
+            sink.clear();
+            sink.put((byte) 0x80);
+            Assert.assertEquals(-1, Utf8s.getUtf8SequenceType(sink.lo(), sink.hi()));
+        }
+    }
+
+    @Test
     public void testHashCode() {
         final int size = 64;
         StringSink charSink = new StringSink();
@@ -423,7 +438,7 @@ public class Utf8sTest {
                 rnd.nextUtf8Str(100, utf8Sink);
 
                 sink.clear();
-                Utf8s.utf8ToUtf16(utf8Sink, sink);
+                Utf8s.directUtf8ToUtf16(utf8Sink, sink);
 
                 if (!Utf8s.equalsUtf16(sink, utf8Sink)) {
                     Assert.fail("iteration " + i + ", expected equals: " + sink);
@@ -442,7 +457,7 @@ public class Utf8sTest {
                 rnd.nextUtf8Str(100, utf8Sink);
 
                 sink.clear();
-                Utf8s.utf8ToUtf16(utf8Sink, sink);
+                Utf8s.directUtf8ToUtf16(utf8Sink, sink);
 
                 // remove the last character
                 if (Utf8s.equalsUtf16(sink, 0, sink.length() - 1, utf8Sink, 0, utf8Sink.size())) {
@@ -651,7 +666,7 @@ public class Utf8sTest {
 
             sink.clear();
             sink.put((byte) 0xC2);
-            sink.put((byte) 0x00);
+            sink.putAscii((char) 0x00);
             Assert.assertEquals(0, Utf8s.utf8CharDecode(sink));
 
             sink.clear();
@@ -669,7 +684,7 @@ public class Utf8sTest {
             sink.clear();
             sink.put((byte) 0xED);
             sink.put((byte) 0xA0);
-            sink.put((byte) 0x7F);
+            sink.putAscii((char) 0x7F);
             Assert.assertEquals(0, Utf8s.utf8CharDecode(sink));
 
             sink.clear();
@@ -795,21 +810,6 @@ public class Utf8sTest {
         Assert.assertEquals(-1, Utf8s.validateUtf8(new Utf8String(new byte[]{(byte) 0x80}, false)));
     }
 
-    @Test
-    public void testGetUtf8SequenceType() {
-        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
-            Assert.assertEquals(0, Utf8s.getUtf8SequenceType(sink.lo(), sink.hi()));
-            sink.put("abc");
-            Assert.assertEquals(0, Utf8s.getUtf8SequenceType(sink.lo(), sink.hi()));
-            sink.put("привет мир");
-            Assert.assertEquals(1, Utf8s.getUtf8SequenceType(sink.lo(), sink.hi()));
-            // invalid UTF-8
-            sink.clear();
-            sink.put((byte) 0x80);
-            Assert.assertEquals(-1, Utf8s.getUtf8SequenceType(sink.lo(), sink.hi()));
-        }
-    }
-
     private static void assertUtf8ToUtf16WithTerminator(
             DirectUtf8Sink utf8Sink,
             StringSink utf16Sink,
@@ -836,7 +836,12 @@ public class Utf8sTest {
         sink.clear();
         byte[] bytes = x.getBytes(Files.UTF_8);
         for (int i = 0, n = Math.min(bytes.length, 8); i < n; i++) {
-            sink.put(bytes[i]);
+            byte b = bytes[i];
+            if (b < 0) {
+                sink.put(b);
+            } else {
+                sink.putAscii((char) b);
+            }
         }
         int res = Utf8s.utf8CharDecode(sink);
         boolean eq = x.charAt(0) == (char) Numbers.decodeHighShort(res);

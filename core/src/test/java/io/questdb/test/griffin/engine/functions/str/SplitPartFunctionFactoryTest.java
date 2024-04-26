@@ -47,8 +47,8 @@ public class SplitPartFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaNIndex() throws SqlException {
-        callCustomised(true, true, "abc~@~def~@~ghi", "~@~", Numbers.INT_NaN).andAssert(null);
-        callCustomised(true, true, "abc,def,ghi,jkl", ",", Numbers.INT_NaN).andAssert(null);
+        callCustomised(true, true, "abc~@~def~@~ghi", "~@~", Numbers.INT_NULL).andAssert(null);
+        callCustomised(true, true, "abc,def,ghi,jkl", ",", Numbers.INT_NULL).andAssert(null);
     }
 
     @Test

@@ -58,7 +58,7 @@ public class CountIntGroupByFunctionFactory implements FunctionFactory {
             int val = arg.getInt(null);
             // NULL expression would lead to zero matched rows, so it makes
             // no sense to support it until we support count(expression).
-            if (val == Numbers.INT_NaN) {
+            if (val == Numbers.INT_NULL) {
                 throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
             }
             return new CountLongConstGroupByFunction();

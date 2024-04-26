@@ -34,6 +34,6 @@ public class TimestampTypeConstant extends TimestampFunction implements TypeCons
 
     @Override
     public long getTimestamp(Record rec) {
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 }

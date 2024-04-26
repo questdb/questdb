@@ -43,12 +43,12 @@ public class InsertNullTest extends AbstractCairoTest {
             {"byte", "0"},
             {"short", "0"},
             {"char", ""},
-            {"int", "NaN"},
-            {"long", "NaN"},
+            {"int", "null"},
+            {"long", "null"},
             {"date", ""},
             {"timestamp", ""},
-            {"float", "NaN"},
-            {"double", "NaN"},
+            {"float", "null"},
+            {"double", "null"},
             {"string", ""},
             {"symbol", ""},
             {"long256", ""},
@@ -123,7 +123,7 @@ public class InsertNullTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (SqlException expected) {
-                Assert.assertEquals("[0] insert statement must populate timestamp", expected.getMessage());
+                Assert.assertEquals("[0] designated timestamp column cannot be NULL", expected.getMessage());
             }
         });
     }

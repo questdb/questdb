@@ -111,7 +111,7 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
 
         @Nullable
         private StringSink getStr0(long s, StringSink sink) {
-            if (s != Numbers.LONG_NaN) {
+            if (s != Numbers.LONG_NULL) {
                 toSizePretty(sink, s);
                 return sink;
             }

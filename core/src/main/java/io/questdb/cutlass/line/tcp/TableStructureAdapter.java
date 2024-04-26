@@ -152,11 +152,10 @@ public class TableStructureAdapter implements TableStructure {
         entityNamesUtf16.clear();
         entities.clear();
         timestampIndex = -1;
-        final boolean hasNonAsciiChars = parser.hasNonAsciiChars();
         for (int i = 0; i < parser.getEntityCount(); i++) {
             final LineTcpParser.ProtoEntity entity = parser.getEntity(i);
             final DirectUtf8Sequence colNameUtf8 = entity.getName();
-            final CharSequence colNameUtf16 = Utf8s.utf8ToUtf16(colNameUtf8, tempSink.get(), hasNonAsciiChars);
+            final CharSequence colNameUtf16 = Utf8s.directUtf8ToUtf16(colNameUtf8, tempSink.get());
             int index = entityNamesUtf16.keyIndex(colNameUtf16);
             if (index > -1) {
                 entityNamesUtf16.addAt(index, colNameUtf16.toString());

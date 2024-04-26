@@ -75,13 +75,13 @@ public class CastVarcharToUuidFunctionFactory implements FunctionFactory {
         public long getLong128Hi(Record rec) {
             final Utf8Sequence value = arg.getVarcharA(rec);
             if (value == null) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
             try {
                 Uuid.checkDashesAndLength(value.asAsciiCharSequence());
                 return Uuid.parseHi(value.asAsciiCharSequence());
             } catch (NumericException e) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
         }
 
@@ -89,13 +89,13 @@ public class CastVarcharToUuidFunctionFactory implements FunctionFactory {
         public long getLong128Lo(Record rec) {
             final Utf8Sequence value = arg.getVarcharA(rec);
             if (value == null) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
             try {
                 Uuid.checkDashesAndLength(value.asAsciiCharSequence());
                 return Uuid.parseLo(value.asAsciiCharSequence());
             } catch (NumericException e) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
         }
     }

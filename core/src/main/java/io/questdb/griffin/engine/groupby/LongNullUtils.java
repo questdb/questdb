@@ -41,12 +41,12 @@ public final class LongNullUtils {
                 case ColumnType.LONG:
                 case ColumnType.TIMESTAMP:
                 case ColumnType.DATE:
-                    LONG_NULLs[i] = Numbers.LONG_NaN;
+                    LONG_NULLs[i] = Numbers.LONG_NULL;
                     break;
 
                 case ColumnType.INT:
                 case ColumnType.SYMBOL:
-                    LONG_NULLs[i] = Numbers.INT_NaN;
+                    LONG_NULLs[i] = Numbers.INT_NULL;
                     break;
 
                 case ColumnType.FLOAT:

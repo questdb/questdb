@@ -120,10 +120,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
     private static boolean isNotNull(Long256 value) {
         return value != null &&
-                value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NaN ||
-                value.getLong1() != Numbers.LONG_NaN ||
-                value.getLong2() != Numbers.LONG_NaN ||
-                value.getLong3() != Numbers.LONG_NaN);
+                value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NULL ||
+                value.getLong1() != Numbers.LONG_NULL ||
+                value.getLong2() != Numbers.LONG_NULL ||
+                value.getLong3() != Numbers.LONG_NULL);
     }
 
     private interface BinaryCoalesceFunction extends BinaryFunction {
@@ -158,11 +158,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             for (int i = 0; i < size; i++) {
                 long value = args.getQuick(i).getDate(rec);
-                if (value != Numbers.LONG_NaN) {
+                if (value != Numbers.LONG_NULL) {
                     return value;
                 }
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
     }
 
@@ -264,11 +264,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             for (int i = 0; i < size; i++) {
                 int value = args.getQuick(i).getInt(rec);
-                if (value != Numbers.INT_NaN) {
+                if (value != Numbers.INT_NULL) {
                     return value;
                 }
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
     }
 
@@ -341,11 +341,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             long value;
             for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong(rec);
-                if (value != Numbers.LONG_NaN) {
+                if (value != Numbers.LONG_NULL) {
                     return value;
                 }
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
     }
 
@@ -501,11 +501,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             for (int i = 0; i < size; i++) {
                 long value = args.getQuick(i).getTimestamp(rec);
-                if (value != Numbers.LONG_NaN) {
+                if (value != Numbers.LONG_NULL) {
                     return value;
                 }
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
     }
 
@@ -522,7 +522,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public long getDate(Record rec) {
             long value = args0.getDate(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return value;
             }
             return args1.getDate(rec);
@@ -642,7 +642,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             int value = args0.getInt(rec);
-            if (value != Numbers.INT_NaN) {
+            if (value != Numbers.INT_NULL) {
                 return value;
             }
             return args1.getInt(rec);
@@ -725,7 +725,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             long value = args0.getLong(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return value;
             }
             return args1.getLong(rec);
@@ -881,7 +881,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             long value = args0.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return value;
             }
             return args1.getTimestamp(rec);
@@ -906,11 +906,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public long getLong128Hi(Record rec) {
             long hi0 = args0.getLong128Hi(rec);
-            if (hi0 != Numbers.LONG_NaN) {
+            if (hi0 != Numbers.LONG_NULL) {
                 return hi0; // if hi is not NaN then we know Long128 is not null
             }
             long lo0 = args0.getLong128Lo(rec);
-            if (lo0 != Numbers.LONG_NaN) {
+            if (lo0 != Numbers.LONG_NULL) {
                 return hi0; // if lo is not NaN then we know Long128 is not null and we can return hi0 even if it is NaN
             }
             // ok, both hi and lo are NaN, we use the value from the second argument
@@ -920,11 +920,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public long getLong128Lo(Record rec) {
             long lo0 = args0.getLong128Lo(rec);
-            if (lo0 != Numbers.LONG_NaN) {
+            if (lo0 != Numbers.LONG_NULL) {
                 return lo0; // lo is not NaN -> Long128 is not null, that's easy
             }
             long hi0 = args0.getLong128Hi(rec);
-            if (hi0 != Numbers.LONG_NaN) {
+            if (hi0 != Numbers.LONG_NULL) {
                 return lo0; // hi is not NaN  -> Long128 is not null -> we can return lo even if it is NaN
             }
             // ok, both hi and lo are NaN, we use the value from the second argument
@@ -953,14 +953,14 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong128Hi(Record rec) {
-            long value = Numbers.LONG_NaN;
+            long value = Numbers.LONG_NULL;
             for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong128Hi(rec);
-                if (value != Numbers.LONG_NaN) {
+                if (value != Numbers.LONG_NULL) {
                     return value;
                 }
                 long lo = args.getQuick(i).getLong128Lo(rec);
-                if (lo != Numbers.LONG_NaN) {
+                if (lo != Numbers.LONG_NULL) {
                     return value;
                 }
             }
@@ -969,14 +969,14 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong128Lo(Record rec) {
-            long value = Numbers.LONG_NaN;
+            long value = Numbers.LONG_NULL;
             for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong128Lo(rec);
-                if (value != Numbers.LONG_NaN) {
+                if (value != Numbers.LONG_NULL) {
                     return value;
                 }
                 long hi = args.getQuick(i).getLong128Hi(rec);
-                if (hi != Numbers.LONG_NaN) {
+                if (hi != Numbers.LONG_NULL) {
                     return value;
                 }
             }

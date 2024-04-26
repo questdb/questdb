@@ -177,7 +177,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
         testColumnType(
                 ColumnType.FLOAT,
                 "column\tlocation\ttimestamp\n" +
-                        "NaN\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
+                        "null\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
                         "3.1416\t\t1970-01-01T00:00:02.000000Z\n" +
                         "5.0000\t\t1970-01-01T00:00:05.000000Z\n",
                 (sender) -> {
@@ -235,7 +235,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
         testColumnType(
                 ColumnType.INT,
                 "column\tlocation\ttimestamp\n" +
-                        "NaN\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
+                        "null\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
                         "5\t\t1970-01-01T00:00:04.000000Z\n",
                 (sender) -> {
                     sender.metric(tableName)

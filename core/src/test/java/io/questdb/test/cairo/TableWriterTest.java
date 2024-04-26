@@ -51,6 +51,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -1139,7 +1140,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableReader rdr = newOffPoolReader(configuration, PRODUCT)) {
                 String expected = "productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
                         "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:00:00.000000Z\n" +
-                        "NaN\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z\n";
+                        "null\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z\n";
                 assertCursor(expected, rdr.getCursor(), rdr.getMetadata(), true);
             }
         });
@@ -1761,6 +1762,52 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testGeoHashAsStringVanilla() throws Exception {
         TestUtils.assertMemoryLeak(() -> assertGeoStr("g9", 10, 489));
+    }
+
+    @Test
+    public void testGeoHashAsVarcharInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertGeoVarchar("ooo", 15, GeoHashes.NULL);
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `ooo` [");
+                TestUtils.assertContains(e.getFlyweightMessage(), " -> GEOHASH(3c)]");
+            }
+        });
+    }
+
+    @Test
+    public void testGeoHashAsVarcharLongerThanType() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoVarchar("g912j", 15, 15649));
+    }
+
+    @Test
+    public void testGeoHashAsVarcharLongerThanTypeUneven() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoVarchar("g912j", 11, 978));
+    }
+
+    @Test
+    public void testGeoHashAsVarcharNull() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoVarchar(null, 15, GeoHashes.NULL));
+    }
+
+    @Test
+    public void testGeoHashAsVarcharShorterThanType() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertGeoVarchar("g912j", 44, GeoHashes.NULL);
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `g912j` [");
+                TestUtils.assertContains(e.getFlyweightMessage(), " -> GEOHASH(44b)]");
+            }
+        });
+    }
+
+    @Test
+    public void testGeoHashAsVarcharVanilla() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoVarchar("g9", 10, 489));
     }
 
     @Test
@@ -2743,22 +2790,25 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            assertTable("productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
-                    "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:01:00.000000Z\n" +
-                    "761275053\tHBHFOWL\tPDXY\tSBEOUOJSHRU\t0.6761934857077543\tf\t6js\tu0x8u6\twc8jw257kp8b\t2013-03-04T00:02:00.000000Z\n" +
-                    "2034804966\tYRFBVTM\tHGOO\tZZVDZJMYICC\t0.2282233596526786\tp\tp16\t5ehgu7\tn5f7bnz2wzkr\t2013-03-04T00:03:00.000000Z\n" +
-                    "1775935667\tEDYYCTG\tQOLY\tXWCKYLSUWDS\t0.2820020716674768\tr\t2q2\tcsded1\tvqnqb4qjen3k\t2013-03-04T00:04:00.000000Z\n" +
-                    "68027832\tKJSMSSU\tQSRL\tTKVVSJOJIPH\t0.13006100084163252\t2\t06j\tuxnz7u\tpp3dqy3z5fzc\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n", PRODUCT);
+            assertTable(
+                    "productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
+                            "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:01:00.000000Z\n" +
+                            "761275053\tHBHFOWL\tPDXY\tSBEOUOJSHRU\t0.6761934857077543\tf\t6js\tu0x8u6\twc8jw257kp8b\t2013-03-04T00:02:00.000000Z\n" +
+                            "2034804966\tYRFBVTM\tHGOO\tZZVDZJMYICC\t0.2282233596526786\tp\tp16\t5ehgu7\tn5f7bnz2wzkr\t2013-03-04T00:03:00.000000Z\n" +
+                            "1775935667\tEDYYCTG\tQOLY\tXWCKYLSUWDS\t0.2820020716674768\tr\t2q2\tcsded1\tvqnqb4qjen3k\t2013-03-04T00:04:00.000000Z\n" +
+                            "68027832\tKJSMSSU\tQSRL\tTKVVSJOJIPH\t0.13006100084163252\t2\t06j\tuxnz7u\tpp3dqy3z5fzc\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n",
+                    PRODUCT
+            );
         });
     }
 
@@ -3290,6 +3340,10 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void assertGeoStr(String hash, int tableBits, long expected) {
+        assertGeoStringy(hash, tableBits, expected, true);
+    }
+
+    private void assertGeoStringy(String hash, int tableBits, long expected, boolean isStr) {
         final String tableName = "geo1";
         TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE);
         model.col("g", ColumnType.getGeoHashTypeWithBits(tableBits));
@@ -3297,7 +3351,11 @@ public class TableWriterTest extends AbstractCairoTest {
 
         try (TableWriter writer = newOffPoolWriter(configuration, tableName, metrics)) {
             TableWriter.Row r = writer.newRow();
-            r.putGeoStr(0, hash);
+            if (isStr) {
+                r.putGeoStr(0, hash);
+            } else {
+                r.putGeoVarchar(0, hash != null ? new Utf8String(hash) : null);
+            }
             r.append();
             writer.commit();
         }
@@ -3325,6 +3383,10 @@ public class TableWriterTest extends AbstractCairoTest {
             }
             Assert.assertEquals(expected, actual);
         }
+    }
+
+    private void assertGeoVarchar(String hash, int tableBits, long expected) {
+        assertGeoStringy(hash, tableBits, expected, false);
     }
 
     private void assertIndex(TableReader reader, TableReaderRecord record, int columnIndex) {

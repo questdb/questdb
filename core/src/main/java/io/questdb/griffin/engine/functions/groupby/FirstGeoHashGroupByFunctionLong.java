@@ -96,7 +96,7 @@ class FirstGeoHashGroupByFunctionLong extends GeoLongFunction implements GroupBy
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcValue.getGeoLong(valueIndex + 1));
         }
@@ -106,7 +106,7 @@ class FirstGeoHashGroupByFunctionLong extends GeoLongFunction implements GroupBy
     public void setLong(MapValue mapValue, long value) {
         // This method is used to define interpolated points and to init
         // an empty value, so it's ok to reset the row id field here.
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, value);
     }
 

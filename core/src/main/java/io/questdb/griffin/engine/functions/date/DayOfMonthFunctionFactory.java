@@ -65,8 +65,8 @@ public class DayOfMonthFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
-                return Numbers.INT_NaN;
+            if (value == Numbers.LONG_NULL) {
+                return Numbers.INT_NULL;
             }
             final int year = Timestamps.getYear(value);
             final boolean isLeap = Timestamps.isLeapYear(year);

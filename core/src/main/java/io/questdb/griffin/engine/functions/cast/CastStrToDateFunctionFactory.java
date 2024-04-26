@@ -56,9 +56,9 @@ public class CastStrToDateFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             final CharSequence value = arg.getStrA(rec);
             try {
-                return value == null ? Numbers.LONG_NaN : DateFormatUtils.parseDate(value);
+                return value == null ? Numbers.LONG_NULL : DateFormatUtils.parseDate(value);
             } catch (NumericException e) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
         }
     }

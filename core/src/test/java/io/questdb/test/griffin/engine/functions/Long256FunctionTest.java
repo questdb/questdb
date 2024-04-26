@@ -119,7 +119,7 @@ public class Long256FunctionTest {
 
     @Test
     public void testGetLong() {
-        Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
+        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

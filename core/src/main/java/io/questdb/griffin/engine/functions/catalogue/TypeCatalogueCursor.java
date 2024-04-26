@@ -61,7 +61,7 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     public boolean hasNext() {
         if (++row < rowCount) {
             intValues[0] = PG_TYPE_OIDS.get(row);
-            intValues[9] = Numbers.INT_NaN;
+            intValues[9] = Numbers.INT_NULL;
             intValues[10] = 0;
             intValues[11] = 0;
             intValues[12] = 0;

@@ -52,7 +52,7 @@ public class CastLongToByteFunctionFactory implements FunctionFactory {
         @Override
         public byte getByte(Record rec) {
             final long value = arg.getLong(rec);
-            return value != Numbers.LONG_NaN ? (byte) value : 0;
+            return value != Numbers.LONG_NULL ? (byte) value : 0;
         }
     }
 }

@@ -136,7 +136,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 break;
 
                             case ColumnType.INT:
-                                row.putInt(index, isNull ? Numbers.INT_NaN : rnd.nextInt());
+                                row.putInt(index, isNull ? Numbers.INT_NULL : rnd.nextInt());
                                 break;
 
                             case ColumnType.IPv4:
@@ -144,15 +144,15 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 break;
 
                             case ColumnType.LONG:
-                                row.putLong(index, isNull ? Numbers.LONG_NaN : rnd.nextLong());
+                                row.putLong(index, isNull ? Numbers.LONG_NULL : rnd.nextLong());
                                 break;
 
                             case ColumnType.TIMESTAMP:
-                                row.putTimestamp(index, isNull ? Numbers.LONG_NaN : rnd.nextLong());
+                                row.putTimestamp(index, isNull ? Numbers.LONG_NULL : rnd.nextLong());
                                 break;
 
                             case ColumnType.DATE:
-                                row.putDate(index, isNull ? Numbers.LONG_NaN : rnd.nextLong());
+                                row.putDate(index, isNull ? Numbers.LONG_NULL : rnd.nextLong());
                                 break;
 
                             case ColumnType.SYMBOL:
@@ -179,7 +179,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 if (!isNull) {
                                     row.putLong128(index, rnd.nextLong(), rnd.nextLong());
                                 } else {
-                                    row.putLong128(index, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                                    row.putLong128(index, Numbers.LONG_NULL, Numbers.LONG_NULL);
                                 }
                                 break;
 

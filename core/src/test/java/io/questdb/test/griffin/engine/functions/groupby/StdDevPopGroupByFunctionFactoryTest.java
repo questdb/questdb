@@ -32,7 +32,7 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStddevPopAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "stddev_pop\nNaN\n", "select stddev_pop(x) from (select cast(null as double) x from long_sequence(100))"
+                "stddev_pop\nnull\n", "select stddev_pop(x) from (select cast(null as double) x from long_sequence(100))"
         ));
     }
 
@@ -103,7 +103,7 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl1(x int)");
             assertSql(
-                    "stddev_pop\nNaN\n", "select stddev_pop(x) from tbl1"
+                    "stddev_pop\nnull\n", "select stddev_pop(x) from tbl1"
             );
         });
     }
