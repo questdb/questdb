@@ -71,7 +71,7 @@ public final class Unsafe {
         try {
             assert memoryTag >= MemoryTag.NATIVE_DEFAULT;
             checkAllocLimit(size, memoryTag);
-            long ptr = getUnsafe().allocateMemory(size);
+            long ptr = Os.malloc(size);
             recordMemAlloc(size, memoryTag);
             MALLOC_COUNT.incrementAndGet();
             return ptr;
@@ -173,7 +173,7 @@ public final class Unsafe {
 
     public static long free(long ptr, long size, int memoryTag) {
         if (ptr != 0) {
-            getUnsafe().freeMemory(ptr);
+            Os.free(ptr);
             FREE_COUNT.incrementAndGet();
             recordMemAlloc(-size, memoryTag);
         }
@@ -250,7 +250,7 @@ public final class Unsafe {
         try {
             assert memoryTag >= MemoryTag.NATIVE_DEFAULT;
             checkAllocLimit(-oldSize + newSize, memoryTag);
-            long ptr = getUnsafe().reallocateMemory(address, newSize);
+            long ptr = Os.realloc(address, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
             REALLOC_COUNT.incrementAndGet();
             return ptr;

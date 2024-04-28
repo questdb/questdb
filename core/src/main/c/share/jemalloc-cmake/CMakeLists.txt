@@ -16,10 +16,6 @@
 #    return()
 #endif ()
 
-if (NOT OS_LINUX)
-    message(WARNING "jemalloc support on non-Linux is EXPERIMENTAL")
-endif ()
-
 if (OS_LINUX)
     # ThreadPool select job randomly, and there can be some threads that have been
     # performed some memory-heavy tasks before and will be inactive for some time,
