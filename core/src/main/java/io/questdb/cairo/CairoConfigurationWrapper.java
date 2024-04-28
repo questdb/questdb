@@ -826,7 +826,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public String getSqlOperatorPrecedenceCompatMode() {
+    public boolean getSqlOperatorPrecedenceCompatMode() {
         return getDelegate().getSqlOperatorPrecedenceCompatMode();
     }
 

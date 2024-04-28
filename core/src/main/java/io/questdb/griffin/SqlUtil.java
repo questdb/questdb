@@ -907,7 +907,7 @@ public class SqlUtil {
     }
 
     static {
-        OperatorRegistry registry = OperatorExpression.getRegistry(PropertyKey.CompatModeNext);
+        OperatorRegistry registry = OperatorExpression.getRegistry();
         for (int i = 0, n = registry.operators.size(); i < n; i++) {
             SqlUtil.disallowedAliases.add(registry.operators.getQuick(i).operator.token);
         }

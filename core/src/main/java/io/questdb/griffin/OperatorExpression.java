@@ -168,10 +168,11 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.BinaryOr, 16, true, BINARY, false));
             }});
 
-    public static OperatorRegistry getRegistry(String compatMode) {
-        if (compatMode.equals(PropertyKey.CompatModeNext)) {
-            return registry;
-        }
+    public static OperatorRegistry getRegistry() {
+        return registry;
+    }
+
+    public static OperatorRegistry getLegacyRegistry() {
         return legacyRegistry;
     }
 

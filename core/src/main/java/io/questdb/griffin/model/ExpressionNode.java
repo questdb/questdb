@@ -197,7 +197,7 @@ public class ExpressionNode implements Mutable, Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        OperatorRegistry registry = OperatorExpression.getRegistry(PropertyKey.CompatModeNext);
+        OperatorRegistry registry = OperatorExpression.getRegistry();
         switch (paramCount) {
             case 0:
                 if (queryModel != null) {

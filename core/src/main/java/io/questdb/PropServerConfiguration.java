@@ -327,7 +327,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowStoreMaxPages;
     private final int sqlWindowStorePageSize;
     private final int sqlWindowTreeKeyMaxPages;
-    private String sqlOperatorPrecedenceCompatMode;
+    private final boolean tempSqlOperatorPrecedence;
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
     private final int systemO3ColumnMemorySize;
@@ -1107,11 +1107,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, sqlWindowTreeKeyPageSize));
             int sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES, sqlWindowTreeKeyMaxPages);
-            this.sqlOperatorPrecedenceCompatMode = getString(properties, env, PropertyKey.TEMP_7_4_3_CAIRO_SQL_OPERATOR_PRECEDENCE, PropertyKey.CompatModeCurrent);
-            if (!this.sqlOperatorPrecedenceCompatMode.equals(PropertyKey.CompatModeCurrent) && !this.sqlOperatorPrecedenceCompatMode.equals(PropertyKey.CompatModeNext) && !this.sqlOperatorPrecedenceCompatMode.equals(PropertyKey.CompatModeValidation)) {
-                log.advisory().$("invalid property value: key=[").$(PropertyKey.TEMP_7_4_3_CAIRO_SQL_OPERATOR_PRECEDENCE).$("], value=[").$(this.sqlOperatorPrecedenceCompatMode).$("]").$();
-                this.sqlOperatorPrecedenceCompatMode = PropertyKey.CompatModeCurrent;
-            }
+            this.tempSqlOperatorPrecedence = getBoolean(properties, env, PropertyKey.TEMP_CAIRO_SQL_OPERATOR_PRECEDENCE, false);
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATESTBY_QUEUE_CAPACITY, 32));
@@ -2677,8 +2673,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public String getSqlOperatorPrecedenceCompatMode() {
-            return sqlOperatorPrecedenceCompatMode;
+        public boolean getSqlOperatorPrecedenceCompatMode() {
+            return tempSqlOperatorPrecedence;
         }
 
         @Override

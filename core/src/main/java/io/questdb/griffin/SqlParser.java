@@ -104,18 +104,18 @@ public class SqlParser {
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
         this.optimiser = optimiser;
-        String sqlOperatorPrecedenceCompatMode = configuration.getSqlOperatorPrecedenceCompatMode();
-        if (sqlOperatorPrecedenceCompatMode.equals(PropertyKey.CompatModeValidation)) {
+        boolean sqlOperatorPrecedenceCompatMode = configuration.getSqlOperatorPrecedenceCompatMode();
+        if (!sqlOperatorPrecedenceCompatMode) {
             this.expressionParser = new ExpressionParser(
-                    OperatorExpression.getRegistry(PropertyKey.CompatModeCurrent),
-                    OperatorExpression.getRegistry(PropertyKey.CompatModeNext),
+                    OperatorExpression.getLegacyRegistry(),
+                    OperatorExpression.getRegistry(),
                     expressionNodePool,
                     this,
                     characterStore
             );
         } else {
             this.expressionParser = new ExpressionParser(
-                    OperatorExpression.getRegistry(sqlOperatorPrecedenceCompatMode),
+                    OperatorExpression.getRegistry(),
                     null,
                     expressionNodePool,
                     this,

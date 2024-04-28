@@ -193,7 +193,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_WINDOW_TREE_PAGE_SIZE("cairo.sql.window.tree.page.size"),
     CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES("cairo.sql.analytic.tree.max.pages"),
     CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"),
-    TEMP_7_4_3_CAIRO_SQL_OPERATOR_PRECEDENCE("temp_7_4_3.cairo.sql.operator.precedence"), // "use-current" / "use-next" / "use-current-validate-next"
+    TEMP_CAIRO_SQL_OPERATOR_PRECEDENCE("temp.cairo.sql.operator.precedence"),
     CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT("cairo.o3.txn.scoreboard.entry.count"),
     CAIRO_LATESTBY_QUEUE_CAPACITY("cairo.latestby.queue.capacity"),
     CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY("cairo.o3.partition.purge.list.initial.capacity"),
@@ -461,10 +461,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_CAIRO_ALLOW_MIXED_IO("debug.cairo.allow.mixed.io", false, true),
     DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE("debug.cairo.o3.column.memory.size", false, true),
     CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count");
-
-    public static final String CompatModeCurrent = "use-current";
-    public static final String CompatModeNext = "use-next";
-    public static final String CompatModeValidation = "use-current-validate-next";
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

@@ -827,8 +827,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public String getSqlOperatorPrecedenceCompatMode() {
-        return PropertyKey.CompatModeCurrent;
+    public boolean getSqlOperatorPrecedenceCompatMode() {
+        return false;
     }
 
     @Override

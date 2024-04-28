@@ -63,9 +63,9 @@ public class ExpressionParserFuzzTest extends AbstractBootstrapTest {
 
     @Test
     public void fuzzTestValidExpressions() throws Exception {
-        createDummyConfiguration(PropertyKey.TEMP_7_4_3_CAIRO_SQL_OPERATOR_PRECEDENCE + "=use-next");
+        createDummyConfiguration(PropertyKey.TEMP_CAIRO_SQL_OPERATOR_PRECEDENCE + "=true");
         try (final ServerMain serverMain = ServerMain.createWithoutWalApplyJob(root, new HashMap<>())) {
-            Assert.assertEquals(serverMain.getConfiguration().getCairoConfiguration().getSqlOperatorPrecedenceCompatMode(), "use-next");
+            Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().getSqlOperatorPrecedenceCompatMode());
             serverMain.start();
 
             final CairoEngine engine = serverMain.getEngine();
