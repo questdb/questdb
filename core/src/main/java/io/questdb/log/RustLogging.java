@@ -1,6 +1,6 @@
 package io.questdb.log;
 
-import io.questdb.std.Qdb;
+import io.questdb.std.Os;
 
 public class RustLogging {
     public static int LEVEL_DEBUG = 4;
@@ -20,7 +20,7 @@ public class RustLogging {
     private static native void installRustLogger(int maxLevel);
 
     static {
-        Qdb.init();
+        Os.init();
 
         // To ensure that the Log and LogFactory classes are loaded
         // before the JNI code performs lookups on them.

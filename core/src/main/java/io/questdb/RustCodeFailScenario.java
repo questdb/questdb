@@ -1,6 +1,6 @@
 package io.questdb;
 
-import io.questdb.std.Qdb;
+import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 
 public class RustCodeFailScenario implements QuietCloseable {
@@ -34,6 +34,6 @@ public class RustCodeFailScenario implements QuietCloseable {
     private static native void teardown(long impl);
 
     static {
-        Qdb.init();
+        Os.init();
     }
 }

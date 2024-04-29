@@ -76,11 +76,7 @@ public class Bootstrap {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
-
-        // ensure we can load libraries
         Os.init();
-        Qdb.init();
-
         banner = bootstrapConfiguration.getBanner();
         microsecondClock = bootstrapConfiguration.getMicrosecondClock();
         buildInformation = new BuildInformationHolder(bootstrapConfiguration.getClass());

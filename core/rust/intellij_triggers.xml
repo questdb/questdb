@@ -22,7 +22,7 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project name="qdb-rust" default="qdb-build" basedir="..">
+<project name="qdbr-rust" default="qdbr-build" basedir="..">
     <description>
         IntelliJ integration to trigger maven steps to build "qdb" via Ant.
 
@@ -55,18 +55,16 @@
         <property name="maven.executable" value="mvn"/>
     </target>
 
-    <target name="qdb-build" depends="set-mvn-path-windows, set-mvn-path-unix">
+    <target name="qdbr-build" depends="set-mvn-path-windows, set-mvn-path-unix">
         <exec executable="${maven.executable}">
-<!--            <arg value="-pl=core"/>-->
-            <arg value="org.questdb:rust-maven-plugin:build@qdb-build"/>
+            <arg value="org.questdb:rust-maven-plugin:build@qdbr-build"/>
         </exec>
     </target>
 
-    <target name="qdb-release-build" depends="set-mvn-path-windows, set-mvn-path-unix">
+    <target name="qdbr-release-build" depends="set-mvn-path-windows, set-mvn-path-unix">
         <exec executable="${maven.executable}">
-<!--            <arg value="-pl=core"/>-->
-            <arg value="org.questdb:rust-maven-plugin:build@qdb-build"/>
-            <arg value="-Dqdb.release=true"/>
+            <arg value="org.questdb:rust-maven-plugin:build@qdbr-build"/>
+            <arg value="-Dqdbr.release=true"/>
         </exec>
     </target>
 </project>

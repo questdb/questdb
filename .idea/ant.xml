@@ -2,7 +2,7 @@
 <project version="4">
   <component name="AntConfiguration">
     <buildFile url="file://$PROJECT_DIR$/core/rust/intellij_triggers.xml">
-      <executeOn event="beforeCompilation" target="qdb-build" />
+      <executeOn event="beforeCompilation" target="qdbr-build" />
     </buildFile>
   </component>
 </project>

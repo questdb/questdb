@@ -97,4 +97,10 @@ public class OsTest {
         long sleepTime = System.currentTimeMillis() - time;
         Assert.assertTrue(String.valueOf(sleepTime), sleepTime >= 1000);
     }
+
+    @Test
+    public void testSmokeTestRust() {
+        final long res = Os.rustSmokeTest(1, 2);
+        Assert.assertEquals(3, res);
+    }
 }

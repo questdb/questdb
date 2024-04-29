@@ -1415,7 +1415,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void configurePortal(CharSequence portalName, CharSequence statementName) throws BadProtocolException {
+    private void configurePortal(@NotNull CharSequence portalName, CharSequence statementName) throws BadProtocolException {
         int index = namedPortalMap.keyIndex(portalName);
         if (index > -1) {
             Portal portal = namedPortalPool.pop();
@@ -1427,7 +1427,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void configurePreparedStatement(CharSequence statementName) throws BadProtocolException {
+    private void configurePreparedStatement(@NotNull CharSequence statementName) throws BadProtocolException {
         // this is a PARSE message asking us to setup named SQL
         // we need to keep SQL text in case our SQL cache expires
         // as well as PG types of the bind variables, which we will need to configure setters
@@ -3163,7 +3163,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
+        public Utf8Sink putNonAscii(long lo, long hi) {
             // Once this is actually needed, the impl would look something like:
             // final long size = hi - lo;
             // ensureCapacity(size);

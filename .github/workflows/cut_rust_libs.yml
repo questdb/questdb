@@ -10,11 +10,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build Rust Library
         run: |
-          cd core/rust/qdb
+          cd core/rust/qdbr
           cargo build --release --target-dir target
       - name: list built files
         run: |
-          cd core/rust/qdb/target
+          cd core/rust/qdbr/target
           dir /A-D /S /B
   build-freebsd:
     runs-on: ubuntu-latest
@@ -31,11 +31,11 @@ jobs:
             pkg install -y curl cmake gcc git nasm openjdk17 rust
           run: |
             export JAVA_HOME=/usr/local/openjdk17
-            cd core/rust/qdb
+            cd core/rust/qdbr
             cargo build --release --target-dir target
       - name: list built files
         run: |
-          cd core/rust/qdb/target
+          cd core/rust/qdbr/target
           find . -type f
 
   build-macos:
@@ -50,12 +50,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build Rust Library
         run: |
-          cd core/rust/qdb
+          cd core/rust/qdbr
           cargo clean
           cargo build --release --target-dir target
       - name: list built files
         run: |
-          cd core/rust/qdb/target
+          cd core/rust/qdbr/target
           find . -type f
   build-linux-amd64:
     runs-on: ubuntu-latest
@@ -79,12 +79,12 @@ jobs:
           echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
       - name: Build linux-amd64 Rust Library
         run: |
-          cd core/rust/qdb
+          cd core/rust/qdbr
           cargo clean
           cargo build --release --target-dir target
       - name: list built files
         run: |
-          cd core/rust/qdb/target
+          cd core/rust/qdbr/target
           find . -type f
   build-linux-aarch64:
     runs-on: ubuntu-latest
@@ -100,10 +100,10 @@ jobs:
           cargo install cross
       - name: Build linux-aarch64 Rust Library
         run: |
-          cd core/rust/qdb
+          cd core/rust/qdbr
           cargo clean
           cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
       - name: list built files
         run: |
-          cd core/rust/qdb/target
+          cd core/rust/qdbr/target
           find . -type f
