@@ -359,8 +359,12 @@ public class OrderedMap implements Map, Reopenable {
         return offsets.get(((long) index << 1) | 1);
     }
 
-    private static long getOffset(DirectIntList offsets, int index) {
-        return ((long) offsets.get((long) index << 1) - 1) << 3;
+    private static long getOffset(int rawOffset) {
+        return ((long) rawOffset - 1) << 3;
+    }
+
+    private static int getRawOffset(DirectIntList offsets, int index) {
+        return offsets.get((long) index << 1);
     }
 
     private static void setHashCodeLo(DirectIntList offsets, int index, int hashCodeLo) {
@@ -397,15 +401,12 @@ public class OrderedMap implements Map, Reopenable {
             int hashCodeLo = Numbers.decodeLowInt(hashCode);
             int index = hashCodeLo & mask;
 
-            long destOffset;
-            while ((destOffset = getOffset(offsets, index)) > -1) {
-                long destAddress = heapStart + destOffset;
+            int destRawOffset;
+            while ((destRawOffset = getRawOffset(offsets, index)) != 0) {
+                long destAddress = heapStart + getOffset(destRawOffset);
                 if (hashCodeLo == getHashCodeLo(offsets, index) && Vect.memeq(destAddress, srcAddress, keySize)) {
                     // Match found, merge values.
-                    mergeFunc.merge(
-                            valueAt(destAddress),
-                            srcMap.valueAt(srcAddress)
-                    );
+                    mergeFunc.merge(valueAt(destAddress), srcMap.valueAt(srcAddress));
                     continue OUTER;
                 }
                 index = (index + 1) & mask;
@@ -430,29 +431,26 @@ public class OrderedMap implements Map, Reopenable {
 
         OUTER:
         for (int i = 0, k = (int) (srcMap.offsets.size() >>> 1); i < k; i++) {
-            long offset = getOffset(srcMap.offsets, i);
-            if (offset < 0) {
+            int rawOffset = getRawOffset(srcMap.offsets, i);
+            if (rawOffset == 0) {
                 continue;
             }
 
-            long srcAddress = srcMap.heapStart + offset;
+            long srcAddress = srcMap.heapStart + getOffset(rawOffset);
             int srcKeySize = Unsafe.getUnsafe().getInt(srcAddress);
             int hashCodeLo = getHashCodeLo(srcMap.offsets, i);
             int index = hashCodeLo & mask;
 
-            long destOffset;
-            while ((destOffset = getOffset(offsets, index)) > -1) {
-                long destAddress = heapStart + destOffset;
+            int destRawOffset;
+            while ((destRawOffset = getRawOffset(offsets, index)) != 0) {
+                long destAddress = heapStart + getOffset(destRawOffset);
                 if (
                         hashCodeLo == getHashCodeLo(offsets, index)
                                 && Unsafe.getUnsafe().getInt(destAddress) == srcKeySize
                                 && Vect.memeq(destAddress + keyOffset, srcAddress + keyOffset, srcKeySize)
                 ) {
                     // Match found, merge values.
-                    mergeFunc.merge(
-                            valueAt(destAddress),
-                            srcMap.valueAt(srcAddress)
-                    );
+                    mergeFunc.merge(valueAt(destAddress), srcMap.valueAt(srcAddress));
                     continue OUTER;
                 }
                 index = (index + 1) & mask;
@@ -474,8 +472,9 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     private OrderedMapValue probe0(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
-        long offset;
-        while ((offset = getOffset(offsets, index = (++index & mask))) > -1) {
+        int rawOffset;
+        while ((rawOffset = getRawOffset(offsets, index = (index + 1) & mask)) != 0) {
+            long offset = getOffset(rawOffset);
             if (hashCodeLo == getHashCodeLo(offsets, index) && keyWriter.eq(offset)) {
                 long startAddress = heapStart + offset;
                 return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
@@ -485,8 +484,9 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     private OrderedMapValue probeReadOnly(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
-        long offset;
-        while ((offset = getOffset(offsets, index = (++index & mask))) > -1) {
+        int rawOffset;
+        while ((rawOffset = getRawOffset(offsets, index = (index + 1) & mask)) != 0) {
+            long offset = getOffset(rawOffset);
             if (hashCodeLo == getHashCodeLo(offsets, index) && keyWriter.eq(offset)) {
                 long startAddress = heapStart + offset;
                 return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
@@ -513,13 +513,14 @@ public class OrderedMap implements Map, Reopenable {
         newOffsets.zero(0);
 
         for (int i = 0, k = (int) (offsets.size() >>> 1); i < k; i++) {
-            long offset = getOffset(offsets, i);
-            if (offset < 0) {
+            int rawOffset = getRawOffset(offsets, i);
+            if (rawOffset == 0) {
                 continue;
             }
+            long offset = getOffset(rawOffset);
             int hashCodeLo = getHashCodeLo(offsets, i);
             int index = hashCodeLo & mask;
-            while (getOffset(newOffsets, index) > -1) {
+            while (getRawOffset(newOffsets, index) != 0) {
                 index = (index + 1) & mask;
             }
             setOffset(newOffsets, index, offset);
@@ -787,10 +788,12 @@ public class OrderedMap implements Map, Reopenable {
         private MapValue createValue(long keySize, long hashCode) {
             int hashCodeLo = Numbers.decodeLowInt(hashCode);
             int index = hashCodeLo & mask;
-            long offset = getOffset(offsets, index);
-            if (offset < 0) {
+
+            int rawOffset = getRawOffset(offsets, index);
+            long offset;
+            if (rawOffset == 0) {
                 return asNew(this, index, hashCodeLo, value);
-            } else if (hashCodeLo == getHashCodeLo(offsets, index) && eq(offset)) {
+            } else if (hashCodeLo == getHashCodeLo(offsets, index) && eq(offset = getOffset(rawOffset))) {
                 long startAddress = heapStart + offset;
                 return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
             }
@@ -802,11 +805,12 @@ public class OrderedMap implements Map, Reopenable {
             long hashCode = hash();
             int hashCodeLo = Numbers.decodeLowInt(hashCode);
             int index = hashCodeLo & mask;
-            long offset = getOffset(offsets, index);
 
-            if (offset < 0) {
+            int rawOffset = getRawOffset(offsets, index);
+            long offset;
+            if (rawOffset == 0) {
                 return null;
-            } else if (hashCodeLo == getHashCodeLo(offsets, index) && eq(offset)) {
+            } else if (hashCodeLo == getHashCodeLo(offsets, index) && eq(offset = getOffset(rawOffset))) {
                 long startAddress = heapStart + offset;
                 return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
             } else {
