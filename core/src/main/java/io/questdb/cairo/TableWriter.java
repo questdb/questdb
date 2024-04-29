@@ -911,12 +911,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long partitionTimestamp = txWriter.getLastPartitionTimestamp();
                 setStateForTimestamp(path, partitionTimestamp);
                 openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
-                long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                long colTopZeroBased = columnTop > -1 ? columnTop : 0;
-                long columnRowCount = txWriter.getTransientRowCount() - colTopZeroBased;
-                if (columnRowCount > 0) {
-                    setColumnAppendPosition(columnIndex, columnRowCount, false);
-                }
+                setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
                 path.trimTo(rootLen);
             }
 

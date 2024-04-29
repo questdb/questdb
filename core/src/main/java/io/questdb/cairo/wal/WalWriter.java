@@ -494,12 +494,24 @@ public class WalWriter implements TableWriterAPI {
                 try {
                     final int timestampIndex = metadata.getTimestampIndex();
 
-                    LOG.info().$("rolling uncommitted rows to new segment [wal=")
-                            .$(path).$(Files.SEPARATOR).$(oldSegmentId)
-                            .$(", lastSegmentTxn=").$(lastSegmentTxn)
-                            .$(", newSegmentId=").$(newSegmentId)
-                            .$(", uncommittedRows=").$(uncommittedRows)
-                            .I$();
+                    if (convertColumnIndex < 0) {
+                        LOG.info().$("rolling uncommitted rows to new segment [wal=")
+                                .$(path).$(Files.SEPARATOR).$(oldSegmentId)
+                                .$(", lastSegmentTxn=").$(lastSegmentTxn)
+                                .$(", newSegmentId=").$(newSegmentId)
+                                .$(", uncommittedRows=").$(uncommittedRows)
+                                .I$();
+                    } else {
+                        int existingType = metadata.getColumnType(convertColumnIndex);
+                        LOG.info().$("rolling uncommitted rows to new segment with type conversion [wal=")
+                                .$(path).$(Files.SEPARATOR).$(oldSegmentId)
+                                .$(", lastSegmentTxn=").$(lastSegmentTxn)
+                                .$(", newSegmentId=").$(newSegmentId)
+                                .$(", uncommittedRows=").$(uncommittedRows)
+                                .$(", existingType=").$(ColumnType.nameOf(existingType))
+                                .$(", newType=").$(ColumnType.nameOf(convertToColumnType))
+                                .I$();
+                    }
 
                     final int commitMode = configuration.getCommitMode();
                     for (int columnIndex = 0; columnIndex < columnsToRoll; columnIndex++) {
@@ -1094,8 +1106,8 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
-        final MemoryMA primaryColumn = columns.getAndSetQuick(pi, NullMemory.INSTANCE);
-        final MemoryMA secondaryColumn = columns.getAndSetQuick(si, NullMemory.INSTANCE);
+        final MemoryMA primaryColumn = columns.getAndSetQuick(pi, null);
+        final MemoryMA secondaryColumn = columns.getAndSetQuick(si, null);
         primaryColumn.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
         if (secondaryColumn != null) {
             secondaryColumn.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
@@ -1696,7 +1708,9 @@ public class WalWriter implements TableWriterAPI {
                 for (int i = 0, n = symbolHashMap.size(); i < n; i++) {
                     CharSequence symbolValue = symbolHashMap.keys().get(i);
                     int index = symbolHashMap.get(symbolValue);
-                    symbols.extendAndSet(index, i);
+                    if (index >= symbolCountWatermark) {
+                        symbols.extendAndSet(index - symbolCountWatermark, i);
+                    }
                 }
             }
         }
@@ -1906,6 +1920,8 @@ public class WalWriter implements TableWriterAPI {
                     if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
                         metadata.changeColumnType(columnName, newType);
                         path.trimTo(rootLen).slash().put(segmentId);
+
+                        markColumnRemoved(existingColumnIndex, existingColumnType);
                         if (!rollSegmentOnNextRow) {
                             // this means we have rolled uncommitted rows to a new segment already
                             // we should switch metadata to this new segment
@@ -1924,8 +1940,6 @@ public class WalWriter implements TableWriterAPI {
                                         .I$();
                             }
                         }
-
-                        markColumnRemoved(existingColumnIndex, existingColumnType);
                         if (securityContext != null) {
                             ddlListener.onColumnTypeChanged(securityContext, metadata.getTableToken(), columnName, existingColumnType, newType);
                         }
