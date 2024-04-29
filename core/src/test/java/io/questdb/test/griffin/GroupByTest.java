@@ -1021,6 +1021,36 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupBySingleVarcharKeyFromSampleByWithFill() throws Exception {
+        ddl("create table t (vch varchar, l long, ts timestamp) timestamp(ts) partition by day;");
+        insert("insert into t values \n" +
+                "('USD', 1, '2021-11-17T17:00:00.000000Z'),\n" +
+                "('USD', 2, '2021-11-17T17:35:02.000000Z'),\n" +
+                "('EUR', 3, '2021-11-17T17:45:02.000000Z'),\n" +
+                "('USD', 1, '2021-11-17T19:04:00.000000Z'),\n" +
+                "('USD', 2, '2021-11-17T19:35:02.000000Z'),\n" +
+                "('USD', 3, '2021-11-17T19:45:02.000000Z');");
+
+        String query = "with samp as (\n" +
+                "  select ts, vch, min(l), max(l)\n" +
+                "  from t\n" +
+                "  sample by 1h fill(prev)\n" +
+                ")\n" +
+                "select vch, sum(min)\n" +
+                "from samp;";
+
+        assertQuery(
+                "vch\tsum\n" +
+                        "EUR\t9\n" +
+                        "USD\t3\n",
+                query,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testGroupBySingleVarcharKeyFromUnionAllAndFunction() throws Exception {
         // grouping by a single varchar key uses a fast-path which assume most of the time keys are just stable
         // pointers into mmaped memory. This test verifies that the fast-path is not broken when some grouping
