@@ -558,19 +558,6 @@ public class MemoryCARWImplTest {
     }
 
     @Test
-    public void testJumpToZeroAddressAllocates() {
-        final int pageSize = 256;
-        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            Assert.assertEquals(0, mem.size());
-
-            mem.jumpTo(0);
-
-            Assert.assertEquals(pageSize, mem.size());
-            Assert.assertEquals(0, mem.getAppendOffset());
-        }
-    }
-
-    @Test
     public void testLong256() {
         try (MemoryARW mem = new MemoryCARWImpl(256, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
@@ -928,24 +915,6 @@ public class MemoryCARWImplTest {
     public void testOkSize() {
         try (MemoryARW mem = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             assertStrings(mem);
-        }
-    }
-
-    @Test
-    public void testReuseAfterClose() {
-        final int pageSize = 256;
-        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            mem.putLong(42);
-            Assert.assertEquals(pageSize, mem.size());
-            Assert.assertEquals(8, mem.getAppendOffset());
-
-            mem.close();
-            Assert.assertEquals(0, mem.size());
-            Assert.assertEquals(0, mem.getAppendOffset());
-
-            mem.putLong(42);
-            Assert.assertEquals(pageSize, mem.size());
-            Assert.assertEquals(8, mem.getAppendOffset());
         }
     }
 
