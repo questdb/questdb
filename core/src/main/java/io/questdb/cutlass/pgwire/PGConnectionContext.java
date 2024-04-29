@@ -3163,7 +3163,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
+        public Utf8Sink putNonAscii(long lo, long hi) {
             // Once this is actually needed, the impl would look something like:
             // final long size = hi - lo;
             // ensureCapacity(size);

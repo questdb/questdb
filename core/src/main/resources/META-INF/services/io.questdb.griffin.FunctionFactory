@@ -789,6 +789,7 @@ io.questdb.griffin.engine.functions.str.ConcatFunctionFactory
 
 # replace()
 io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory
+io.questdb.griffin.engine.functions.str.ReplaceVarcharFunctionFactory
 
 # regexp_replace()
 io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory
@@ -852,9 +853,11 @@ io.questdb.griffin.engine.functions.groupby.CorrGroupByFunctionFactory
 # strpos()
 io.questdb.griffin.engine.functions.str.StrPosFunctionFactory
 io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory
+io.questdb.griffin.engine.functions.str.StrPosVarcharFunctionFactory
 
 # position()
 io.questdb.griffin.engine.functions.str.PositionFunctionFactory
+io.questdb.griffin.engine.functions.str.PositionVarcharFunctionFactory
 
 # ^
 io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory
@@ -903,6 +906,9 @@ io.questdb.griffin.engine.functions.str.RPadVarcharVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.TrimFunctionFactory
 io.questdb.griffin.engine.functions.str.LTrimFunctionFactory
 io.questdb.griffin.engine.functions.str.RTrimFunctionFactory
+io.questdb.griffin.engine.functions.str.TrimVarcharFunctionFactory
+io.questdb.griffin.engine.functions.str.LTrimVarcharFunctionFactory
+io.questdb.griffin.engine.functions.str.RTrimVarcharFunctionFactory
 
 # window functions
 io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory

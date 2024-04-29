@@ -24,49 +24,14 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.str.StringSink;
-
-import static io.questdb.std.Chars.trim;
-
-public class TrimConstFunction extends StrFunction implements UnaryFunction {
-
-    private final Function arg;
-    private final StringSink sink1 = new StringSink();
-    private final StringSink sink2 = new StringSink();
-
-    public TrimConstFunction(Function arg, TrimType type) {
-        this.arg = arg;
-        trim(type, getArg().getStrA(null), sink1);
-        trim(type, getArg().getStrA(null), sink2);
+public class RTrimVarcharFunctionFactory extends TrimVarcharFunctionFactory {
+    @Override
+    public String getSignature() {
+        return "rtrim(Ø)";
     }
 
     @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public CharSequence getStrA(Record rec) {
-        return sink1;
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return sink2;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val('\'').val(sink1).val('\'');
+    protected TrimType trimType() {
+        return TrimType.RTRIM;
     }
 }

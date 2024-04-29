@@ -32,18 +32,16 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Sink interface that does not expose storage format. Users of this interface must not make any assumptions about
- * storage format.
- *
- * @param <T>
+ * A sink that does not expose its storage format. Users of this interface must
+ * not make any assumptions about the storage format.
  */
 @SuppressWarnings("unchecked")
 public interface CharSink<T extends CharSink<?>> {
 
     /**
-     * Treats the input char as an ASCII one and writes it into the sink n times.
-     * If a UTF-8 char is provided instead, a corrupted char may be written into
-     * the sink depending on the implementation.
+     * Assumes the char is ASCII and appends it to the sink n times.
+     * If the char is non-ASCII, it may append a corrupted char, depending
+     * on the implementation.
      */
     default void fillAscii(char c, int n) {
         for (int i = 0; i < n; i++) {
@@ -78,54 +76,77 @@ public interface CharSink<T extends CharSink<?>> {
         return (T) this;
     }
 
+    /**
+     * Appends a UTF-8-encoded sequence to this sink.
+     * <br/>
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * If the sequence's `isAscii` status is false, this sink's `isAscii`
+     * status drops to false as well.
+     */
     T put(@Nullable Utf8Sequence us);
 
+    /**
+     * Appends a string representation of the supplied number to this sink.
+     */
     default T put(int value) {
         Numbers.append(this, value);
         return (T) this;
     }
 
+    /**
+     * Appends a string representation of the supplied number to this sink.
+     */
     default T put(long value) {
         Numbers.append(this, value);
         return (T) this;
     }
 
+    /**
+     * Appends a string representation of the supplied number to this sink.
+     */
     default T put(float value, int scale) {
         Numbers.append(this, value, scale);
         return (T) this;
     }
 
+    /**
+     * Appends a string representation of the supplied number to this sink.
+     */
     default T put(double value) {
         Numbers.append(this, value);
         return (T) this;
     }
 
+    /**
+     * Appends a string representation of the supplied number to this sink.
+     */
     default T put(double value, int scale) {
         Numbers.append(this, value, scale);
         return (T) this;
     }
 
+    /**
+     * Appends a string representation of the supplied boolean to this sink.
+     */
     default T put(boolean value) {
         return putAscii(value ? "true" : "false");
     }
 
     /**
-     * Treats the input char as an ASCII one. If a UTF-8 char is provided instead,
-     * a corrupted char may be written into the sink depending on the implementation.
+     * Appends an ASCII char to this sink. If the char is non-ASCII, it may append a
+     * corrupted char, depending on the implementation.
      */
     T putAscii(char c);
 
     /**
-     * Treats the input char sequence as an ASCII-only one. If a sequence with UTF-8 chars
-     * is provided instead, corrupted chars may be written into the sink depending on
-     * the implementation.
+     * Appends a sequence of ASCII chars to this sink. If some chars are non-ASCII,
+     * it may append corrupted chars, depending on the implementation.
      */
     T putAscii(@Nullable CharSequence cs);
 
     /**
-     * Treats the input char array segment as an ASCII-only one. If an array with UTF-8 chars
-     * is provided instead, corrupted chars may be written into the sink depending on
-     * the implementation.
+     * Appends a range of ASCII chars from the supplied array. If some chars are
+     * non-ASCII, it may append corrupted chars, depending on the implementation.
      */
     default T putAscii(char @NotNull [] chars, int start, int len) {
         for (int i = 0; i < len; i++) {
@@ -135,9 +156,9 @@ public interface CharSink<T extends CharSink<?>> {
     }
 
     /**
-     * Treats the input char sequence segment as an ASCII-only one. If a sequence
-     * with UTF-8 chars is provided instead, corrupted chars may be written into
-     * the sink depending on the implementation.
+     * Appends a range of ASCII chars from the supplied sequence to this sink.
+     * If some chars are non-ASCII, it may append corrupted chars, depending on
+     * the implementation.
      */
     default T putAscii(@NotNull CharSequence cs, int start, int len) {
         for (int i = start; i < len; i++) {
@@ -165,6 +186,15 @@ public interface CharSink<T extends CharSink<?>> {
         return (T) this;
     }
 
+    /**
+     * Accepts a range of memory addresses from lo to hi (exclusive), expecting it to
+     * point to a block of valid UTF-8 bytes, and appends it to this sink.
+     * <br/>
+     * For impls that care about the distinction between ASCII and non-ASCII:
+     * Drops the `isAscii` status of this sink.
+     */
+    T putNonAscii(long lo, long hi);
+
     default T putQuoted(@NotNull CharSequence cs) {
         putAscii('\"').put(cs).putAscii('\"');
         return (T) this;
@@ -180,6 +210,4 @@ public interface CharSink<T extends CharSink<?>> {
                 : b <= 0xfffccccccccccccL ? put(Math.round((bytes >> 10) / 0x1p40 * 1000.0) / 1000.0).put(" PiB")
                 : put(Math.round((bytes >> 20) / 0x1p40 * 1000.0) / 1000.0).put(" EiB");
     }
-
-    T putUtf8(long lo, long hi);
 }
