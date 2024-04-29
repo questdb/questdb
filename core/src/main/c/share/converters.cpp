@@ -76,6 +76,14 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
     macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::DOUBLE, int32_t, double)
     macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::DATE, int32_t, int64_t)
     macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::TIMESTAMP, int32_t, int64_t)
+    // LONG
+    macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::BYTE,      int64_t, int8_t)
+    macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::SHORT,     int64_t, int16_t)
+    macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::INT,       int64_t, int32_t)
+    macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::FLOAT,     int64_t, float)
+    macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::DOUBLE,    int64_t, double)
+    macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::DATE,      int64_t, int64_t)
+    macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::TIMESTAMP, int64_t, int64_t)
     // FLOAT
     macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::BYTE, float, int8_t)
     macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::SHORT, float, int16_t)
