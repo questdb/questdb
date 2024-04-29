@@ -60,7 +60,7 @@ import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
  * </ul>
  * The offset list contains [compressed_offset, hash code 32 LSBs] pairs. An offset value contains
  * an offset to the address of a key-value pair in the key memory compressed to an int. Key-value
- * pair addresses are 8 byte aligned, so a FastMap is capable of holding up to 32GB of data.
+ * pair addresses are 8 byte aligned, so an OrderedMap is capable of holding up to 32GB of data.
  * <p>
  * The offset list is used as a hash table with linear probing. So, a table resize allocates a new
  * offset list and copies offsets there while the key memory stays as is.
@@ -363,6 +363,10 @@ public class OrderedMap implements Map, Reopenable {
         return ((long) offsets.get((long) index << 1) - 1) << 3;
     }
 
+    private static int getRawOffset(DirectIntList offsets, int index) {
+        return offsets.get((long) index << 1);
+    }
+
     private static void setHashCodeLo(DirectIntList offsets, int index, int hashCodeLo) {
         offsets.set(((long) index << 1) | 1, hashCodeLo);
     }
@@ -389,28 +393,21 @@ public class OrderedMap implements Map, Reopenable {
         long entrySize = keySize + valueSize;
         long alignedEntrySize = Bytes.align8b(entrySize);
 
+        // Calculating fixed-size key's hash code is cheap, so unlike mergeVarSizeKey,
+        // here we iterate the heap, not the hash table.
         OUTER:
-        for (int i = 0, k = (int) (srcMap.offsets.size() >>> 1); i < k; i++) {
-            long offset = getOffset(srcMap.offsets, i);
-            if (offset < 0) {
-                continue;
-            }
-
-            long srcStartAddress = srcMap.heapStart + offset;
-            int hashCodeLo = getHashCodeLo(srcMap.offsets, i);
+        for (long srcAddress = srcMap.heapStart; srcAddress < srcMap.kPos; srcAddress += alignedEntrySize) {
+            long hashCode = Hash.hashMem64(srcAddress, keySize);
+            int hashCodeLo = Numbers.decodeLowInt(hashCode);
             int index = hashCodeLo & mask;
 
-            long destOffset;
-            long destStartAddress;
-            while ((destOffset = getOffset(offsets, index)) > -1) {
-                if (
-                        hashCodeLo == getHashCodeLo(offsets, index)
-                                && Vect.memeq((destStartAddress = heapStart + destOffset), srcStartAddress, keySize)
-                ) {
+            while (getRawOffset(offsets, index) != 0) {
+                long destAddress = heapStart + getOffset(offsets, index);
+                if (hashCodeLo == getHashCodeLo(offsets, index) && Vect.memeq(destAddress, srcAddress, keySize)) {
                     // Match found, merge values.
                     mergeFunc.merge(
-                            valueAt(destStartAddress),
-                            srcMap.valueAt(srcStartAddress)
+                            valueAt(destAddress),
+                            srcMap.valueAt(srcAddress)
                     );
                     continue OUTER;
                 }
@@ -420,7 +417,7 @@ public class OrderedMap implements Map, Reopenable {
             if (kPos + entrySize > heapLimit) {
                 resize(entrySize, kPos);
             }
-            Vect.memcpy(kPos, srcStartAddress, entrySize);
+            Vect.memcpy(kPos, srcAddress, entrySize);
             setOffset(offsets, index, kPos - heapStart);
             setHashCodeLo(offsets, index, hashCodeLo);
             kPos += alignedEntrySize;
@@ -441,23 +438,22 @@ public class OrderedMap implements Map, Reopenable {
                 continue;
             }
 
-            long srcStartAddress = srcMap.heapStart + offset;
-            int srcKeySize = Unsafe.getUnsafe().getInt(srcStartAddress);
+            long srcAddress = srcMap.heapStart + offset;
+            int srcKeySize = Unsafe.getUnsafe().getInt(srcAddress);
             int hashCodeLo = getHashCodeLo(srcMap.offsets, i);
             int index = hashCodeLo & mask;
 
-            long destOffset;
-            long destStartAddress;
-            while ((destOffset = getOffset(offsets, index)) > -1) {
+            while (getRawOffset(offsets, index) != 0) {
+                long destAddress = heapStart + getOffset(offsets, index);
                 if (
                         hashCodeLo == getHashCodeLo(offsets, index)
-                                && Unsafe.getUnsafe().getInt((destStartAddress = heapStart + destOffset)) == srcKeySize
-                                && Vect.memeq(destStartAddress + keyOffset, srcStartAddress + keyOffset, srcKeySize)
+                                && Unsafe.getUnsafe().getInt(destAddress) == srcKeySize
+                                && Vect.memeq(destAddress + keyOffset, srcAddress + keyOffset, srcKeySize)
                 ) {
                     // Match found, merge values.
                     mergeFunc.merge(
-                            valueAt(destStartAddress),
-                            srcMap.valueAt(srcStartAddress)
+                            valueAt(destAddress),
+                            srcMap.valueAt(srcAddress)
                     );
                     continue OUTER;
                 }
@@ -468,7 +464,7 @@ public class OrderedMap implements Map, Reopenable {
             if (kPos + entrySize > heapLimit) {
                 resize(entrySize, kPos);
             }
-            Vect.memcpy(kPos, srcStartAddress, entrySize);
+            Vect.memcpy(kPos, srcAddress, entrySize);
             setOffset(offsets, index, kPos - heapStart);
             setHashCodeLo(offsets, index, hashCodeLo);
             kPos = Bytes.align8b(kPos + entrySize);
@@ -548,7 +544,7 @@ public class OrderedMap implements Map, Reopenable {
                 kCapacity = Numbers.ceilPow2(target);
             }
             if (kCapacity > MAX_HEAP_SIZE) {
-                throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
+                throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in OrderedMap");
             }
             long kAddress = Unsafe.realloc(heapStart, heapSize, kCapacity, heapMemoryTag);
 
@@ -562,7 +558,7 @@ public class OrderedMap implements Map, Reopenable {
 
             return delta;
         } else {
-            throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
+            throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in OrderedMap");
         }
     }
 
