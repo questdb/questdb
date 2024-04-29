@@ -919,6 +919,24 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testReuseAfterClose() {
+        final int pageSize = 256;
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            mem.putLong(42);
+            Assert.assertEquals(pageSize, mem.size());
+            Assert.assertEquals(8, mem.getAppendOffset());
+
+            mem.close();
+            Assert.assertEquals(0, mem.size());
+            Assert.assertEquals(0, mem.getAppendOffset());
+
+            mem.putLong(42);
+            Assert.assertEquals(pageSize, mem.size());
+            Assert.assertEquals(8, mem.getAppendOffset());
+        }
+    }
+
+    @Test
     public void testShiftOffsetRight() {
         try (MemoryCARW mem = new MemoryCARWImpl(32, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.shiftOffsetRight(256);
