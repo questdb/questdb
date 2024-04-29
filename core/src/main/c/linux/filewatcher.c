@@ -105,7 +105,7 @@ static uintptr_t setup(const char *fp)
     return (uintptr_t)fw;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_InotifyFileWatcher_setup(JNIEnv *e, jclass cl, jlong lpszName)
+JNIEXPORT jlong JNICALL Java_io_questdb_InotifyFileEventNotifier_setup(JNIEnv *e, jclass cl, jlong lpszName)
 {
     return setup((const char *)lpszName);
 }
@@ -143,7 +143,7 @@ static int waitForChange(uintptr_t wp)
     }
 }
 
-JNIEXPORT int JNICALL Java_io_questdb_InotifyFileWatcher_waitForChange(JNIEnv *e, jclass cl, jlong address)
+JNIEXPORT int JNICALL Java_io_questdb_InotifyFileEventNotifier_waitForChange(JNIEnv *e, jclass cl, jlong address)
 {
     return waitForChange(address);
 }
@@ -158,7 +158,7 @@ static void teardown(uintptr_t wp)
     free(fw);
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_InotifyFileWatcher_teardown(JNIEnv *e, jclass cl, jlong address)
+JNIEXPORT void JNICALL Java_io_questdb_InotifyFileEventNotifier_teardown(JNIEnv *e, jclass cl, jlong address)
 {
     teardown(address);
 }
