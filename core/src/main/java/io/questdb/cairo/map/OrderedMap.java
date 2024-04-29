@@ -363,10 +363,6 @@ public class OrderedMap implements Map, Reopenable {
         return ((long) offsets.get((long) index << 1) - 1) << 3;
     }
 
-    private static int getRawOffset(DirectIntList offsets, int index) {
-        return offsets.get((long) index << 1);
-    }
-
     private static void setHashCodeLo(DirectIntList offsets, int index, int hashCodeLo) {
         offsets.set(((long) index << 1) | 1, hashCodeLo);
     }
@@ -401,8 +397,9 @@ public class OrderedMap implements Map, Reopenable {
             int hashCodeLo = Numbers.decodeLowInt(hashCode);
             int index = hashCodeLo & mask;
 
-            while (getRawOffset(offsets, index) != 0) {
-                long destAddress = heapStart + getOffset(offsets, index);
+            long destOffset;
+            while ((destOffset = getOffset(offsets, index)) > -1) {
+                long destAddress = heapStart + destOffset;
                 if (hashCodeLo == getHashCodeLo(offsets, index) && Vect.memeq(destAddress, srcAddress, keySize)) {
                     // Match found, merge values.
                     mergeFunc.merge(
@@ -443,8 +440,9 @@ public class OrderedMap implements Map, Reopenable {
             int hashCodeLo = getHashCodeLo(srcMap.offsets, i);
             int index = hashCodeLo & mask;
 
-            while (getRawOffset(offsets, index) != 0) {
-                long destAddress = heapStart + getOffset(offsets, index);
+            long destOffset;
+            while ((destOffset = getOffset(offsets, index)) > -1) {
+                long destAddress = heapStart + destOffset;
                 if (
                         hashCodeLo == getHashCodeLo(offsets, index)
                                 && Unsafe.getUnsafe().getInt(destAddress) == srcKeySize
