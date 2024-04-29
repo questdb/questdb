@@ -193,6 +193,26 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStartsWith() throws Exception {
+        assertQuery(
+                "k\tstarts_with\n" +
+                        "xabc\tfalse\n" +
+                        "ab\tfalse\n" +
+                        "abcx\ttrue\n" +
+                        "xx\tfalse\n" +
+                        "abcx\ttrue\n" +
+                        "xx\tfalse\n" +
+                        "ab\tfalse\n" +
+                        "xx\tfalse\n" +
+                        "ab\tfalse\n" +
+                        "xabc\tfalse\n",
+                "select k, starts_with(k, 'abc') from x",
+                "create table x as (select rnd_varchar('xabc', 'abcx', 'ab', 'xx') k from long_sequence(10))",
+                null, true, true
+        );
+    }
+
+    @Test
     public void testStrpos() throws Exception {
         assertQuery(
                 "k\tstrpos\n" +
