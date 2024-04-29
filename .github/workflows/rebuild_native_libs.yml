@@ -131,12 +131,18 @@ jobs:
     container:
       image: debian:buster
     steps:
-      - uses: actions/checkout@v4
-      - name: Install toolchains (CXX/NASM/Rust)
+      - name: Install tools (CXX/NASM/Rust)
         run: |
           ldd --version
           apt-get update -y
           apt install git nasm python3 wget ca-certificates build-essential zstd -y
+          python3 ./.github/prepare_rust_env.py
+          echo "PATH=/github/home/.cargo/bin/:$PATH" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install toolchains (Rust)
+        run: |
           python3 ./.github/prepare_rust_env.py
           echo "PATH=/github/home/.cargo/bin/:$PATH" >> "$GITHUB_ENV"
       - name: Install up-to-date CMake
@@ -152,7 +158,7 @@ jobs:
       - name: Generate Makefiles
         run: |
           cd ./core
-          git submodule update --init
+          # git submodule update --init
           cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: Build linux-amd64 CXX Library
         run: |
