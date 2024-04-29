@@ -190,7 +190,7 @@ jobs:
       - name: Generate Makefiles
         run: |
           cd ./core
-          cmake -G -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: CMAKE linux-aarch64
         run: |
           cd ./core
