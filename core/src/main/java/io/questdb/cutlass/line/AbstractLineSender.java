@@ -223,11 +223,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     @Override
-    public AbstractLineSender putUtf8(long lo, long hi) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public AbstractLineSender putAscii(char @NotNull [] chars, int start, int len) {
         validateNotClosed();
         if (ptr + len < hi) {
@@ -309,6 +304,11 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
             }
         }
         return this;
+    }
+
+    @Override
+    public AbstractLineSender putNonAscii(long lo, long hi) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

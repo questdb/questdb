@@ -264,7 +264,7 @@ public final class LineHttpSender implements Sender {
         Response chunkedRsp = response.getResponse();
         Fragment fragment;
         while ((fragment = chunkedRsp.recv()) != null) {
-            sink.putUtf8(fragment.lo(), fragment.hi());
+            sink.putNonAscii(fragment.lo(), fragment.hi());
         }
     }
 
@@ -675,14 +675,14 @@ public final class LineHttpSender implements Sender {
             LineSenderException exception = new LineSenderException("Could not flush buffer: ");
             while ((fragment = chunkedRsp.recv()) != null) {
                 try {
-                    jsonSink.putUtf8(fragment.lo(), fragment.hi());
+                    jsonSink.putNonAscii(fragment.lo(), fragment.hi());
                     lexer.parse(fragment.lo(), fragment.hi(), this);
                 } catch (JsonException e) {
                     // we failed to parse JSON, but we still want to show the error message.
                     // if we cannot parse it then we show the whole response as is.
                     // let's make sure we have the whole message - there might be more chunks
                     while ((fragment = chunkedRsp.recv()) != null) {
-                        jsonSink.putUtf8(fragment.lo(), fragment.hi());
+                        jsonSink.putNonAscii(fragment.lo(), fragment.hi());
                     }
                     exception.put(jsonSink).put(" [http-status=").put(httpStatus.asAsciiCharSequence()).put(']');
                     reset();
