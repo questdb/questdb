@@ -6399,7 +6399,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 final int columnType = metadata.getColumnType(columnIndex);
                 if (columnType > 0) {
-                    final int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
                     if (ColumnType.isVarSize(columnType)) {
                         final MemoryCARW dataMem = o3MemColumns1.getQuick(getPrimaryColumnIndex(columnIndex));
                         walColumns.add(dataMem);
@@ -6422,6 +6421,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                         walColumns.add(primaryMem);
                         primaryMem.jumpTo(0);
+                        final int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
                         primaryMem.shiftOffsetRight(rowLo << sizeBitsPow2);
                         walColumns.add(NullMemory.INSTANCE);
                     }
@@ -6461,6 +6461,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     offset += skipWalRowValue(columnIndex, timestampIndex, Math.abs(columnType), offset, walRowMemory);
                 }
             }
+
             if (rows != rowHi - rowLo) {
                 throw CairoException.critical(0).put("incorrect number of rows in WAL segment [path=").put(walPath)
                         .put(", count=").put(rows)

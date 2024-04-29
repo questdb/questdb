@@ -44,7 +44,8 @@ public class MemoryCARWImpl extends AbstractMemoryCARW {
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private final int maxPages;
     private final int memoryTag;
-    private long sizeMsb;
+    private long pageSize;
+    private long pageSizeMsb;
 
     public MemoryCARWImpl(long pageSize, int maxPages, int memoryTag) {
         super(false);
@@ -87,7 +88,7 @@ public class MemoryCARWImpl extends AbstractMemoryCARW {
 
     @Override
     public long getExtendSegmentSize() {
-        return 1L << sizeMsb;
+        return 1L << pageSizeMsb;
     }
 
     @Override
@@ -120,7 +121,9 @@ public class MemoryCARWImpl extends AbstractMemoryCARW {
     public void truncate() {
         // our internal "extend" implementation will reduce size
         // as well as extend it
-        extend0(0);
+        if (pageAddress > 0) {
+            extend0(pageSize);
+        }
         // reset append offset
         appendAddress = pageAddress;
         shiftOffsetRight(0);
@@ -133,12 +136,12 @@ public class MemoryCARWImpl extends AbstractMemoryCARW {
     }
 
     private void extend0(long size) {
-        if (size == 0 && pageAddress == 0) {
+        if (size == 0 && pageAddress > 0) {
             return;
         }
 
-        long nPages = size > 0 ? ((size - 1) >>> sizeMsb) + 1 : 1;
-        size = nPages << sizeMsb;
+        long nPages = size > 0 ? ((size - 1) >>> pageSizeMsb) + 1 : 1;
+        size = nPages << pageSizeMsb;
         final long oldSize = size();
 
         // sometimes the resize request ends up being the same
@@ -184,14 +187,15 @@ public class MemoryCARWImpl extends AbstractMemoryCARW {
     }
 
     private void setPageSize(long size) {
-        this.sizeMsb = Numbers.msb(Numbers.ceilPow2(size));
+        this.pageSize = Numbers.ceilPow2(size);
+        this.pageSizeMsb = Numbers.msb(pageSize);
     }
 
     @Override
     protected void checkAndExtend(long address) {
         assert appendAddress <= lim;
         assert address >= pageAddress;
-        if (address <= lim) {
+        if (lim > 0 && address <= lim) {
             return;
         }
         extend0(address - pageAddress);
