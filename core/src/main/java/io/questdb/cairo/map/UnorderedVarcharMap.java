@@ -162,7 +162,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         record = new UnorderedVarcharMapRecord(valueSize, valueOffsets, value, valueTypes);
         cursor = new UnorderedVarcharMapCursor(record, this);
         key = new Key();
-        allocator = new GroupByAllocatorArena(allocatorDefaultChunkSize, allocatorMaxChunkSize);
+        allocator = new GroupByAllocatorArena(allocatorDefaultChunkSize, allocatorMaxChunkSize, false);
     }
 
     // public for testing
