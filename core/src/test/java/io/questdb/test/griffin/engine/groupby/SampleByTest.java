@@ -5900,6 +5900,182 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillLinearBadType() throws Exception {
+        assertException(
+                "select b, sum_t(b), k from x sample by 3h fill(linear)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(1,1,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                10,
+                "Unsupported interpolation type"
+        );
+    }
+
+    @Test
+    public void testSampleFillLinearByMonth() throws Exception {
+        assertQuery(
+                "b\tsum_t\tk\n" +
+                        "\t54112.40405938657\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t11209.880434660998\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\t9939.438287132381\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t11042.882403279875\t1970-01-03T00:00:00.000000Z\n" +
+                        "HYRX\t11080.174817969955\t1970-01-03T00:00:00.000000Z\n" +
+                        "CPSW\t9310.397369439\t1970-01-03T00:00:00.000000Z\n" +
+                        "\t53936.039113863764\t1970-04-03T00:00:00.000000Z\n" +
+                        "HYRX\t10382.092656987053\t1970-04-03T00:00:00.000000Z\n" +
+                        "CPSW\t11677.451781387846\t1970-04-03T00:00:00.000000Z\n" +
+                        "RXGZ\t12082.97398092452\t1970-04-03T00:00:00.000000Z\n" +
+                        "VTJW\t11574.354700279142\t1970-04-03T00:00:00.000000Z\n" +
+                        "PEHN\t11225.427167029598\t1970-04-03T00:00:00.000000Z\n" +
+                        "\t53719.38559836983\t1970-07-03T00:00:00.000000Z\n" +
+                        "VTJW\t10645.216313875992\t1970-07-03T00:00:00.000000Z\n" +
+                        "RXGZ\t12441.881371617534\t1970-07-03T00:00:00.000000Z\n" +
+                        "HYRX\t10478.918039106036\t1970-07-03T00:00:00.000000Z\n" +
+                        "CPSW\t11215.534064219255\t1970-07-03T00:00:00.000000Z\n" +
+                        "PEHN\t12053.625707887684\t1970-07-03T00:00:00.000000Z\n" +
+                        "\t54106.362147164444\t1970-10-03T00:00:00.000000Z\n" +
+                        "HYRX\t11883.354138407445\t1970-10-03T00:00:00.000000Z\n" +
+                        "RXGZ\t11608.715762809448\t1970-10-03T00:00:00.000000Z\n" +
+                        "CPSW\t11623.362686708584\t1970-10-03T00:00:00.000000Z\n" +
+                        "PEHN\t11258.550294609915\t1970-10-03T00:00:00.000000Z\n" +
+                        "VTJW\t10865.136275604094\t1970-10-03T00:00:00.000000Z\n" +
+                        "\t33152.56289929654\t1971-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t7219.25966062438\t1971-01-03T00:00:00.000000Z\n" +
+                        "CPSW\t6038.83487182006\t1971-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\t5862.505042201944\t1971-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t6677.581919995402\t1971-01-03T00:00:00.000000Z\n" +
+                        "HYRX\t5998.730211949621\t1971-01-03T00:00:00.000000Z\n",
+                "select b, sum_t(a), k from x sample by 3M fill(linear) align to first observation",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(10000)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                true,
+                true
+        );
+
+        assertQuery(
+                "b\tsum_t\tk\n" +
+                        "\t54112.40405938657\t1970-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t11209.880434660998\t1970-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t9939.438287132381\t1970-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t11042.882403279875\t1970-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t11080.174817969955\t1970-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t9310.397369439\t1970-01-01T00:00:00.000000Z\n" +
+                        "\t53936.039113863764\t1970-04-01T00:00:00.000000Z\n" +
+                        "HYRX\t10382.092656987053\t1970-04-01T00:00:00.000000Z\n" +
+                        "CPSW\t11677.451781387846\t1970-04-01T00:00:00.000000Z\n" +
+                        "RXGZ\t12082.97398092452\t1970-04-01T00:00:00.000000Z\n" +
+                        "VTJW\t11574.354700279142\t1970-04-01T00:00:00.000000Z\n" +
+                        "PEHN\t11225.427167029598\t1970-04-01T00:00:00.000000Z\n" +
+                        "\t53719.38559836983\t1970-07-01T00:00:00.000000Z\n" +
+                        "VTJW\t10645.216313875992\t1970-07-01T00:00:00.000000Z\n" +
+                        "RXGZ\t12441.881371617534\t1970-07-01T00:00:00.000000Z\n" +
+                        "HYRX\t10478.918039106036\t1970-07-01T00:00:00.000000Z\n" +
+                        "CPSW\t11215.534064219255\t1970-07-01T00:00:00.000000Z\n" +
+                        "PEHN\t12053.625707887684\t1970-07-01T00:00:00.000000Z\n" +
+                        "\t54106.362147164444\t1970-10-01T00:00:00.000000Z\n" +
+                        "HYRX\t11883.354138407445\t1970-10-01T00:00:00.000000Z\n" +
+                        "RXGZ\t11608.715762809448\t1970-10-01T00:00:00.000000Z\n" +
+                        "CPSW\t11623.362686708584\t1970-10-01T00:00:00.000000Z\n" +
+                        "PEHN\t11258.550294609915\t1970-10-01T00:00:00.000000Z\n" +
+                        "VTJW\t10865.136275604094\t1970-10-01T00:00:00.000000Z\n" +
+                        "\t33152.56289929654\t1971-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t7219.25966062438\t1971-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t6038.83487182006\t1971-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t5862.505042201944\t1971-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t6677.581919995402\t1971-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t5998.730211949621\t1971-01-01T00:00:00.000000Z\n",
+                "select b, sum_t(a), k from x sample by 3M fill(linear) align to calendar",
+                "k",
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleFillLinearConstructorFail() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(172800000000, 3600000000) k" +
+                    " from" +
+                    " long_sequence(20000000)" +
+                    ") timestamp(k) partition by NONE"
+            );
+
+            CairoConfiguration configuration = createMmapFailingConfiguration(4);
+
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
+                        compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", ctx);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "could not mmap"));
+                    }
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSampleFillLinearFail() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(172800000000, 3600000000) k" +
+                    " from" +
+                    " long_sequence(20000000)" +
+                    ") timestamp(k) partition by NONE"
+            );
+
+            CairoConfiguration configuration = createMmapFailingConfiguration(10);
+
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    try {
+                        try (
+                                RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory();
+                                RecordCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine))
+                        ) {
+                            // with mmap count = 5 we should get failure in cursor
+                            // noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                            }
+                        }
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "could not mmap"));
+                    }
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSampleFillLinearWithAlignment() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x (\n" +
@@ -6118,182 +6294,6 @@ public class SampleByTest extends AbstractCairoTest {
                     "2024-03-30T17:10:00.000000Z\t10\n" +
                     "2024-03-30T17:15:00.000000Z\t4\n", "select ts, count() from x sample by 5m fill(linear) align to calendar\n", "ts", true, true);
 
-        });
-    }
-
-    @Test
-    public void testSampleFillLinearBadType() throws Exception {
-        assertException(
-                "select b, sum_t(b), k from x sample by 3h fill(linear)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_str(1,1,2) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                10,
-                "Unsupported interpolation type"
-        );
-    }
-
-    @Test
-    public void testSampleFillLinearByMonth() throws Exception {
-        assertQuery(
-                "b\tsum_t\tk\n" +
-                        "\t54112.40405938657\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t11209.880434660998\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\t9939.438287132381\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t11042.882403279875\t1970-01-03T00:00:00.000000Z\n" +
-                        "HYRX\t11080.174817969955\t1970-01-03T00:00:00.000000Z\n" +
-                        "CPSW\t9310.397369439\t1970-01-03T00:00:00.000000Z\n" +
-                        "\t53936.039113863764\t1970-04-03T00:00:00.000000Z\n" +
-                        "HYRX\t10382.092656987053\t1970-04-03T00:00:00.000000Z\n" +
-                        "CPSW\t11677.451781387846\t1970-04-03T00:00:00.000000Z\n" +
-                        "RXGZ\t12082.97398092452\t1970-04-03T00:00:00.000000Z\n" +
-                        "VTJW\t11574.354700279142\t1970-04-03T00:00:00.000000Z\n" +
-                        "PEHN\t11225.427167029598\t1970-04-03T00:00:00.000000Z\n" +
-                        "\t53719.38559836983\t1970-07-03T00:00:00.000000Z\n" +
-                        "VTJW\t10645.216313875992\t1970-07-03T00:00:00.000000Z\n" +
-                        "RXGZ\t12441.881371617534\t1970-07-03T00:00:00.000000Z\n" +
-                        "HYRX\t10478.918039106036\t1970-07-03T00:00:00.000000Z\n" +
-                        "CPSW\t11215.534064219255\t1970-07-03T00:00:00.000000Z\n" +
-                        "PEHN\t12053.625707887684\t1970-07-03T00:00:00.000000Z\n" +
-                        "\t54106.362147164444\t1970-10-03T00:00:00.000000Z\n" +
-                        "HYRX\t11883.354138407445\t1970-10-03T00:00:00.000000Z\n" +
-                        "RXGZ\t11608.715762809448\t1970-10-03T00:00:00.000000Z\n" +
-                        "CPSW\t11623.362686708584\t1970-10-03T00:00:00.000000Z\n" +
-                        "PEHN\t11258.550294609915\t1970-10-03T00:00:00.000000Z\n" +
-                        "VTJW\t10865.136275604094\t1970-10-03T00:00:00.000000Z\n" +
-                        "\t33152.56289929654\t1971-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t7219.25966062438\t1971-01-03T00:00:00.000000Z\n" +
-                        "CPSW\t6038.83487182006\t1971-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\t5862.505042201944\t1971-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t6677.581919995402\t1971-01-03T00:00:00.000000Z\n" +
-                        "HYRX\t5998.730211949621\t1971-01-03T00:00:00.000000Z\n",
-                "select b, sum_t(a), k from x sample by 3M fill(linear) align to first observation",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(10000)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                true,
-                true
-        );
-
-        assertQuery(
-                "b\tsum_t\tk\n" +
-                        "\t54112.40405938657\t1970-01-01T00:00:00.000000Z\n" +
-                        "VTJW\t11209.880434660998\t1970-01-01T00:00:00.000000Z\n" +
-                        "RXGZ\t9939.438287132381\t1970-01-01T00:00:00.000000Z\n" +
-                        "PEHN\t11042.882403279875\t1970-01-01T00:00:00.000000Z\n" +
-                        "HYRX\t11080.174817969955\t1970-01-01T00:00:00.000000Z\n" +
-                        "CPSW\t9310.397369439\t1970-01-01T00:00:00.000000Z\n" +
-                        "\t53936.039113863764\t1970-04-01T00:00:00.000000Z\n" +
-                        "HYRX\t10382.092656987053\t1970-04-01T00:00:00.000000Z\n" +
-                        "CPSW\t11677.451781387846\t1970-04-01T00:00:00.000000Z\n" +
-                        "RXGZ\t12082.97398092452\t1970-04-01T00:00:00.000000Z\n" +
-                        "VTJW\t11574.354700279142\t1970-04-01T00:00:00.000000Z\n" +
-                        "PEHN\t11225.427167029598\t1970-04-01T00:00:00.000000Z\n" +
-                        "\t53719.38559836983\t1970-07-01T00:00:00.000000Z\n" +
-                        "VTJW\t10645.216313875992\t1970-07-01T00:00:00.000000Z\n" +
-                        "RXGZ\t12441.881371617534\t1970-07-01T00:00:00.000000Z\n" +
-                        "HYRX\t10478.918039106036\t1970-07-01T00:00:00.000000Z\n" +
-                        "CPSW\t11215.534064219255\t1970-07-01T00:00:00.000000Z\n" +
-                        "PEHN\t12053.625707887684\t1970-07-01T00:00:00.000000Z\n" +
-                        "\t54106.362147164444\t1970-10-01T00:00:00.000000Z\n" +
-                        "HYRX\t11883.354138407445\t1970-10-01T00:00:00.000000Z\n" +
-                        "RXGZ\t11608.715762809448\t1970-10-01T00:00:00.000000Z\n" +
-                        "CPSW\t11623.362686708584\t1970-10-01T00:00:00.000000Z\n" +
-                        "PEHN\t11258.550294609915\t1970-10-01T00:00:00.000000Z\n" +
-                        "VTJW\t10865.136275604094\t1970-10-01T00:00:00.000000Z\n" +
-                        "\t33152.56289929654\t1971-01-01T00:00:00.000000Z\n" +
-                        "PEHN\t7219.25966062438\t1971-01-01T00:00:00.000000Z\n" +
-                        "CPSW\t6038.83487182006\t1971-01-01T00:00:00.000000Z\n" +
-                        "RXGZ\t5862.505042201944\t1971-01-01T00:00:00.000000Z\n" +
-                        "VTJW\t6677.581919995402\t1971-01-01T00:00:00.000000Z\n" +
-                        "HYRX\t5998.730211949621\t1971-01-01T00:00:00.000000Z\n",
-                "select b, sum_t(a), k from x sample by 3M fill(linear) align to calendar",
-                "k",
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testSampleFillLinearConstructorFail() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table x as " +
-                    "(" +
-                    "select" +
-                    " rnd_double(0)*100 a," +
-                    " rnd_symbol(5,4,4,1) b," +
-                    " timestamp_sequence(172800000000, 3600000000) k" +
-                    " from" +
-                    " long_sequence(20000000)" +
-                    ") timestamp(k) partition by NONE"
-            );
-
-            CairoConfiguration configuration = createMmapFailingConfiguration(4);
-
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
-                        compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", ctx);
-                        Assert.fail();
-                    } catch (SqlException e) {
-                        Assert.assertTrue(Chars.contains(e.getMessage(), "could not mmap"));
-                    }
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
-                    Assert.assertEquals(0, engine.getBusyWriterCount());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testSampleFillLinearFail() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table x as " +
-                    "(" +
-                    "select" +
-                    " rnd_double(0)*100 a," +
-                    " rnd_symbol(5,4,4,1) b," +
-                    " timestamp_sequence(172800000000, 3600000000) k" +
-                    " from" +
-                    " long_sequence(20000000)" +
-                    ") timestamp(k) partition by NONE"
-            );
-
-            CairoConfiguration configuration = createMmapFailingConfiguration(10);
-
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    try {
-                        try (
-                                RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory();
-                                RecordCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine))
-                        ) {
-                            // with mmap count = 5 we should get failure in cursor
-                            // noinspection StatementWithEmptyBody
-                            while (cursor.hasNext()) {
-                            }
-                        }
-                        Assert.fail();
-                    } catch (CairoException e) {
-                        Assert.assertTrue(Chars.contains(e.getMessage(), "could not mmap"));
-                    }
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
-                    Assert.assertEquals(0, engine.getBusyWriterCount());
-                }
-            }
         });
     }
 
