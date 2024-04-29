@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 
@@ -63,6 +62,16 @@ public class CastSymbolToVarcharFunctionFactory implements FunctionFactory {
 
         public Func(Function arg) {
             super(arg);
+        }
+
+        @Override
+        public Utf8Sequence getSplitVarcharA(Record rec) {
+            return arg.getSplitVarcharA(rec);
+        }
+
+        @Override
+        public Utf8Sequence getSplitVarcharB(Record rec) {
+            return arg.getSplitVarcharB(rec);
         }
 
         @Override

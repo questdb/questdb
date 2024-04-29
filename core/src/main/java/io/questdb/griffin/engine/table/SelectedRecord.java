@@ -157,6 +157,16 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public Utf8Sequence getSplitVarcharA(int col) {
+        return base.getSplitVarcharA(getColumnIndex(col));
+    }
+
+    @Override
+    public Utf8Sequence getSplitVarcharB(int col) {
+        return base.getSplitVarcharB(getColumnIndex(col));
+    }
+
+    @Override
     public void getStr(int col, Utf16Sink utf16Sink) {
         base.getStr(getColumnIndex(col), utf16Sink);
     }

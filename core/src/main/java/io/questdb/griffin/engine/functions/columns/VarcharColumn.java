@@ -50,6 +50,16 @@ public class VarcharColumn extends VarcharFunction implements ScalarFunction {
     }
 
     @Override
+    public Utf8Sequence getSplitVarcharA(Record rec) {
+        return rec.getSplitVarcharA(columnIndex);
+    }
+
+    @Override
+    public Utf8Sequence getSplitVarcharB(Record rec) {
+        return rec.getSplitVarcharB(columnIndex);
+    }
+
+    @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         rec.getVarchar(columnIndex, utf8Sink);
     }

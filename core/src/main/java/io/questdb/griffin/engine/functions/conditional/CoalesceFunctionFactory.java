@@ -349,100 +349,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoVarcharCoalesceFunction extends VarcharFunction implements BinaryCoalesceFunction {
-        private final Function args0;
-        private final Function args1;
-
-        public TwoVarcharCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-        }
-
-        @Override
-        public Utf8Sequence getVarcharA(Record rec) {
-            Utf8Sequence value = args0.getVarcharA(rec);
-            if (value != null) {
-                return value;
-            }
-            return args1.getVarcharA(rec);
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            Utf8Sequence sequence = getVarcharA(rec);
-            if (sequence != null) {
-                utf8Sink.put(sequence);
-            }
-        }
-
-        @Override
-        public Utf8Sequence getVarcharB(Record rec) {
-            Utf8Sequence value = args0.getVarcharB(rec);
-            if (value != null) {
-                return value;
-            }
-            return args1.getVarcharB(rec);
-        }
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
-        }
-    }
-
-    private static class VarcharCoalesceFunction extends VarcharFunction implements MultiArgCoalesceFunction {
-        private final ObjList<Function> args;
-        private final int size;
-
-        public VarcharCoalesceFunction(ObjList<Function> args, int size) {
-            this.args = args;
-            this.size = size;
-        }
-
-        @Override
-        public ObjList<Function> getArgs() {
-            return args;
-        }
-
-        @Override
-        public Utf8Sequence getVarcharA(Record rec) {
-            for (int i = 0; i < size; i++) {
-                Function arg = args.getQuick(i);
-                Utf8Sequence value = arg.getVarcharA(rec);
-                if (value != null) {
-                    return value;
-                }
-            }
-            return null;
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            Utf8Sequence sequence = getVarcharA(rec);
-            if (sequence != null) {
-                utf8Sink.put(sequence);
-            }
-        }
-
-        @Override
-        public Utf8Sequence getVarcharB(Record rec) {
-            for (int i = 0; i < size; i++) {
-                Function arg = args.getQuick(i);
-                Utf8Sequence value = arg.getVarcharB(rec);
-                if (value != null) {
-                    return value;
-                }
-            }
-            return null;
-        }
-    }
-
     private static class SymStrCoalesceFunction extends StrFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
@@ -937,6 +843,71 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class TwoVarcharCoalesceFunction extends VarcharFunction implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoVarcharCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        @Override
+        public Utf8Sequence getSplitVarcharA(Record rec) {
+            Utf8Sequence value = args0.getSplitVarcharA(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getSplitVarcharA(rec);
+        }
+
+        @Override
+        public Utf8Sequence getSplitVarcharB(Record rec) {
+            Utf8Sequence value = args0.getSplitVarcharB(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getSplitVarcharB(rec);
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            Utf8Sequence sequence = getVarcharA(rec);
+            if (sequence != null) {
+                utf8Sink.put(sequence);
+            }
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            Utf8Sequence value = args0.getVarcharA(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getVarcharA(rec);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            Utf8Sequence value = args0.getVarcharB(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getVarcharB(rec);
+        }
+    }
+
     private static class UuidCoalesceFunction extends UuidFunction implements MultiArgFunction {
         private final ObjList<Function> args;
         private final int size;
@@ -981,6 +952,77 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return value;
+        }
+    }
+
+    private static class VarcharCoalesceFunction extends VarcharFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public VarcharCoalesceFunction(ObjList<Function> args, int size) {
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public Utf8Sequence getSplitVarcharA(Record rec) {
+            for (int i = 0; i < size; i++) {
+                Function arg = args.getQuick(i);
+                Utf8Sequence value = arg.getSplitVarcharA(rec);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public Utf8Sequence getSplitVarcharB(Record rec) {
+            for (int i = 0; i < size; i++) {
+                Function arg = args.getQuick(i);
+                Utf8Sequence value = arg.getSplitVarcharB(rec);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            Utf8Sequence sequence = getVarcharA(rec);
+            if (sequence != null) {
+                utf8Sink.put(sequence);
+            }
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            for (int i = 0; i < size; i++) {
+                Function arg = args.getQuick(i);
+                Utf8Sequence value = arg.getVarcharA(rec);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            for (int i = 0; i < size; i++) {
+                Function arg = args.getQuick(i);
+                Utf8Sequence value = arg.getVarcharB(rec);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
         }
     }
 }

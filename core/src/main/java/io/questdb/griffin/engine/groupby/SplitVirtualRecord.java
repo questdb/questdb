@@ -32,6 +32,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.Nullable;
 
 public class SplitVirtualRecord implements Record {
     private final ObjList<? extends Function> functionsA;
@@ -150,6 +151,16 @@ public class SplitVirtualRecord implements Record {
     @Override
     public short getShort(int col) {
         return getFunction(col).getShort(base);
+    }
+
+    @Override
+    public @Nullable Utf8Sequence getSplitVarcharA(int col) {
+        return getFunction(col).getSplitVarcharA(base);
+    }
+
+    @Override
+    public @Nullable Utf8Sequence getSplitVarcharB(int col) {
+        return getFunction(col).getSplitVarcharB(base);
     }
 
     @Override

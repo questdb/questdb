@@ -280,6 +280,14 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
+    default @Nullable Utf8Sequence getSplitVarcharA(int col) {
+        return getVarcharA(col);
+    }
+
+    default @Nullable Utf8Sequence getSplitVarcharB(int col) {
+        return getVarcharB(col);
+    }
+
     /**
      * Reads bytes from string-specific storage and prints them into UTF16 encoded
      * sink.
