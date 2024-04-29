@@ -212,6 +212,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Increase file count and install tooling
         run: |
           sudo sysctl -w fs.file-max=500000
