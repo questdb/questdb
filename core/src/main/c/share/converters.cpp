@@ -115,22 +115,3 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
     return static_cast<jlong>(status);
 }
 } // extern "C"
-
-
-//
-//
-//JNIEXPORT jdouble JNICALL
-//Java_io_questdb_std_Vect_avgDoubleAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
-//    auto *ppi = reinterpret_cast<double_t *>(pi);
-//    double_t avg = 0;
-//    double_t c = 1;
-//    for (uint32_t i = 0; i < count; i++) {
-//        double_t v = ppi[i];
-//        if (v == v) {
-//            avg += (v - avg) / c;
-//            ++c;
-//        }
-//    }
-//    *(reinterpret_cast<jlong *>(pCount)) = ((jlong) c - 1);
-//    return avg;
-//}
