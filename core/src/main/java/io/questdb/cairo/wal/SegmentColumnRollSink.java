@@ -72,6 +72,7 @@ public class SegmentColumnRollSink implements ColumnConversionOffsetSink {
 
     public void nextColumn() {
         baseIndex += ENTRIES_PER_COLUMN;
+        data.extendAndSet(baseIndex + ENTRIES_PER_COLUMN - 1, -1);
     }
 
     public void setDestPrimaryFd(long fd) {

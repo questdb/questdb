@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
@@ -384,7 +385,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         ") timestamp (timestamp) PARTITION BY HOUR WAL;"
         );
 
-        try (var walWriter = getWalWriter("x")) {
+        try (WalWriter walWriter = getWalWriter("x")) {
             TableWriter.Row row = walWriter.newRow(IntervalUtils.parseFloorPartialTimestamp("2024-02-04"));
             switch (columnType) {
                 case ColumnType.STRING:

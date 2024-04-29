@@ -557,7 +557,7 @@ public class WalWriter implements TableWriterAPI {
                         columnRollSink.nextColumn();
                     }
                 } catch (Throwable e) {
-                    closeSegmentSwitchFiles(columnRollSink, columnsToRoll);
+                    closeSegmentSwitchFiles(columnRollSink);
                     throw e;
                 }
                 switchColumnsToNewSegment(columnRollSink, columnsToRoll, convertColumnIndex);
@@ -865,7 +865,7 @@ public class WalWriter implements TableWriterAPI {
                 .put(", wal=").put(walId).put(']');
     }
 
-    private void closeSegmentSwitchFiles(SegmentColumnRollSink newColumnFiles, int columnsToRoll) {
+    private void closeSegmentSwitchFiles(SegmentColumnRollSink newColumnFiles) {
         int commitMode = configuration.getCommitMode();
         for (int columnIndex = 0, n = newColumnFiles.count(); columnIndex < n; columnIndex++) {
             final int primaryFd = newColumnFiles.getDestPrimaryFd(columnIndex);
@@ -1786,8 +1786,15 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
-            validateExistingColumnName(columnName, "cannot rename ");
-            validateNewColumnName(newName);
+            validateExistingColumnName(columnName, "cannot rename");
+            int columnIndexNew = metadata.getColumnIndexQuiet(newName);
+            if (columnIndexNew > -1) {
+                throw CairoException.nonCritical().put("cannot rename, column with the name already exists [table=").put(tableToken.getTableName())
+                        .put(", newName=").put(newName).put(']');
+            }
+            if (!TableUtils.isValidColumnName(newName, newName.length())) {
+                throw CairoException.nonCritical().put("invalid column name: ").put(newName);
+            }
             structureVersion++;
         }
 
