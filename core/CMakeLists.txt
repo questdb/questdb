@@ -342,14 +342,13 @@ endif (ARCH_AARCH64)
 #jemalloc
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
-target_link_libraries(questdb _jemalloc)
 
 if (OS_WINDOWS)
     target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc)
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics)
 elseif (OS_DARWIN)
-    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++)
+    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++ _jemalloc)
 else ()
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics -ffunction-sections -fdata-sections)
-    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc)
+    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _jemalloc)
 endif ()

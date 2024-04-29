@@ -1,20 +1,6 @@
-#if (SANITIZE OR NOT (
-#    ((OS_LINUX OR OS_FREEBSD) AND (ARCH_AMD64 OR ARCH_AARCH64 OR ARCH_PPC64LE OR ARCH_RISCV64 OR ARCH_S390X)) OR
-#    (OS_DARWIN AND (CMAKE_BUILD_TYPE_UC STREQUAL "RELWITHDEBINFO" OR CMAKE_BUILD_TYPE_UC STREQUAL "DEBUG"))
-#))
-#    if (ENABLE_JEMALLOC)
-#        message (${RECONFIGURE_MESSAGE_LEVEL}
-#                 "jemalloc is disabled implicitly: it doesn't work with sanitizers and can only be used with x86_64, aarch64, or ppc64le Linux or FreeBSD builds and RelWithDebInfo macOS builds. Use -DENABLE_JEMALLOC=0")
-#    endif ()
-#    set (ENABLE_JEMALLOC OFF)
-#else ()
-#    option (ENABLE_JEMALLOC "Enable jemalloc allocator" ${ENABLE_LIBRARIES})
-#endif ()
-#
-#if (NOT ENABLE_JEMALLOC)
-#    message (STATUS "Not using jemalloc")
-#    return()
-#endif ()
+if (OS_WINDOWS)
+    return()
+endif ()
 
 if (OS_LINUX)
     # ThreadPool select job randomly, and there can be some threads that have been
