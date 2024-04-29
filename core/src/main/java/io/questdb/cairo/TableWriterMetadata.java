@@ -48,11 +48,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public boolean isSoftLink() {
-        return false;
-    }
-
-    @Override
     public void close() {
         // nothing to release
     }
@@ -122,6 +117,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public boolean isSoftLink() {
+        return false;
+    }
+
+    @Override
     public boolean isWalEnabled() {
         return walEnabled;
     }
@@ -188,7 +188,16 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.tableToken = tableToken;
     }
 
-    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex, boolean sequential, int symbolCapacity, boolean isDedupKey) {
+    void addColumn(
+            CharSequence name,
+            int type,
+            boolean indexFlag,
+            int indexValueBlockCapacity,
+            int columnIndex,
+            boolean sequential,
+            int symbolCapacity,
+            boolean isDedupKey
+    ) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(

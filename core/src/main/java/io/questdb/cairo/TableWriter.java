@@ -1759,7 +1759,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             o3Lo,
                             walLagRowCount,
                             1,
-                            this.cthAppendWalColumnToLastPartition
+                            cthAppendWalColumnToLastPartition
                     );
                     walLagRowCount += commitRowCount;
                     txWriter.setLagRowCount((int) walLagRowCount);
@@ -6395,6 +6395,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Prepare memory to copy the column values.
             // TODO(puzpuzpuz): try to use walRowMemory as data memory for var-size columns.
+            int nonDroppedColumnCount = 0;
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 final int columnType = metadata.getColumnType(columnIndex);
                 if (columnType > 0) {
@@ -6424,6 +6425,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         primaryMem.shiftOffsetRight(rowLo << sizeBitsPow2);
                         walColumns.add(NullMemory.INSTANCE);
                     }
+                    nonDroppedColumnCount++;
                 } else {
                     walColumns.add(NullMemory.INSTANCE);
                     walColumns.add(NullMemory.INSTANCE);
@@ -6438,7 +6440,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final int columnIndex = walRowMemory.getInt(offset);
                 offset += Integer.BYTES;
                 if (columnIndex == WalRowFirstWriter.NEW_ROW_SEPARATOR) {
-                    if (nonNullColumns < columnCount) {
+                    if (nonNullColumns < nonDroppedColumnCount) {
                         for (int i = 0; i < columnCount; i++) {
                             if (rowValueIsNotNull.getQuick(i) == 0) {
                                 o3NullSetters1.getQuick(i).run();
@@ -6453,11 +6455,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final int columnType = metadata.getColumnType(columnIndex);
                 if (columnType > -1) {
                     offset += copyWalRowValue(columnIndex, timestampIndex, columnType, offset, walRowMemory);
+                    rowValueIsNotNull.setQuick(columnIndex, 1);
+                    nonNullColumns++;
                 } else {
                     offset += skipWalRowValue(columnIndex, timestampIndex, Math.abs(columnType), offset, walRowMemory);
                 }
-                rowValueIsNotNull.setQuick(columnIndex, 1);
-                nonNullColumns++;
             }
 
             o3RowCount = rowHi - rowLo;
