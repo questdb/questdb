@@ -25,40 +25,43 @@
 package io.questdb;
 
 public class KqueueAccessor {
-    public static final short EVFILT_READ;
-    public static final short SIZEOF_KEVENT;
-    public static final short EVFILT_VNODE;
-    public static final short NOTE_DELETE;
-    public static final short NOTE_WRITE;
-    public static final short NOTE_EXTEND;
-    public static final short NOTE_ATTRIB;
-    public static final short NOTE_LINK;
-    public static final short NOTE_RENAME;
-    public static final short NOTE_REVOKE;
     public static final short DATA_OFFSET;
+    public static final short EVFILT_READ;
+    public static final short EVFILT_VNODE;
     public static final short EVFILT_WRITE;
     public static final short EV_ADD;
+    public static final short EV_CLEAR;
     public static final short EV_DELETE;
     public static final short EV_ONESHOT;
-    public static final short EV_CLEAR;
     public static final short FD_OFFSET;
     public static final short FILTER_OFFSET;
     public static final short FLAGS_OFFSET;
+    public static final short NOTE_ATTRIB;
+    public static final short NOTE_DELETE;
+    public static final short NOTE_EXTEND;
+    public static final short NOTE_LINK;
+    public static final short NOTE_RENAME;
+    public static final short NOTE_REVOKE;
+    public static final short NOTE_WRITE;
+    public static final short SIZEOF_KEVENT;
+
+    public static native long evSet(long ident, int filter, int flags, int fflags, long data);
+
     public static native short getDataOffset();
+
     public static native short getEvAdd();
-    public static native short getEvDelete();
+
     public static native short getEvClear();
+
+    public static native short getEvDelete();
+
     public static native short getEvOneshot();
+
     public static native short getEvfiltRead();
-    public static native short getEvfiltWrite();
+
     public static native short getEvfiltVnode();
-    public static native short getNoteDelete();
-    public static native short getNoteWrite();
-    public static native short  getNoteExtend();
-    public static native short  getNoteAttrib();
-    public static native short getNoteLink();
-    public static native short  getNoteRename();
-    public static native short  getNoteRevoke();
+
+    public static native short getEvfiltWrite();
 
     public static native short getFdOffset();
 
@@ -66,12 +69,27 @@ public class KqueueAccessor {
 
     public static native short getFlagsOffset();
 
+    public static native short getNoteAttrib();
+
+    public static native short getNoteDelete();
+
+    public static native short getNoteExtend();
+
+    public static native short getNoteLink();
+
+    public static native short getNoteRename();
+
+    public static native short getNoteRevoke();
+
+    public static native short getNoteWrite();
+
     public static native short getSizeofKevent();
 
     public static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
-    public static native int keventRegister(int kq, long changeList, int nChanges);
+
     public static native int keventGetBlocking(int kq, long eventList, int nEvents);
-    public static native long evSet(long ident, int filter, int flags, int fflags, long data);
+
+    public static native int keventRegister(int kq, long changeList, int nChanges);
 
     public static native int kqueue();
 

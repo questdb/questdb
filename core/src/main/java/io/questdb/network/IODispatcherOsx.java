@@ -24,8 +24,8 @@
 
 package io.questdb.network;
 
-import io.questdb.std.IntHashSet;
 import io.questdb.KqueueAccessor;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.LongMatrix;
 
 public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatcher<C> {

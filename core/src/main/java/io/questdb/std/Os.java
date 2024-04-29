@@ -130,6 +130,10 @@ public final class Os {
     public static void init() {
     }
 
+    public static boolean isFreeBSD() {
+        return type == Os.FREEBSD;
+    }
+
     public static boolean isLinux() {
         return type == LINUX_AMD64 || type == LINUX_ARM64;
     }
@@ -147,8 +151,6 @@ public final class Os {
     public static boolean isWindows() {
         return type == Os.WINDOWS;
     }
-
-    public static boolean isFreeBSD() { return type == Os.FREEBSD; }
 
     public static void park() {
         LockSupport.parkNanos(Os.PARK_NANOS_MAX);
