@@ -119,11 +119,7 @@ else ()
 endif ()
 # ARCH_
 if (ARCH_AMD64)
-    if (USE_MUSL)
-        set(JEMALLOC_INCLUDE_PREFIX "${JEMALLOC_INCLUDE_PREFIX}_x86_64_musl")
-    else ()
-        set(JEMALLOC_INCLUDE_PREFIX "${JEMALLOC_INCLUDE_PREFIX}_x86_64")
-    endif ()
+    set(JEMALLOC_INCLUDE_PREFIX "${JEMALLOC_INCLUDE_PREFIX}_x86_64")
 elseif (ARCH_AARCH64)
     set(JEMALLOC_INCLUDE_PREFIX "${JEMALLOC_INCLUDE_PREFIX}_aarch64")
 else ()
@@ -131,6 +127,8 @@ else ()
 endif ()
 
 message(STATUS "jemalloc include prefix: ${JEMALLOC_INCLUDE_PREFIX}")
+message(STATUS "jemalloc _aarch64: ${ARCH_AARCH64}")
+message(STATUS "jemalloc amd64: ${ARCH_AMD4}")
 
 set(JEMALLOC_CMAKE_INCLUDE_PREFIX ${LIBRARY_CMAKE_DIR}/${JEMALLOC_INCLUDE_PREFIX})
 
