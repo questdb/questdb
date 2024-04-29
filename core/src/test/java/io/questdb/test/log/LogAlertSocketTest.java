@@ -691,7 +691,7 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
+        public Utf8Sink putNonAscii(long lo, long hi) {
             sink.put(lo, hi);
             return this;
         }

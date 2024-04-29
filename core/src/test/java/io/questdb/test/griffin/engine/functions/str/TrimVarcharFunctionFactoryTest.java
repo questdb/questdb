@@ -26,39 +26,37 @@ package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.str.LowerVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.str.TrimVarcharFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
-public class LowerVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class TrimVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
     @Test
-    public void testSimple() throws SqlException {
-        call(utf8("AbC")).andAssert("abc");
+    public void testEmptyOrNullTrimSpace() throws SqlException {
+        call(utf8("")).andAssertUtf8("");
+        call(utf8(" ")).andAssertUtf8("");
+        call(utf8("    ")).andAssertUtf8("");
+        call(utf8(null)).andAssertUtf8(null);
     }
 
     @Test
-    public void testWithAllLowercase() throws SqlException {
-        call(utf8("abcdefghijklmnopqrstuvxz")).andAssert("abcdefghijklmnopqrstuvxz");
+    public void testNotTrimSpace() throws SqlException {
+        call(utf8("a b c")).andAssertUtf8("a b c");
+        call(utf8("kkk")).andAssertUtf8("kkk");
+        call(utf8("()  /  {}")).andAssertUtf8("()  /  {}");
     }
 
     @Test
-    public void testWithAllUppercase() throws SqlException {
-        call(utf8("ABCDEFGHIJKLMNOPQRSTUVXZ")).andAssert("abcdefghijklmnopqrstuvxz");
-    }
-
-    @Test
-    public void testWithMixedCases() throws SqlException {
-        call(utf8("ABCdefGHIjklMNOpqrSTUvxz")).andAssert("abcdefghijklmnopqrstuvxz");
-    }
-
-    @Test
-    public void testWithNonAsciiCharacters() throws SqlException {
-        call(utf8("abcDEFghiJKLm...() { _; } >_[$($())] { <<< (=) \noPQRstuVXZ"))
-                .andAssert("abcdefghijklm...() { _; } >_[$($())] { <<< (=) \nopqrstuvxz");
+    public void testTrimSpace() throws SqlException {
+        call(utf8("    abc     ")).andAssertUtf8("abc");
+        call(utf8("abc     ")).andAssertUtf8("abc");
+        call(utf8("     abc")).andAssertUtf8("abc");
+        call(utf8(" a b c ")).andAssertUtf8("a b c");
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new LowerVarcharFunctionFactory();
+        return new TrimVarcharFunctionFactory();
     }
 }
