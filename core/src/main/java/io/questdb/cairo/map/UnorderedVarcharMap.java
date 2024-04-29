@@ -342,13 +342,14 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return key.init();
     }
 
-    private UnorderedVarcharMapValue asNew(long startAddress, long hash, long ptr, long ptrWithUnstableFlag, int size, long newEntryPackedHashSizeFlags, UnorderedVarcharMapValue value) {
+    private UnorderedVarcharMapValue asNew(long startAddress, long hash, long ptrWithUnstableFlag, int size, long newEntryPackedHashSizeFlags, UnorderedVarcharMapValue value) {
         Unsafe.getUnsafe().putLong(startAddress, newEntryPackedHashSizeFlags);
         Unsafe.getUnsafe().putLong(startAddress + 8L, ptrWithUnstableFlag);
         if (--free == 0) {
             rehash();
             // Index may have changed after rehash, so we need to find the key.
             startAddress = getStartAddress(hash & mask);
+            long ptr = ptrWithUnstableFlag & PTR_MASK;
             for (; ; ) {
                 long loadedHashSizeFlags = Unsafe.getUnsafe().getLong(startAddress);
                 if (loadedHashSizeFlags == newEntryPackedHashSizeFlags) {
@@ -382,12 +383,13 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return getStartAddress(memStart, index);
     }
 
-    private UnorderedVarcharMapValue probe0(long startAddress, long hash, long ptr, long ptrWithUnstableFlag, int size, long packedHashSizeFlagsToFind, UnorderedVarcharMapValue value) {
+    private UnorderedVarcharMapValue probe0(long startAddress, long hash, long ptrWithUnstableFlag, int size, long packedHashSizeFlagsToFind, UnorderedVarcharMapValue value) {
+        long ptr = ptrWithUnstableFlag & PTR_MASK;
         for (; ; ) {
             startAddress = getNextAddress(startAddress);
             long loadedHashSizeFlags = Unsafe.getUnsafe().getLong(startAddress);
             if (loadedHashSizeFlags == 0) {
-                return asNew(startAddress, hash, ptr, ptrWithUnstableFlag, size, packedHashSizeFlagsToFind, value);
+                return asNew(startAddress, hash, ptrWithUnstableFlag, size, packedHashSizeFlagsToFind, value);
             }
             if (loadedHashSizeFlags == packedHashSizeFlagsToFind) {
                 long currentEntryPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
@@ -501,7 +503,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
     class Key implements MapKey {
         private byte flags;
-        private long ptr;
         private long ptrWithUnstableFlag;
         private int size;
 
@@ -517,19 +518,17 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             flags = srcVarcharKey.flags;
             if ((srcVarcharKey.ptrWithUnstableFlag & PTR_UNSTABLE_MASK) == 0) {
                 // stable pointer
-                assert srcVarcharKey.ptrWithUnstableFlag == srcVarcharKey.ptr;
-                ptrWithUnstableFlag = srcVarcharKey.ptr;
-                ptr = srcVarcharKey.ptr;
+                ptrWithUnstableFlag = srcVarcharKey.ptrWithUnstableFlag;
             } else {
-                ptr = allocator.malloc(size);
-                Vect.memcpy(ptr, srcVarcharKey.ptr, size);
+                long ptr = allocator.malloc(size);
+                Vect.memcpy(ptr, srcVarcharKey.ptrWithUnstableFlag & PTR_MASK, size);
                 ptrWithUnstableFlag = ptr | PTR_UNSTABLE_MASK;
             }
         }
 
         @Override
         public MapValue createValue() {
-            long hash = Hash.hashMem64(ptr, size);
+            long hash = Hash.hashMem64(ptrWithUnstableFlag & PTR_MASK, size);
             return createValue(hash);
         }
 
@@ -541,42 +540,41 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long loadedHashSizeFlags = Unsafe.getUnsafe().getLong(startAddress);
             long currentHashSizeFlags = packHashSizeFlags(hashCode, size, flags);
             if (loadedHashSizeFlags == 0) {
-                return asNew(startAddress, hashCode, ptr, ptrWithUnstableFlag, size, currentHashSizeFlags, value);
+                return asNew(startAddress, hashCode, ptrWithUnstableFlag, size, currentHashSizeFlags, value);
             }
             if (loadedHashSizeFlags == currentHashSizeFlags) {
                 long currentPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
-                if (Vect.memeq(currentPtr, ptr, size)) {
+                if (Vect.memeq(currentPtr, ptrWithUnstableFlag & PTR_MASK, size)) {
                     return valueOf(startAddress, false, value);
                 }
             }
-            return probe0(startAddress, hashCode, ptr, ptrWithUnstableFlag, size, currentHashSizeFlags, value);
+            return probe0(startAddress, hashCode, ptrWithUnstableFlag, size, currentHashSizeFlags, value);
         }
 
         @Override
         public MapValue findValue() {
-            return findValue(ptr, size, flags, value);
+            return findValue(ptrWithUnstableFlag, size, flags, value);
         }
 
         @Override
         public MapValue findValue2() {
-            return findValue(ptr, size, flags, value2);
+            return findValue(ptrWithUnstableFlag, size, flags, value2);
         }
 
         @Override
         public MapValue findValue3() {
-            return findValue(ptr, size, flags, value3);
+            return findValue(ptrWithUnstableFlag, size, flags, value3);
         }
 
         @Override
         public long hash() {
-            return Hash.hashMem64(ptr, size);
+            return Hash.hashMem64(ptrWithUnstableFlag & PTR_MASK, size);
         }
 
         public Key init() {
             // this is a new key, should behave as if it's null
             size = 0;
             ptrWithUnstableFlag = 0;
-            ptr = 0;
             flags = FLAG_IS_NULL | FLAG_IS_ASCII;
             return this;
         }
@@ -682,16 +680,14 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             if (value == null) {
                 size = 0;
                 ptrWithUnstableFlag = 0;
-                ptr = 0;
                 // set the 2 top bits to indicate null value (+ascii flag)
                 flags = FLAG_IS_NULL | FLAG_IS_ASCII;
             } else {
                 size = value.size();
                 if (value.isStable()) {
-                    ptr = value.ptr();
-                    ptrWithUnstableFlag = ptr;
+                    ptrWithUnstableFlag = value.ptr();
                 } else {
-                    ptr = allocator.malloc(size);
+                    long ptr = allocator.malloc(size);
                     value.writeTo(ptr, 0, size);
                     ptrWithUnstableFlag = ptr | PTR_UNSTABLE_MASK;
                 }
@@ -709,7 +705,8 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             // no-op
         }
 
-        private MapValue findValue(long ptr, int size, byte flags, UnorderedVarcharMapValue value) {
+        private MapValue findValue(long ptrWithUnstableFlag, int size, byte flags, UnorderedVarcharMapValue value) {
+            long ptr = ptrWithUnstableFlag & PTR_MASK;
             long hash = Hash.hashMem64(ptr, size);
             long index = hash & mask;
             long startAddress = getStartAddress(index);
@@ -736,7 +733,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
             size = srcSize;
             ptrWithUnstableFlag = srcPtrWithUnstableFlag;
-            ptr = srcPtrWithUnstableFlag & PTR_MASK;
             flags = srcFlags;
         }
     }
