@@ -26,6 +26,7 @@ set(JEMALLOC_CONFIG_MALLOC_CONF_OVERRIDE "" CACHE STRING "Change default configu
 if (JEMALLOC_CONFIG_MALLOC_CONF_OVERRIDE)
     set(JEMALLOC_CONFIG_MALLOC_CONF "${JEMALLOC_CONFIG_MALLOC_CONF_OVERRIDE}")
 endif ()
+
 message(STATUS "jemalloc malloc_conf: ${JEMALLOC_CONFIG_MALLOC_CONF}")
 
 set(LIBRARY_DIR "src/main/c/share/jemalloc")
@@ -128,6 +129,8 @@ elseif (ARCH_AARCH64)
 else ()
     message(FATAL_ERROR "internal jemalloc: This arch is not supported")
 endif ()
+
+message(STATUS "jemalloc include prefix: ${JEMALLOC_INCLUDE_PREFIX}")
 
 set(JEMALLOC_CMAKE_INCLUDE_PREFIX ${LIBRARY_CMAKE_DIR}/${JEMALLOC_INCLUDE_PREFIX})
 
