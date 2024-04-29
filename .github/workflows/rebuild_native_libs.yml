@@ -52,7 +52,6 @@ jobs:
           prepare: |
             pkg install -y curl cmake gcc git nasm openjdk17 rust
           run: |
-            git submodule update --init
             export JAVA_HOME=/usr/local/openjdk17
             cd core
             cmake -B build/release -DCMAKE_BUILD_TYPE=Release
@@ -85,7 +84,6 @@ jobs:
           brew install make cmake gcc nasm
       - name: Build CXX Library
         run: |
-          git submodule update --init
           cd core
           cmake -B build/release -DCMAKE_BUILD_TYPE=Release
           cmake --build build/release --config Release
@@ -128,6 +126,8 @@ jobs:
       image: debian:buster
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Install toolchains (CXX/NASM/Rust)
         run: |
           ldd --version
@@ -147,7 +147,6 @@ jobs:
           echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
       - name: Generate Makefiles
         run: |
-          git submodule update --init
           cd ./core
           cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: Build linux-amd64 CXX Library
@@ -182,7 +181,6 @@ jobs:
           cargo install cross
       - name: Generate Makefiles
         run: |
-          git submodule update --init
           cd ./core
           cmake -G -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: CMAKE linux-aarch64
