@@ -134,7 +134,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchains (CXX/NASM/Rust)
         run: |
-          git submodule update --init
           ldd --version
           apt-get update -y
           apt install git nasm python3 wget ca-certificates build-essential zstd -y
@@ -153,6 +152,7 @@ jobs:
       - name: Generate Makefiles
         run: |
           cd ./core
+          git submodule update --init
           cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: Build linux-amd64 CXX Library
         run: |
