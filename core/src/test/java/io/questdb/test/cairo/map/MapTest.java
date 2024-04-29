@@ -79,19 +79,6 @@ public class MapTest extends AbstractCairoTest {
         STABLE_SINK.clear();
     }
 
-    public int readKey(Record record, int index, int preferredType) throws NumericException {
-        if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
-            return Numbers.parseInt(record.getVarcharA(index));
-        }
-        if (preferredType == ColumnType.INT) {
-            return record.getInt(index);
-        } else if (preferredType == ColumnType.SHORT) {
-            return record.getShort(index);
-        } else {
-            throw new UnsupportedOperationException("Unsupported type: " + ColumnType.nameOf(preferredType));
-        }
-    }
-
     @Before
     public void setupRnd() {
         rnd = TestUtils.generateRandom(null);
@@ -925,6 +912,19 @@ public class MapTest extends AbstractCairoTest {
                 default:
                     throw new UnsupportedOperationException("unsupported key type:" + ColumnType.nameOf(preferredKeyType));
             }
+        }
+    }
+
+    private int readKey(Record record, int index, int preferredType) throws NumericException {
+        if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
+            return Numbers.parseInt(record.getVarcharA(index));
+        }
+        if (preferredType == ColumnType.INT) {
+            return record.getInt(index);
+        } else if (preferredType == ColumnType.SHORT) {
+            return record.getShort(index);
+        } else {
+            throw new UnsupportedOperationException("Unsupported type: " + ColumnType.nameOf(preferredType));
         }
     }
 

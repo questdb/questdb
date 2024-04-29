@@ -56,7 +56,7 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Key-value pairs stored in the hash table may have the following layout:
  * <pre>
- * | Hash code 32 LSBs |   Length   | Varchar pointer | Value columns 0..V |
+ * | Hash code 32 LSBs |    Size    | Varchar pointer | Value columns 0..V |
  * +-------------------+------------+-----------------+--------------------+
  * |       4 bytes     |  4 bytes   |     8 bytes     |         -          |
  * +-------------------+------------+-----------------+--------------------+
@@ -72,7 +72,7 @@ import org.jetbrains.annotations.Nullable;
 public class UnorderedVarcharMap implements Map, Reopenable {
     static final byte FLAG_IS_ASCII = (byte) (1 << 7);
     static final byte FLAG_IS_NULL = (byte) (1 << 6);
-    static final long KEY_HEADER_SIZE = 2 * Long.BYTES;
+    static final long KEY_SIZE = 2 * Long.BYTES;
     static final int MASK_FLAGS_FROM_SIZE = 0x3FFFFFFF; // clear top 2 bits: ascii and null
     static final long PTR_UNSTABLE_MASK = 0x8000000000000000L; // 63 bits
     static final long PTR_MASK = ~PTR_UNSTABLE_MASK;
@@ -149,7 +149,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             }
         }
 
-        this.entrySize = Bytes.align8b(KEY_HEADER_SIZE + valueSize);
+        this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
         final long sizeBytes = entrySize * this.keyCapacity;
         memStart = Unsafe.malloc(sizeBytes, memoryTag);
         Vect.memset(memStart, sizeBytes, 0);
@@ -276,7 +276,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 Unsafe.getUnsafe().putLong(destAddr + 8, arenaPtrWithUnstableFlags);
 
                 // copy value
-                Vect.memcpy(destAddr + 16, srcAddr + 16, entrySize - 16);
+                Vect.memcpy(destAddr + KEY_SIZE, srcAddr + KEY_SIZE, entrySize - KEY_SIZE);
             }
             mapSize++;
             if (--free == 0) {
@@ -507,7 +507,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
         @Override
         public long commit() {
-            return KEY_HEADER_SIZE; // we don't need to track the actual key size
+            return KEY_SIZE; // we don't need to track the actual key size
         }
 
         @Override

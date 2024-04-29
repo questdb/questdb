@@ -172,12 +172,7 @@ final class UnorderedVarcharMapValue implements MapValue {
     @Override
     public Long256 getLong256A(int index) {
         final long p = address0(index);
-        long256.setAll(
-                Unsafe.getUnsafe().getLong(p),
-                Unsafe.getUnsafe().getLong(p + 8L),
-                Unsafe.getUnsafe().getLong(p + 16L),
-                Unsafe.getUnsafe().getLong(p + 24L)
-        );
+        long256.fromAddress(p);
         return long256;
     }
 
@@ -323,7 +318,7 @@ final class UnorderedVarcharMapValue implements MapValue {
 
     UnorderedVarcharMapValue of(long startAddress, long limit, boolean newValue) {
         this.startAddress = startAddress;
-        this.valueAddress = startAddress + UnorderedVarcharMap.KEY_HEADER_SIZE;
+        this.valueAddress = startAddress + UnorderedVarcharMap.KEY_SIZE;
         this.limit = limit;
         this.newValue = newValue;
         return this;

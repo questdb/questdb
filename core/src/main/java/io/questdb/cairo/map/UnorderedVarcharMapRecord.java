@@ -36,7 +36,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Provides Record access interface for FastMap key-value pairs with fixed-size keys.
+ * Provides Record access interface for UnorderedVarcharMap key-value pairs.
  * <p>
  * Uses an offsets array to speed up key and value column look-ups.
  */
@@ -76,7 +76,7 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
         Long256Impl[] long256A = null;
         Long256Impl[] long256B = null;
-        long offset = UnorderedVarcharMap.KEY_HEADER_SIZE;
+        long offset = UnorderedVarcharMap.KEY_SIZE;
         if (valueTypes != null) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 int columnType = valueTypes.getColumnType(i);
@@ -152,8 +152,8 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     @Override
     public void copyValue(MapValue destValue) {
-        UnorderedVarcharMapValue destFastValue = (UnorderedVarcharMapValue) destValue;
-        destFastValue.copyRawValue(startAddress + UnorderedVarcharMap.KEY_HEADER_SIZE);
+        UnorderedVarcharMapValue destVarcharValue = (UnorderedVarcharMapValue) destValue;
+        destVarcharValue.copyRawValue(startAddress + UnorderedVarcharMap.KEY_SIZE);
     }
 
     @Override
@@ -329,12 +329,7 @@ final class UnorderedVarcharMapRecord implements MapRecord {
     private Long256 getLong256Generic(Long256Impl[] keyLong256, int columnIndex) {
         long address = addressOfColumn(columnIndex);
         Long256Impl long256 = keyLong256[columnIndex];
-        long256.setAll(
-                Unsafe.getUnsafe().getLong(address),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES * 2),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES * 3)
-        );
+        long256.fromAddress(address);
         return long256;
     }
 
