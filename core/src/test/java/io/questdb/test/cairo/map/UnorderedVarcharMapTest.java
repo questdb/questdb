@@ -44,6 +44,24 @@ import java.util.concurrent.ThreadLocalRandom;
 public class UnorderedVarcharMapTest extends AbstractCairoTest {
 
     @Test
+    public void testBlankKey() {
+        SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+        try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
+             DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
+             UnorderedVarcharMap map = newDefaultMap(valueType)
+        ) {
+            Assert.assertNull(findValue("", map));
+            putStable("", 42, map, sinkA, true);
+            Assert.assertEquals(42, get("", map));
+            Assert.assertEquals(1, map.size());
+
+            putStable("", 43, map, sinkB, false);
+            Assert.assertEquals(43, get("", map));
+            Assert.assertEquals(1, map.size());
+        }
+    }
+
+    @Test
     public void testClear() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
@@ -77,7 +95,6 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         }
     }
 
-
     @Test
     public void testCursor() throws Exception {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
@@ -109,18 +126,42 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     @Test
     public void testEmptyKey() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-             DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-             UnorderedVarcharMap map = newDefaultMap(valueType)
-        ) {
-            Assert.assertNull(findValue("", map));
-            putStable("", 42, map, sinkA, true);
-            Assert.assertEquals(42, get("", map));
-            Assert.assertEquals(1, map.size());
+        try (UnorderedVarcharMap map = newDefaultMap(valueType)) {
+            // insert nothing into key
+            MapKey mapKey = map.withKey();
+            mapKey.commit();
+            MapValue value = mapKey.createValue();
+            Assert.assertTrue(value.isNew());
+            value.putInt(0, 42);
 
-            putStable("", 43, map, sinkB, false);
-            Assert.assertEquals(43, get("", map));
-            Assert.assertEquals(1, map.size());
+            // and check you can find it under null key
+            mapKey = map.withKey();
+            mapKey.putVarchar((Utf8Sequence) null);
+            mapKey.commit();
+            value = mapKey.createValue();
+            Assert.assertNotNull(value);
+            Assert.assertFalse(value.isNew());
+            Assert.assertEquals(42, value.getInt(0));
+
+            // and now let's do they other way around
+            map.clear();
+
+            // let's insert a null key
+            mapKey = map.withKey();
+            mapKey.putVarchar((Utf8Sequence) null);
+            mapKey.commit();
+            value = mapKey.createValue();
+            Assert.assertNotNull(value);
+            Assert.assertTrue(value.isNew());
+            value.putInt(0, 42);
+
+            // and check we can still find it under empty key
+            mapKey = map.withKey();
+            mapKey.commit();
+            value = mapKey.createValue();
+            Assert.assertNotNull(value);
+            Assert.assertFalse(value.isNew());
+            Assert.assertEquals(42, value.getInt(0));
         }
     }
 

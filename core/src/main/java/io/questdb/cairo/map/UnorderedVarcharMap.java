@@ -573,8 +573,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         }
 
         public Key init() {
-            size = -1;
-            ptrWithUnstableFlag = -1;
+            // this is a new key, should behave as if it's null
+            size = 0;
+            ptrWithUnstableFlag = 0;
+            ptr = 0;
+            flags = FLAG_IS_NULL | FLAG_IS_ASCII;
             return this;
         }
 
