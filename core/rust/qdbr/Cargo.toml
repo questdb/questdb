@@ -9,3 +9,4 @@ crate-type = ["dylib"]
 
 [dependencies]
 jni = "0.21.1"
+parquet2 = { path = "parquet2" }
