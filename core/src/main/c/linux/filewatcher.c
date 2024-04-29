@@ -162,18 +162,3 @@ JNIEXPORT void JNICALL Java_io_questdb_InotifyFileEventNotifier_teardown(JNIEnv 
 {
     teardown(address);
 }
-
-int main(int argc, char *argv[])
-{
-    intptr_t fw_ptr = setup("/home/steven/tmp/qdbdev/conf/server.conf");
-    int a;
-    int b = 0;
-    for (;;)
-    {
-        a = waitForChange(fw_ptr);
-        b += 1;
-        printf("change detected: %d iteration %d\n", a, b);
-    }
-
-    teardown(fw_ptr);
-}
