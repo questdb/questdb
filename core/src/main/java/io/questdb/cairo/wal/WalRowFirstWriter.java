@@ -1181,7 +1181,7 @@ public class WalRowFirstWriter implements WalWriter {
         eventWriter.sync();
     }
 
-    private void setAppendPosition(final long segmentOffset) {
+    private void setAppendPosition(long segmentOffset) {
         rowMem.jumpTo(segmentOffset);
     }
 
@@ -1495,14 +1495,9 @@ public class WalRowFirstWriter implements WalWriter {
 
         @Override
         public void append() {
-            if (timestamp > txnMaxTimestamp) {
-                txnMaxTimestamp = timestamp;
-            } else {
-                txnOutOfOrder |= (txnMaxTimestamp != timestamp);
-            }
-            if (timestamp < txnMinTimestamp) {
-                txnMinTimestamp = timestamp;
-            }
+            txnMaxTimestamp = Math.max(txnMaxTimestamp, timestamp);
+            txnMinTimestamp = Math.min(txnMinTimestamp, timestamp);
+            txnOutOfOrder |= (txnMaxTimestamp != timestamp);
 
             segmentRowCount++;
             rowMem.putInt(NEW_ROW_SEPARATOR);

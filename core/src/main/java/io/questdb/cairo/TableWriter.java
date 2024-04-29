@@ -6435,8 +6435,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Copy the column values from the WAL segment.
             int nonNullColumns = 0;
             rowValueIsNotNull.fill(0, columnCount, 0);
-            long offset = startOffset;
-            for (long rowId = rowLo; rowId < rowHi; ) {
+            long rows = 0;
+            for (long offset = startOffset; offset < endOffset; ) {
                 final int columnIndex = walRowMemory.getInt(offset);
                 offset += Integer.BYTES;
                 if (columnIndex == WalRowFirstWriter.NEW_ROW_SEPARATOR) {
@@ -6449,7 +6449,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                     rowValueIsNotNull.fill(0, columnCount, 0);
                     nonNullColumns = 0;
-                    rowId++;
+                    rows++;
                     continue;
                 }
                 final int columnType = metadata.getColumnType(columnIndex);
@@ -6460,6 +6460,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } else {
                     offset += skipWalRowValue(columnIndex, timestampIndex, Math.abs(columnType), offset, walRowMemory);
                 }
+            }
+            if (rows != rowHi - rowLo) {
+                throw CairoException.critical(0).put("incorrect number of rows in WAL segment [path=").put(walPath)
+                        .put(", count=").put(rows)
+                        .put(", rowLo=").put(rowLo)
+                        .put(", rowHi=").put(rowHi)
+                        .put(']');
             }
 
             o3RowCount = rowHi - rowLo;
