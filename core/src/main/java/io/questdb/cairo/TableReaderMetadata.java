@@ -28,16 +28,17 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
+import static io.questdb.cairo.TableUtils.validationException;
+
 public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
+    private final IntList columnOrderMap = new IntList();
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
-    private final IntList columnOrderMap = new IntList();
     private boolean isSoftLink;
     private int maxUncommittedRows;
     private MemoryMR metaMem;
@@ -93,24 +94,26 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         buildWriterOrderMap(metaMem, columnCount);
 
         for (int i = 0, n = columnOrderMap.size(); i < n; i += 3) {
-            int metaIndex = columnOrderMap.get(i);
-            if (metaIndex < 0) {
+            int writerIndex = columnOrderMap.get(i);
+            if (writerIndex < 0) {
                 continue;
             }
 
+            int stableIndex = i / 3;
             CharSequence name = metaMem.getStrA(columnOrderMap.get(i + 1));
             int denseSymbolIndex = columnOrderMap.get(i + 2);
             assert name != null;
-            int columnType = TableUtils.getColumnType(metaMem, metaIndex);
-            boolean isIndexed = TableUtils.isColumnIndexed(metaMem, metaIndex);
-            boolean isDedupKey = TableUtils.isColumnDedupKey(metaMem, metaIndex);
-            int indexBlockCapacity = TableUtils.getIndexBlockCapacity(metaMem, metaIndex);
-            TableColumnMetadata existing = null;
+            int columnType = TableUtils.getColumnType(metaMem, writerIndex);
+            boolean isIndexed = TableUtils.isColumnIndexed(metaMem, writerIndex);
+            boolean isDedupKey = TableUtils.isColumnDedupKey(metaMem, writerIndex);
+            int indexBlockCapacity = TableUtils.getIndexBlockCapacity(metaMem, writerIndex);
+            TableReaderMetadataColumn existing = null;
             String newName;
 
             if (existingIndex < existingColumnCount) {
-                existing = columnMetadata.getQuick(existingIndex);
-                if (existing.getWriterIndex() != metaIndex && columnType < 0) {
+                existing = (TableReaderMetadataColumn) columnMetadata.getQuick(existingIndex);
+                int existingStableIndex = existing.getStableIndex();
+                if (existingStableIndex > stableIndex && columnType < 0) {
                     // This column must be deleted so existing dense columns do not contain it
                     continue;
                 }
@@ -125,30 +128,32 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 newName = rename || existing == null ? Chars.toString(name) : existing.getName();
                 if (rename
                         || existing == null
-                        || existing.getWriterIndex() != metaIndex
+                        || existing.getWriterIndex() != writerIndex
                         || existing.isIndexed() != isIndexed
                         || existing.getIndexValueBlockCapacity() != indexBlockCapacity
                         || existing.isDedupKey() != isDedupKey
                         || existing.getDenseSymbolIndex() != denseSymbolIndex
+                        || existing.getStableIndex() != stableIndex
                 ) {
                     columnMetadata.setQuick(existingIndex - shiftLeft,
-                            new TableColumnMetadata(
+                            new TableReaderMetadataColumn(
                                     newName,
                                     columnType,
                                     isIndexed,
                                     indexBlockCapacity,
                                     true,
                                     null,
-                                    metaIndex,
+                                    writerIndex,
                                     isDedupKey,
-                                    denseSymbolIndex
+                                    denseSymbolIndex,
+                                    stableIndex
                             )
                     );
                 } else if (shiftLeft > 0) {
                     columnMetadata.setQuick(existingIndex - shiftLeft, existing);
                 }
                 this.columnNameIndexMap.put(newName, existingIndex - shiftLeft);
-                if (timestampIndex == metaIndex) {
+                if (timestampIndex == writerIndex) {
                     this.timestampIndex = existingIndex - shiftLeft;
                 }
             }
@@ -204,7 +209,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     public int getDenseSymbolIndex(int columnIndex) {
-        return columnMetadata.getQuick(columnIndex).getDenseSymbolIndex();
+        return ((TableReaderMetadataColumn) columnMetadata.getQuick(columnIndex)).getDenseSymbolIndex();
     }
 
     @Override
@@ -269,6 +274,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 if (writerIndex < 0) {
                     continue;
                 }
+                int stableIndex = i / 3;
                 CharSequence name = metaMem.getStrA(columnOrderMap.get(i + 1));
                 int denseSymbolIndex = columnOrderMap.get(i + 2);
 
@@ -278,20 +284,23 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 if (columnType > -1) {
                     String colName = Chars.toString(name);
                     columnMetadata.add(
-                            new TableColumnMetadata(
+                            new TableReaderMetadataColumn(
                                     colName,
                                     columnType,
-                                    TableUtils.isColumnIndexed(metaMem, i),
-                                    TableUtils.getIndexBlockCapacity(metaMem, i),
+                                    TableUtils.isColumnIndexed(metaMem, writerIndex),
+                                    TableUtils.getIndexBlockCapacity(metaMem, writerIndex),
                                     true,
                                     null,
                                     writerIndex,
-                                    TableUtils.isColumnDedupKey(metaMem, i),
-                                    denseSymbolIndex
+                                    TableUtils.isColumnDedupKey(metaMem, writerIndex),
+                                    denseSymbolIndex,
+                                    stableIndex
                             )
                     );
                     int denseIndex = columnMetadata.size() - 1;
-                    columnNameIndexMap.put(colName, denseIndex);
+                    if (!columnNameIndexMap.put(colName, denseIndex)) {
+                        throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
+                    }
                     if (writerIndex == timestampIndex) {
                         this.timestampIndex = denseIndex;
                     }
@@ -406,13 +415,21 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.tableToken = tableToken;
     }
 
-    private void buildWriterOrderMap(MemoryR newMeta, int newColumnCount) {
+    private void buildWriterOrderMap(MemoryMR newMeta, int newColumnCount) {
         int nameOffset = (int) TableUtils.getColumnNameOffset(newColumnCount);
         columnOrderMap.clear();
 
         int denseSymbolIndex = 0;
         for (int i = 0; i < newColumnCount; i++) {
-            int nameLen = (int) Vm.getStorageLength(newMeta.getInt(nameOffset));
+            int strLen = TableUtils.getInt(newMeta, newMeta.size(), nameOffset);
+            if (strLen == TableUtils.NULL_LEN) {
+                throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
+            }
+            if (strLen < 1 || strLen > 255) {
+                // EXT4 and many others do not allow file name length > 255 bytes
+                throw validationException(metaMem).put("String length of ").put(strLen).put(" is invalid at offset ").put(nameOffset);
+            }
+            int nameLen = (int) Vm.getStorageLength(strLen);
             int newOrderIndex = TableUtils.getReplacingColumnIndex(newMeta, i);
             boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(newMeta, i));
 
@@ -438,9 +455,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
-    private TransitionIndex createTransitionIndex(
-            MemoryR newMeta
-    ) {
+    private TransitionIndex createTransitionIndex(MemoryMR newMeta) {
         if (transitionIndex == null) {
             transitionIndex = new TransitionIndex();
         } else {
@@ -463,6 +478,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         buildWriterOrderMap(newMeta, newColumnCount);
 
         for (int i = 0, n = columnOrderMap.size(); i < n; i += 3) {
+            int stableIndex = i / 3;
             int writerIndex = columnOrderMap.get(i);
             if (writerIndex < 0) {
                 continue;
@@ -472,8 +488,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
             int oldWriterIndex = -1;
             if (oldIndex < oldColumnCount) {
-                oldWriterIndex = this.getWriterIndex(oldIndex);
-                if (oldWriterIndex != writerIndex && newColumnType < 0) {
+                oldWriterIndex = getWriterIndex(oldIndex);
+                int oldStableIndex = getStableIndex(oldIndex);
+                if (oldStableIndex > stableIndex && newColumnType < 0) {
                     // This column must be deleted so existing dense columns do not contain it
                     continue;
                 }
@@ -510,6 +527,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             oldIndex++;
         }
         return transitionIndex;
+    }
+
+    private int getStableIndex(int oldIndex) {
+        return ((TableReaderMetadataColumn) this.getColumnMetadata(oldIndex)).getStableIndex();
     }
 
     public static class TransitionIndex {

@@ -666,7 +666,7 @@ public class Utf8sTest {
 
             sink.clear();
             sink.put((byte) 0xC2);
-            sink.put((byte) 0x00);
+            sink.putAscii((char) 0x00);
             Assert.assertEquals(0, Utf8s.utf8CharDecode(sink));
 
             sink.clear();
@@ -684,7 +684,7 @@ public class Utf8sTest {
             sink.clear();
             sink.put((byte) 0xED);
             sink.put((byte) 0xA0);
-            sink.put((byte) 0x7F);
+            sink.putAscii((char) 0x7F);
             Assert.assertEquals(0, Utf8s.utf8CharDecode(sink));
 
             sink.clear();
@@ -836,7 +836,12 @@ public class Utf8sTest {
         sink.clear();
         byte[] bytes = x.getBytes(Files.UTF_8);
         for (int i = 0, n = Math.min(bytes.length, 8); i < n; i++) {
-            sink.put(bytes[i]);
+            byte b = bytes[i];
+            if (b < 0) {
+                sink.put(b);
+            } else {
+                sink.putAscii((char) b);
+            }
         }
         int res = Utf8s.utf8CharDecode(sink);
         boolean eq = x.charAt(0) == (char) Numbers.decodeHighShort(res);

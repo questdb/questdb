@@ -63,7 +63,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     public long addressOf(long offset) {
         offset -= shiftAddressRight;
-        assert offset <= size : "offset=" + offset + ", size=" + size;
+        assert checkOffsetMapped(offset);
         return pageAddress + offset;
     }
 
@@ -158,7 +158,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private DirectUtf8String getVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
         long addr = addressOf(offset);
         assert addr > 0;
-        if (size + offset <= size()) {
+        if (checkOffsetMapped(size + offset)) {
             return u8view.of(addr, addr + size, ascii);
         }
         throw CairoException.critical(0)

@@ -417,7 +417,7 @@ public class FuzzRunner {
         this.parallelWalCount = parallelWalCount;
     }
 
-    public void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb) {
+    public void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb, double colTypeChangeProb) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
@@ -425,7 +425,7 @@ public class FuzzRunner {
         this.collAddProb = collAddProb;
         this.collRemoveProb = collRemoveProb;
         this.colRenameProb = colRenameProb;
-        this.colTypeChangeProb = colRenameProb;
+        this.colTypeChangeProb = colTypeChangeProb;
         this.dataAddProb = dataAddProb;
         this.truncateProb = truncateProb;
         this.equalTsRowsProb = equalTsRowsProb;
@@ -840,6 +840,7 @@ public class FuzzRunner {
                         rnd.nextDouble(),
                         rnd.nextDouble(),
                         0.1 * rnd.nextDouble(), 0.01,
+                        rnd.nextDouble(),
                         rnd.nextDouble()
                 );
             }

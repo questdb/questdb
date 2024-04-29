@@ -879,7 +879,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long columnNameTxn = getTxn();
 
             // Set txn number in the column version file to mark the transaction where the column is added
-            columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getPartitionTimestampByIndex(0));
+            long firstPartitionTsm = columnVersionWriter.getColumnTopPartitionTimestamp(existingColIndex);
+            if (firstPartitionTsm == Long.MIN_VALUE) {
+                firstPartitionTsm = txWriter.getPartitionTimestampByIndex(0);
+            }
+            columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, firstPartitionTsm);
 
             if (ColumnType.isSymbol(newType)) {
                 createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
@@ -887,13 +891,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // maintain sparse list of symbol writers
                 symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
             }
-            getConvertOperator().convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
+            getConvertOperator().convertColumn(columnName, existingColIndex, existingType, columnIndex, newType, columnVersionWriter);
 
             // Column converted, add new one to _meta file and remove the existing column
             addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, existingColIndex);
 
             // close old column files
             freeColumnMemory(existingColIndex);
+
+            // remove symbol map writer or entry for such
+            removeSymbolMapWriter(existingColIndex);
 
             // remove old column to in-memory metadata object and add new one
             metadata.removeColumn(existingColIndex);
@@ -904,12 +911,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long partitionTimestamp = txWriter.getLastPartitionTimestamp();
                 setStateForTimestamp(path, partitionTimestamp);
                 openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
-                long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                long colTopZeroBased = columnTop > -1 ? columnTop : 0;
-                long columnRowCount = txWriter.getTransientRowCount() - colTopZeroBased;
-                if (columnRowCount > 0) {
-                    setColumnAppendPosition(columnIndex, columnRowCount, false);
-                }
+                setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
                 path.trimTo(rootLen);
             }
 
@@ -4680,7 +4682,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private ConvertOperatorImpl getConvertOperator() {
         if (convertOperatorImpl == null) {
-            convertOperatorImpl = new ConvertOperatorImpl(configuration, this, path, rootLen, getPurgingOperator());
+            convertOperatorImpl = new ConvertOperatorImpl(configuration, this, columnVersionWriter, path, rootLen, getPurgingOperator());
         }
         return convertOperatorImpl;
     }

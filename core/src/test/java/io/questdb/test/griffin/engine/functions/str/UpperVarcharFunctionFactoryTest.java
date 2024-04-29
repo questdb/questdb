@@ -27,34 +27,33 @@ package io.questdb.test.griffin.engine.functions.str;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.str.UpperVarcharFunctionFactory;
-import io.questdb.std.str.Utf8String;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class UpperVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testSimple() throws SqlException {
-        call(new Utf8String("AbC")).andAssert("ABC");
+        call(utf8("AbC")).andAssertUtf8("ABC");
     }
 
     @Test
     public void testWithAllLowercase() throws SqlException {
-        call(new Utf8String("abcdefghijklmnopqrstuvxz")).andAssert("ABCDEFGHIJKLMNOPQRSTUVXZ");
+        call(utf8("abcdefghijklmnopqrstuvxz")).andAssert("ABCDEFGHIJKLMNOPQRSTUVXZ");
     }
 
     @Test
     public void testWithAllUppercase() throws SqlException {
-        call(new Utf8String("ABCDEFGHIJKLMNOPQRSTUVXZ")).andAssert("ABCDEFGHIJKLMNOPQRSTUVXZ");
+        call(utf8("ABCDEFGHIJKLMNOPQRSTUVXZ")).andAssert("ABCDEFGHIJKLMNOPQRSTUVXZ");
     }
 
     @Test
     public void testWithMixedCases() throws SqlException {
-        call(new Utf8String("ABCdefGHIjklMNOpqrSTUvxz")).andAssert("ABCDEFGHIJKLMNOPQRSTUVXZ");
+        call(utf8("ABCdefGHIjklMNOpqrSTUvxz")).andAssert("ABCDEFGHIJKLMNOPQRSTUVXZ");
     }
 
     @Test
     public void testWithNonAsciiCharacters() throws SqlException {
-        call(new Utf8String("abcDEFghiJKLm...() { _; } >_[$($())] { <<< (=) \noPQRstuVXZ"))
+        call(utf8("abcDEFghiJKLm...() { _; } >_[$($())] { <<< (=) \noPQRstuVXZ"))
                 .andAssert("ABCDEFGHIJKLM...() { _; } >_[$($())] { <<< (=) \nOPQRSTUVXZ");
     }
 

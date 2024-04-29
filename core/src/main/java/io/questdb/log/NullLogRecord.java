@@ -45,21 +45,6 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public Utf8Sink putUtf8(long lo, long hi) {
-        return this;
-    }
-
-    @Override
-    public Utf8Sink put(@Nullable Utf8Sequence us) {
-        return this;
-    }
-
-    @Override
-    public Utf8Sink put(byte b) {
-        return this;
-    }
-
-    @Override
     public LogRecord $(@Nullable CharSequence sequence) {
         return this;
     }
@@ -170,7 +155,22 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public Utf8Sink put(@Nullable Utf8Sequence us) {
+        return this;
+    }
+
+    @Override
+    public Utf8Sink put(byte b) {
+        return this;
+    }
+
+    @Override
     public LogRecord put(char c) {
+        return this;
+    }
+
+    @Override
+    public Utf8Sink putNonAscii(long lo, long hi) {
         return this;
     }
 

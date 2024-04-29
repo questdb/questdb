@@ -111,7 +111,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
     default DirectString getStr(long offset, DirectString view) {
         long addr = addressOf(offset);
         assert addr > 0;
-        if (Vm.PARANOIA_MODE && checkOffsetMapped(offset + 4)) {
+        if (Vm.PARANOIA_MODE && !checkOffsetMapped(offset + 4)) {
             throw CairoException.critical(0)
                     .put("String is outside of file boundary [offset=")
                     .put(offset)

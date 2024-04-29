@@ -22,18 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.functions.str;
 
-public interface DdlListener {
+public class LTrimVarcharFunctionFactory extends TrimVarcharFunctionFactory {
+    @Override
+    public String getSignature() {
+        return "ltrim(Ø)";
+    }
 
-    void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName);
-
-    void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName);
-
-    void onTableCreated(SecurityContext securityContext, TableToken tableToken);
-
-    void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken);
-
-    default void onColumnTypeChanged(SecurityContext securityContext, TableToken tableToken, CharSequence columnName, int oldColumnType, int newColumnType) {
+    @Override
+    protected TrimType trimType() {
+        return TrimType.LTRIM;
     }
 }

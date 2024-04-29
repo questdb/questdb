@@ -30,7 +30,6 @@ import io.questdb.griffin.Plannable;
 import org.jetbrains.annotations.Nullable;
 
 public class TableColumnMetadata implements Plannable {
-    private final int denseSymbolIndex;
     @Nullable
     private final RecordMetadata metadata;
     private final boolean symbolTableStatic;
@@ -46,7 +45,7 @@ public class TableColumnMetadata implements Plannable {
     }
 
     public TableColumnMetadata(String name, int type, @Nullable RecordMetadata metadata) {
-        this(name, type, false, 0, false, metadata, -1, false, -1);
+        this(name, type, false, 0, false, metadata, -1, false);
         // Do not allow using this constructor for symbol types.
         // Use version where you specify symbol table parameters
         assert !ColumnType.isSymbol(type);
@@ -60,7 +59,7 @@ public class TableColumnMetadata implements Plannable {
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata
     ) {
-        this(name, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1, false, -1);
+        this(name, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1, false);
     }
 
     public TableColumnMetadata(
@@ -73,20 +72,6 @@ public class TableColumnMetadata implements Plannable {
             int writerIndex,
             boolean dedupKeyFlag
     ) {
-        this(name, type, indexed, indexValueBlockCapacity, symbolTableStatic, metadata, writerIndex, dedupKeyFlag, -1);
-    }
-
-    public TableColumnMetadata(
-            String name,
-            int type,
-            boolean indexed,
-            int indexValueBlockCapacity,
-            boolean symbolTableStatic,
-            @Nullable RecordMetadata metadata,
-            int writerIndex,
-            boolean dedupKeyFlag,
-            int denseSymbolIndex
-    ) {
         this.name = name;
         this.type = type;
         this.indexed = indexed;
@@ -95,11 +80,6 @@ public class TableColumnMetadata implements Plannable {
         this.metadata = GenericRecordMetadata.copyOf(metadata);
         this.writerIndex = writerIndex;
         this.isDedupKey = dedupKeyFlag;
-        this.denseSymbolIndex = denseSymbolIndex;
-    }
-
-    public int getDenseSymbolIndex() {
-        return denseSymbolIndex;
     }
 
     public int getIndexValueBlockCapacity() {

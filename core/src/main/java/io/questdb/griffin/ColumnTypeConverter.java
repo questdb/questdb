@@ -142,7 +142,9 @@ public class ColumnTypeConverter {
     ) {
         long symbolMapAddressRaw;
         columnSizesSink.setSrcOffsets(skipRows * Integer.BYTES, -1);
-        symbolMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * Integer.BYTES, rowCount * Integer.BYTES, false, memoryTag);
+        symbolMapAddressRaw = rowCount > 0 ?
+                TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * Integer.BYTES, rowCount * Integer.BYTES, false, memoryTag)
+                : 0;
 
         try {
             long symbolMapAddress = Math.abs(symbolMapAddressRaw);
@@ -157,7 +159,7 @@ public class ColumnTypeConverter {
                     throw CairoException.critical(0).put("Unsupported conversion from SYMBOL to ").put(ColumnType.nameOf(dstColumnType));
             }
         } finally {
-            TableUtils.mapAppendColumnBufferRelease(ff, symbolMapAddressRaw, 0, rowCount * Integer.BYTES, memoryTag);
+            TableUtils.mapAppendColumnBufferRelease(ff, symbolMapAddressRaw, skipRows * Integer.BYTES, rowCount * Integer.BYTES, memoryTag);
         }
         return true;
     }
@@ -173,13 +175,17 @@ public class ColumnTypeConverter {
             return false;
         }
 
-        MemoryCMORImpl srcVarMem = srcVarMemTL.get();
+        MemoryCMORImpl srcVarMem = null;
         MemoryCMORImpl srcFixMem = srcFixMemTL.get();
         long skipAuxOffset = driverInstance.getAuxVectorSize(skipRows);
         columnSizesSink.setSrcOffsets(skipDataSize, skipAuxOffset);
 
         try {
-            srcVarMem.ofOffset(ff, srcVarFd, null, skipDataSize, dataHi, memoryTag, CairoConfiguration.O_NONE);
+            if (dataHi > skipDataSize) {
+                // Data can be fully inlined then no need to open / map data file
+                srcVarMem = srcVarMemTL.get();
+                srcVarMem.ofOffset(ff, srcVarFd, null, skipDataSize, dataHi, memoryTag, CairoConfiguration.O_NONE);
+            }
             srcFixMem.ofOffset(ff, srcFixFd, null, skipAuxOffset, skipAuxOffset + driverInstance.getAuxVectorSize(rowCount), memoryTag, CairoConfiguration.O_NONE);
 
             switch (ColumnType.tagOf(dstColumnType)) {
@@ -193,13 +199,16 @@ public class ColumnTypeConverter {
                     throw CairoException.critical(0).put("Unsupported conversion from VARCHAR to ").put(ColumnType.nameOf(dstColumnType));
             }
         } finally {
-            srcVarMem.detachFdClose();
+            if (srcVarMem != null) {
+                srcVarMem.detachFdClose();
+            }
             srcFixMem.detachFdClose();
         }
         return true;
     }
 
-    private static void convertFromVarcharToString(long rowLo, long rowHi, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize, MemoryCMORImpl srcVarMem, MemoryCMORImpl srcFixMem, ColumnConversionOffsetSink columnSizesSink) {
+    private static void convertFromVarcharToString(long rowLo, long rowHi, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize,
+                                                   @Nullable MemoryCMORImpl srcVarMem, MemoryCMORImpl srcFixMem, ColumnConversionOffsetSink columnSizesSink) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         MemoryCMARW dstVarMem = dstVarMemTL.get();
 
@@ -229,7 +238,8 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static void convertFromVarcharToSymbol(long rowLo, long rowHi, int dstFixFd, FilesFacade ff, SymbolMapWriterLite symbolMapWriterLite, MemoryCMORImpl srcVarMem, MemoryCMORImpl srcFixMem, ColumnConversionOffsetSink columnSizesSink) {
+    private static void convertFromVarcharToSymbol(long rowLo, long rowHi, int dstFixFd, FilesFacade ff, SymbolMapWriterLite symbolMapWriterLite,
+                                                   @Nullable MemoryCMORImpl srcVarMem, MemoryCMORImpl srcFixMem, ColumnConversionOffsetSink columnSizesSink) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
 
         dstFixMem.of(ff, dstFixFd, null, Files.PAGE_SIZE, (rowHi - rowLo) * Integer.BYTES, memoryTag);

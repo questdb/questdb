@@ -25,6 +25,8 @@
 package io.questdb.std.str;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
+import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -641,6 +643,38 @@ public final class Utf8s {
     }
 
     /**
+     * Returns the length of the UTF-8 sequence as the count of code points.
+     * NOTE: this number is different from the length of the equivalent Java String,
+     * which counts UTF-16 code words. A surrogate pair encodes one code point, but
+     * counts as two in the length of a Java String.
+     */
+    public static int length(Utf8Sequence value) {
+        if (value == null) {
+            return TableUtils.NULL_LEN;
+        }
+        final int size = value.size();
+
+        int continuationByteCount = 0;
+        int i = 0;
+        for (; i <= size - Long.BYTES; i += Long.BYTES) {
+            long c = value.longAt(i);
+            long x = c & 0x8080808080808080L;
+            long y = ~c << 1;
+            long swarDelta = x & y;
+            int delta = Long.bitCount(swarDelta);
+            continuationByteCount += delta;
+        }
+        for (; i < size; i++) {
+            int c = value.byteAt(i);
+            int x = c & 0x80;
+            int y = ~c << 1;
+            int delta = (x & y) >>> 7;
+            continuationByteCount += delta;
+        }
+        return size - continuationByteCount;
+    }
+
+    /**
      * Strictly less than (&lt;) comparison of two UTF8 sequences in lexicographical
      * order. For example, for:
      * l = aaaaa
@@ -789,6 +823,40 @@ public final class Utf8s {
         return b.toString();
     }
 
+    /**
+     * Implements strpos() with SQL semantics. Returns the 1-based position of a non-null
+     * needle within a non-null haystack, and 0 if needle doesn't occur within haystack. An
+     * empty needle is specified to occur at position 1 of any haystack (even an empty one).
+     */
+    public static int strpos(@NotNull Utf8Sequence haystack, @NotNull Utf8Sequence needle) {
+        final int substrSize = needle.size();
+        if (substrSize < 1) {
+            return 1;
+        }
+        final int strSize = haystack.size();
+        if (strSize < 1) {
+            return 0;
+        }
+
+        OUTER:
+        for (int i = 0, strPos = 0, n = strSize - substrSize + 1; i < n; i++) {
+            final byte c = haystack.byteAt(i);
+            // Only advance strPos if c is not a continuation byte
+            if ((c & 0b1100_0000) != 0b1000_0000) {
+                strPos++;
+            }
+            if (c == needle.byteAt(0)) {
+                for (int k = 1; k < substrSize; k++) {
+                    if (haystack.byteAt(i + k) != needle.byteAt(k)) {
+                        continue OUTER;
+                    }
+                }
+                return strPos;
+            }
+        }
+        return 0;
+    }
+
     public static String toString(@NotNull Utf8Sequence us, int start, int end, byte unescapeAscii) {
         final Utf8Sink sink = Misc.getThreadLocalUtf8Sink();
         final int lastChar = end - 1;
@@ -808,6 +876,25 @@ public final class Utf8s {
 
     public static Utf8String toUtf8String(@Nullable Utf8Sequence s) {
         return s == null ? null : Utf8String.newInstance(s);
+    }
+
+    public static void trim(TrimType type, Utf8Sequence source, Utf8Sink sink) {
+        if (source == null || source.size() == 0) {
+            return;
+        }
+        int start = 0;
+        int limit = source.size();
+        if (type != TrimType.RTRIM) {
+            while (start < limit && source.byteAt(start) == ' ') {
+                start++;
+            }
+        }
+        if (type != TrimType.LTRIM) {
+            while (limit > start && source.byteAt(limit - 1) == ' ') {
+                limit--;
+            }
+        }
+        sink.putAny(source, start, limit);
     }
 
     /**

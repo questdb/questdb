@@ -38,6 +38,7 @@ import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -91,6 +92,8 @@ public class WalWriter implements TableWriterAPI {
     private SegmentColumnRollSink columnConversionSink;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
+    private ConversionSymbolMapWriter conversionSymbolMap;
+    private ConversionSymbolTable conversionSymbolTable;
     private long currentTxnStartRowNum = -1;
     private boolean distressed;
     private boolean isCommittingData;
@@ -491,12 +494,24 @@ public class WalWriter implements TableWriterAPI {
                 try {
                     final int timestampIndex = metadata.getTimestampIndex();
 
-                    LOG.info().$("rolling uncommitted rows to new segment [wal=")
-                            .$(path).$(Files.SEPARATOR).$(oldSegmentId)
-                            .$(", lastSegmentTxn=").$(lastSegmentTxn)
-                            .$(", newSegmentId=").$(newSegmentId)
-                            .$(", uncommittedRows=").$(uncommittedRows)
-                            .I$();
+                    if (convertColumnIndex < 0) {
+                        LOG.info().$("rolling uncommitted rows to new segment [wal=")
+                                .$(path).$(Files.SEPARATOR).$(oldSegmentId)
+                                .$(", lastSegmentTxn=").$(lastSegmentTxn)
+                                .$(", newSegmentId=").$(newSegmentId)
+                                .$(", uncommittedRows=").$(uncommittedRows)
+                                .I$();
+                    } else {
+                        int existingType = metadata.getColumnType(convertColumnIndex);
+                        LOG.info().$("rolling uncommitted rows to new segment with type conversion [wal=")
+                                .$(path).$(Files.SEPARATOR).$(oldSegmentId)
+                                .$(", lastSegmentTxn=").$(lastSegmentTxn)
+                                .$(", newSegmentId=").$(newSegmentId)
+                                .$(", uncommittedRows=").$(uncommittedRows)
+                                .$(", existingType=").$(ColumnType.nameOf(existingType))
+                                .$(", newType=").$(ColumnType.nameOf(convertToColumnType))
+                                .I$();
+                    }
 
                     final int commitMode = configuration.getCommitMode();
                     for (int columnIndex = 0; columnIndex < columnsToRoll; columnIndex++) {
@@ -505,6 +520,18 @@ public class WalWriter implements TableWriterAPI {
                             final MemoryMA primaryColumn = getDataColumn(columnIndex);
                             final MemoryMA secondaryColumn = getAuxColumn(columnIndex);
                             final String columnName = metadata.getColumnName(columnIndex);
+
+                            SymbolMapWriterLite symbolMapWriter = null;
+                            SymbolTable symbolTable = null;
+                            if (columnIndex == convertColumnIndex) {
+                                if (ColumnType.isSymbol(convertToColumnType)) {
+                                    // New column destination is the column with last index
+                                    symbolMapWriter = getConversionSymbolMapWriter(columnCount - 1);
+                                }
+                                if (ColumnType.isSymbol(columnType)) {
+                                    symbolTable = getConversionSymbolMapReader(columnIndex);
+                                }
+                            }
 
                             int type = columnIndex == timestampIndex ? -columnType : columnType;
                             CopyWalSegmentUtils.rollColumnToSegment(
@@ -519,9 +546,10 @@ public class WalWriter implements TableWriterAPI {
                                     currentTxnStartRowNum,
                                     uncommittedRows,
                                     columnRollSink,
-                                    columnIndex,
                                     commitMode,
-                                    columnIndex == convertColumnIndex ? convertToColumnType : type
+                                    columnIndex == convertColumnIndex ? convertToColumnType : type,
+                                    symbolTable,
+                                    symbolMapWriter
                             );
                         } else {
                             rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
@@ -794,6 +822,11 @@ public class WalWriter implements TableWriterAPI {
         // Apply to itself.
         try {
             alterOp.apply(metaWriterSvc, true);
+            LOG.info().$("committed structural metadata change [wal=").$(path).$(Files.SEPARATOR).$(segmentId)
+                    .$(", segmentTxn=").$(lastSegmentTxn)
+                    .$(", seqTxn=").$(txn)
+                    .I$();
+
         } catch (Throwable th) {
             LOG.critical().$("Exception during alter [ex=").$(th).I$();
             distressed = true;
@@ -834,7 +867,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void closeSegmentSwitchFiles(SegmentColumnRollSink newColumnFiles, int columnsToRoll) {
         int commitMode = configuration.getCommitMode();
-        for (int columnIndex = 0; columnIndex < columnsToRoll; columnIndex++) {
+        for (int columnIndex = 0, n = newColumnFiles.count(); columnIndex < n; columnIndex++) {
             final int primaryFd = newColumnFiles.getDestPrimaryFd(columnIndex);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsyncAndClose(primaryFd);
@@ -1073,8 +1106,8 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
-        final MemoryMA primaryColumn = columns.getAndSetQuick(pi, NullMemory.INSTANCE);
-        final MemoryMA secondaryColumn = columns.getAndSetQuick(si, NullMemory.INSTANCE);
+        final MemoryMA primaryColumn = columns.getAndSetQuick(pi, null);
+        final MemoryMA secondaryColumn = columns.getAndSetQuick(si, null);
         primaryColumn.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
         if (secondaryColumn != null) {
             secondaryColumn.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
@@ -1105,6 +1138,22 @@ public class WalWriter implements TableWriterAPI {
     private long getColumnStructureVersion() {
         // Sequencer metadata version is the same as column structure version of the table.
         return metadata.getMetadataVersion();
+    }
+
+    private SymbolTable getConversionSymbolMapReader(int columnIndex) {
+        if (conversionSymbolTable == null) {
+            conversionSymbolTable = new ConversionSymbolTable();
+        }
+        conversionSymbolTable.of(this, columnIndex);
+        return conversionSymbolTable;
+    }
+
+    private SymbolMapWriterLite getConversionSymbolMapWriter(int columnIndex) {
+        if (conversionSymbolMap == null) {
+            conversionSymbolMap = new ConversionSymbolMapWriter();
+        }
+        conversionSymbolMap.of(this, columnIndex);
+        return conversionSymbolMap;
     }
 
     private long getDataAppendPageSize() {
@@ -1154,7 +1203,10 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void markColumnRemoved(int columnIndex) {
+    private void markColumnRemoved(int columnIndex, int columnType) {
+        if (ColumnType.isSymbol(columnType)) {
+            removeSymbolMapReader(columnIndex);
+        }
         final int pi = getDataColumnOffset(columnIndex);
         final int si = getAuxColumnOffset(columnIndex);
         freeNullSetter(nullSetters, columnIndex);
@@ -1434,9 +1486,9 @@ public class WalWriter implements TableWriterAPI {
 
     private void setAppendPosition(final long segmentRowCount) {
         for (int i = 0; i < columnCount; i++) {
-            setAppendPosition0(i, segmentRowCount);
             int type = metadata.getColumnType(i);
             if (type > 0) {
+                setAppendPosition0(i, segmentRowCount);
                 rowValueIsNotNull.setQuick(i, segmentRowCount - 1);
             }
         }
@@ -1527,11 +1579,14 @@ public class WalWriter implements TableWriterAPI {
 
     private void switchColumnsToNewSegment(SegmentColumnRollSink rollSink, int columnsToRoll, int convertColumnIndex) {
         for (int i = 0; i < columnsToRoll; i++) {
-            if (i != convertColumnIndex) {
-                switchColumnsToNewSegmentRollColumn(rollSink, i, i);
-            } else {
-                // Column is converted, the destination column objects are for the last added column
-                switchColumnsToNewSegmentRollColumn(rollSink, i, columnCount - 1);
+            final int columnType = metadata.getColumnType(i);
+            if (columnType > 0) {
+                if (i != convertColumnIndex) {
+                    switchColumnsToNewSegmentRollColumn(rollSink, i, i);
+                } else {
+                    // Column is converted, the destination column objects are for the last added column
+                    switchColumnsToNewSegmentRollColumn(rollSink, i, columnCount - 1);
+                }
             }
         }
     }
@@ -1571,6 +1626,94 @@ public class WalWriter implements TableWriterAPI {
             }
         }
         events.sync();
+    }
+
+    private static class ConversionSymbolMapWriter implements SymbolMapWriterLite {
+        private int columnIndex;
+        private IntList localSymbolIds;
+        private CharSequenceIntHashMap symbolHashMap;
+        private SymbolMapReader symbolMapReader;
+
+        @Override
+        public int resolveSymbol(CharSequence value) {
+            return putSym0(columnIndex, value, symbolMapReader);
+        }
+
+        private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
+            int key;
+            if (utf16Value != null) {
+                final CharSequenceIntHashMap utf16Map = symbolHashMap;
+                final int index = utf16Map.keyIndex(utf16Value);
+                if (index > -1) {
+                    key = symbolMapReader.keyOf(utf16Value);
+                    if (key == SymbolTable.VALUE_NOT_FOUND) {
+                        // Add it to in-memory symbol map
+                        // Locally added symbols must have a continuous range of keys
+                        key = localSymbolIds.postIncrement(columnIndex);
+                    }
+                    // Chars.toString used as value is a parser buffer memory slice or mapped memory of symbolMapReader
+                    utf16Map.putAt(index, Chars.toString(utf16Value), key);
+                } else {
+                    key = utf16Map.valueAt(index);
+                }
+            } else {
+                key = SymbolTable.VALUE_IS_NULL;
+            }
+            return key;
+        }
+
+        void of(WalWriter writer, int columnIndex) {
+            this.columnIndex = columnIndex;
+            this.symbolMapReader = writer.getSymbolMapReader(columnIndex);
+            this.symbolHashMap = writer.symbolMaps.getQuick(columnIndex);
+            this.localSymbolIds = writer.localSymbolIds;
+        }
+    }
+
+
+    private static class ConversionSymbolTable implements SymbolTable {
+        private final IntList symbols = new IntList();
+        private int symbolCountWatermark;
+        private CharSequenceIntHashMap symbolHashMap;
+        private SymbolMapReader symbolMapReader;
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            if (key == SymbolTable.VALUE_IS_NULL) {
+                return null;
+            }
+            if (key < symbolCountWatermark) {
+                return symbolMapReader.valueOf(key);
+            } else {
+                int keyIndex = symbols.get(key - symbolCountWatermark);
+                return symbolHashMap.keys().get(keyIndex);
+            }
+        }
+
+        void of(WalWriter writer, int columnIndex) {
+            this.symbolMapReader = writer.getSymbolMapReader(columnIndex);
+            this.symbolCountWatermark = writer.getSymbolCountWatermark(columnIndex);
+
+            symbols.clear();
+            symbolHashMap = writer.symbolMaps.getQuick(columnIndex);
+
+            int remapSize = writer.localSymbolIds.get(columnIndex);
+            if (remapSize > 0) {
+                symbols.setPos(remapSize);
+                for (int i = 0, n = symbolHashMap.size(); i < n; i++) {
+                    CharSequence symbolValue = symbolHashMap.keys().get(i);
+                    int index = symbolHashMap.get(symbolValue);
+                    if (index >= symbolCountWatermark) {
+                        symbols.extendAndSet(index - symbolCountWatermark, i);
+                    }
+                }
+            }
+        }
     }
 
     private class MetadataValidatorService implements MetadataServiceStub {
@@ -1731,10 +1874,10 @@ public class WalWriter implements TableWriterAPI {
                         openColumnFiles(columnName, columnType, columnIndex, path.size());
                         path.trimTo(rootLen);
                     }
+
                     // if we did not have to roll uncommitted rows to a new segment
                     // it will add the column file and switch metadata file on next row write
                     // as part of rolling to a new segment
-
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount, configuration.getCommitMode());
                     }
@@ -1749,7 +1892,6 @@ public class WalWriter implements TableWriterAPI {
                 }
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
-                    // TODO: this should be some kind of warning probably that different WALs adding the same column concurrently
                     LOG.info().$("column has already been added by another WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
                 } else {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
@@ -1766,31 +1908,47 @@ public class WalWriter implements TableWriterAPI {
                 int existingColumnType = metadata.getColumnType(existingColumnIndex);
                 if (existingColumnType > 0) {
                     // Configure new column, it will be used if the uncommitted data is rolled to a new segment
-                    configureColumn(columnCount, newType);
+                    int newColumnIndex = columnCount;
+                    configureColumn(newColumnIndex, newType);
                     if (ColumnType.isSymbol(newType)) {
-                        configureSymbolMapWriter(newType, columnName, 0, -1);
+                        configureSymbolMapWriter(newColumnIndex, columnName, 0, -1);
                     }
                     columnCount++;
-                    if (currentTxnStartRowNum > 0) {
-                        // Roll last transaction to new segment
-                        rollUncommittedToNewSegment(existingColumnIndex, newType);
-                    }
+                    // Roll last transaction to new segment
+                    rollUncommittedToNewSegment(existingColumnIndex, newType);
 
                     if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
                         metadata.changeColumnType(columnName, newType);
+                        path.trimTo(rootLen).slash().put(segmentId);
+
+                        markColumnRemoved(existingColumnIndex, existingColumnType);
                         if (!rollSegmentOnNextRow) {
                             // this means we have rolled uncommitted rows to a new segment already
                             // we should switch metadata to this new segment
                             path.trimTo(rootLen).slash().put(segmentId);
                             // this will close old _meta file and create the new one
                             metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
-                        }
 
-                        if (ColumnType.isSymbol(existingColumnType)) {
-                            removeSymbolMapReader(existingColumnIndex);
+                            if (segmentRowCount == 0) {
+                                openColumnFiles(columnName, newType, newColumnIndex, path.size());
+                                LOG.info().$("==== open column files [path=").$(path).$(Files.SEPARATOR).$(segmentId)
+                                        .$(", columnName=").utf8(columnName)
+                                        .$(", from=").$(ColumnType.nameOf(existingColumnType))
+                                        .$(", to=").$(ColumnType.nameOf(newType))
+                                        .$(", segmentRowCount=").$(segmentRowCount)
+                                        .$(", currentTxnStartRowNum=").$(currentTxnStartRowNum)
+                                        .I$();
+                            }
                         }
-                        markColumnRemoved(existingColumnIndex);
-                        LOG.info().$("change column type in WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
+                        if (securityContext != null) {
+                            ddlListener.onColumnTypeChanged(securityContext, metadata.getTableToken(), columnName, existingColumnType, newType);
+                        }
+                        path.trimTo(rootLen);
+                        LOG.info().$("changed column type in WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId)
+                                .$(", columnName=").utf8(columnName)
+                                .$(", from=").$(ColumnType.nameOf(existingColumnType))
+                                .$(", to=").$(ColumnType.nameOf(newType))
+                                .I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
                                 .put("' was removed, cannot apply commit because of concurrent table definition change");
@@ -1848,11 +2006,10 @@ public class WalWriter implements TableWriterAPI {
                         // it will switch metadata file on next row write
                         // as part of rolling to a new segment
 
-                        if (ColumnType.isSymbol(type)) {
-                            removeSymbolMapReader(index);
-                        }
-                        markColumnRemoved(index);
-                        LOG.info().$("removed column from WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
+                        markColumnRemoved(index, type);
+                        path.trimTo(rootLen);
+                        LOG.info().$("removed column from WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId)
+                                .$(", columnName=").utf8(columnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
                                 .put("' was removed, cannot apply commit because of concurrent table definition change");
@@ -1903,7 +2060,9 @@ public class WalWriter implements TableWriterAPI {
                             ddlListener.onColumnRenamed(securityContext, metadata.getTableToken(), columnName, newColumnName);
                         }
 
-                        LOG.info().$("renamed column in WAL [path=").$(path).$(", columnName=").utf8(columnName).$(", newColumnName=").utf8(newColumnName).I$();
+                        path.trimTo(rootLen);
+                        LOG.info().$("renamed column in WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId)
+                                .$(", columnName=").utf8(columnName).$(", newColumnName=").utf8(newColumnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
                                 .put("' was removed, cannot apply commit because of concurrent table definition change");
