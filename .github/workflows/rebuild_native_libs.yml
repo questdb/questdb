@@ -136,8 +136,6 @@ jobs:
           ldd --version
           apt-get update -y
           apt install git nasm python3 wget ca-certificates build-essential zstd -y
-          python3 ./.github/prepare_rust_env.py
-          echo "PATH=/github/home/.cargo/bin/:$PATH" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           submodules: true
