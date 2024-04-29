@@ -470,7 +470,7 @@ public final class Unsafe {
                 throw new InstantiationException("failed to initialize class definer");
             }
             anonymousClassDefiner = classDefiner;
-            enableJmalloc = !Os.isWindows() && System.getenv("no_jemalloc") == null;
+            enableJmalloc = !Os.isWindows() && System.getenv("qdb_no_jemalloc") == null;
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
