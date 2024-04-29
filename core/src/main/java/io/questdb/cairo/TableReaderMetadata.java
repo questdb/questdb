@@ -49,7 +49,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private int plen;
     private int tableId;
     private TableToken tableToken;
-    private TransitionIndex transitionIndex;
+    private TableReaderMetadataTransitionIndex transitionIndex;
     private MemoryMR transitionMeta;
     private boolean walEnabled;
 
@@ -71,7 +71,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.metaMem = Vm.getMRInstance();
     }
 
-    public void applyTransitionIndex() {
+    public TableReaderMetadataTransitionIndex applyTransition() {
         // swap meta and transitionMeta
         MemoryMR temp = this.metaMem;
         this.metaMem = this.transitionMeta;
@@ -92,17 +92,25 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
         int shiftLeft = 0, existingIndex = 0;
         buildWriterOrderMap(metaMem, columnCount);
+        int newColumnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
 
+        if (transitionIndex == null) {
+            transitionIndex = new TableReaderMetadataTransitionIndex();
+        } else {
+            transitionIndex.clear();
+        }
+
+        buildWriterOrderMap(metaMem, newColumnCount);
         for (int i = 0, n = columnOrderMap.size(); i < n; i += 3) {
+            int stableIndex = i / 3;
             int writerIndex = columnOrderMap.get(i);
             if (writerIndex < 0) {
                 continue;
             }
-
-            int stableIndex = i / 3;
             CharSequence name = metaMem.getStrA(columnOrderMap.get(i + 1));
-            int denseSymbolIndex = columnOrderMap.get(i + 2);
             assert name != null;
+            int denseSymbolIndex = columnOrderMap.get(i + 2);
+            int newColumnType = TableUtils.getColumnType(metaMem, writerIndex);
             int columnType = TableUtils.getColumnType(metaMem, writerIndex);
             boolean isIndexed = TableUtils.isColumnIndexed(metaMem, writerIndex);
             boolean isDedupKey = TableUtils.isColumnDedupKey(metaMem, writerIndex);
@@ -119,13 +127,23 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 }
             }
 
-            if (columnType < 0) {
-                // column dropped
-                shiftLeft++;
+            // index structure is
+            // [action: deleted | reused, copy from:int index]
+            // "copy from" >= 0 indicates that column is to be copied from old position
+            // "copy from" < 0  indicates that column is new and should be taken from updated metadata position
+            // "copy from" == Integer.MIN_VALUE  indicates that column is deleted for good and should not be re-added from any source
+
+            int outIndex = existingIndex - shiftLeft;
+            if (newColumnType < 0) {
+                shiftLeft++; // Deleted in new
+                if (existing != null) {
+                    transitionIndex.markDeleted(existingIndex);
+                }
             } else {
                 // existing column
                 boolean rename = existing != null && !Chars.equals(existing.getName(), name);
                 newName = rename || existing == null ? Chars.toString(name) : existing.getName();
+
                 if (rename
                         || existing == null
                         || existing.getWriterIndex() != writerIndex
@@ -135,7 +153,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         || existing.getDenseSymbolIndex() != denseSymbolIndex
                         || existing.getStableIndex() != stableIndex
                 ) {
-                    columnMetadata.setQuick(existingIndex - shiftLeft,
+                    // new
+                    columnMetadata.setQuick(
+                            outIndex,
                             new TableReaderMetadataColumn(
                                     newName,
                                     columnType,
@@ -149,21 +169,36 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                     stableIndex
                             )
                     );
-                } else if (shiftLeft > 0) {
-                    columnMetadata.setQuick(existingIndex - shiftLeft, existing);
+                    if (existing != null) {
+                        // column deleted at existingIndex
+                        transitionIndex.markDeleted(existingIndex);
+                    }
+                    transitionIndex.markCopyFrom(outIndex, writerIndex);
+                } else {
+                    // reuse
+                    columnMetadata.setQuick(outIndex, existing);
+                    transitionIndex.markReusedAction(outIndex, existingIndex);
+                    if (existingIndex > outIndex) {
+                        // mark to do nothing with existing column, this may be overwritten later
+                        transitionIndex.markReplaced(existingIndex);
+                    }
                 }
-                this.columnNameIndexMap.put(newName, existingIndex - shiftLeft);
+                this.columnNameIndexMap.put(newName, outIndex);
                 if (timestampIndex == writerIndex) {
-                    this.timestampIndex = existingIndex - shiftLeft;
+                    this.timestampIndex = outIndex;
                 }
             }
             existingIndex++;
         }
+
+
         columnMetadata.setPos(existingIndex - shiftLeft);
         this.columnCount = columnMetadata.size();
         if (timestampIndex < 0) {
             this.timestampIndex = timestampIndex;
         }
+
+        return transitionIndex;
     }
 
     @Override
@@ -178,23 +213,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         metaMem = Misc.free(metaMem);
         path = Misc.free(path);
         transitionMeta = Misc.free(transitionMeta);
-    }
-
-    public TransitionIndex createTransitionIndex(long txnMetadataVersion) {
-        if (transitionMeta == null) {
-            transitionMeta = Vm.getMRInstance();
-        }
-
-        transitionMeta.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
-        if (transitionMeta.size() >= TableUtils.META_OFFSET_METADATA_VERSION + 8
-                && txnMetadataVersion != transitionMeta.getLong(TableUtils.META_OFFSET_METADATA_VERSION)) {
-            // No match
-            return null;
-        }
-
-        tmpValidationMap.clear();
-        TableUtils.validateMeta(transitionMeta, tmpValidationMap, ColumnType.VERSION);
-        return createTransitionIndex(transitionMeta);
     }
 
     public void dumpTo(MemoryMA mem) {
@@ -337,79 +355,22 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
-//    public static long createTransitionIndex(
-//            MemoryR masterMeta,
-//            AbstractRecordMetadata slaveMeta
-//    ) {
-//        int slaveColumnCount = slaveMeta.columnCount;
-//        int masterColumnCount = masterMeta.getInt(META_OFFSET_COUNT);
-//        final long pTransitionIndex;
-//        final int size = 8 + masterColumnCount * 8;
-//
-//        long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_TABLE_READER);
-//        Unsafe.getUnsafe().putInt(index, size);
-//        index += 8;
-//
-//        // index structure is
-//        // [action: int, copy from:int]
-//
-//        // action: if -1 then current column in slave is deleted or renamed, else it's reused
-//        // "copy from" >= 0 indicates that column is to be copied from slave position
-//        // "copy from" < 0  indicates that column is new and should be taken from updated metadata position
-//        // "copy from" == Integer.MIN_VALUE  indicates that column is deleted for good and should not be re-added from any source
-//
-//        long offset = getColumnNameOffset(masterColumnCount);
-//        int slaveIndex = 0;
-//        int shiftLeft = 0;
-//        for (int masterIndex = 0; masterIndex < masterColumnCount; masterIndex++) {
-//            CharSequence name = masterMeta.getStrA(offset);
-//            offset += Vm.getStorageLength(name);
-//            int masterColumnType = getColumnType(masterMeta, masterIndex);
-//
-//            if (slaveIndex < slaveColumnCount) {
-//                int existingWriterIndex = slaveMeta.getWriterIndex(slaveIndex);
-//                if (existingWriterIndex > masterIndex) {
-//                    // This column must be deleted so existing dense columns do not contain it
-//                    assert masterColumnType < 0;
-//                    continue;
-//                }
-//                assert existingWriterIndex == masterIndex;
-//            }
-//
-//            int outIndex = slaveIndex - shiftLeft;
-//            if (masterColumnType < 0) {
-//                shiftLeft++; // Deleted in master
-//                if (slaveIndex < slaveColumnCount) {
-//                    Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);
-//                    Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);
-//                }
-//            } else {
-//                if (
-//                        slaveIndex < slaveColumnCount
-//                                && isColumnIndexed(masterMeta, masterIndex) == slaveMeta.isColumnIndexed(slaveIndex)
-//                                && Chars.equals(name, slaveMeta.getColumnName(slaveIndex))
-//                ) {
-//                    // reuse
-//                    Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, slaveIndex);
-//                    if (slaveIndex > outIndex) {
-//                        // mark to do nothing with existing column, this may be overwritten later
-//                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);
-//                    }
-//                } else {
-//                    // new
-//                    if (slaveIndex < slaveColumnCount) {
-//                        // column deleted at slaveIndex
-//                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);
-//                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);
-//                    }
-//                    Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, -masterIndex - 1);
-//                }
-//            }
-//            slaveIndex++;
-//        }
-//        Unsafe.getUnsafe().putInt(pTransitionIndex + 4, slaveIndex - shiftLeft);
-//        return pTransitionIndex;
-//    }
+    public boolean prepareTransition(long txnMetadataVersion) {
+        if (transitionMeta == null) {
+            transitionMeta = Vm.getMRInstance();
+        }
+
+        transitionMeta.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
+        if (transitionMeta.size() >= TableUtils.META_OFFSET_METADATA_VERSION + 8
+                && txnMetadataVersion != transitionMeta.getLong(TableUtils.META_OFFSET_METADATA_VERSION)) {
+            // No match
+            return false;
+        }
+
+        tmpValidationMap.clear();
+        TableUtils.validateMeta(transitionMeta, tmpValidationMap, ColumnType.VERSION);
+        return true;
+    }
 
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
@@ -452,122 +413,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             if (isSymbol) {
                 denseSymbolIndex++;
             }
-        }
-    }
-
-    private TransitionIndex createTransitionIndex(MemoryMR newMeta) {
-        if (transitionIndex == null) {
-            transitionIndex = new TransitionIndex();
-        } else {
-            transitionIndex.clear();
-        }
-
-        int oldColumnCount = columnCount;
-        int newColumnCount = newMeta.getInt(TableUtils.META_OFFSET_COUNT);
-
-        // index structure is
-        // [action: int, copy from:int]
-
-        // action: if -1 then current column in old is deleted or renamed, else it's reused
-        // "copy from" >= 0 indicates that column is to be copied from old position
-        // "copy from" < 0  indicates that column is new and should be taken from updated metadata position
-        // "copy from" == Integer.MIN_VALUE  indicates that column is deleted for good and should not be re-added from any source
-
-        int oldIndex = 0;
-        int shiftLeft = 0;
-        buildWriterOrderMap(newMeta, newColumnCount);
-
-        for (int i = 0, n = columnOrderMap.size(); i < n; i += 3) {
-            int stableIndex = i / 3;
-            int writerIndex = columnOrderMap.get(i);
-            if (writerIndex < 0) {
-                continue;
-            }
-            CharSequence name = newMeta.getStrA(columnOrderMap.get(i + 1));
-            int newColumnType = TableUtils.getColumnType(newMeta, writerIndex);
-
-            int oldWriterIndex = -1;
-            if (oldIndex < oldColumnCount) {
-                oldWriterIndex = getWriterIndex(oldIndex);
-                int oldStableIndex = getStableIndex(oldIndex);
-                if (oldStableIndex > stableIndex && newColumnType < 0) {
-                    // This column must be deleted so existing dense columns do not contain it
-                    continue;
-                }
-            }
-
-            int outIndex = oldIndex - shiftLeft;
-            if (newColumnType < 0) {
-                shiftLeft++; // Deleted in new
-                if (oldIndex < oldColumnCount) {
-                    transitionIndex.markDeleted(oldIndex);
-                }
-            } else {
-                if (
-                        oldIndex < oldColumnCount
-                                && oldWriterIndex == writerIndex
-                                && TableUtils.isColumnIndexed(newMeta, writerIndex) == this.isColumnIndexed(oldIndex)
-                                && Chars.equals(name, this.getColumnName(oldIndex))
-                ) {
-                    // reuse
-                    transitionIndex.markReusedAction(outIndex, oldIndex);
-                    if (oldIndex > outIndex) {
-                        // mark to do nothing with existing column, this may be overwritten later
-                        transitionIndex.markReplaced(oldIndex);
-                    }
-                } else {
-                    // new
-                    if (oldIndex < oldColumnCount) {
-                        // column deleted at oldIndex
-                        transitionIndex.markDeleted(oldIndex);
-                    }
-                    transitionIndex.markCopyFrom(outIndex, writerIndex);
-                }
-            }
-            oldIndex++;
-        }
-        return transitionIndex;
-    }
-
-    private int getStableIndex(int oldIndex) {
-        return ((TableReaderMetadataColumn) this.getColumnMetadata(oldIndex)).getStableIndex();
-    }
-
-    public static class TransitionIndex {
-        private final IntList actions = new IntList();
-
-        public void clear() {
-            actions.setAll(actions.capacity(), 0);
-            actions.clear();
-        }
-
-        public boolean closeColumn(int index) {
-            return actions.get(index * 2) == -1;
-        }
-
-        public int getCopyFromIndex(int index) {
-            return actions.get(index * 2 + 1);
-        }
-
-        public boolean replaceWithNew(int index) {
-            return actions.get(index * 2 + 1) != Integer.MIN_VALUE && actions.get(index * 2 + 1) < 0;
-        }
-
-        private void markCopyFrom(int index, int newIndex) {
-            actions.extendAndSet(index * 2 + 1, -newIndex - 1);
-        }
-
-        private void markDeleted(int index) {
-            actions.extendAndSet(index * 2, -1);
-            actions.extendAndSet(index * 2 + 1, Integer.MIN_VALUE);
-        }
-
-        private void markReplaced(int index) {
-            actions.extendAndSet(index * 2 + 1, Integer.MIN_VALUE);
-        }
-
-        private void markReusedAction(int index, int oldIndex) {
-            actions.extendAndSet(index * 2 + 1, oldIndex);
         }
     }
 }

@@ -178,9 +178,9 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                     structureVersion = writer.getMetadataVersion();
                 }
 
-                metadata.createTransitionIndex(structureVersion);
+                metadata.prepareTransition(structureVersion);
                 StringSink sink = new StringSink();
-                metadata.applyTransitionIndex();
+                metadata.applyTransition();
                 Assert.assertEquals(columnCount, metadata.getColumnCount());
                 for (int i = 0; i < columnCount; i++) {
                     sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
@@ -222,9 +222,9 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                     structVersion = writer.getMetadataVersion();
                 }
 
-                metadata.createTransitionIndex(structVersion);
+                metadata.prepareTransition(structVersion);
                 StringSink sink = new StringSink();
-                metadata.applyTransitionIndex();
+                metadata.applyTransition();
                 Assert.assertEquals(expectedColumnCount, metadata.getColumnCount());
                 for (int i = 0; i < expectedColumnCount; i++) {
                     sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
