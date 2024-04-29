@@ -487,7 +487,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         int sizeAndFlags = (int) (packedHashSizeFlags >>> 32);
 
         // clear top 2 bits
-        return sizeAndFlags & 0x3FFFFFFF;
+        return sizeAndFlags & MASK_FLAGS_FROM_SIZE;
     }
 
     long entrySize() {
