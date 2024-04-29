@@ -66,7 +66,6 @@ public class FileWatcher implements QuietCloseable {
     @Override
     public void close() {
         if (!closed) {
-            reloadThread.interrupt();
             Misc.free(notifier);
         }
         closed = true;
