@@ -1,0 +1,109 @@
+name: Rebuild Rust libs for all platforms
+on:
+  workflow_dispatch:
+# This workflow is triggered manually from the Actions tab.
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Rust Library
+        run: |
+          cd core/rust/qdb
+          cargo build --release --target-dir target
+      - name: list built files
+        run: |
+          cd core/rust/qdb/target
+          dir /A-D /S /B
+  build-freebsd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build in FreeBSD
+        # @d44bf830e7d is the same as the tag v1, but it's guaranteed to be immutable.
+        uses: vmactions/freebsd-vm@d44bf830e7d850111d27aa120d468c905e5980f4
+        with:
+          # FreeBSD 13.2
+          release: 13.2
+          usesh: true
+          prepare: |
+            pkg install -y curl cmake gcc git nasm openjdk17 rust
+          run: |
+            export JAVA_HOME=/usr/local/openjdk17
+            cd core/rust/qdb
+            cargo build --release --target-dir target
+      - name: list built files
+        run: |
+          cd core/rust/qdb/target
+          find . -type f
+
+  build-macos:
+    strategy:
+      matrix:
+        # macos-14 = ARM M1
+        # macos-13 = x64
+        # if you change OS definitions then you need to change conditions in cache-save steps below
+        os: [ macos-14, macos-13 ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Rust Library
+        run: |
+          cd core/rust/qdb
+          cargo clean
+          cargo build --release --target-dir target
+      - name: list built files
+        run: |
+          cd core/rust/qdb/target
+          find . -type f
+  build-linux-amd64:
+    runs-on: ubuntu-latest
+    # this is very bare container, we use it to restrict GLIBC to 2.28
+    # everything has to be installed on it manually
+    container:
+      image: debian:buster
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchains (CXX/NASM/Rust)
+        run: |
+          ldd --version
+          apt-get update -y
+          apt install git nasm python3 wget ca-certificates build-essential zstd -y
+          python3 ./.github/prepare_rust_env.py
+          echo "PATH=/github/home/.cargo/bin/:$PATH" >> "$GITHUB_ENV"
+      - name: Install JDK17 (for jni.h)
+        run: |
+          wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
+          tar xfz OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
+          echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
+      - name: Build linux-amd64 Rust Library
+        run: |
+          cd core/rust/qdb
+          cargo clean
+          cargo build --release --target-dir target
+      - name: list built files
+        run: |
+          cd core/rust/qdb/target
+          find . -type f
+  build-linux-aarch64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Increase file count and install tooling
+        run: |
+          sudo sysctl -w fs.file-max=500000
+          sudo apt-get update -y
+          sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu
+      - name: Install rs-cross
+        run: |
+          cargo install cross
+      - name: Build linux-aarch64 Rust Library
+        run: |
+          cd core/rust/qdb
+          cargo clean
+          cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
+      - name: list built files
+        run: |
+          cd core/rust/qdb/target
+          find . -type f
