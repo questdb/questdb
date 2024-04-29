@@ -471,85 +471,89 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             final int binarySize = 64;
-            final long pointer = Unsafe.getUnsafe().allocateMemory(binarySize);
-            final DirectBinarySequence binSeq = new DirectBinarySequence();
-            WalWriterTest.prepareBinPayload(pointer, binarySize);
-            final Utf8String varChar = new Utf8String("₴ п'ять доллярів");
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    WalWriter walWriter = engine.getWalWriter(tableToken)
-            ) {
-                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            final long pointer = Unsafe.malloc(binarySize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final DirectBinarySequence binSeq = new DirectBinarySequence();
+                WalWriterTest.prepareBinPayload(pointer, binarySize);
+                final Utf8String varChar = new Utf8String("₴ п'ять доллярів");
+                try (
+                        SqlCompiler compiler = engine.getSqlCompiler();
+                        WalWriter walWriter = engine.getWalWriter(tableToken)
+                ) {
+                    addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                sqlExecutionContext.getBindVariableService().setInt(0, 567890);
-                sqlExecutionContext.getBindVariableService().setByte(1, (byte) 122);
-                sqlExecutionContext.getBindVariableService().setShort(2, (short) 42567);
-                sqlExecutionContext.getBindVariableService().setLong(3, 33342567L);
-                sqlExecutionContext.getBindVariableService().setFloat(4, (float) 34.34);
-                sqlExecutionContext.getBindVariableService().setDouble(5, 357.35);
-                sqlExecutionContext.getBindVariableService().setTimestamp(6, 100_000L);
-                sqlExecutionContext.getBindVariableService().setDate(7, 100_000L);
-                sqlExecutionContext.getBindVariableService().setChar(8, 'Q');
-                sqlExecutionContext.getBindVariableService().setBoolean(9, true);
-                sqlExecutionContext.getBindVariableService().setStr(10, "updated");
-                sqlExecutionContext.getBindVariableService().setStr(11, "labelUpdate");
-                sqlExecutionContext.getBindVariableService().setBin(12, binSeq.of(pointer, binarySize));
-                sqlExecutionContext.getBindVariableService().setGeoHash(13, rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
-                sqlExecutionContext.getBindVariableService().setGeoHash(14, rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
-                sqlExecutionContext.getBindVariableService().setGeoHash(15, rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
-                sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
-                sqlExecutionContext.getBindVariableService().setVarchar(17, varChar);
+                    sqlExecutionContext.getBindVariableService().setInt(0, 567890);
+                    sqlExecutionContext.getBindVariableService().setByte(1, (byte) 122);
+                    sqlExecutionContext.getBindVariableService().setShort(2, (short) 42567);
+                    sqlExecutionContext.getBindVariableService().setLong(3, 33342567L);
+                    sqlExecutionContext.getBindVariableService().setFloat(4, (float) 34.34);
+                    sqlExecutionContext.getBindVariableService().setDouble(5, 357.35);
+                    sqlExecutionContext.getBindVariableService().setTimestamp(6, 100_000L);
+                    sqlExecutionContext.getBindVariableService().setDate(7, 100_000L);
+                    sqlExecutionContext.getBindVariableService().setChar(8, 'Q');
+                    sqlExecutionContext.getBindVariableService().setBoolean(9, true);
+                    sqlExecutionContext.getBindVariableService().setStr(10, "updated");
+                    sqlExecutionContext.getBindVariableService().setStr(11, "labelUpdate");
+                    sqlExecutionContext.getBindVariableService().setBin(12, binSeq.of(pointer, binarySize));
+                    sqlExecutionContext.getBindVariableService().setGeoHash(13, rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
+                    sqlExecutionContext.getBindVariableService().setGeoHash(14, rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
+                    sqlExecutionContext.getBindVariableService().setGeoHash(15, rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
+                    sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
+                    sqlExecutionContext.getBindVariableService().setVarchar(17, varChar);
 
-                update(
-                        "UPDATE " + tableName + " SET " +
-                                "INT=$1, " +
-                                "BYTE=$2, " +
-                                "SHORT=$3, " +
-                                "LONG=$4, " +
-                                "FLOAT=$5, " +
-                                "DOUBLE=$6, " +
-                                "TIMESTAMP=$7, " +
-                                "DATE=$8, " +
-                                "CHAR=$9, " +
-                                "BOOLEAN=$10, " +
-                                "STRING=$11, " +
-                                "LABEL=$12, " +
-                                "BIN=$13, " +
-                                "GEOBYTE=$14, " +
-                                "GEOSHORT=$15, " +
-                                "GEOINT=$16, " +
-                                "GEOLONG=$17, " +
-                                "VARCHAR=$18 " +
-                                "WHERE INT > 5"
-                );
+                    update(
+                            "UPDATE " + tableName + " SET " +
+                                    "INT=$1, " +
+                                    "BYTE=$2, " +
+                                    "SHORT=$3, " +
+                                    "LONG=$4, " +
+                                    "FLOAT=$5, " +
+                                    "DOUBLE=$6, " +
+                                    "TIMESTAMP=$7, " +
+                                    "DATE=$8, " +
+                                    "CHAR=$9, " +
+                                    "BOOLEAN=$10, " +
+                                    "STRING=$11, " +
+                                    "LABEL=$12, " +
+                                    "BIN=$13, " +
+                                    "GEOBYTE=$14, " +
+                                    "GEOSHORT=$15, " +
+                                    "GEOINT=$16, " +
+                                    "GEOLONG=$17, " +
+                                    "VARCHAR=$18 " +
+                                    "WHERE INT > 5"
+                    );
 
-                drainWalQueue();
+                    drainWalQueue();
 
-                update(
-                        "UPDATE " + tableCopyName + " SET " +
-                                "INT=$1, " +
-                                "BYTE=$2, " +
-                                "SHORT=$3, " +
-                                "LONG=$4, " +
-                                "FLOAT=$5, " +
-                                "DOUBLE=$6, " +
-                                "TIMESTAMP=$7, " +
-                                "DATE=$8, " +
-                                "CHAR=$9, " +
-                                "BOOLEAN=$10, " +
-                                "STRING=$11, " +
-                                "LABEL=$12, " +
-                                "BIN=$13, " +
-                                "GEOBYTE=$14, " +
-                                "GEOSHORT=$15, " +
-                                "GEOINT=$16, " +
-                                "GEOLONG=$17, " +
-                                "VARCHAR=$18 " +
-                                "WHERE INT > 5"
-                );
+                    update(
+                            "UPDATE " + tableCopyName + " SET " +
+                                    "INT=$1, " +
+                                    "BYTE=$2, " +
+                                    "SHORT=$3, " +
+                                    "LONG=$4, " +
+                                    "FLOAT=$5, " +
+                                    "DOUBLE=$6, " +
+                                    "TIMESTAMP=$7, " +
+                                    "DATE=$8, " +
+                                    "CHAR=$9, " +
+                                    "BOOLEAN=$10, " +
+                                    "STRING=$11, " +
+                                    "LABEL=$12, " +
+                                    "BIN=$13, " +
+                                    "GEOBYTE=$14, " +
+                                    "GEOSHORT=$15, " +
+                                    "GEOINT=$16, " +
+                                    "GEOLONG=$17, " +
+                                    "VARCHAR=$18 " +
+                                    "WHERE INT > 5"
+                    );
 
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                }
+            } finally {
+                Unsafe.free(pointer, binarySize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -598,87 +602,91 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             final int binarySize = 64;
-            final long pointer = Unsafe.getUnsafe().allocateMemory(binarySize);
-            final DirectBinarySequence binSeq = new DirectBinarySequence();
-            WalWriterTest.prepareBinPayload(pointer, binarySize);
+            final long pointer = Unsafe.malloc(binarySize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final DirectBinarySequence binSeq = new DirectBinarySequence();
+                WalWriterTest.prepareBinPayload(pointer, binarySize);
 
-            final Utf8String varChar = new Utf8String("₴ п'ять доллярів");
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    WalWriter walWriter = engine.getWalWriter(tableToken)
-            ) {
-                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                final Utf8String varChar = new Utf8String("₴ п'ять доллярів");
+                try (
+                        SqlCompiler compiler = engine.getSqlCompiler();
+                        WalWriter walWriter = engine.getWalWriter(tableToken)
+                ) {
+                    addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                sqlExecutionContext.getBindVariableService().setInt("INTVAL", 567890);
-                sqlExecutionContext.getBindVariableService().setByte("BYTEVAL", (byte) 122);
-                sqlExecutionContext.getBindVariableService().setShort("SHORTVAL", (short) 42567);
-                sqlExecutionContext.getBindVariableService().setLong("LONGVAL", 33342567L);
-                sqlExecutionContext.getBindVariableService().setFloat("FLOATVAL", (float) 34.34);
-                sqlExecutionContext.getBindVariableService().setDouble("DOUBLEVAL", 357.35);
-                sqlExecutionContext.getBindVariableService().setTimestamp("TIMESTAMPVAL", 100_000L);
-                sqlExecutionContext.getBindVariableService().setDate("DATEVAL", 100_000L);
-                sqlExecutionContext.getBindVariableService().setChar("CHARVAL", 'Q');
-                sqlExecutionContext.getBindVariableService().setBoolean("BOOLVAL", true);
-                sqlExecutionContext.getBindVariableService().setStr("STRVAL", "updated");
-                sqlExecutionContext.getBindVariableService().setStr("SYMVAL", "labelUpdate");
-                sqlExecutionContext.getBindVariableService().setBin("BINVAL", binSeq.of(pointer, binarySize));
-                sqlExecutionContext.getBindVariableService().setGeoHash("GEOBYTEVAL", rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
-                sqlExecutionContext.getBindVariableService().setGeoHash("GEOSHORTVAL", rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
-                sqlExecutionContext.getBindVariableService().setGeoHash("GEOINTVAL", rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
-                sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
-                sqlExecutionContext.getBindVariableService().setUuid("UUIDVAL", rnd.nextLong(), rnd.nextLong());
-                sqlExecutionContext.getBindVariableService().setVarchar("VARCHARVAL", varChar);
+                    sqlExecutionContext.getBindVariableService().setInt("INTVAL", 567890);
+                    sqlExecutionContext.getBindVariableService().setByte("BYTEVAL", (byte) 122);
+                    sqlExecutionContext.getBindVariableService().setShort("SHORTVAL", (short) 42567);
+                    sqlExecutionContext.getBindVariableService().setLong("LONGVAL", 33342567L);
+                    sqlExecutionContext.getBindVariableService().setFloat("FLOATVAL", (float) 34.34);
+                    sqlExecutionContext.getBindVariableService().setDouble("DOUBLEVAL", 357.35);
+                    sqlExecutionContext.getBindVariableService().setTimestamp("TIMESTAMPVAL", 100_000L);
+                    sqlExecutionContext.getBindVariableService().setDate("DATEVAL", 100_000L);
+                    sqlExecutionContext.getBindVariableService().setChar("CHARVAL", 'Q');
+                    sqlExecutionContext.getBindVariableService().setBoolean("BOOLVAL", true);
+                    sqlExecutionContext.getBindVariableService().setStr("STRVAL", "updated");
+                    sqlExecutionContext.getBindVariableService().setStr("SYMVAL", "labelUpdate");
+                    sqlExecutionContext.getBindVariableService().setBin("BINVAL", binSeq.of(pointer, binarySize));
+                    sqlExecutionContext.getBindVariableService().setGeoHash("GEOBYTEVAL", rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
+                    sqlExecutionContext.getBindVariableService().setGeoHash("GEOSHORTVAL", rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
+                    sqlExecutionContext.getBindVariableService().setGeoHash("GEOINTVAL", rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
+                    sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
+                    sqlExecutionContext.getBindVariableService().setUuid("UUIDVAL", rnd.nextLong(), rnd.nextLong());
+                    sqlExecutionContext.getBindVariableService().setVarchar("VARCHARVAL", varChar);
 
-                update(
-                        "UPDATE " + tableName + " SET " +
-                                "INT=:INTVAL, " +
-                                "BYTE=:BYTEVAL, " +
-                                "SHORT=:SHORTVAL, " +
-                                "LONG=:LONGVAL, " +
-                                "FLOAT=:FLOATVAL, " +
-                                "DOUBLE=:DOUBLEVAL, " +
-                                "TIMESTAMP=:TIMESTAMPVAL, " +
-                                "DATE=:DATEVAL, " +
-                                "CHAR=:CHARVAL, " +
-                                "BOOLEAN=:BOOLVAL, " +
-                                "STRING=:STRVAL, " +
-                                "LABEL=:SYMVAL, " +
-                                "BIN=:BINVAL, " +
-                                "GEOBYTE=:GEOBYTEVAL, " +
-                                "GEOSHORT=:GEOSHORTVAL, " +
-                                "GEOINT=:GEOINTVAL, " +
-                                "GEOLONG=:GEOLONGVAL, " +
-                                "UUID=:UUIDVAL," +
-                                "VARCHAR=:VARCHARVAL " +
-                                "WHERE INT > 5"
-                );
-                drainWalQueue();
+                    update(
+                            "UPDATE " + tableName + " SET " +
+                                    "INT=:INTVAL, " +
+                                    "BYTE=:BYTEVAL, " +
+                                    "SHORT=:SHORTVAL, " +
+                                    "LONG=:LONGVAL, " +
+                                    "FLOAT=:FLOATVAL, " +
+                                    "DOUBLE=:DOUBLEVAL, " +
+                                    "TIMESTAMP=:TIMESTAMPVAL, " +
+                                    "DATE=:DATEVAL, " +
+                                    "CHAR=:CHARVAL, " +
+                                    "BOOLEAN=:BOOLVAL, " +
+                                    "STRING=:STRVAL, " +
+                                    "LABEL=:SYMVAL, " +
+                                    "BIN=:BINVAL, " +
+                                    "GEOBYTE=:GEOBYTEVAL, " +
+                                    "GEOSHORT=:GEOSHORTVAL, " +
+                                    "GEOINT=:GEOINTVAL, " +
+                                    "GEOLONG=:GEOLONGVAL, " +
+                                    "UUID=:UUIDVAL," +
+                                    "VARCHAR=:VARCHARVAL " +
+                                    "WHERE INT > 5"
+                    );
+                    drainWalQueue();
 
-                update(
-                        "UPDATE " + tableCopyName + " SET " +
-                                "INT=:INTVAL, " +
-                                "BYTE=:BYTEVAL, " +
-                                "SHORT=:SHORTVAL, " +
-                                "LONG=:LONGVAL, " +
-                                "FLOAT=:FLOATVAL, " +
-                                "DOUBLE=:DOUBLEVAL, " +
-                                "TIMESTAMP=:TIMESTAMPVAL, " +
-                                "DATE=:DATEVAL, " +
-                                "CHAR=:CHARVAL, " +
-                                "BOOLEAN=:BOOLVAL, " +
-                                "STRING=:STRVAL, " +
-                                "LABEL=:SYMVAL, " +
-                                "BIN=:BINVAL, " +
-                                "GEOBYTE=:GEOBYTEVAL, " +
-                                "GEOSHORT=:GEOSHORTVAL, " +
-                                "GEOINT=:GEOINTVAL, " +
-                                "GEOLONG=:GEOLONGVAL, " +
-                                "UUID=:UUIDVAL, " +
-                                "VARCHAR=:VARCHARVAL " +
-                                "WHERE INT > 5"
-                );
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                    update(
+                            "UPDATE " + tableCopyName + " SET " +
+                                    "INT=:INTVAL, " +
+                                    "BYTE=:BYTEVAL, " +
+                                    "SHORT=:SHORTVAL, " +
+                                    "LONG=:LONGVAL, " +
+                                    "FLOAT=:FLOATVAL, " +
+                                    "DOUBLE=:DOUBLEVAL, " +
+                                    "TIMESTAMP=:TIMESTAMPVAL, " +
+                                    "DATE=:DATEVAL, " +
+                                    "CHAR=:CHARVAL, " +
+                                    "BOOLEAN=:BOOLVAL, " +
+                                    "STRING=:STRVAL, " +
+                                    "LABEL=:SYMVAL, " +
+                                    "BIN=:BINVAL, " +
+                                    "GEOBYTE=:GEOBYTEVAL, " +
+                                    "GEOSHORT=:GEOSHORTVAL, " +
+                                    "GEOINT=:GEOINTVAL, " +
+                                    "GEOLONG=:GEOLONGVAL, " +
+                                    "UUID=:UUIDVAL, " +
+                                    "VARCHAR=:VARCHARVAL " +
+                                    "WHERE INT > 5"
+                    );
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                }
+            } finally {
+                Unsafe.free(pointer, binarySize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
