@@ -258,6 +258,19 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeByteToShort() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            drainWalQueue();
+            ddl("create table y as (select l from x)", sqlExecutionContext);
+
+            ddl("alter table x alter column l type short", sqlExecutionContext);
+
+            assertSql("count\n0\n", "select count() from (select y.l = x.l from y join x on y.l = x.l::short) where column != true");
+            });
+    }
+
+    @Test
     public void testChangeVarcharToSymbol() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -420,4 +433,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             );
         }
     }
+
+
 }

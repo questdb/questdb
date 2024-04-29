@@ -84,8 +84,28 @@ public class ColumnTypeConverter {
     }
 
     private static boolean convertFixedToFixed(long rowCount, int srcFixFd, int dstFixFd, int srcColumnType, int dstColumnType, FilesFacade ff, long appendPageSize) {
-        throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
-    }
+        MemoryCMORImpl srcFixMem = srcFixMemTL.get();
+        MemoryCMARW dstFixMem = dstFixMemTL.get();
+
+        try {
+            srcFixMem.ofOffset(ff, srcFixFd, null, 0, ColumnType.sizeOf(srcColumnType) * rowCount, memoryTag, CairoConfiguration.O_NONE);
+            dstFixMem.of(ff, dstFixFd, null, appendPageSize, ColumnType.sizeOf(dstColumnType) * rowCount, memoryTag);
+            dstFixMem.jumpTo(0);
+            long succeeded = ConvertersNative.fixedToFixed(srcFixMem.getPageAddress(0), srcColumnType, dstFixMem.getPageAddress(0), dstColumnType, rowCount, true);
+            switch ((int) succeeded) {
+                case ConvertersNative.ConversionError.NONE:
+                    return true;
+               case ConvertersNative.ConversionError.TRUNCATION_DISALLOWED:
+                    throw CairoException.critical(0).put("Conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType)).put(" would truncate the value.");
+                default:
+                    throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
+            }
+        }
+        finally {
+            srcFixMem.detachFdClose();
+            dstFixMem.detachFdClose();
+        }
+      }
 
     private static boolean convertFromString(long skipRows, long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd, int dstColumnType, FilesFacade ff, long appendPageSize, SymbolMapWriterLite symbolMapWriter, ColumnConversionOffsetSink columnSizesSink) {
         long skipDataSize;
@@ -500,3 +520,5 @@ public class ColumnTypeConverter {
 //    }
 
 }
+
+
