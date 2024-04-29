@@ -124,48 +124,6 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEmptyKey() {
-        SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (UnorderedVarcharMap map = newDefaultMap(valueType)) {
-            // insert nothing into key
-            MapKey mapKey = map.withKey();
-            mapKey.commit();
-            MapValue value = mapKey.createValue();
-            Assert.assertTrue(value.isNew());
-            value.putInt(0, 42);
-
-            // and check you can find it under null key
-            mapKey = map.withKey();
-            mapKey.putVarchar((Utf8Sequence) null);
-            mapKey.commit();
-            value = mapKey.createValue();
-            Assert.assertNotNull(value);
-            Assert.assertFalse(value.isNew());
-            Assert.assertEquals(42, value.getInt(0));
-
-            // and now let's do they other way around
-            map.clear();
-
-            // let's insert a null key
-            mapKey = map.withKey();
-            mapKey.putVarchar((Utf8Sequence) null);
-            mapKey.commit();
-            value = mapKey.createValue();
-            Assert.assertNotNull(value);
-            Assert.assertTrue(value.isNew());
-            value.putInt(0, 42);
-
-            // and check we can still find it under empty key
-            mapKey = map.withKey();
-            mapKey.commit();
-            value = mapKey.createValue();
-            Assert.assertNotNull(value);
-            Assert.assertFalse(value.isNew());
-            Assert.assertEquals(42, value.getInt(0));
-        }
-    }
-
-    @Test
     public void testHashPacking() {
         long hash = Integer.MAX_VALUE;
         long packed = UnorderedVarcharMap.packHashSizeFlags(hash, 0, (byte) 0);

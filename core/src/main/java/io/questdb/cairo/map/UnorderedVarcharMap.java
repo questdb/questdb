@@ -572,10 +572,9 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         }
 
         public Key init() {
-            // this is a new key, should behave as if it's null
-            size = 0;
-            ptrWithUnstableFlag = 0;
-            flags = FLAG_IS_NULL | FLAG_IS_ASCII;
+            // no-op since all fields are set in putVarchar().
+            // Q: What if a user does not call putVarchar()?
+            // A: It's illegal to use an uninitialized key and will result in undefined behavior.
             return this;
         }
 
