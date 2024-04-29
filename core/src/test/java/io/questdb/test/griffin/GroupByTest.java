@@ -1026,32 +1026,62 @@ public class GroupByTest extends AbstractCairoTest {
         // pointers into mmaped memory. This test verifies that the fast-path is not broken when some grouping
         // keys are indeed stable and some are not. to_uppercase() produces a varchar which is not stable.
 
-        ddl("create table tab1 as (select (x % 5)::varchar as vch, x, now() as ts from long_sequence(50)) \n" +
+        ddl("create table tab1 as (select (x % 5)::varchar as vch, x, now() as ts from long_sequence(20)) \n" +
                 "timestamp(ts) PARTITION by day");
 
         String query = "with \n" +
                 "  w1 as (\n" +
-                "    select to_uppercase(vch)::varchar as vch, x, ts from tab1\n" +
-                "  ),\n" +
+                "    select * from tab1\n" +
+                "    order by vch asc\n" +
+                "  ), \n" +
                 "  w2 as (\n" +
                 "    select * from tab1\n" +
+                "    order by vch desc\n" +
                 "  ),\n" +
                 "  u as (select * from w1\n" +
                 "    UNION all w2\n" +
+                "  ),\n" +
+                "  uo as (\n" +
+                "    select * from u order by vch\n" +
+                "  ),\n" +
+                "  grouped as (\n" +
+                "    select vch, count(vch)\n" +
+                "    from uo\n" +
+                "    order by vch\n" +
+                "  ),\n" +
+                "  nested as (\n" +
+                "    select vch, sum(count) from grouped\n" +
+                "    group by vch\n" +
+                "    order by vch\n" +
                 "  )\n" +
-                "select vch, count(vch)\n" +
-                "from u\n" +
-                "order by vch;";
+                "select tab1.vch, tab1.x, nested.vch as nested_vch, sum\n" +
+                "from tab1\n" +
+                "join nested on nested.vch = tab1.vch;";
         assertQuery(
-                "vch\tcount\n" +
-                        "0\t20\n" +
-                        "1\t20\n" +
-                        "2\t20\n" +
-                        "3\t20\n" +
-                        "4\t20\n",
+                "vch\tx\tnested_vch\tsum\n" +
+                        "1\t1\t1\t8\n" +
+                        "2\t2\t2\t8\n" +
+                        "3\t3\t3\t8\n" +
+                        "4\t4\t4\t8\n" +
+                        "0\t5\t0\t8\n" +
+                        "1\t6\t1\t8\n" +
+                        "2\t7\t2\t8\n" +
+                        "3\t8\t3\t8\n" +
+                        "4\t9\t4\t8\n" +
+                        "0\t10\t0\t8\n" +
+                        "1\t11\t1\t8\n" +
+                        "2\t12\t2\t8\n" +
+                        "3\t13\t3\t8\n" +
+                        "4\t14\t4\t8\n" +
+                        "0\t15\t0\t8\n" +
+                        "1\t16\t1\t8\n" +
+                        "2\t17\t2\t8\n" +
+                        "3\t18\t3\t8\n" +
+                        "4\t19\t4\t8\n" +
+                        "0\t20\t0\t8\n",
                 query,
                 null,
-                true,
+                false,
                 true
         );
     }
