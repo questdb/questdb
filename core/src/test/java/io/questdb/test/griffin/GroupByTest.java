@@ -1021,6 +1021,42 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupBySingleVarcharKeyFromUnionAllAndFunction() throws Exception {
+        // grouping by a single varchar key uses a fast-path which assume most of the time keys are just stable
+        // pointers into mmaped memory. This test verifies that the fast-path is not broken when some grouping
+        // keys are indeed stable and some are not. to_uppercase() produces a varchar which is not stable.
+
+        ddl("create table tab1 as (select (x % 5)::varchar as vch, x, now() as ts from long_sequence(50)) \n" +
+                "timestamp(ts) PARTITION by day");
+
+        String query = "with \n" +
+                "  w1 as (\n" +
+                "    select to_uppercase(vch)::varchar as vch, x, ts from tab1\n" +
+                "  ),\n" +
+                "  w2 as (\n" +
+                "    select * from tab1\n" +
+                "  ),\n" +
+                "  u as (select * from w1\n" +
+                "    UNION all w2\n" +
+                "  )\n" +
+                "select vch, count(vch)\n" +
+                "from u\n" +
+                "order by vch;";
+        assertQuery(
+                "vch\tcount\n" +
+                        "0\t20\n" +
+                        "1\t20\n" +
+                        "2\t20\n" +
+                        "3\t20\n" +
+                        "4\t20\n",
+                query,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testGroupByVarchar() throws Exception {
         assertQuery(
                 "key\tmax\n" +
