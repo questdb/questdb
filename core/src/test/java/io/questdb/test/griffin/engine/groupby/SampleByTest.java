@@ -4599,6 +4599,74 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByWithAsofJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades1' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY;");
+            ddl("CREATE TABLE 'trades2' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY;");
+
+            insert("insert into trades1 \n" +
+                    "select \n" +
+                    "rnd_symbol('a', 'b', 'c'),\n" +
+                    "rnd_double(),\n" +
+                    "rnd_double(),\n" +
+                    "timestamp_sequence('2022-02-24', 60* 1000000L)\n" +
+                    "from long_sequence(10)\n");
+
+            insert("insert into trades2 \n" +
+                    "select \n" +
+                    "rnd_symbol('a', 'b', 'c'),\n" +
+                    "rnd_double(),\n" +
+                    "rnd_double(),\n" +
+                    "timestamp_sequence('2022-02-24', 60* 1000000L)\n" +
+                    "from long_sequence(10)\n");
+
+            String expected = "timestamp\tprice1\tprice2\n" +
+                    "2022-02-24T00:00:00.000000Z\t0.8043224099968393\t0.24808812376657652\n" +
+                    "2022-02-24T00:01:00.000000Z\t0.299199045961845\t0.4022810626779558\n" +
+                    "2022-02-24T00:02:00.000000Z\t0.13123360041292131\t0.9687423276940171\n" +
+                    "2022-02-24T00:03:00.000000Z\t0.22452340856088226\t0.8912587536603974\n" +
+                    "2022-02-24T00:04:00.000000Z\t0.11427984775756228\t0.7883065830055033\n" +
+                    "2022-02-24T00:05:00.000000Z\t0.5599161804800813\t0.5298405941762054\n" +
+                    "2022-02-24T00:06:00.000000Z\t0.6276954028373309\t0.2459345277606021\n" +
+                    "2022-02-24T00:07:00.000000Z\t0.3100545983862456\t0.8847591603509142\n" +
+                    "2022-02-24T00:08:00.000000Z\t0.0035983672154330515\t0.7643643144642823\n" +
+                    "2022-02-24T00:09:00.000000Z\t0.7675673070796104\t0.38642336707855873\n";
+
+            // First, without table aliases
+            assertSampleByFlavours(
+                    expected,
+                    "SELECT trades1.timestamp,\n" +
+                            "      avg(trades1.price) AS price1,\n" +
+                            "      avg(trades2.price) AS price2\n" +
+                            "FROM  trades1 ASOF JOIN trades2 \n" +
+                            "WHERE trades1.timestamp BETWEEN '2021-02-23T19' AND '2023-02-23T23'\n" +
+                            "SAMPLE BY 1s"
+            );
+
+            // Same again, but with table aliases.
+            assertSampleByFlavours(
+                    expected,
+                    "SELECT t1.timestamp,\n" +
+                            "      avg(t1.price) AS price1,\n" +
+                            "      avg(t2.price) AS price2\n" +
+                            "FROM trades1 t1 ASOF JOIN trades2 t2 \n" +
+                            "WHERE t1.timestamp BETWEEN '2021-02-23T19' AND '2023-02-23T23'\n" +
+                            "SAMPLE BY 1s"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByWithEmptyCursor() throws Exception {
         assertQuery("to_timezone\ts\tlat\tlon\n",
                 "select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
