@@ -52,6 +52,7 @@ jobs:
           prepare: |
             pkg install -y curl cmake gcc git nasm openjdk17 rust
           run: |
+            git submodule update --init
             export JAVA_HOME=/usr/local/openjdk17
             cd core
             cmake -B build/release -DCMAKE_BUILD_TYPE=Release
@@ -84,6 +85,7 @@ jobs:
           brew install make cmake gcc nasm
       - name: Build CXX Library
         run: |
+          git submodule update --init
           cd core
           cmake -B build/release -DCMAKE_BUILD_TYPE=Release
           cmake --build build/release --config Release
@@ -145,6 +147,7 @@ jobs:
           echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
       - name: Generate Makefiles
         run: |
+          git submodule update --init
           cd ./core
           cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: Build linux-amd64 CXX Library
@@ -167,8 +170,6 @@ jobs:
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
     runs-on: ubuntu-latest
-    env:
-      generator: "CodeBlocks - Unix Makefiles"
     steps:
       - uses: actions/checkout@v4
       - name: Increase file count and install tooling
@@ -181,8 +182,9 @@ jobs:
           cargo install cross
       - name: Generate Makefiles
         run: |
+          git submodule update --init
           cd ./core
-          cmake -G "$generator" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+          cmake -G -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: CMAKE linux-aarch64
         run: |
           cd ./core
@@ -210,8 +212,6 @@ jobs:
           key: nativelibs-armlinux-${{ github.sha }}
   build-cxx-windows:
     runs-on: ubuntu-latest
-    env:
-      generator: "CodeBlocks - Unix Makefiles"
     steps:
       - uses: actions/checkout@v4
       - name: Increase file count and install tooling
@@ -222,7 +222,7 @@ jobs:
       - name: Generate Makefiles
         run: |
           cd ./core
-          cmake -G "$generator" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: Download windows jni_md.h from JDK 11
         run: |
           cd core
