@@ -89,8 +89,7 @@ static uintptr_t setup(const char *fp)
     }
 
     /* Re-copy the path so we can extract the filename */
-    strcpy(pathCpy, fp);
-    char *filename = malloc(sizeof(char) * strlen(pathCpy) + 1);
+    char *filename = malloc(sizeof(char) * strlen(fp) + 1);
 
     /* Set up file_watcher struct */
     fw = malloc(sizeof(struct file_watcher));
