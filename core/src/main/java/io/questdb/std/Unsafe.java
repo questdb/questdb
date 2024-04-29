@@ -59,9 +59,10 @@ public final class Unsafe {
     private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
+    private static final boolean enableJmalloc;
+    private static long WRITER_MEM_LIMIT = 0;
     //#if jdk.version!=8
     private static final Method implAddExports;
-    private static long WRITER_MEM_LIMIT = 0;
     //#endif
 
     private Unsafe() {
@@ -75,12 +76,12 @@ public final class Unsafe {
             e.printStackTrace();
         }
     }
+    //#endif
 
     public static long arrayGetVolatile(long[] array, int index) {
         assert index > -1 && index < array.length;
         return Unsafe.getUnsafe().getLongVolatile(array, LONG_OFFSET + ((long) index << LONG_SCALE));
     }
-    //#endif
 
     public static int arrayGetVolatile(int[] array, int index) {
         assert index > -1 && index < array.length;
@@ -157,10 +158,10 @@ public final class Unsafe {
 
     public static long free(long ptr, long size, int memoryTag) {
         if (ptr != 0) {
-            if(Os.isWindows()) {
-                Unsafe.getUnsafe().freeMemory(ptr);
-            } else {
+            if(enableJmalloc) {
                 Os.free(ptr);
+            } else {
+                Unsafe.getUnsafe().freeMemory(ptr);
             }
             FREE_COUNT.incrementAndGet();
             recordMemAlloc(-size, memoryTag);
@@ -221,6 +222,8 @@ public final class Unsafe {
         REALLOC_COUNT.incrementAndGet();
     }
 
+    //#if jdk.version!=8
+
     /**
      * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
      * it does not produce an illegal access error or warning.
@@ -230,14 +233,13 @@ public final class Unsafe {
     public static void makeAccessible(AccessibleObject accessibleObject) {
         UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
     }
-
-    //#if jdk.version!=8
+    //#endif
 
     public static long malloc(long size, int memoryTag) {
         try {
             assert memoryTag >= MemoryTag.NATIVE_DEFAULT;
             checkAllocLimit(size, memoryTag);
-            long ptr = Os.isWindows() ? Unsafe.getUnsafe().allocateMemory(size) : Os.malloc(size);
+            long ptr = enableJmalloc ? Os.malloc(size) : Unsafe.getUnsafe().allocateMemory(size);
             recordMemAlloc(size, memoryTag);
             MALLOC_COUNT.incrementAndGet();
             return ptr;
@@ -248,13 +250,12 @@ public final class Unsafe {
             throw oom;
         }
     }
-    //#endif
 
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         try {
             assert memoryTag >= MemoryTag.NATIVE_DEFAULT;
             checkAllocLimit(-oldSize + newSize, memoryTag);
-            long ptr = Os.isWindows() ? Unsafe.getUnsafe().reallocateMemory(address, newSize) : Os.realloc(address, newSize);
+            long ptr = enableJmalloc ? Os.realloc(address, newSize) : Unsafe.getUnsafe().reallocateMemory(address, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
             REALLOC_COUNT.incrementAndGet();
             return ptr;
@@ -295,6 +296,7 @@ public final class Unsafe {
         }
         return 16L;
     }
+    //#endif
 
     private static void checkAllocLimit(long size, int memoryTag) {
         if (WRITER_MEM_LIMIT > 0 && memoryTag == NATIVE_O3 && COUNTERS[memoryTag].sum() + size > WRITER_MEM_LIMIT) {
@@ -308,7 +310,6 @@ public final class Unsafe {
             }
         }
     }
-    //#endif
 
     //#if jdk.version!=8
     private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
@@ -469,6 +470,7 @@ public final class Unsafe {
                 throw new InstantiationException("failed to initialize class definer");
             }
             anonymousClassDefiner = classDefiner;
+            enableJmalloc = !Os.isWindows() && System.getenv("no_jemalloc") == null;
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
