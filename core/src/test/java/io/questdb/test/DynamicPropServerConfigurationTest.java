@@ -193,7 +193,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     @Before
     public void setUp() {
         latch = new SOCountDownLatch(1);
-        serverConfPath = Path.of(temp.getRoot().getAbsolutePath(), "dbroot", "conf", "server.conf");
+        serverConfPath = Path.of(temp.getRoot().getAbsolutePath(), "dbRoot", "conf", "server.conf");
         try {
             Files.createDirectories(serverConfPath.getParent());
             serverConf = serverConfPath.toFile();
