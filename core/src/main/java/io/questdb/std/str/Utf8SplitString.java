@@ -30,7 +30,6 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
-import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 
 /**
  * An immutable flyweight for a UTF-8 string stored in native memory.
@@ -112,7 +111,7 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     @Override
     public long zeroPaddedSixPrefix() {
-        return Unsafe.getUnsafe().getLong(auxLo) & VARCHAR_INLINED_PREFIX_MASK;
+        return Unsafe.getUnsafe().getLong(auxLo);
     }
 
     private boolean dataEquals(Utf8Sequence other) {
