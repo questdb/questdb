@@ -82,6 +82,23 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     /**
+     * Appends varchar to single data vector. The storage in this data vector is
+     * length prefixed. The ascii flag is encoded to the highest bit of the length.
+     *
+     * @param dataMem the target append memory
+     * @param value   the nullable varchar value, UTF8 encoded
+     */
+    public static void appendPlainValue(MemoryA dataMem, @Nullable Utf8Sequence value) {
+        if (value == null) {
+            dataMem.putInt(TableUtils.NULL_LEN);
+            return;
+        }
+        final int size = value.size();
+        dataMem.putInt(value.isAscii() ? size | Integer.MIN_VALUE : size);
+        dataMem.putVarchar(value, 0, size);
+    }
+
+    /**
      * Appends UTF8 varchar type to the data and aux vectors.
      *
      * @param dataMem data vector, contains UTF8 bytes
@@ -130,23 +147,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         // write 48 bit offset (little-endian)
         auxMem.putShort((short) offset);
         auxMem.putInt((int) (offset >> 16));
-    }
-
-    /**
-     * Appends varchar to single data vector. The storage in this data vector is
-     * length prefixed. The ascii flag is encoded to the highest bit of the length.
-     *
-     * @param dataMem the target append memory
-     * @param value   the nullable varchar value, UTF8 encoded
-     */
-    public static void appendValue(MemoryA dataMem, @Nullable Utf8Sequence value) {
-        if (value == null) {
-            dataMem.putInt(TableUtils.NULL_LEN);
-            return;
-        }
-        final int size = value.size();
-        dataMem.putInt(value.isAscii() ? size | Integer.MIN_VALUE : size);
-        dataMem.putVarchar(value, 0, size);
     }
 
     public static long getDataOffset(long auxEntry) {
