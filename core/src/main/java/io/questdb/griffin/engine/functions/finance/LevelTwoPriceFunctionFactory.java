@@ -108,11 +108,6 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             final double size_0 = args.getQuick(1).getDouble(rec);
             final double value_0 = args.getQuick(2).getDouble(rec);
 
-            // if null values, can't continue calculating price
-            if (Double.isNaN(size_0) || Double.isNaN(value_0)) {
-                return Double.NaN;
-            }
-
             if (size_0 >= target)
                 return value_0;
 
@@ -134,20 +129,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             final double size_0 = args.getQuick(1).getDouble(rec);
             final double value_0 = args.getQuick(2).getDouble(rec);
 
-            // if null values, can't continue calculating price
-            if (Double.isNaN(size_0) || Double.isNaN(value_0)) {
-                return Double.NaN;
-            }
-
             if (size_0 >= target)
                 return value_0;
 
             final double size_1 = args.getQuick(3).getDouble(rec);
             final double value_1 = args.getQuick(4).getDouble(rec);
-
-            if (Double.isNaN(size_1) || Double.isNaN(value_1)) {
-                return Double.NaN;
-            }
 
             if (size_0 + size_1 >= target) {
                 return ((size_0 * value_0) + (target - size_0) * value_1) / target;
@@ -171,20 +157,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             final double size_0 = args.getQuick(1).getDouble(rec);
             final double value_0 = args.getQuick(2).getDouble(rec);
 
-            // if null values, can't continue calculating price
-            if (Double.isNaN(size_0) || Double.isNaN(value_0)) {
-                return Double.NaN;
-            }
-
             if (size_0 >= target)
                 return value_0;
 
             final double size_1 = args.getQuick(3).getDouble(rec);
             final double value_1 = args.getQuick(4).getDouble(rec);
-
-            if (Double.isNaN(size_1) || Double.isNaN(value_1)) {
-                return Double.NaN;
-            }
 
             if (size_0 + size_1 >= target) {
                 return ((size_0 * value_0) + (target - size_0) * value_1) / target;
@@ -192,10 +169,6 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
             final double size_2 = args.getQuick(5).getDouble(rec);
             final double value_2 = args.getQuick(6).getDouble(rec);
-
-            if (Double.isNaN(size_2) || Double.isNaN(value_2)) {
-                return Double.NaN;
-            }
 
             if (size_0 + size_1 + size_2 >= target) {
                 return ((size_0 * value_0)
@@ -221,20 +194,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             final double size_0 = args.getQuick(1).getDouble(rec);
             final double value_0 = args.getQuick(2).getDouble(rec);
 
-            // if null values, can't continue calculating price
-            if (Double.isNaN(size_0) || Double.isNaN(value_0)) {
-                return Double.NaN;
-            }
-
             if (size_0 >= target)
                 return value_0;
 
             final double size_1 = args.getQuick(3).getDouble(rec);
             final double value_1 = args.getQuick(4).getDouble(rec);
-
-            if (Double.isNaN(size_1) || Double.isNaN(value_1)) {
-                return Double.NaN;
-            }
 
             if (size_0 + size_1 >= target) {
                 return ((size_0 * value_0) + (target - size_0) * value_1) / target;
@@ -242,10 +206,6 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
             final double size_2 = args.getQuick(5).getDouble(rec);
             final double value_2 = args.getQuick(6).getDouble(rec);
-
-            if (Double.isNaN(size_2) || Double.isNaN(value_2)) {
-                return Double.NaN;
-            }
 
             if (size_0 + size_1 + size_2 >= target) {
                 return ((size_0 * value_0)
@@ -255,10 +215,6 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
             final double size_3 = args.getQuick(7).getDouble(rec);
             final double value_3 = args.getQuick(8).getDouble(rec);
-
-            if (Double.isNaN(size_3) || Double.isNaN(value_3)) {
-                return Double.NaN;
-            }
 
             if (size_0 + size_1 + size_2 + size_3 >= target) {
                 return ((size_0 * value_0)
@@ -286,20 +242,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             final double value_0 = args.getQuick(2).getDouble(rec);
 
 
-            // if null values, can't continue calculating price
-            if (Double.isNaN(size_0) || Double.isNaN(value_0)) {
-                return Double.NaN;
-            }
-
             if (size_0 >= target)
                 return value_0;
 
             final double size_1 = args.getQuick(3).getDouble(rec);
             final double value_1 = args.getQuick(4).getDouble(rec);
-
-            if (Double.isNaN(size_1) || Double.isNaN(value_1)) {
-                return Double.NaN;
-            }
 
             if (size_0 + size_1 >= target) {
                 return ((size_0 * value_0) + (target - size_0) * value_1) / target;
@@ -307,10 +254,6 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
             final double size_2 = args.getQuick(5).getDouble(rec);
             final double value_2 = args.getQuick(6).getDouble(rec);
-
-            if (Double.isNaN(size_2) || Double.isNaN(value_2)) {
-                return Double.NaN;
-            }
 
             if (size_0 + size_1 + size_2 >= target) {
                 return ((size_0 * value_0)
@@ -321,10 +264,6 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             final double size_3 = args.getQuick(7).getDouble(rec);
             final double value_3 = args.getQuick(8).getDouble(rec);
 
-            if (Double.isNaN(size_3) || Double.isNaN(value_3)) {
-                return Double.NaN;
-            }
-
             if (size_0 + size_1 + size_2 + size_3 >= target) {
                 return ((size_0 * value_0)
                         + (size_1 * value_1)
@@ -334,10 +273,6 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
             final double size_4 = args.getQuick(9).getDouble(rec);
             final double value_4 = args.getQuick(10).getDouble(rec);
-
-            if (Double.isNaN(size_4) || Double.isNaN(value_4)) {
-                return Double.NaN;
-            }
 
             if (size_0 + size_1 + size_2 + size_3 + size_4 >= target) {
                 return ((size_0 * value_0)
@@ -373,11 +308,6 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             for (int i = 1, n = args.size(); i < n; i += 2) {
                 final double size = args.getQuick(i).getDouble(rec);
                 final double value = args.getQuick(i + 1).getDouble(rec);
-
-                // if null values, can't continue calculating price
-                if (Double.isNaN(size) || Double.isNaN(value)) {
-                    return Double.NaN;
-                }
 
                 // add size to acc
                 ta += size;
