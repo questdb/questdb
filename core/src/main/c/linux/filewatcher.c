@@ -151,8 +151,11 @@ static void teardown(uintptr_t wp)
 {
     struct file_watcher *fw = (struct file_watcher *)wp;
 
-    // Clean up the inotify watch descriptor first
+    // Clean up the malloced memory contained in the struct
     free(fw->wd);
+    free(fw->fd);
+    free(fw->filename);
+
     // Then clean up the filewatcher struct itself
     free(fw);
 }
