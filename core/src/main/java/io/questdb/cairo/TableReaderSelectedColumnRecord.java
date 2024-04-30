@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -311,12 +310,12 @@ public class TableReaderSelectedColumnRecord implements Record {
 
     @Override
     public Utf8Sequence getVarcharA(int columnIndex) {
-        return getDirectVarchar(columnIndex, 1);
+        return getVarchar(columnIndex, 1);
     }
 
     @Override
     public Utf8Sequence getVarcharB(int columnIndex) {
-        return getDirectVarchar(columnIndex, 2);
+        return getVarchar(columnIndex, 2);
     }
 
     @Override
@@ -356,23 +355,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Nullable
-    private DirectUtf8Sequence getDirectVarchar(int columnIndex, int ab) {
-        final int col = deferenceColumn(columnIndex);
-        final long rowNum = getAdjustedRecordIndex(col);
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-                rowNum,
-                TableReader.getPrimaryColumnIndex(columnBase, col)
-        );
-        return VarcharTypeDriver.getDirectValue(
-                rowNum,
-                reader.getColumn(absoluteColumnIndex),
-                reader.getColumn(absoluteColumnIndex + 1),
-                ab
-        );
-    }
-
-    @Nullable
-    private Utf8Sequence getSplitVarchar(int columnIndex, int ab) {
+    private Utf8Sequence getVarchar(int columnIndex, int ab) {
         final int col = deferenceColumn(columnIndex);
         final long rowNum = getAdjustedRecordIndex(col);
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(

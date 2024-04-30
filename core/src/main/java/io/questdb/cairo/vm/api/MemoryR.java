@@ -29,7 +29,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 
 import java.io.Closeable;
 
@@ -89,11 +89,11 @@ public interface MemoryR extends Closeable {
 
     short getShort(long offset);
 
-    default Utf8Sequence getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
+    default Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
         throw new UnsupportedOperationException();
     }
 
-    default Utf8Sequence getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
+    default Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
         throw new UnsupportedOperationException();
     }
 

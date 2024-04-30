@@ -311,12 +311,12 @@ public class PageAddressCacheRecord implements Record, Closeable {
 
     @Override
     public Utf8Sequence getVarcharA(int columnIndex) {
-        return getSplitVarchar(columnIndex, utf8SplitViewA);
+        return getVarchar(columnIndex, utf8SplitViewA);
     }
 
     @Override
     public Utf8Sequence getVarcharB(int columnIndex) {
-        return getSplitVarchar(columnIndex, utf8SplitViewB);
+        return getVarchar(columnIndex, utf8SplitViewB);
     }
 
     @Override
@@ -365,21 +365,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
         return null;
     }
 
-    @Nullable
-    private Utf8Sequence getDirectVarchar(int columnIndex, DirectUtf8String utf8view) {
-        final long auxPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
-        if (auxPageAddress == 0) {
-            return null; // Column top.
-        }
-        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        return VarcharTypeDriver.getDirectValue(
-                auxPageAddress,
-                dataPageAddress,
-                rowIndex,
-                utf8view
-        );
-    }
-
     private void getLong256(int columnIndex, Long256Acceptor sink) {
         final long columnAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (columnAddress == 0) {
@@ -397,21 +382,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
         c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);
         d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);
         Numbers.appendLong256(a, b, c, d, sink);
-    }
-
-    @Nullable
-    private Utf8Sequence getSplitVarchar(int columnIndex, Utf8SplitString utf8SplitView) {
-        final long auxPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
-        if (auxPageAddress == 0) {
-            return null; // Column top.
-        }
-        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        return VarcharTypeDriver.getSplitValue(
-                auxPageAddress,
-                dataPageAddress,
-                rowIndex,
-                utf8SplitView
-        );
     }
 
     private DirectString getStrA(long base, long offset, long size, DirectString view) {
@@ -440,5 +410,20 @@ public class PageAddressCacheRecord implements Record, Closeable {
             symbolTableCache.extendAndSet(columnIndex, symbolTable);
         }
         return symbolTable;
+    }
+
+    @Nullable
+    private Utf8Sequence getVarchar(int columnIndex, Utf8SplitString utf8SplitView) {
+        final long auxPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
+        if (auxPageAddress == 0) {
+            return null; // Column top.
+        }
+        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        return VarcharTypeDriver.getSplitValue(
+                auxPageAddress,
+                dataPageAddress,
+                rowIndex,
+                utf8SplitView
+        );
     }
 }

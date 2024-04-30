@@ -149,19 +149,13 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         auxMem.putInt((int) (offset >> 16));
     }
 
-    public static long getDataOffset(long auxEntry) {
+    public static long getDataVectorSize(MemoryR auxMem, long offset) {
+        final int raw = auxMem.getInt(offset);
         // the first 4 bytes cannot ever be 0
         // why? the first 4 bytes contains size and flags and there are 3 possibilities:
         // 1. null string -> the null flag is set
         // 2. empty string -> it's fully inlined -> the inline flag is set
         // 3. non-empty string -> the size is non-zero
-        assert Unsafe.getUnsafe().getInt(auxEntry) != 0;
-
-        return Unsafe.getUnsafe().getLong(auxEntry + Long.BYTES) >>> 16;
-    }
-
-    public static long getDataVectorSize(MemoryR auxMem, long offset) {
-        final int raw = auxMem.getInt(offset);
         assert raw != 0;
         final long dataOffset = getDataOffset(auxMem, offset);
 
@@ -171,80 +165,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         // size of the string at this offset
         final int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
         return dataOffset + size;
-    }
-
-    /**
-     * Returns a Utf8Sequence set up to point to the varchar data in either the
-     * auxiliary vector (for short strings <= 9 bytes), or the data vector.
-     *
-     * @param rowNum  the row number to read
-     * @param dataMem base pointer of the data vector
-     * @param auxMem  base pointer of the auxiliary vector
-     * @param ab      whether to return the A or B flyweight
-     * @return a Utf8Sequence representing the value at rowNum
-     */
-    public static DirectUtf8Sequence getDirectValue(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
-        final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
-        int raw = auxMem.getInt(auxOffset);
-        assert raw != 0;
-
-        if (hasNullFlag(raw)) {
-            return null;
-        }
-
-        boolean isAscii = hasAsciiFlag(raw);
-
-        if (hasInlinedFlag(raw)) {
-            int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
-            return ab == 1
-                    ? auxMem.getIntegralVarcharA(auxOffset + FULLY_INLINED_STRING_OFFSET, size, isAscii)
-                    : auxMem.getIntegralVarcharB(auxOffset + FULLY_INLINED_STRING_OFFSET, size, isAscii);
-        }
-
-        long dataOffset = getDataOffset(auxMem, auxOffset);
-        int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
-        return ab == 1
-                ? dataMem.getIntegralVarcharA(dataOffset, size, isAscii)
-                : dataMem.getIntegralVarcharB(dataOffset, size, isAscii);
-    }
-
-    /**
-     * Sets up the supplied DirectUtf8String to point to the varchar data in either the
-     * auxiliary vector (for short string <= 9 bytes), or the data vector.
-     *
-     * @param auxAddr  base pointer of the auxiliary vector
-     * @param dataAddr base pointer of the data vector
-     * @param rowNum   the row number to access
-     * @param utf8View will contain the string
-     * @return utf8View set up to point to the string, or null if the value is null
-     */
-    public static DirectUtf8String getDirectValue(
-            long auxAddr,
-            long dataAddr,
-            long rowNum,
-            DirectUtf8String utf8View
-    ) {
-        long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
-        int raw = Unsafe.getUnsafe().getInt(auxEntry);
-        assert raw != 0;
-
-        if (hasNullFlag(raw)) {
-            return null;
-        }
-
-        boolean ascii = hasAsciiFlag(raw);
-
-        if (hasInlinedFlag(raw)) {
-            long lo = auxEntry + FULLY_INLINED_STRING_OFFSET;
-            int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
-            return utf8View.of(lo, lo + (byte) size, ascii);
-        }
-        long lo = dataAddr + getDataOffset(auxEntry);
-        return utf8View.of(
-                lo,
-                lo + ((raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK),
-                ascii
-        );
     }
 
     /**
@@ -262,8 +182,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return null;
         }
         return (ab == 1)
-                ? dataMem.getIntegralVarcharA(offset + Integer.BYTES, size(header), isAscii(header))
-                : dataMem.getIntegralVarcharB(offset + Integer.BYTES, size(header), isAscii(header));
+                ? dataMem.getDirectVarcharA(offset + Integer.BYTES, size(header), isAscii(header))
+                : dataMem.getDirectVarcharB(offset + Integer.BYTES, size(header), isAscii(header));
     }
 
     /**
@@ -324,21 +244,18 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
         int raw = auxMem.getInt(auxOffset);
         assert raw != 0;
-
         if (hasNullFlag(raw)) {
             return null;
         }
-
         boolean isAscii = hasAsciiFlag(raw);
-
+        long auxLo = auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET);
         if (hasInlinedFlag(raw)) {
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
+            assert size <= VARCHAR_MAX_BYTES_FULLY_INLINED;
             return ab == 1
-                    ? auxMem.getIntegralVarcharA(auxOffset + FULLY_INLINED_STRING_OFFSET, size, isAscii)
-                    : auxMem.getIntegralVarcharB(auxOffset + FULLY_INLINED_STRING_OFFSET, size, isAscii);
+                    ? auxMem.getSplitVarcharA(auxLo, auxLo, size, isAscii)
+                    : auxMem.getSplitVarcharB(auxLo, auxLo, size, isAscii);
         }
-
-        long auxLo = auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET);
         long dataLo = dataMem.addressOf(getDataOffset(auxMem, auxOffset));
         int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
         return ab == 1
@@ -353,7 +270,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param dataAddr      base pointer of the data vector
      * @param rowNum        the row number to read
      * @param utf8SplitView flyweight for the split string
-     * @return utf8IntegralView or utf8SplitView loaded with the read value, or null if the value is null
+     * @return utf8SplitView loaded with the read value, or null if the value is null
      */
     public static Utf8Sequence getSplitValue(
             long auxAddr,
@@ -367,11 +284,19 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         if (hasNullFlag(raw)) {
             return null;
         }
+        boolean isAscii = hasAsciiFlag(raw);
+        long auxLo = auxAddr + INLINED_PREFIX_OFFSET;
+        if (hasInlinedFlag(raw)) {
+            return utf8SplitView.ofInline(
+                    auxLo,
+                    (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK,
+                    isAscii);
+        }
         return utf8SplitView.of(
-                auxEntry + INLINED_PREFIX_OFFSET,
+                auxLo,
                 dataAddr + getDataOffset(auxEntry),
                 (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
-                hasAsciiFlag(raw)
+                isAscii
         );
     }
 
@@ -507,7 +432,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     public long getDataVectorOffset(long auxMemAddr, long row) {
-        return getDataOffset(auxMemAddr + VARCHAR_AUX_WIDTH_BYTES * row);
+        long auxEntry = auxMemAddr + VARCHAR_AUX_WIDTH_BYTES * row;
+        assert Unsafe.getUnsafe().getInt(auxEntry) != 0;
+        return getDataOffset(auxEntry);
     }
 
     @Override
@@ -683,14 +610,18 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         );
     }
 
+    private static long getDataOffset(long auxEntry) {
+        return Unsafe.getUnsafe().getLong(auxEntry + Long.BYTES) >>> 16;
+    }
+
     private static long getDataOffset(MemoryR auxMem, long offset) {
         return auxMem.getLong(offset + 8L) >>> 16;
     }
 
     private static long getDataVectorSize(long auxEntry) {
         final int raw = Unsafe.getUnsafe().getInt(auxEntry);
+        assert raw != 0;
         final long dataOffset = getDataOffset(auxEntry);
-
         if (hasNullOrInlinedFlag(raw)) {
             return dataOffset;
         }

@@ -30,7 +30,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 
 public class NullMemoryMR implements MemoryMR {
 
@@ -162,12 +162,12 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
-    public Utf8Sequence getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
+    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
         return null;
     }
 
     @Override
-    public Utf8Sequence getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
+    public Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
         return null;
     }
 

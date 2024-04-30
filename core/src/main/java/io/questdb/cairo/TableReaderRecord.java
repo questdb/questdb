@@ -30,7 +30,6 @@ import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Rows;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -301,12 +300,12 @@ public class TableReaderRecord implements Record, Sinkable {
     @Override
     @Nullable
     public Utf8Sequence getVarcharA(int col) {
-        return getDirectVarchar(col, 1);
+        return getVarchar(col, 1);
     }
 
     @Override
     public @Nullable Utf8Sequence getVarcharB(int col) {
-        return getDirectVarchar(col, 2);
+        return getVarchar(col, 2);
     }
 
     @Override
@@ -350,22 +349,7 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Nullable
-    private DirectUtf8Sequence getDirectVarchar(int col, int ab) {
-        final long rowNum = getAdjustedRecordIndex(col);
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-                rowNum,
-                TableReader.getPrimaryColumnIndex(columnBase, col)
-        );
-        return VarcharTypeDriver.getDirectValue(
-                rowNum,
-                reader.getColumn(absoluteColumnIndex),
-                reader.getColumn(absoluteColumnIndex + 1),
-                ab
-        );
-    }
-
-    @Nullable
-    private Utf8Sequence getSplitVarchar(int col, int ab) {
+    private Utf8Sequence getVarchar(int col, int ab) {
         final long rowNum = getAdjustedRecordIndex(col);
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
                 rowNum,
