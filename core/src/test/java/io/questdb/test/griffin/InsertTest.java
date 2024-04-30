@@ -48,23 +48,24 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameters;
 
 import java.util.Arrays;
 import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class InsertTest extends AbstractCairoTest {
-
     private final boolean walEnabled;
 
-    public InsertTest(boolean walEnabled) {
-        this.walEnabled = walEnabled;
+    public InsertTest(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 
-    @Parameters
+    @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{{false}, {true}});
+        return Arrays.asList(new Object[][]{
+                {AbstractCairoTest.WalMode.NO_WAL},
+                {AbstractCairoTest.WalMode.WITH_WAL}
+        });
     }
 
     public void assertReaderCheckWal(String expected, CharSequence tableName) {
@@ -841,11 +842,21 @@ public class InsertTest extends AbstractCairoTest {
 
             ddl("insert into dest select ts, sym from src;");
 
-            String expected = "ts\tvch\n" + "1970-01-01T00:00:00.000000Z\tfoo\n" + "1970-01-01T00:00:00.020000Z\t\n" + "1970-01-01T00:00:00.030000Z\tbar\n";
+            String expected = "ts\tvch\n" +
+                    "1970-01-01T00:00:00.000000Z\tfoo\n" +
+                    "1970-01-01T00:00:00.020000Z\t\n" +
+                    "1970-01-01T00:00:00.030000Z\tbar\n";
             assertQueryCheckWal(expected);
 
             // check symbol null was inserted as a null varch and not as an empty varchar
-            assertQuery("ts\tvch\n" + "1970-01-01T00:00:00.020000Z\t\n", "select * from dest where vch is null", "ts", true, false);
+            assertQuery(
+                    "ts\tvch\n" +
+                            "1970-01-01T00:00:00.020000Z\t\n",
+                    "select * from dest where vch is null",
+                    "ts",
+                    true,
+                    false
+            );
         });
     }
 
@@ -1032,11 +1043,21 @@ public class InsertTest extends AbstractCairoTest {
 
             ddl("insert into dest select ts, u from src;");
 
-            String expected = "ts\tvch\n" + "1970-01-01T00:00:00.000000Z\t11111111-1111-1111-1111-111111111111\n" + "1970-01-01T00:00:00.020000Z\t\n" + "1970-01-01T00:00:00.030000Z\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n";
+            String expected = "ts\tvch\n" +
+                    "1970-01-01T00:00:00.000000Z\t11111111-1111-1111-1111-111111111111\n" +
+                    "1970-01-01T00:00:00.020000Z\t\n" +
+                    "1970-01-01T00:00:00.030000Z\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n";
             assertQueryCheckWal(expected);
 
             // check symbol null was inserted as a null varch and not as an empty varchar
-            assertQuery("ts\tvch\n" + "1970-01-01T00:00:00.020000Z\t\n", "select * from dest where vch is null", "ts", true, false);
+            assertQuery(
+                    "ts\tvch\n" +
+                            "1970-01-01T00:00:00.020000Z\t\n",
+                    "select * from dest where vch is null",
+                    "ts",
+                    true,
+                    false
+            );
         });
     }
 
@@ -1241,7 +1262,6 @@ public class InsertTest extends AbstractCairoTest {
         if (walEnabled) {
             drainWalQueue();
         }
-
         assertQuery(expected, "dest", "ts", true, true);
     }
 
