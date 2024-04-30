@@ -46,8 +46,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private final Utf8SplitString utf8SplitViewA = new Utf8SplitString(true);
     private final Utf8SplitString utf8SplitViewB = new Utf8SplitString(true);
-    private final Utf8IntegralString utf8viewA = new Utf8IntegralString(true);
-    private final Utf8IntegralString utf8viewB = new Utf8IntegralString(true);
     private int frameIndex;
     private PageAddressCache pageAddressCache;
     private long rowIndex;
@@ -255,16 +253,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public Utf8Sequence getSplitVarcharA(int columnIndex) {
-        return getSplitVarchar(columnIndex, utf8viewA, utf8SplitViewA);
-    }
-
-    @Override
-    public Utf8Sequence getSplitVarcharB(int columnIndex) {
-        return getSplitVarchar(columnIndex, utf8viewB, utf8SplitViewB);
-    }
-
-    @Override
     public CharSequence getStrA(int columnIndex) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (dataPageAddress == 0) {
@@ -323,12 +311,12 @@ public class PageAddressCacheRecord implements Record, Closeable {
 
     @Override
     public Utf8Sequence getVarcharA(int columnIndex) {
-        return getDirectVarchar(columnIndex, utf8viewA);
+        return getSplitVarchar(columnIndex, utf8SplitViewA);
     }
 
     @Override
     public Utf8Sequence getVarcharB(int columnIndex) {
-        return getDirectVarchar(columnIndex, utf8viewB);
+        return getSplitVarchar(columnIndex, utf8SplitViewB);
     }
 
     @Override
@@ -412,7 +400,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Nullable
-    private Utf8Sequence getSplitVarchar(int columnIndex, Utf8IntegralString utf8view, Utf8SplitString utf8SplitView) {
+    private Utf8Sequence getSplitVarchar(int columnIndex, Utf8SplitString utf8SplitView) {
         final long auxPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
         if (auxPageAddress == 0) {
             return null; // Column top.
@@ -422,7 +410,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
                 auxPageAddress,
                 dataPageAddress,
                 rowIndex,
-                utf8view,
                 utf8SplitView
         );
     }

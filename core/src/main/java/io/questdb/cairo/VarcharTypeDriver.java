@@ -349,40 +349,29 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     /**
      * Reads a UTF-8 value from a VARCHAR column.
      *
-     * @param auxAddr          base pointer of the auxiliary vector
-     * @param dataAddr         base pointer of the data vector
-     * @param rowNum           the row number to read
-     * @param utf8IntegralView flyweight for the inlined string
-     * @param utf8SplitView    flyweight for the split string
+     * @param auxAddr       base pointer of the auxiliary vector
+     * @param dataAddr      base pointer of the data vector
+     * @param rowNum        the row number to read
+     * @param utf8SplitView flyweight for the split string
      * @return utf8IntegralView or utf8SplitView loaded with the read value, or null if the value is null
      */
     public static Utf8Sequence getSplitValue(
             long auxAddr,
             long dataAddr,
             long rowNum,
-            Utf8IntegralString utf8IntegralView,
             Utf8SplitString utf8SplitView
     ) {
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
         int raw = Unsafe.getUnsafe().getInt(auxEntry);
         assert raw != 0;
-
         if (hasNullFlag(raw)) {
             return null;
-        }
-
-        boolean ascii = hasAsciiFlag(raw);
-
-        if (hasInlinedFlag(raw)) {
-            long lo = auxEntry + FULLY_INLINED_STRING_OFFSET;
-            int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
-            return utf8IntegralView.of(lo, lo + (byte) size, ascii);
         }
         return utf8SplitView.of(
                 auxEntry + INLINED_PREFIX_OFFSET,
                 dataAddr + getDataOffset(auxEntry),
                 (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
-                ascii
+                hasAsciiFlag(raw)
         );
     }
 

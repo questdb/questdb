@@ -29,11 +29,14 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
-import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
+import static io.questdb.cairo.VarcharTypeDriver.*;
 
 /**
- * An immutable flyweight for a UTF-8 string stored in native memory.
+ * An immutable flyweight for a UTF-8 string stored in a VARCHAR column. It may be
+ * stored in two formats:
+ * <br/>
+ * - fully inlined into the auxiliary vector (if up to 9 bytes)
+ * - fully stored in the data vector, plus the first 6 bytes in the auxiliary vector
  */
 public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
@@ -54,7 +57,7 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte((index < VARCHAR_INLINED_PREFIX_BYTES ? auxLo : dataLo) + index);
+        return Unsafe.getUnsafe().getByte(dataLo + index);
     }
 
     @Override
@@ -85,7 +88,7 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     public Utf8SplitString of(long auxLo, long dataLo, int size, boolean ascii) {
         this.auxLo = auxLo;
-        this.dataLo = dataLo;
+        this.dataLo = (size <= VARCHAR_MAX_BYTES_FULLY_INLINED) ? auxLo : dataLo;
         this.size = size;
         this.ascii = ascii;
         return this;
@@ -93,7 +96,6 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     @Override
     public long ptr() {
-        // Always return pointer to the data vector since it contains the full string.
         return dataLo;
     }
 
@@ -102,9 +104,8 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
         return size;
     }
 
-    @NotNull
     @Override
-    public String toString() {
+    public @NotNull String toString() {
         Utf16Sink utf16Sink = Misc.getThreadLocalSink();
         Utf8s.utf8ToUtf16(this, utf16Sink);
         return utf16Sink.toString();
