@@ -61,7 +61,7 @@ static uintptr_t setup(const char *fp)
     const int fd = inotify_init();
     if (fd == -1)
     {
-        return 0;
+        return -1;
     }
 
     /* Allocate memory for watch descriptor. Return 0 if
@@ -69,7 +69,7 @@ static uintptr_t setup(const char *fp)
     int *wd = malloc(sizeof(int));
     if (wd == NULL)
     {
-        return 0;
+        return -1;
     }
 
     /* Create a copy of the path so we can run dirname/basename on it. We use
@@ -85,7 +85,7 @@ static uintptr_t setup(const char *fp)
         IN_MODIFY | IN_CLOSE_WRITE | IN_CREATE | IN_MOVED_TO);
     if (wd == NULL)
     {
-        return 0;
+        return -1;
     }
 
     /* Re-copy the path so we can extract the filename */
@@ -95,7 +95,7 @@ static uintptr_t setup(const char *fp)
     fw = malloc(sizeof(struct file_watcher));
     if (fw == NULL)
     {
-        return 0;
+        return -1;
     }
     fw->fd = fd;
     fw->wd = wd;
@@ -153,7 +153,7 @@ static void teardown(uintptr_t wp)
 
     // Clean up the malloced memory contained in the struct
     free(fw->wd);
-    free(fw->fd);
+    close(fw->fd);
     free(fw->filename);
 
     // Then clean up the filewatcher struct itself
