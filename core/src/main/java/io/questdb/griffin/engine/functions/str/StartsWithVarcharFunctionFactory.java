@@ -28,12 +28,16 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
 public class StartsWithVarcharFunctionFactory implements FunctionFactory {
@@ -52,7 +56,44 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
     ) {
         Function varcharFunc = args.get(0);
         Function prefixFunc = args.get(1);
+        if (prefixFunc.isConstant()) {
+            return new ConstStartsWithVarcharFunction(varcharFunc, prefixFunc.getVarcharA(null));
+        }
         return new Func(varcharFunc, prefixFunc);
+    }
+
+    public static class ConstStartsWithVarcharFunction extends BooleanFunction implements UnaryFunction {
+        private final Utf8String prefix;
+        private final Function value;
+
+        public ConstStartsWithVarcharFunction(Function value, @Transient Utf8Sequence prefix) {
+            this.value = value;
+            this.prefix = Utf8String.newInstance(prefix);
+        }
+
+        public ConstStartsWithVarcharFunction(Function value, @Transient CharSequence prefix) {
+            this.value = value;
+            this.prefix = new Utf8String(prefix);
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            Utf8Sequence us = value.getVarcharA(rec);
+            return us != null && Utf8s.startsWith(us, prefix);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" like ");
+            sink.val(prefix);
+            sink.val('%');
+        }
     }
 
     private static class Func extends BooleanFunction implements BinaryFunction {

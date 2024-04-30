@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.str.StartsWithVarcharFunctionFactory.ConstStartsWithVarcharFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -385,35 +386,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" ilike ");
-            sink.val(pattern);
-            sink.val('%');
-        }
-    }
-
-    private static class ConstStartsWithVarcharFunction extends BooleanFunction implements UnaryFunction {
-        private final Utf8String pattern;
-        private final Function value;
-
-        public ConstStartsWithVarcharFunction(Function value, @Transient CharSequence pattern) {
-            this.value = value;
-            this.pattern = new Utf8String(pattern);
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            Utf8Sequence us = value.getVarcharA(rec);
-            return us != null && Utf8s.startsWith(us, pattern);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(value);
-            sink.val(" like ");
             sink.val(pattern);
             sink.val('%');
         }
