@@ -197,15 +197,15 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         if (hasInlinedFlag(raw)) {
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             return ab == 1
-                    ? auxMem.getVarcharA(auxOffset + 1, size, isAscii)
-                    : auxMem.getVarcharB(auxOffset + 1, size, isAscii);
+                    ? auxMem.getIntegralVarcharA(auxOffset + 1, size, isAscii)
+                    : auxMem.getIntegralVarcharB(auxOffset + 1, size, isAscii);
         }
 
         long dataOffset = getDataOffset(auxMem, auxOffset);
         int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
         return ab == 1
-                ? dataMem.getVarcharA(dataOffset, size, isAscii)
-                : dataMem.getVarcharB(dataOffset, size, isAscii);
+                ? dataMem.getIntegralVarcharA(dataOffset, size, isAscii)
+                : dataMem.getIntegralVarcharB(dataOffset, size, isAscii);
     }
 
     /**
@@ -262,8 +262,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return null;
         }
         return (ab == 1)
-                ? dataMem.getVarcharA(offset + Integer.BYTES, size(header), isAscii(header))
-                : dataMem.getVarcharB(offset + Integer.BYTES, size(header), isAscii(header));
+                ? dataMem.getIntegralVarcharA(offset + Integer.BYTES, size(header), isAscii(header))
+                : dataMem.getIntegralVarcharB(offset + Integer.BYTES, size(header), isAscii(header));
     }
 
     /**
@@ -334,8 +334,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         if (hasInlinedFlag(raw)) {
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             return ab == 1
-                    ? auxMem.getVarcharA(auxOffset + 1, size, isAscii)
-                    : auxMem.getVarcharB(auxOffset + 1, size, isAscii);
+                    ? auxMem.getIntegralVarcharA(auxOffset + 1, size, isAscii)
+                    : auxMem.getIntegralVarcharB(auxOffset + 1, size, isAscii);
         }
 
         long auxLo = auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET);
@@ -349,18 +349,18 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     /**
      * Reads a UTF-8 value from a VARCHAR column.
      *
-     * @param auxAddr       base pointer of the auxiliary vector
-     * @param dataAddr      base pointer of the data vector
-     * @param rowNum        the row number to read
-     * @param utf8View      flyweight for the inlined string
-     * @param utf8SplitView flyweight for the split string
-     * @return utf8View or utf8SplitView loaded with the read value, or null if the value is null
+     * @param auxAddr          base pointer of the auxiliary vector
+     * @param dataAddr         base pointer of the data vector
+     * @param rowNum           the row number to read
+     * @param utf8IntegralView flyweight for the inlined string
+     * @param utf8SplitView    flyweight for the split string
+     * @return utf8IntegralView or utf8SplitView loaded with the read value, or null if the value is null
      */
     public static Utf8Sequence getSplitValue(
             long auxAddr,
             long dataAddr,
             long rowNum,
-            DirectUtf8String utf8View,
+            Utf8IntegralString utf8IntegralView,
             Utf8SplitString utf8SplitView
     ) {
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
@@ -376,7 +376,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         if (hasInlinedFlag(raw)) {
             long lo = auxEntry + FULLY_INLINED_STRING_OFFSET;
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
-            return utf8View.of(lo, lo + (byte) size, ascii);
+            return utf8IntegralView.of(lo, lo + (byte) size, ascii);
         }
         return utf8SplitView.of(
                 auxEntry + INLINED_PREFIX_OFFSET,
