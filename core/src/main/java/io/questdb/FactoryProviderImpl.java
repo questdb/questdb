@@ -29,6 +29,7 @@ import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.pgwire.DefaultPgWireAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.SocketFactory;
@@ -49,7 +50,12 @@ public class FactoryProviderImpl implements FactoryProvider {
         this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
         this.readOnlyUserPasswordSink = new DirectUtf8Sink(4);
         this.defaultUserPasswordSink = new DirectUtf8Sink(4);
-        this.pgWireAuthenticatorFactory = ServerMain.getPgWireAuthenticatorFactory(configuration, defaultUserPasswordSink, readOnlyUserPasswordSink);
+        this.pgWireAuthenticatorFactory = DefaultPgWireAuthenticatorFactory.INSTANCE;
+    }
+
+    @Override
+    public PgWireAuthenticatorFactory getPgWireAuthenticationFactory() {
+        return pgWireAuthenticatorFactory;
     }
 
     @Override

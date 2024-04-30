@@ -143,15 +143,6 @@ public class ServerMain implements Closeable {
         return authenticatorFactory;
     }
 
-    public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(
-            ServerConfiguration configuration,
-            DirectUtf8Sink defaultUserPasswordSink,
-            DirectUtf8Sink readOnlyUserPasswordSink
-    ) {
-        UsernamePasswordMatcher usernamePasswordMatcher = newPgWireUsernamePasswordMatcher(configuration.getPGWireConfiguration(), defaultUserPasswordSink, readOnlyUserPasswordSink);
-        return new UsernamePasswordPgWireAuthenticatorFactory(usernamePasswordMatcher);
-    }
-
     public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
         boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance();
         if (readOnlyInstance) {
@@ -401,7 +392,7 @@ public class ServerMain implements Closeable {
 
         // pg wire
         freeOnExit.register(services().createPGWireServer(
-                config,
+                config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
                 metrics

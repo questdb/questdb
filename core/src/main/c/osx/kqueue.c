@@ -161,14 +161,19 @@ JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_keventGetBlocking
     );
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_KqueueAccessor_evSet
+JNIEXPORT jlong JNICALL Java_io_questdb_KqueueAccessor_evtAlloc
     (JNIEnv *e, jclass cl, jlong ident, jint filter, jint flags, jint fflags, jlong data) {
     struct kevent *event = malloc(sizeof(struct kevent));
     EV_SET(event, ident, filter, flags, fflags, data, NULL);
     return (jlong)event;
-
-
 }
+
+JNIEXPORT void JNICALL Java_io_questdb_KqueueAccessor_evtFree
+        (JNIEnv *e, jclass cl, jlong event) {
+    free((void *) event);
+}
+
+
 JNIEXPORT jlong JNICALL Java_io_questdb_KqueueAccessor_pipe
         (JNIEnv *e, jclass cl) {
     int fds[2];

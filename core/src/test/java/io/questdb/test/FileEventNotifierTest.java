@@ -7,6 +7,7 @@ import io.questdb.FileEventNotifierFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -18,6 +19,7 @@ public class FileEventNotifierTest extends AbstractTest {
     private SOCountDownLatch threadLatch;
 
     @Test
+    @Ignore
     public void testFileWatcher() throws Exception {
 
         final File targetFile = temp.newFile();

@@ -25,7 +25,6 @@
 package io.questdb.cutlass;
 
 import io.questdb.Metrics;
-import io.questdb.ServerConfiguration;
 import io.questdb.WorkerPoolManager;
 import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
@@ -41,6 +40,7 @@ import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
@@ -239,12 +239,12 @@ public class Services {
 
     @Nullable
     public PGWireServer createPGWireServer(
-            ServerConfiguration configuration,
+            PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
             Metrics metrics
     ) {
-        if (!configuration.getPGWireConfiguration().isEnabled()) {
+        if (!configuration.isEnabled()) {
             return null;
         }
 
@@ -252,15 +252,15 @@ public class Services {
         // - DEDICATED when PropertyKey.PG_WORKER_COUNT is > 0
         // - SHARED otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
-                configuration.getPGWireConfiguration(),
+                configuration,
                 metrics,
                 Requester.PG_WIRE_SERVER
         );
 
-        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration.getPGWireConfiguration(), cairoEngine.getConfiguration());
+        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
         return new PGWireServer(
-                configuration.getPGWireConfiguration(),
+                configuration,
                 cairoEngine,
                 workerPool,
                 new PGWireServer.PGConnectionContextFactory(

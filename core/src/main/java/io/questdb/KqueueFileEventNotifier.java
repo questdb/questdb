@@ -8,10 +8,10 @@ import io.questdb.std.str.Path;
 
 public class KqueueFileEventNotifier implements FileEventNotifier {
     private final int bufferSize;
-    private final long dirEvent;
+    private final long evtDir;
     private final int dirFd;
     private final long eventList;
-    private final long fileEvent;
+    private final long evtFile;
     private final int fileFd;
     private final int kq;
     private boolean closed;
@@ -31,7 +31,7 @@ public class KqueueFileEventNotifier implements FileEventNotifier {
             }
         }
 
-        this.fileEvent = KqueueAccessor.evSet(
+        this.evtFile = KqueueAccessor.evtAlloc(
                 this.fileFd,
                 KqueueAccessor.EVFILT_VNODE,
                 KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
@@ -42,7 +42,7 @@ public class KqueueFileEventNotifier implements FileEventNotifier {
                 0
         );
 
-        this.dirEvent = KqueueAccessor.evSet(
+        this.evtDir = KqueueAccessor.evtAlloc(
                 this.dirFd,
                 KqueueAccessor.EVFILT_VNODE,
                 KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
@@ -65,7 +65,7 @@ public class KqueueFileEventNotifier implements FileEventNotifier {
         // Register events with queue
         int fileRes = KqueueAccessor.keventRegister(
                 kq,
-                fileEvent,
+                evtFile,
                 1
         );
         if (fileRes < 0) {
@@ -74,7 +74,7 @@ public class KqueueFileEventNotifier implements FileEventNotifier {
 
         int dirRes = KqueueAccessor.keventRegister(
                 kq,
-                dirEvent,
+                evtDir,
                 1
         );
         if (dirRes < 0) {
@@ -91,8 +91,8 @@ public class KqueueFileEventNotifier implements FileEventNotifier {
             Files.close(fileFd);
             Files.close(dirFd);
             Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-            Unsafe.free(this.fileEvent, KqueueAccessor.SIZEOF_KEVENT, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-            Unsafe.free(this.dirEvent, KqueueAccessor.SIZEOF_KEVENT, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+            KqueueAccessor.evtFree(this.evtFile);
+            KqueueAccessor.evtFree(this.evtDir);
         }
     }
 

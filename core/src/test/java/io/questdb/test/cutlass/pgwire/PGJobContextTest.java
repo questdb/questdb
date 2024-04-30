@@ -24,32 +24,22 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.DynamicUsernamePasswordMatcher;
-import io.questdb.FactoryProvider;
 import io.questdb.PropertyKey;
-import io.questdb.ServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -10212,66 +10202,9 @@ create table tab as (
             SOCountDownLatch queryScheduledCount,
             CircuitBreakerRegistry registry
     ) {
-        ServerConfiguration serverConfiguration = new ServerConfiguration() {
-            @Override
-            public CairoConfiguration getCairoConfiguration() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public FactoryProvider getFactoryProvider() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public HttpMinServerConfiguration getHttpMinServerConfiguration() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public HttpServerConfiguration getHttpServerConfiguration() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public MetricsConfiguration getMetricsConfiguration() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public PGWireConfiguration getPGWireConfiguration() {
-                return conf;
-            }
-
-            @Override
-            public UsernamePasswordMatcher getUsernamePasswordMatcher() {
-                return new DynamicUsernamePasswordMatcher(this);
-            }
-
-            @Override
-            public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public WorkerPoolConfiguration getWorkerPoolConfiguration() {
-                throw new UnsupportedOperationException();
-            }
-        };
-
         return new PGWireServer.PGConnectionContextFactory(
                 engine,
-                serverConfiguration,
+                conf,
                 registry,
                 () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
                     @Override

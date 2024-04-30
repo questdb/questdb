@@ -45,7 +45,9 @@ public class KqueueAccessor {
     public static final short NOTE_WRITE;
     public static final short SIZEOF_KEVENT;
 
-    public static native long evSet(long ident, int filter, int flags, int fflags, long data);
+    public static native long evtAlloc(long ident, int filter, int flags, int fflags, long data);
+
+    public static native long evtFree(long event);
 
     public static native short getDataOffset();
 
