@@ -110,12 +110,12 @@ public class CopyWalSegmentUtils {
         }
 
         if (!success) {
-            throw CairoException.critical(ff.errno()).put("failed to copy column file to new segment [path=").put(newSegPath)
+            throw CairoException.critical(ff.errno()).put("failed to copy column WAL data to new segment [path=").put(newSegPath)
                     .put(", column=").put(columnName)
                     .put(", startRowNumber=").put(startRowNumber)
                     .put(", rowCount=").put(rowCount)
                     .put(", columnType=").put(columnType)
-                    .put("]");
+                    .put(']');
         }
     }
 
@@ -131,15 +131,19 @@ public class CopyWalSegmentUtils {
             int commitMode
     ) {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment).concat(WAL_SEGMENT_FILE_NAME).$();
-        // TODO(puzpuzpuz): better error handling here
-        int fd = openRW(ff, newSegPath, LOG, options);
 
         final long alignedOffset = Files.floorPageSize(startOffset);
         final long alignedExtraSize = startOffset - alignedOffset;
-        final long srcRowDataAddr = TableUtils.mapRO(ff, rowMem.getFd(), size + alignedExtraSize, alignedOffset, MEMORY_TAG);
-        final long destRowDataAddr = TableUtils.mapRW(ff, fd, size, MEMORY_TAG);
-        ff.madvise(destRowDataAddr, size, Files.POSIX_MADV_RANDOM);
+        int fd = -1;
+        long srcRowDataAddr = 0;
+        long destRowDataAddr = 0;
         try {
+            fd = openRW(ff, newSegPath, LOG, options);
+
+            srcRowDataAddr = TableUtils.mapRO(ff, rowMem.getFd(), size + alignedExtraSize, alignedOffset, MEMORY_TAG);
+            destRowDataAddr = TableUtils.mapRW(ff, fd, size, MEMORY_TAG);
+            ff.madvise(destRowDataAddr, size, Files.POSIX_MADV_RANDOM);
+
             final int timestampIndex = metadata.getTimestampIndex();
 
             final long srcAddr = srcRowDataAddr + alignedExtraSize;
@@ -214,7 +218,19 @@ public class CopyWalSegmentUtils {
                 ff.msync(destRowDataAddr, size, commitMode == CommitMode.ASYNC);
             }
             return fd;
+        } catch (Throwable th) {
+            ff.close(fd);
+            LOG.critical()
+                    .$("row-first WAL copy failed [path=").$(walPath)
+                    .$(", error=").$(th.getMessage())
+                    .I$();
+            throw CairoException.critical(ff.errno()).put("failed to copy row-first WAL data to new segment [path=").put(newSegPath)
+                    .put(", path=").put(walPath)
+                    .put(", startOffset=").put(startOffset)
+                    .put(", size=").put(size)
+                    .put(']');
         } finally {
+            ff.munmap(srcRowDataAddr, size + alignedExtraSize, MEMORY_TAG);
             ff.munmap(destRowDataAddr, size, MEMORY_TAG);
         }
     }
@@ -289,6 +305,8 @@ public class CopyWalSegmentUtils {
         ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
         final long auxMemSize = columnTypeDriver.getAuxVectorSize(startRowNumber + rowCount);
         final long auxMemAddr = TableUtils.mapRO(ff, auxMem.getFd(), auxMemSize, MEMORY_TAG);
+        long newAuxMemAddr = 0;
+        long newAuxMemSize = 0;
         try {
             final long dataStartOffset = columnTypeDriver.getDataVectorOffset(auxMemAddr, startRowNumber);
             final long dataSize = columnTypeDriver.getDataVectorSize(auxMemAddr, startRowNumber, startRowNumber + rowCount - 1);
@@ -305,8 +323,8 @@ public class CopyWalSegmentUtils {
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, dataStartOffset);
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, dataSize);
 
-            final long newAuxMemSize = columnTypeDriver.getAuxVectorSize(rowCount);
-            final long newAuxMemAddr = TableUtils.mapRW(ff, secondaryFd, newAuxMemSize, MEMORY_TAG);
+            newAuxMemSize = columnTypeDriver.getAuxVectorSize(rowCount);
+            newAuxMemAddr = TableUtils.mapRW(ff, secondaryFd, newAuxMemSize, MEMORY_TAG);
             ff.madvise(newAuxMemAddr, newAuxMemSize, Files.POSIX_MADV_RANDOM);
 
             columnTypeDriver.shiftCopyAuxVector(
@@ -324,11 +342,10 @@ public class CopyWalSegmentUtils {
             if (commitMode != CommitMode.NOSYNC) {
                 ff.msync(newAuxMemAddr, newAuxMemSize, commitMode == CommitMode.ASYNC);
             }
-            // All in memory calls, no need to unmap in finally
-            ff.munmap(newAuxMemAddr, newAuxMemSize, MEMORY_TAG);
             return true;
         } finally {
             ff.munmap(auxMemAddr, auxMemSize, MEMORY_TAG);
+            ff.munmap(newAuxMemAddr, newAuxMemSize, MEMORY_TAG);
         }
     }
 }
