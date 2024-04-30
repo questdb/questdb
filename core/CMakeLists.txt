@@ -133,7 +133,8 @@ elseif (OS_LINUX)
                 src/main/c/linux/files.c
                 src/main/c/linux/io_uring.c
                 src/main/c/linux/inotify.c
-        )endif ()
+        )
+endif ()
 
 if (OS_WINDOWS)
     include_directories($ENV{JAVA_HOME}/include/win32/)
