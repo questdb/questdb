@@ -248,14 +248,15 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return null;
         }
         boolean isAscii = hasAsciiFlag(raw);
-        long auxLo = auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET);
         if (hasInlinedFlag(raw)) {
+            long auxLo = auxMem.addressOf(auxOffset + FULLY_INLINED_STRING_OFFSET);
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             assert size <= VARCHAR_MAX_BYTES_FULLY_INLINED;
             return ab == 1
                     ? auxMem.getSplitVarcharA(auxLo, auxLo, size, isAscii)
                     : auxMem.getSplitVarcharB(auxLo, auxLo, size, isAscii);
         }
+        long auxLo = auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET);
         long dataLo = dataMem.addressOf(getDataOffset(auxMem, auxOffset));
         int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
         return ab == 1
@@ -285,15 +286,16 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return null;
         }
         boolean isAscii = hasAsciiFlag(raw);
-        long auxLo = auxAddr + INLINED_PREFIX_OFFSET;
         if (hasInlinedFlag(raw)) {
-            return utf8SplitView.ofInline(
+            long auxLo = auxAddr + FULLY_INLINED_STRING_OFFSET;
+            return utf8SplitView.of(
+                    auxLo,
                     auxLo,
                     (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK,
                     isAscii);
         }
         return utf8SplitView.of(
-                auxLo,
+                auxAddr + INLINED_PREFIX_OFFSET,
                 dataAddr + getDataOffset(auxEntry),
                 (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
                 isAscii

@@ -87,18 +87,8 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     }
 
     public Utf8SplitString of(long auxLo, long dataLo, int size, boolean ascii) {
-        assert size > VARCHAR_MAX_BYTES_FULLY_INLINED;
         this.auxLo = auxLo;
-        this.dataLo = dataLo;
-        this.size = size;
-        this.ascii = ascii;
-        return this;
-    }
-
-    public Utf8SplitString ofInline(long auxLo, int size, boolean ascii) {
-        assert size <= VARCHAR_MAX_BYTES_FULLY_INLINED;
-        this.auxLo = auxLo;
-        this.dataLo = auxLo;
+        this.dataLo = size > VARCHAR_MAX_BYTES_FULLY_INLINED ? dataLo : auxLo;
         this.size = size;
         this.ascii = ascii;
         return this;
