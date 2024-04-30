@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -71,42 +70,41 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             final long t = args.getQuick(0).getLong(rec);
 
             double ta = 0; // target accumulator
-            double pa = 0; // result accumulator
+            double pa = 0; // price accumulator
             double rt = t; // reduced target
+            double pp = 0; // partial price
+
             // expect (size, value) pairs
+            // equation is
+            // ((size[0] * value[0]) + (size[n] * value[n]) + ((target - size[0] - size[n]) * value[n+1])) / target
+            // ((ra)             + (rt * value[n+1])) / t
+            // get final price by partially filling against the last bin
             for (int i = 1, n = args.size(); i < n; i += 2) {
+                final double size = args.getQuick(i).getDouble(rec);
+                final double value = args.getQuick(i+1).getDouble(rec);
+
                 // add size to acc
-                ta += args.getQuick(i).getDouble(rec);
+                ta += size;
 
-                // if target is met, return the aggregate value
-                if (ta > t) {
-
-                    // equation is
-                    // ((size[0] * value[0]) + (size[n] * value[n]) + ((target - size[0] - size[n]) * value[n+1])) / target
-                    // ((ra)             + (rt * value[n+1])) / t
-                    if (i == 1) {
-                        return args.getQuick(i + 1).getDouble(rec);
-                    }
-
-                    // sum up (size[n] * value[n]) pairs and sizes from target
-                    for (int j = 1; j < i; j += 2) {
-                        final double size = args.getQuick(j).getDouble(rec);
-                        final double value = args.getQuick(j+1).getDouble(rec);
-                        pa += size * value; // sum up the (size[n] * value[n] pairs)
-                        rt -= size; // subtract size[n] from the target
-                    }
-
-                    // get final price by partially filling against the last bin
-                    rt *= args.getQuick(i+1).getDouble(rec);
-
-                    // get average price
-                    return (pa + rt) / t;
+                // if order not fulfilled
+                if (ta < t) {
+                    pa += (size * value);
+                    rt -= size;
+                    continue;
                 }
 
+                if (ta >= t) {
+                    if (i == 1) {
+                        return value;
+                    }
+
+                    pp = rt * value;
+                    return (pa + pp) / t;
+                }
             }
 
             // if never exceeded the target, then no price, since it can't be fulfilled
-            return 0;
+            return Double.NaN;
         }
 
         @Override

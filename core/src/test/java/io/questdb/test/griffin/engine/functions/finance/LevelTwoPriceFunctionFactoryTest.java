@@ -44,7 +44,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
             drainWalQueue();
 
             assertQuery("avg\n"
-                    + "0.4494059253582213\n", "select avg(l2price(14, size, value)) from x");
+                    + "0.5617574066977766\n", "select avg(l2price(14, size, value)) from x");
         });
     }
 
@@ -76,10 +76,19 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n");
 
-            assertQuery("spread\n"
-                    + "0.020150084516455447\n",
-                    "select avg(l2price(14, ask_size, ask_value)) " +
-                            "- avg(l2price(14, bid_size, bid_value))" +
+            assertQuery("spread\n" +
+                            "-0.0745689117121191\n" +
+                            "-0.33476968200189616\n" +
+                            "-0.2517202513378337\n" +
+                            "null\n" +
+                            "0.2924569772314709\n" +
+                            "-0.43148475135445163\n" +
+                            "-0.01642808233254145\n" +
+                            "0.4590854085578898\n" +
+                            "null\n" +
+                            "0.214176258308453\n",
+                    "select l2price(14, ask_size, ask_value) " +
+                            "- l2price(14, bid_size, bid_value)" +
                             " as spread from x");
         });
     }
