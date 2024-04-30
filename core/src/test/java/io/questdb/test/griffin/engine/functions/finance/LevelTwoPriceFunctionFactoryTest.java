@@ -100,6 +100,15 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n");
 
+            assertPlan("select l2price(14, ask_size, ask_value) " +
+                            "- l2price(14, bid_size, bid_value)" +
+                            " as spread from x",
+                    "VirtualRecord\n" +
+                            "  functions: [l2price([14,ask_size,ask_value])-l2price([14,bid_size,bid_value])]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n");
+
             assertQuery("spread\n" +
                             "-0.0745689117121191\n" +
                             "-0.33476968200189616\n" +
