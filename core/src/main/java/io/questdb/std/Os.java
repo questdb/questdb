@@ -156,6 +156,12 @@ public final class Os {
         LockSupport.parkNanos(Os.PARK_NANOS_MAX);
     }
 
+    public static native long malloc(long size);
+
+    public static native long realloc(long mem, long size);
+
+    public static native void free(long mem);
+
     public static void pause() {
         try {
             Thread.sleep(0);

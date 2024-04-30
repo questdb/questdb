@@ -80,8 +80,8 @@ public class StringHashFunctionBenchmark {
     }
 
     @Benchmark
-    public long testHashUtf8() {
-        return Hash.hashUtf8(utf8String);
+    public long testHashMem64() {
+        return Hash.hashMem64(utf8String.ptr(), utf8String.size());
     }
 
     @Benchmark
