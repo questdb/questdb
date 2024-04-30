@@ -47,9 +47,14 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -59,17 +64,38 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
 @SuppressWarnings("SameParameterValue")
+@RunWith(Parameterized.class)
 public class WalTableSqlTest extends AbstractCairoTest {
+    private final WalFormat walFormat;
+
+    public WalTableSqlTest(WalFormat walFormat) {
+        this.walFormat = walFormat;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalFormat.ROW_FIRST},
+                {WalFormat.COL_FIRST}
+        });
+    }
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
         setProperty(CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 8);
         AbstractCairoTest.setUpStatic();
     }
 
+    @Before
+    public void setUp() {
+        super.setUp();
+        node1.setProperty(PropertyKey.CAIRO_WAL_DEFAULT_FORMAT, walFormat == WalFormat.ROW_FIRST ? "row" : "column");
+    }
+
     @Test
     public void test2InsertsAtSameTime() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl(
                     "create table " + tableName + " (" +
                             "x long," +
@@ -115,7 +141,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testAddColumnWalRollsWalSegment() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl(
                     "create table " + tableName + " (" +
                             "x long," +
@@ -157,7 +183,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testAddFixedSizeColumnBeforeInsertCommit() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
@@ -172,7 +198,6 @@ public class WalTableSqlTest extends AbstractCairoTest {
                         InsertOperation insertOperation = compiledQuery.getInsertOperation();
                         InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
                 ) {
-
                     insertMethod.execute();
                     compile("alter table " + tableName + " add column jjj int");
                     insertMethod.commit();
@@ -185,14 +210,13 @@ public class WalTableSqlTest extends AbstractCairoTest {
             assertSql("x\tsym\tts\tsym2\tjjj\n" +
                     "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
                     "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\n", tableName);
-
         });
     }
 
     @Test
     public void testAddMultipleWalColumnsBeforeCommit() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
@@ -207,7 +231,6 @@ public class WalTableSqlTest extends AbstractCairoTest {
                         InsertOperation insertOperation = compiledQuery.getInsertOperation();
                         InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
                 ) {
-
                     insertMethod.execute();
                     ddl("alter table " + tableName + " add column jjj int");
                     ddl("alter table " + tableName + " add column col_str string");
@@ -222,14 +245,13 @@ public class WalTableSqlTest extends AbstractCairoTest {
             assertSql("x\tsym\tts\tsym2\tjjj\tcol_str\tcol_var\n" +
                     "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\t\t\n" +
                     "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\tsss-value\tvar-val\n", tableName);
-
         });
     }
 
     @Test
     public void testAddWalColumnAfterCommit() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
@@ -264,7 +286,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testAddWalTxnsExceedingSequencerChunks() throws Exception {
         int txnChunk = 64;
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, txnChunk);
-        String tableName = testName.getMethodName() + "Â";
+        String tableName = getEscapedTestName() + "Â";
         ddl("create table " + tableName + " as (" +
                 "select x, " +
                 " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -284,7 +306,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testApplyFromLag() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             Rnd rnd = TestUtils.generateRandom(LOG);
             ddl("create table " + tableName + " (" +
                     "x long," +
@@ -326,7 +348,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testCanApplyTransactionWhenWritingAnotherOne() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl(
                     "create table " + tableName + " (" +
                             "x long," +
@@ -381,7 +403,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void testConvertToFromWalWithLagSet() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = getEscapedTestName();
         ddl("create table " + tableName + " as (" +
                 "select x, " +
                 " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -440,7 +462,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testConvertToWalAfterAlter() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl(
                     "create table " + tableName + " as (" +
                             "select x, " +
@@ -488,7 +510,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testCreateDropCreate() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl(
                     "create table " + tableName + " as (" +
                             "select x, " +
@@ -526,7 +548,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testCreateDropCreateWalNonWal() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             String createSql = "create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -582,7 +604,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testCreateDropWalReuseCreate() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName() + "Â";
+            String tableName = getEscapedTestName() + "Â";
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -666,7 +688,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testCreateWalAndInsertFromSql() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName() + "_लаблअца";
+            String tableName = getEscapedTestName() + "_लаблअца";
             ddl(
                     "create table " + tableName + " as (" +
                             "select x, " +
@@ -697,7 +719,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testCreateWalDropColumnInsert() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -720,7 +742,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testCreateWalTableAsSelect() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -743,7 +765,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testCreateWalTableAsSelectAndInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -785,8 +807,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testDropPartitionRenameTable() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            String newTableName = testName.getMethodName() + "_new";
+            String tableName = getEscapedTestName();
+            String newTableName = getEscapedTestName() + "_new";
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -814,8 +836,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testDropRemovesFromCatalogFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            String tableNameNonWal = testName.getMethodName() + "_non_wal";
+            String tableName = getEscapedTestName();
+            String tableNameNonWal = getEscapedTestName() + "_non_wal";
 
             ddl("create table " + tableName + " as (" +
                     "select x, " +
@@ -885,7 +907,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testDropRetriedWhenReaderOpen() throws Exception {
         assertMemoryLeak(ff, () -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -955,7 +977,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testDropTableAndConvertAnother() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -1010,7 +1032,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -1052,7 +1074,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -1078,7 +1100,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testDropTxnNotificationQueueOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + "1 as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -1112,12 +1134,13 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDroppedTableHappendInTheMiddleOfWalApplication() throws Exception {
-        String tableName = testName.getMethodName();
+    public void testDroppedTableHappenedInTheMiddleOfWalApplication() throws Exception {
+        String tableName = getEscapedTestName();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
-                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "0" + Files.SEPARATOR + "sym.d")) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "0" + Files.SEPARATOR + "sym.d") // col-first
+                        || Utf8s.endsWithAscii(name, Files.SEPARATOR + "0" + Files.SEPARATOR + TableUtils.WAL_SEGMENT_FILE_NAME)) { // row-first
                     TestUtils.unchecked(() -> drop("drop table " + tableName));
                 }
                 return super.openRO(name);
@@ -1143,7 +1166,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     drainWalQueue(walApplyJob);
                 }
 
-                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+                if (walFormat == WalFormat.ROW_FIRST) {
+                    checkTableFilesExist(sysTableName1, "2022-02-24", TableUtils.WAL_SEGMENT_FILE_NAME, false);
+                } else {
+                    checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+                }
                 checkWalFilesRemoved(sysTableName1);
             }
         });
@@ -1152,7 +1179,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testDroppedTableSequencerRecreated() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -1182,7 +1209,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testDroppedTableTriggersWalCheckJob() throws Exception {
         assertMemoryLeak(ff, () -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -1206,7 +1233,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testEmptyTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " (" +
                     "A INT," +
                     "ts TIMESTAMP)" +
@@ -1217,7 +1244,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
-                    "testEmptyTruncate\tfalse\t1\t0\t1\n", "wal_tables()");
+                    tableName + "\tfalse\t1\t0\t1\n", "wal_tables()");
         });
     }
 
@@ -1234,7 +1261,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testInsertManyThenDrop() throws Exception {
         assertMemoryLeak(ff, () -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -1260,7 +1287,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testNoLagUsedWhenDataIsInOrder() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
@@ -1323,7 +1350,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testQueryNullSymbols() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
 
             ddl("create table temp as (" +
                     "select " +
@@ -1360,7 +1387,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testRemoveColumnWalRollsWalSegment() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
@@ -1400,8 +1427,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void testRenameDropTable() throws Exception {
-        String tableName = testName.getMethodName();
-        String newTableName = testName.getMethodName() + "_new";
+        String tableName = getEscapedTestName();
+        String newTableName = getEscapedTestName() + "_new";
 
         FilesFacade ff = new TestFilesFacadeImpl() {
             int i = 0;
@@ -1447,8 +1474,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testRenameNonWalTable() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            String newTableName = testName.getMethodName() + "_new中";
+            String tableName = getEscapedTestName();
+            String newTableName = getEscapedTestName() + "_new中";
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -1502,8 +1529,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testRenameTable() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            String newTableName = testName.getMethodName() + "_new中";
+            String tableName = getEscapedTestName();
+            String newTableName = getEscapedTestName() + "_new中";
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -1556,9 +1583,9 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void testRenameTableToCaseInsensitive() throws Exception {
-        String tableName = testName.getMethodName();
-        String upperCaseName = testName.getMethodName().toUpperCase();
-        String newTableName = testName.getMethodName() + "_new";
+        String tableName = getEscapedTestName();
+        String upperCaseName = getEscapedTestName().toUpperCase();
+        String newTableName = getEscapedTestName() + "_new";
 
         assertMemoryLeak(ff, () -> {
             ddl("create table " + tableName + " as (" +
@@ -1598,7 +1625,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testRogueTableWriterBlocksApplyJob() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -1632,7 +1659,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testSavedDataInTxnFile() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
@@ -1681,7 +1708,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testVarSizeColumnBeforeInsertCommit() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
@@ -1730,7 +1757,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
-            String tableName = testName.getMethodName() + "_लаблअца";
+            String tableName = getEscapedTestName() + "_लаблअца";
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -1807,7 +1834,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     private void testCreateDropRestartRestart0() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -1871,7 +1898,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             }
         };
         assertMemoryLeak(ff, () -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
