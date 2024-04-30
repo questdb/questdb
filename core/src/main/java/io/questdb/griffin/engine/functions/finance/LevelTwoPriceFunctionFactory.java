@@ -81,8 +81,8 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
                 if (ta > t) {
 
                     // equation is
-                    // (size[0] * value[0]) + (size[n] * value[n]) + ((target - size[0] - size[n]) * value[n+1]) / target
-                    // (ra)             + (rt * value[n+1])
+                    // ((size[0] * value[0]) + (size[n] * value[n]) + ((target - size[0] - size[n]) * value[n+1])) / target
+                    // ((ra)             + (rt * value[n+1])) / t
                     if (i == 1) {
                         return args.getQuick(i + 1).getDouble(rec);
                     }
