@@ -280,10 +280,28 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Returns a `Utf8Sequence` implementation that accesses a value in the VARCHAR
+     * column stored in the "split" format. The first six bytes of the value are
+     * inlined into the auxiliary vector, which contains metadata structs,
+     * so accessing them doesn't require accessing the data vector.
+     * <br/>
+     * This is a special-case access method. Use it only when the logic you're
+     * performing may not need more than the initial six bytes (such as equality and
+     * prefix search). Call {@link Utf8Sequence#zeroPaddedSixPrefix()} to get them in
+     * the most efficient way.
+     * <br/>
+     * To access the complete VARCHAR value, use {@link #getVarcharA(int)} instead.
+     * This will access all the value bytes in the data column, where they are stored
+     * contiguously.
+     */
     default @Nullable Utf8Sequence getSplitVarcharA(int col) {
         return getVarcharA(col);
     }
 
+    /**
+     * {@see #getSplitVarcharA} for important usage instructions.
+     */
     default @Nullable Utf8Sequence getSplitVarcharB(int col) {
         return getVarcharB(col);
     }
