@@ -630,7 +630,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     private void runFuzzWithRandomColsDedup(Rnd rnd, int dedupKeys) throws Exception {
         assertMemoryLeak(() -> {
-            String tableNameBase = getTestName();
+            String tableNameBase = getEscapedTestName();
             String tableNameDedup = tableNameBase + "_wal";
             String tableNameWalNoDedup = tableNameBase + "_nodedup";
 
@@ -699,7 +699,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     private void runFuzzWithRepeatDedup(Rnd rnd) throws Exception {
         assertMemoryLeak(() -> {
-            String tableNameBase = getTestName();
+            String tableNameBase = getEscapedTestName();
             String tableNameDedup = tableNameBase + "_wal";
             String tableNameNoWal = tableNameBase + "_nonwal";
 

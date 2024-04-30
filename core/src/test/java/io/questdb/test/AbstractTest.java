@@ -72,4 +72,8 @@ public class AbstractTest {
     protected static String[] getServerMainArgs() {
         return Bootstrap.getServerMainArgs(root);
     }
+
+    protected String getEscapedTestName() {
+        return testName.getMethodName().replace('[', '_').replace(']', '_');
+    }
 }

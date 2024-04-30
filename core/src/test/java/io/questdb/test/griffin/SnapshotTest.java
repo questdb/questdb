@@ -29,7 +29,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.cairo.wal.WalColFirstWriter;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
@@ -969,35 +968,36 @@ public class SnapshotTest extends AbstractCairoTest {
             );
 
             // WalWriter.applyMetadataChangeLog should be triggered
-            try (WalColFirstWriter walWriter1 = getWalWriter(tableName)) {
-                try (WalColFirstWriter walWriter2 = getWalWriter(tableName)) {
-                    walWriter1.addColumn("C", ColumnType.INT);
-                    walWriter1.commit();
+            try (
+                    WalWriter walWriter1 = getWalWriter(tableName);
+                    WalWriter walWriter2 = getWalWriter(tableName)
+            ) {
+                walWriter1.addColumn("C", ColumnType.INT);
+                walWriter1.commit();
 
-                    TableWriter.Row row = walWriter1.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:00:00.000000Z"));
+                TableWriter.Row row = walWriter1.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:00:00.000000Z"));
 
-                    row.putLong(0, 777L);
-                    row.putSym(1, "XXX");
-                    row.putSym(3, "YYY");
-                    row.putInt(4, 0);
-                    row.putInt(5, 1);
-                    row.putInt(6, 2);
-                    row.putInt(7, 3);
-                    row.putInt(8, 42);
-                    row.append();
-                    walWriter1.commit();
+                row.putLong(0, 777L);
+                row.putSym(1, "XXX");
+                row.putSym(3, "YYY");
+                row.putInt(4, 0);
+                row.putInt(5, 1);
+                row.putInt(6, 2);
+                row.putInt(7, 3);
+                row.putInt(8, 42);
+                row.append();
+                walWriter1.commit();
 
-                    TableWriter.Row row2 = walWriter2.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:01:00.000000Z"));
-                    row2.putLong(0, 999L);
-                    row2.putSym(1, "AAA");
-                    row2.putSym(3, "BBB");
-                    row2.putInt(4, 10);
-                    row2.putInt(5, 11);
-                    row2.putInt(6, 12);
-                    row2.putInt(7, 13);
-                    row2.append();
-                    walWriter2.commit();
-                }
+                TableWriter.Row row2 = walWriter2.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:01:00.000000Z"));
+                row2.putLong(0, 999L);
+                row2.putSym(1, "AAA");
+                row2.putSym(3, "BBB");
+                row2.putInt(4, 10);
+                row2.putInt(5, 11);
+                row2.putInt(6, 12);
+                row2.putInt(7, 13);
+                row2.append();
+                walWriter2.commit();
             }
             drainWalQueue();
             assertSql(

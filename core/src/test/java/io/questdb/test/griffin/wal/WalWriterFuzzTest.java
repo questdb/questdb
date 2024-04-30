@@ -211,7 +211,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1
         );
         setFuzzProperties(rnd);
-        runFuzz(rnd, getTestName(), 1);
+        runFuzz(rnd, getEscapedTestName(), 1);
     }
 
     @Test
@@ -246,7 +246,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1
         );
         setFuzzProperties(rnd);
-        runFuzz(rnd, getTestName(), 1);
+        runFuzz(rnd, getEscapedTestName(), 1);
     }
 
     @Test
@@ -257,7 +257,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         int tableCount = 3;
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0.001, 0.01, 0.0);
         setFuzzCounts(false, 500_000, 5_000, 10, 10, 5500, 0, 1);
-        String tableNameBase = getTestName();
+        String tableNameBase = getEscapedTestName();
         runFuzz(rnd, tableNameBase, tableCount);
     }
 
@@ -285,7 +285,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01, 0.0);
         setFuzzCounts(true, 100_000, 10, 10, 10, 10, 50, 1);
-        runFuzz(rnd, getTestName(), 1);
+        runFuzz(rnd, getEscapedTestName(), 1);
     }
 
     @Test
