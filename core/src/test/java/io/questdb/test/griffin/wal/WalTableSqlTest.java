@@ -360,11 +360,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
                         .concat(WalUtils.EVENT_FILE_NAME).$();
                 FilesFacade ff = engine.getConfiguration().getFilesFacade();
                 int fd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
-                long intAddr = Unsafe.getUnsafe().allocateMemory(4);
+                long intAddr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.getUnsafe().putInt(intAddr, 10);
                 ff.write(fd, intAddr, 4, 0);
-
-                Unsafe.getUnsafe().freeMemory(intAddr);
+                Unsafe.free(intAddr, 4, MemoryTag.NATIVE_DEFAULT);
                 ff.close(fd);
             }
 

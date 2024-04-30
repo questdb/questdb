@@ -72,6 +72,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final StringSink sink = new StringSink();
+    protected static final Utf8StringSink utf8Sink = new Utf8StringSink();
     private final static double EPSILON = 0.000001;
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
@@ -1470,6 +1471,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 walApplyJob.run(0);
             }
         }
+    }
+
+    protected static Utf8Sequence utf8(CharSequence value) {
+        return value != null ? new Utf8String(value) : null;
     }
 
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
