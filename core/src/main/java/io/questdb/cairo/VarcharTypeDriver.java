@@ -197,8 +197,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         if (hasInlinedFlag(raw)) {
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             return ab == 1
-                    ? auxMem.getIntegralVarcharA(auxOffset + 1, size, isAscii)
-                    : auxMem.getIntegralVarcharB(auxOffset + 1, size, isAscii);
+                    ? auxMem.getIntegralVarcharA(auxOffset + FULLY_INLINED_STRING_OFFSET, size, isAscii)
+                    : auxMem.getIntegralVarcharB(auxOffset + FULLY_INLINED_STRING_OFFSET, size, isAscii);
         }
 
         long dataOffset = getDataOffset(auxMem, auxOffset);
@@ -334,8 +334,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         if (hasInlinedFlag(raw)) {
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             return ab == 1
-                    ? auxMem.getIntegralVarcharA(auxOffset + 1, size, isAscii)
-                    : auxMem.getIntegralVarcharB(auxOffset + 1, size, isAscii);
+                    ? auxMem.getIntegralVarcharA(auxOffset + FULLY_INLINED_STRING_OFFSET, size, isAscii)
+                    : auxMem.getIntegralVarcharB(auxOffset + FULLY_INLINED_STRING_OFFSET, size, isAscii);
         }
 
         long auxLo = auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET);
