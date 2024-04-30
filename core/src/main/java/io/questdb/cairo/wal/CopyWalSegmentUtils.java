@@ -56,57 +56,65 @@ public class CopyWalSegmentUtils {
     ) {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment);
         int setPathRoot = newSegPath.size();
-        dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE);
-        int primaryFd = openRW(ff, newSegPath, LOG, options);
-        newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);
-
-        int secondaryFd;
-        if (ColumnType.isVarSize(columnType)) {
-            iFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE);
-            secondaryFd = openRW(ff, newSegPath, LOG, options);
-            newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 3, secondaryFd);
-        } else {
-            secondaryFd = -1;
-        }
-
+        int primaryFd = -1;
+        int secondaryFd = -1;
         boolean success;
-        if (ColumnType.isVarSize(columnType)) {
-            success = copyVarSizeFiles(
-                    ff,
-                    columnType,
-                    primaryColumn,
-                    secondaryColumn,
-                    primaryFd,
-                    secondaryFd,
-                    startRowNumber,
-                    rowCount,
-                    newColumnFiles,
-                    columnIndex,
-                    commitMode
-            );
-        } else if (columnType > 0) {
-            success = copyFixLenFile(
-                    ff,
-                    primaryColumn,
-                    primaryFd,
-                    startRowNumber,
-                    rowCount,
-                    columnType,
-                    newColumnFiles,
-                    columnIndex,
-                    commitMode
-            );
-        } else {
-            success = copyTimestampFile(
-                    ff,
-                    primaryColumn,
-                    primaryFd,
-                    startRowNumber,
-                    rowCount,
-                    newColumnFiles,
-                    columnIndex,
-                    commitMode
-            );
+
+        try {
+            dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE);
+            primaryFd = openRW(ff, newSegPath, LOG, options);
+            newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);
+
+            if (ColumnType.isVarSize(columnType)) {
+                iFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE);
+                secondaryFd = openRW(ff, newSegPath, LOG, options);
+                newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 3, secondaryFd);
+            }
+
+            if (ColumnType.isVarSize(columnType)) {
+                success = copyVarSizeFiles(
+                        ff,
+                        columnType,
+                        primaryColumn,
+                        secondaryColumn,
+                        primaryFd,
+                        secondaryFd,
+                        startRowNumber,
+                        rowCount,
+                        newColumnFiles,
+                        columnIndex,
+                        commitMode
+                );
+            } else if (columnType > 0) {
+                success = copyFixLenFile(
+                        ff,
+                        primaryColumn,
+                        primaryFd,
+                        startRowNumber,
+                        rowCount,
+                        columnType,
+                        newColumnFiles,
+                        columnIndex,
+                        commitMode
+                );
+            } else {
+                success = copyTimestampFile(
+                        ff,
+                        primaryColumn,
+                        primaryFd,
+                        startRowNumber,
+                        rowCount,
+                        newColumnFiles,
+                        columnIndex,
+                        commitMode
+                );
+            }
+        } catch (Throwable th) {
+            success = false;
+            LOG.critical()
+                    .$("col-first WAL copy failed [path=").$(walPath)
+                    .$(", error=").$(th.getMessage())
+                    .I$();
         }
 
         if (!success) {

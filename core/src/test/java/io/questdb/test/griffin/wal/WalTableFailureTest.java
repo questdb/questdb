@@ -33,7 +33,6 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.MetadataService;
-import io.questdb.cairo.wal.WalColFirstWriter;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -51,8 +50,14 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -64,12 +69,32 @@ import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
+@RunWith(Parameterized.class)
 public class WalTableFailureTest extends AbstractCairoTest {
+    private final WalFormat walFormat;
+
+    public WalTableFailureTest(WalFormat walFormat) {
+        this.walFormat = walFormat;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalFormat.ROW_FIRST},
+                {WalFormat.COL_FIRST}
+        });
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        node1.setProperty(PropertyKey.CAIRO_WAL_DEFAULT_FORMAT, walFormat == WalFormat.ROW_FIRST ? "row" : "column");
+    }
 
     @Test
     public void testAddColumnFailToApplySequencerMetadataStructureChangeTransaction() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableName = createStandardWalTable(testName.getMethodName());
+            TableToken tableName = createStandardWalTable(getEscapedTestName());
 
             try (TableWriterAPI twa = engine.getTableWriterAPI(tableName, "test")) {
                 AtomicInteger counter = new AtomicInteger(2);
@@ -111,7 +136,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testAddColumnFailToSerialiseToSequencerTransactionLog() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableName = createStandardWalTable(testName.getMethodName());
+            TableToken tableName = createStandardWalTable(getEscapedTestName());
 
             try (TableWriterAPI twa = engine.getTableWriterAPI(tableName, "test")) {
                 AlterOperation dodgyAlterOp = new AlterOperation() {
@@ -153,7 +178,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set", "'param' or 'type' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set typ", "'param' or 'type' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type", "'bypass' or 'wal' expected");
@@ -179,7 +204,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(dodgyFacade, () -> {
-            TableToken tableName = createStandardWalTable(testName.getMethodName());
+            TableToken tableName = createStandardWalTable(getEscapedTestName());
 
             drainWalQueue();
             compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'ef')");
@@ -200,16 +225,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testDataTxnFailToCommitInWalWriter() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
 
             drainWalQueue();
 
             IntHashSet badWalIds = new IntHashSet();
 
             try (
-                    WalColFirstWriter walWriter1 = engine.getWalColFirstWriter(tableToken);
-                    WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tableToken);
-                    WalColFirstWriter walWriter3 = engine.getWalColFirstWriter(tableToken)
+                    WalWriter walWriter1 = engine.getWalWriter(tableToken);
+                    WalWriter walWriter2 = engine.getWalWriter(tableToken);
+                    WalWriter walWriter3 = engine.getWalWriter(tableToken)
             ) {
                 Assert.assertEquals(1, walWriter1.getWalId());
                 Assert.assertEquals(2, walWriter2.getWalId());
@@ -224,8 +249,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     TableWriterAPI alterWriter = engine.getTableWriterAPI(tableToken, "test");
                     TableWriterAPI insertWriter = engine.getTableWriterAPI(tableToken, "test")
             ) {
-
-                badWalIds.add(badWriterId = ((WalColFirstWriter) alterWriter).getWalId());
+                badWalIds.add(badWriterId = ((WalWriter) alterWriter).getWalId());
 
                 // Serialize into WAL sequencer a drop column operation of non-existing column
                 // So that it will fail during application to WAL sequencer
@@ -258,21 +282,20 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 row.putLong(0, 123L);
                 row.append();
                 insertWriter.commit();
-
             } finally {
                 Misc.free(alterOp);
             }
 
-            try (WalColFirstWriter walWriter1 = engine.getWalColFirstWriter(tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
                 Assert.assertTrue(badWalIds.excludes(walWriter1.getWalId()));
 
                 // Assert wal writer 2 is not in the pool after failure to apply structure change
                 // wal writer 3 will fail to go active because of dodgy Alter in the WAL sequencer
 
-                try (WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     Assert.assertTrue(badWalIds.excludes(walWriter2.getWalId()));
 
-                    try (WalColFirstWriter walWriter3 = engine.getWalColFirstWriter(tableToken)) {
+                    try (WalWriter walWriter3 = engine.getWalWriter(tableToken)) {
                         Assert.assertTrue(badWalIds.excludes(walWriter3.getWalId()));
                         Assert.assertNotEquals(badWriterId, walWriter3.getWalId());
                     }
@@ -303,6 +326,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testDataTxnFailToRenameWalColumnOnCommit() throws Exception {
+        // Column file renames only happen for col-first format.
+        Assume.assumeTrue(walFormat == WalFormat.COL_FIRST);
+
         FilesFacade dodgyFf = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
@@ -314,7 +340,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(dodgyFf, () -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
 
             drainWalQueue();
 
@@ -344,11 +370,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 Misc.free(alterOp);
             }
 
-            try (WalColFirstWriter walWriter1 = engine.getWalColFirstWriter(tableToken)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
                 Assert.assertEquals(1, walWriter1.getWalId());
 
                 // Assert wal writer 2 is not in the pool after failure to apply structure change
-                try (WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tableToken)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     Assert.assertEquals(3, walWriter2.getWalId());
                 }
             }
@@ -365,7 +391,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testDodgyAddColumDoesNotChangeMetadata() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
 
             try (TableWriterAPI twa = engine.getTableWriterAPI(tableToken, "test")) {
                 AtomicInteger counter = new AtomicInteger(2);
@@ -406,7 +432,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testDodgyAlterSerializesBrokenStructureChange() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             TableToken tableToken = createStandardWalTable(tableName);
 
             try (TableWriterAPI twa = engine.getTableWriterAPI(tableToken, "test")) {
@@ -460,7 +486,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testErrorReadingWalEFileSuspendTable() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
 
             TableToken tableToken = createStandardWalTable(tableName);
 
@@ -482,26 +508,26 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testFailToRollUncommittedToNewWalSegmentDesignatedTimestamp() throws Exception {
-        String failToRollFile = "ts.d";
+        String failToRollFile = walFormat == WalFormat.ROW_FIRST ? TableUtils.WAL_SEGMENT_FILE_NAME : "ts.d";
         failToCopyDataToFile(failToRollFile);
     }
 
     @Test
     public void testFailToRollUncommittedToNewWalSegmentFixedColumn() throws Exception {
-        String failToRollFile = "sym.d";
+        String failToRollFile = walFormat == WalFormat.ROW_FIRST ? TableUtils.WAL_SEGMENT_FILE_NAME : "sym.d";
         failToCopyDataToFile(failToRollFile);
     }
 
     @Test
     public void testFailToRollUncommittedToNewWalSegmentVarLenDataFile() throws Exception {
-        String failToRollFile = "str.d";
+        String failToRollFile = walFormat == WalFormat.ROW_FIRST ? TableUtils.WAL_SEGMENT_FILE_NAME : "str.d";
         failToCopyDataToFile(failToRollFile);
     }
 
     @Test
     public void testInvalidNonStructureAlter() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
 
             try (TableWriterAPI twa = engine.getTableWriterAPI(tableToken, "test")) {
                 AlterOperation dodgyAlterOp = new AlterOperation() {
@@ -537,9 +563,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testInvalidNonStructureChangeMakeWalWriterDistressed() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableName = createStandardWalTable(testName.getMethodName());
+            TableToken tableName = createStandardWalTable(getEscapedTestName());
 
-            try (WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableName)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableName)) {
                 Assert.assertEquals(1, walWriter.getWalId());
 
                 AlterOperation dodgyAlterOp = new AlterOperation() {
@@ -576,7 +602,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 }
             }
 
-            try (WalColFirstWriter walWriter = engine.getWalColFirstWriter(tableName)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableName)) {
                 // Wal Writer 1 is not pooled
                 Assert.assertEquals(2, walWriter.getWalId());
             }
@@ -593,7 +619,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testMainAddDuplicateColumnSequentiallyFailsWithSqlException() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
 
             compile("alter table " + tableToken.getTableName() + " add column new_column int");
 
@@ -608,6 +634,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testMainAndWalTableAddColumnFailed() throws Exception {
+        // Column files are only added for col-first format.
+        Assume.assumeTrue(walFormat == WalFormat.COL_FIRST);
+
         AtomicBoolean fail = new AtomicBoolean(true);
 
         FilesFacade ffOverride = new TestFilesFacadeImpl() {
@@ -621,7 +650,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ffOverride, () -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
             String tableName = tableToken.getTableName();
 
             compile("alter table " + tableName + " add column new_column int");
@@ -666,7 +695,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
         assertMemoryLeak(ffOverride, () -> {
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                String tableName = testName.getMethodName();
+                String tableName = getEscapedTestName();
                 createStandardWalTable(tableName);
 
                 compile("alter table " + tableName + " add column new_column int");
@@ -689,7 +718,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testNonWalTableTransactionNotificationIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             TableToken ignored = new TableToken(tableName, tableName, 123, false, false, false);
             createStandardWalTable(tableName);
 
@@ -708,11 +737,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testRecompileUpdateWithOutOfDateStructure() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableName = createStandardWalTable(testName.getMethodName());
+            TableToken tableName = createStandardWalTable(getEscapedTestName());
 
             drainWalQueue();
             //noinspection CatchMayIgnoreException
-            try (WalColFirstWriter writer = engine.getWalColFirstWriter(tableName)) {
+            try (WalWriter writer = engine.getWalWriter(tableName)) {
                 writer.apply(new UpdateOperation(tableName, 1, 22, 1) {
                     @Override
                     public SqlExecutionContext getSqlExecutionContext() {
@@ -854,7 +883,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testTableWriterDirectAddColumnStopsWal() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableName = createStandardWalTable(testName.getMethodName());
+            TableToken tableName = createStandardWalTable(getEscapedTestName());
 
             drainWalQueue();
             try (TableWriter writer = getWriter(tableName)) {
@@ -874,7 +903,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testTableWriterDirectDropColumnStopsWal() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableName = createStandardWalTable(testName.getMethodName());
+            TableToken tableName = createStandardWalTable(getEscapedTestName());
 
             drainWalQueue();
             try (TableWriter writer = getWriter(tableName)) {
@@ -921,7 +950,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableAddColumnFailedNoDiskSpaceShouldSuspendTable() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = getEscapedTestName();
         String query = "alter table " + tableName + " ADD COLUMN sym5 SYMBOL CAPACITY 1024";
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
             @Override
@@ -936,7 +965,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableAttachFailedDoesNotSuspendTable() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = getEscapedTestName();
         String query = "alter table " + tableName + " attach partition list '2022-02-25'";
         runCheckTableNonSuspended(tableName, query);
     }
@@ -964,7 +993,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
-            TableToken tableName = createStandardWalTable(testName.getMethodName());
+            TableToken tableName = createStandardWalTable(getEscapedTestName());
 
             drainWalQueue();
 
@@ -983,21 +1012,21 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableDropNonExistingIndexDoesNotSuspendTable() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = getEscapedTestName();
         String query = "alter table " + tableName + " ALTER COLUMN sym DROP INDEX";
         runCheckTableNonSuspended(tableName, query);
     }
 
     @Test
     public void testWalTableDropPartitionFailedDoesNotSuspendTable() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = getEscapedTestName();
         String query = "alter table " + tableName + " drop partition list '2022-02-25'";
         runCheckTableNonSuspended(tableName, query);
     }
 
     @Test
     public void testWalTableDropPartitionFailedDoesNotSuspendTable3() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = getEscapedTestName();
         String query = "alter table " + tableName + " drop partition list '2022'";
         try {
             runCheckTableNonSuspended(tableName, query);
@@ -1009,14 +1038,14 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableEmptyUpdateDoesNotSuspendTable() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = getEscapedTestName();
         String query = "update " + tableName + " set x = 1 where x < 0";
         runCheckTableNonSuspended(tableName, query);
     }
 
     @Test
     public void testWalTableIndexCachedFailedDoesNotSuspendTable() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = getEscapedTestName();
         String query = "alter table " + tableName + " alter column sym NOCACHE";
         runCheckTableNonSuspended(tableName, query);
     }
@@ -1024,7 +1053,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testWalTableMultiColumnAddNotSupported() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
 
             insert("insert into " + tableToken.getTableName() +
                     " values (101, 'dfd', '2022-02-24T01', 'asd')");
@@ -1070,7 +1099,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
 
             //1
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
             //2 fail
             compile("update " + tableToken.getTableName() + " set x = 1111");
             //3
@@ -1124,7 +1153,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(filesFacade, () -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
 
             compile("update " + tableToken.getTableName() + " set x = 1111;");
             compile("update " + tableToken.getTableName() + " set sym = 'XXX';");
@@ -1160,7 +1189,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
         assertMemoryLeak(filesFacade, () -> {
             //1
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
             //2 fail
             compile("update " + tableToken.getTableName() + " set x = 1111");
             //3
@@ -1192,7 +1221,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testWalTableSuspendResumeSql() throws Exception {
         assertMemoryLeak(ff, () -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
             String nonWalTable = "W";
             createStandardNonWalTable(nonWalTable);
 
@@ -1231,7 +1260,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
         assertMemoryLeak(filesFacade, () -> {
             //1
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(getEscapedTestName());
             //2 fail
             compile("update " + tableToken.getTableName() + " set x = 1111");
             //3
@@ -1260,7 +1289,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalUpdateFailedCompilationSuspendsTable() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = getEscapedTestName();
         String query = "update " + tableName + " set x = 1111";
         Overrides overrides = node1.getConfigurationOverrides();
         overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
@@ -1281,7 +1310,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalUpdateFailedSuspendsTable() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = getEscapedTestName();
         String query = "update " + tableName + " set x = 1111";
         runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
             private int attempt = 0;
@@ -1326,7 +1355,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     private void failToApplyAlter(String error, Function<TableToken, AlterOperation> alterOperationFunc) throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             TableToken tableToken = createStandardWalTable(tableName);
             drainWalQueue();
 
@@ -1347,7 +1376,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     private void failToApplyDoubleAlter(Function<TableToken, AlterOperation> alterOperationFunc) throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             TableToken tableToken = createStandardWalTable(tableName);
             drainWalQueue();
 
@@ -1371,27 +1400,17 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     private void failToCopyDataToFile(String failToRollFile) throws Exception {
         FilesFacade dodgyFf = new TestFilesFacadeImpl() {
-
-            @Override
-            public long copyData(int srcFd, int destFd, long offsetSrc, long length) {
-                if (destFd == fd) {
-                    return -1;
-                }
-                return super.copyData(srcFd, destFd, offsetSrc, length);
-            }
-
             @Override
             public int openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "1" + Files.SEPARATOR + failToRollFile)) {
-                    fd = super.openRW(name, opts);
-                    return fd;
+                    return -1;
                 }
                 return super.openRW(name, opts);
             }
         };
 
         assertMemoryLeak(dodgyFf, () -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             compile("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
@@ -1417,8 +1436,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     try {
                         insertMethod.commit();
                     } catch (CairoException e) {
-                        // todo: check all assertContains() usages
-                        TestUtils.assertContains(e.getFlyweightMessage(), "failed to copy column file to new segment");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "failed to copy");
                     }
                 }
             }
@@ -1484,13 +1502,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(dodgyFf, () -> {
-            TableToken tableName = createStandardWalTable(testName.getMethodName());
+            TableToken tableName = createStandardWalTable(getEscapedTestName());
 
             drainWalQueue();
 
-            try (WalColFirstWriter ignore = engine.getWalColFirstWriter(tableName)) {
+            try (WalWriter ignore = engine.getWalWriter(tableName)) {
                 compile("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
-                try (WalColFirstWriter insertedWriter = engine.getWalColFirstWriter(tableName)) {
+                try (WalWriter insertedWriter = engine.getWalWriter(tableName)) {
                     try (Path path = new Path()) {
                         String columnName = "sym";
                         path.of(engine.getConfiguration().getRoot()).concat(tableName).put(Files.SEPARATOR).put(WAL_NAME_BASE).put(insertedWriter.getWalId());
