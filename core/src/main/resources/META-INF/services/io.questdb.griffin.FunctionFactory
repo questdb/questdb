@@ -22,6 +22,8 @@
 #
 ################################################################################
 
+io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory
+
 io.questdb.griffin.engine.functions.activity.CancelQueryFunctionFactory
 io.questdb.griffin.engine.functions.activity.QueryActivityFunctionFactory
 
