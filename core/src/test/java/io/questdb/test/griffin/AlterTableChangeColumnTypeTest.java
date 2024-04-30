@@ -46,17 +46,31 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
+    private final boolean partitioned;
     private final boolean walEnabled;
 
-    public AlterTableChangeColumnTypeTest(WalMode walMode) {
-        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    public AlterTableChangeColumnTypeTest(Mode walMode) {
+        this.walEnabled = (walMode == Mode.WITH_WAL);
+        this.partitioned = (walMode != Mode.NON_PARTITIONED);
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+                {Mode.WITH_WAL}, {Mode.NO_WAL}, {Mode.NON_PARTITIONED}
         });
+    }
+
+    @Test
+    public void testColumnDoesNotExist() throws Exception {
+        Assume.assumeTrue(!walEnabled && partitioned);
+        assertFailure("alter table x alter column non_existing", 27, "column 'non_existing' does not exists in table 'x'");
+    }
+
+    @Test
+    public void testConversionInvalidToken() throws Exception {
+        Assume.assumeTrue(!walEnabled && partitioned);
+        assertFailure("alter table x alter column i type long abc", 39, "unexpected token [abc] while trying to change column type");
     }
 
     @Test
@@ -287,18 +301,48 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testColumnDoesNotExist() throws Exception {
-        assertFailure("alter table x alter column non_existing", 27, "column 'non_existing' does not exists in table 'x'");
-    }
-
-    @Test
     public void testNewTypeInvalid() throws Exception {
+        Assume.assumeTrue(!walEnabled && partitioned);
         assertFailure("alter table x alter column c type abracadabra", 34, "invalid type");
     }
 
     @Test
     public void testNewTypeMissing() throws Exception {
+        Assume.assumeTrue(!walEnabled && partitioned);
         assertFailure("alter table x alter column c type", 33, "column type expected");
+    }
+
+    @Test
+    public void testTimestampConversionInvalid() throws Exception {
+        Assume.assumeTrue(!walEnabled && partitioned);
+        assertFailure("alter table x alter column timestamp type long", 42, "cannot change type of designated timestamp column");
+    }
+
+    private void createX() throws SqlException {
+        ddl(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str(5,1024,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_varchar(5,64,2) v" +
+                        " from long_sequence(1000)" +
+                        "), index(ik) timestamp (timestamp) " +
+                        (partitioned ? "PARTITION BY DAY " : "PARTITION BY NONE ") +
+                        (walEnabled ? "WAL" : (partitioned ? "BYPASS WAL" : ""))
+        );
     }
 
     @Test
@@ -348,30 +392,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         Assume.assumeTrue("Test disabled during WAL run.", walEnabled);
     }
 
-    private void createX() throws SqlException {
-        ddl(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str(5,1024,2) c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(0, 1000000000) k," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_varchar(5,64,2) v" +
-                        " from long_sequence(1000)" +
-                        "), index(ik) timestamp (timestamp) PARTITION BY HOUR " +
-                        (walEnabled ? "WAL" : "BYPASS WAL")
-        );
+    public enum Mode {
+        WITH_WAL, NO_WAL, NON_PARTITIONED
     }
 
     private void testWalRollUncommittedConversion(int columnType, String columnCreateSql, String convertToTypeSql) throws SqlException, NumericException {
