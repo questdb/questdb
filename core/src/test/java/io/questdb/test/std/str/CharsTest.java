@@ -27,10 +27,7 @@ package io.questdb.test.std.str;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.FileNameExtractorUtf8Sequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.*;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -39,6 +36,7 @@ import org.junit.Test;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.util.Base64;
 import java.util.Random;
 
@@ -48,21 +46,7 @@ public class CharsTest {
 
     @BeforeClass
     public static void setUp() {
-        separator = System.getProperty("file.separator").charAt(0);
-    }
-
-    @Test
-    public void testBase64Decode() {
-        String encoded = "+W8kK89c79Jb97CrQM3aGuPJE85fEdFoXwSsEWjU736IXm4v7+mZKiOL82uYhGaxmIYUUJh5/Xj44tX0NrD4lQ==";
-        ByteBuffer buffer = ByteBuffer.allocate(1024);
-        Chars.base64Decode(encoded, buffer);
-        buffer.flip();
-
-        byte[] decode = Base64.getDecoder().decode(encoded);
-        Assert.assertEquals(decode.length, buffer.remaining());
-        for (byte b : decode) {
-            Assert.assertEquals(b, buffer.get());
-        }
+        separator = FileSystems.getDefault().getSeparator().charAt(0);
     }
 
     @Test
@@ -102,6 +86,31 @@ public class CharsTest {
     }
 
     @Test
+    public void testBase64Decode_ByteBuffer() {
+        String encoded = "+W8kK89c79Jb97CrQM3aGuPJE85fEdFoXwSsEWjU736IXm4v7+mZKiOL82uYhGaxmIYUUJh5/Xj44tX0NrD4lQ==";
+        ByteBuffer buffer = ByteBuffer.allocate(1024);
+        Chars.base64Decode(encoded, buffer);
+        buffer.flip();
+
+        byte[] decoded = Base64.getDecoder().decode(encoded);
+        Assert.assertEquals(decoded.length, buffer.remaining());
+        for (byte b : decoded) {
+            Assert.assertEquals(b, buffer.get());
+        }
+    }
+
+    @Test
+    public void testBase64Decode_Utf8Sink() {
+        String encoded = Base64.getEncoder().encodeToString("аз съм грут:गाजर का हलवा".getBytes());
+        Utf8StringSink sink = new Utf8StringSink();
+        Chars.base64Decode(encoded, sink);
+
+        byte[] decoded = Base64.getDecoder().decode(encoded);
+        String decodedStr = new String(decoded);
+        TestUtils.assertEquals(decodedStr, sink);
+    }
+
+    @Test
     public void testBase64Encode() {
         final StringSink sink = new StringSink();
         final TestBinarySequence testBinarySequence = new TestBinarySequence();
@@ -130,14 +139,14 @@ public class CharsTest {
     }
 
     @Test
-    public void testBase64UrlDecode() {
+    public void testBase64UrlDecode_ByteBuffer() {
         String s = "this is a test";
         String encoded = Base64.getUrlEncoder().encodeToString(s.getBytes());
         ByteBuffer buffer = ByteBuffer.allocate(1024);
         Chars.base64UrlDecode(encoded, buffer);
         buffer.flip();
         String s2 = new String(buffer.array(), buffer.position(), buffer.remaining());
-        TestUtils.equals(s, s2);
+        TestUtils.assertEquals(s, s2);
 
         // null is ignored
         buffer.clear();
@@ -203,6 +212,62 @@ public class CharsTest {
         byte[] decoded = new byte[buffer.remaining()];
         buffer.get(decoded);
         Assert.assertArrayEquals(bytes, decoded);
+    }
+
+    @Test
+    public void testBase64UrlDecode_Utf8Sink() {
+        String s = "this is a test";
+        String encoded = Base64.getUrlEncoder().encodeToString(s.getBytes());
+        Utf8StringSink sink = new Utf8StringSink();
+        Chars.base64UrlDecode(encoded, sink);
+        TestUtils.assertEquals(s, sink);
+
+        // null is ignored
+        sink.clear();
+        Chars.base64UrlDecode(null, sink);
+        Assert.assertEquals(0, sink.size());
+
+        // single char with no padding
+        sink.clear();
+        Chars.base64UrlDecode(Base64.getUrlEncoder().encodeToString("a".getBytes(StandardCharsets.UTF_8)), sink);
+        Assert.assertEquals(1, sink.size());
+        TestUtils.assertEquals("a", sink);
+
+        // empty string
+        sink.clear();
+        Chars.base64UrlDecode("", sink);
+        Assert.assertEquals(0, sink.size());
+
+        // single char is invalid
+        sink.clear();
+        try {
+            Chars.base64UrlDecode("a", sink);
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid base64 encoding");
+        }
+
+        // empty string with padding
+        sink.clear();
+        Chars.base64UrlDecode("===", sink);
+        Assert.assertEquals(0, sink.size());
+
+        // non-ascii in input
+        sink.clear();
+        try {
+            Chars.base64UrlDecode("a\u00A0", sink);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "non-ascii character while decoding base64");
+        }
+
+        // ascii but not base64
+        sink.clear();
+        try {
+            Chars.base64UrlDecode("a\u0001", sink);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid base64 character [ch=\u0001]");
+        }
     }
 
     @Test
