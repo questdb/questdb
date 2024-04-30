@@ -68,13 +68,13 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     "- avg(l2price(14, bid_size, bid_value))" +
                     " as spread from x",
                     "VirtualRecord\n" +
-                    "  functions: [avg1-avg]\n" +
-                    "    Async Group By workers: 1\n" +
-                    "      values: [avg(io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory$L2PriceFunction([14,bid_size,bid_value])),avg(io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory$L2PriceFunction([14,ask_size,ask_value]))]\n" +
-                    "      filter: null\n" +
-                    "        DataFrame\n" +
-                    "            Row forward scan\n" +
-                    "            Frame forward scan on: x\n");
+                            "  functions: [avg1-avg]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      values: [avg(l2price([14,bid_size,bid_value])),avg(l2price([14,ask_size,ask_value]))]\n" +
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n");
 
             assertQuery("spread\n"
                     + "0.020150084516455447\n",
