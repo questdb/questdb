@@ -68,7 +68,7 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
 
         public ConstStartsWithVarcharFunction(Function value, @Transient Utf8Sequence prefix) {
             this.value = value;
-            this.prefix = Utf8String.newInstance(prefix);
+            this.prefix = prefix != null ? Utf8String.newInstance(prefix) : null;
         }
 
         public ConstStartsWithVarcharFunction(Function value, @Transient CharSequence prefix) {
@@ -83,6 +83,9 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            if (prefix == null) {
+                return false;
+            }
             Utf8Sequence us = value.getVarcharA(rec);
             return us != null && Utf8s.startsWith(us, prefix);
         }

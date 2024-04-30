@@ -1207,7 +1207,7 @@ public final class Utf8s {
         if (prefixSize == 0) {
             return true;
         }
-        long prefixMask = (1L << 8 * prefixSize) - 1;
+        long prefixMask = (1L << 8 * Math.min(VARCHAR_INLINED_PREFIX_BYTES, prefixSize)) - 1;
         if (((l.zeroPaddedSixPrefix() & prefixMask) ^ r.zeroPaddedSixPrefix()) != 0) {
             return false;
         }
