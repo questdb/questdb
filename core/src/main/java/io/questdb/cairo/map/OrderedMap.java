@@ -593,8 +593,8 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void copyFrom(MapKey srcKey) {
-            FixedSizeKey srcFastKey = (FixedSizeKey) srcKey;
-            copyFromRawKey(srcFastKey.startAddress, keySize);
+            FixedSizeKey srcFixedKey = (FixedSizeKey) srcKey;
+            copyFromRawKey(srcFixedKey.startAddress, keySize);
         }
 
         @Override
@@ -848,8 +848,8 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public void copyFrom(MapKey srcKey) {
-            VarSizeKey srcFastKey = (VarSizeKey) srcKey;
-            copyFromRawKey(srcFastKey.startAddress + keyOffset, srcFastKey.len);
+            VarSizeKey srcVarKey = (VarSizeKey) srcKey;
+            copyFromRawKey(srcVarKey.startAddress + keyOffset, srcVarKey.len);
         }
 
         @Override
