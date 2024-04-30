@@ -91,14 +91,15 @@ public class ColumnTypeConverter {
             srcFixMem.ofOffset(ff, srcFixFd, null, 0, ColumnType.sizeOf(srcColumnType) * rowCount, memoryTag, CairoConfiguration.O_NONE);
             dstFixMem.of(ff, dstFixFd, null, appendPageSize, ColumnType.sizeOf(dstColumnType) * rowCount, memoryTag);
             dstFixMem.jumpTo(0);
-            long succeeded = ConvertersNative.fixedToFixed(srcFixMem.getPageAddress(0), srcColumnType, dstFixMem.getPageAddress(0), dstColumnType, rowCount, true);
+            long succeeded = ConvertersNative.fixedToFixed(srcFixMem.getPageAddress(0), srcColumnType, dstFixMem.getPageAddress(0), dstColumnType, rowCount);
             switch ((int) succeeded) {
                 case ConvertersNative.ConversionError.NONE:
                     return true;
-               case ConvertersNative.ConversionError.TRUNCATION_DISALLOWED:
-                    throw CairoException.critical(0).put("Conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType)).put(" would truncate the value.");
-                default:
+                case ConvertersNative.ConversionError.UNSUPPORTED_CAST:
                     throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
+
+                default:
+                    throw CairoException.critical(0).put("Unknown return code from native call: ").put(succeeded);
             }
         }
         finally {

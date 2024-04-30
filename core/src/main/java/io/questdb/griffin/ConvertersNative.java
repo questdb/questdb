@@ -27,13 +27,11 @@ package io.questdb.griffin;
 public final class ConvertersNative {
 
 
-    public static native long fixedToFixed(long srcMem, long srcType, long dstMem, long dstType, long rowCount, boolean allowTruncation);
+    public static native long fixedToFixed(long srcMem, long srcType, long dstMem, long dstType, long rowCount);
 
     public static final class ConversionError {
         public static final short NONE = 0;
         public static final short UNSUPPORTED_CAST = 1;
-        public static final short TRUNCATION_DISALLOWED = 2;
-
     }
 }
 

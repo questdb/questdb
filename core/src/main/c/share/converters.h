@@ -1,5 +1,5 @@
 /*******************************************************************************
-*     ___                  _   ____  ____
+ *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
@@ -25,7 +25,11 @@
 #define CONVERTERS_H
 
 #include <type_traits>
+#include <cmath>
 
+/**
+ * ColumnType enum, matching the Java definitions.
+ */
 enum class ColumnType : int {
     UNDEFINED = 0,
     BOOLEAN = 1,
@@ -61,39 +65,79 @@ enum class ColumnType : int {
     NULL_ = 31
 };
 
-constexpr size_t pack_column_types(ColumnType a, ColumnType b)
+/**
+ * Packs the column types into an int64_t, so we can use a single switch over both enum values.
+ * @param a the src column type
+ * @param b the dst column type
+ * @return packed value
+ */
+constexpr int64_t pack_column_types(ColumnType a, ColumnType b)
 {
-    return static_cast<size_t>(a) << 32 | static_cast<size_t>(b) & 0xffffffffL;
+    return static_cast<int64_t>(a) << 32 | static_cast<int64_t>(b) & 0xffffffffL;
 }
 
 enum class ConversionError {
     NONE = 0,
     UNSUPPORTED_CAST = 1,
-    TRUNCATION_DISALLOWED = 2,
 };
 
+/**
+ * Convert between fixed numeric types.
+ * Expected behaviour:
+ *      For nullable types, any overflow should be converted to a null.
+ *      For non-nullable types, any overflow will be left as is i.e 100,000 -> short will be -31072.
+ * @tparam T1 the source type
+ * @tparam T2 the destination type
+ * @param srcMem the source type mmap column
+ * @param dstMem the destination type mmap column
+ * @param rowCount the number of rows
+ * @return
+ */
 template <typename T1, typename T2>
-ConversionError convert_fixed_to_fixed(T1* srcMem, T2* dstMem, size_t rowCount, bool allowTruncation)
+ConversionError convert_fixed_to_fixed_numeric(T1* srcMem, T2* dstMem, T1 srcSentinel, T2 dstSentinel, size_t rowCount)
 {
-    if (!allowTruncation)
-    {
-        if (sizeof(T1) > sizeof(T2))
-        {
-            return ConversionError::TRUNCATION_DISALLOWED;
-        }
-
-        if constexpr (std::is_floating_point<T1>() && std::is_integral<T2>())
-        {
-            return ConversionError::TRUNCATION_DISALLOWED;
-        }
-    }
-
+    constexpr auto maxDstValue = std::numeric_limits<T2>::max();
     for (int i = 0; i < rowCount; i++) {
-        dstMem[i] = static_cast<T2>(srcMem[i]);
+        if (srcMem[i] == srcSentinel || srcMem[i] > maxDstValue) {
+            dstMem[i] = dstSentinel;
+        } else {
+            dstMem[i] = static_cast<T2>(srcMem[i]);
+        }
     }
 
     return ConversionError::NONE;
 }
+
+template <ColumnType C> constexpr
+auto get_null_sentinel() {
+    if constexpr (C == ColumnType::INT) {
+        return INT32_MIN;
+    } else if (C == ColumnType::LONG) {
+        return INT64_MIN;
+    }
+    else if (C == ColumnType::DATE) {
+        return INT64_MIN;
+    }
+    else if (C == ColumnType::TIMESTAMP) {
+        return INT64_MIN;
+    }
+    else if (C == ColumnType::FLOAT) {
+        return std::nanf;
+    }
+    else if (C == ColumnType::DOUBLE) {
+        return std::nan;
+    }
+    else {
+        return 0;
+    }
+}
+
+enum class NullSentinels {
+    INT = INT32_MIN,
+    LONG = INT64_MIN,
+    FLOAT = std::nanf,
+
+};
 
 #endif //CONVERTERS_H
 

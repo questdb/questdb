@@ -1,5 +1,5 @@
 /*******************************************************************************
-*     ___                  _   ____  ____
+ *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
@@ -29,10 +29,11 @@
 
 #define macro_dispatch_fixed_to_fixed(a, b, a_ty, b_ty) \
 case pack_column_types(a, b): \
-        status = convert_fixed_to_fixed<a_ty, b_ty>(reinterpret_cast<a_ty*>(srcMem), reinterpret_cast<b_ty*>(dstMem), rowCount, allowTruncation); \
+        status = convert_fixed_to_fixed_numeric<a_ty, b_ty>(reinterpret_cast<a_ty*>(srcMem), reinterpret_cast<b_ty*>(dstMem), get_null_sentinel<a>(), get_null_sentinel<b>(), rowCount); \
 break;
 
 extern "C" {
+
 JNIEXPORT jlong JNICALL
 Java_io_questdb_griffin_ConvertersNative_fixedToFixed
 (
@@ -42,12 +43,12 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
     jlong srcType,
     jlong dstMem,
     jlong dstType,
-    jlong rowCount,
-    jboolean allowTruncation
+    jlong rowCount
 )
 {
     const auto srcColumnType = static_cast<ColumnType>(srcType);
     const auto dstColumnType = static_cast<ColumnType>(dstType);
+
     ConversionError status = ConversionError::NONE;
 
     switch (pack_column_types(srcColumnType, dstColumnType))
@@ -117,7 +118,7 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
     macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::DOUBLE, int64_t, double)
     macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::DATE, int64_t, int64_t)
     default:
-        return static_cast<jlong>(ConversionError::UNSUPPORTED_CAST);
+        status = ConversionError::UNSUPPORTED_CAST;
     }
 
     return static_cast<jlong>(status);
