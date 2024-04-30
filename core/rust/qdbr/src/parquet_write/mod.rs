@@ -1,12 +1,11 @@
 mod primitive;
 mod schema;
 
-use parquet2;
 use parquet2::encoding::hybrid_rle::encode_bool;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2, Page};
-use parquet2::schema::types::{PrimitiveType};
+use parquet2::schema::types::PrimitiveType;
 use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveStatistics};
 use parquet2::types::NativeType;
 use parquet2::write::{DynIter, Version};
@@ -36,7 +35,12 @@ pub fn column_chunk_to_pages(
             (offset, length)
         });
 
-    let pages = rows.map(move |(offset, length)| Ok(slice_to_page(column_type.clone(), &slice[offset..offset + length])));
+    let pages = rows.map(move |(offset, length)| {
+        Ok(slice_to_page(
+            column_type.clone(),
+            &slice[offset..offset + length],
+        ))
+    });
 
     DynIter::new(pages)
 }
@@ -83,7 +87,7 @@ pub fn slice_to_page(column_type: PrimitiveType, chunk: &[i32]) -> Page {
         chunk.len(),
         statistics,
         column_type.clone(),
-        Encoding::Plain
+        Encoding::Plain,
     ))
 }
 
@@ -101,7 +105,7 @@ fn encode_iter_v1<I: Iterator<Item = bool>>(buffer: &mut Vec<u8>, iter: I) -> io
 }
 
 fn encode_iter_v2<I: Iterator<Item = bool>>(writer: &mut Vec<u8>, iter: I) -> io::Result<()> {
-    Ok(encode_bool(writer, iter)?)
+    encode_bool(writer, iter)
 }
 
 fn encode_iter<I: Iterator<Item = bool>>(
@@ -124,12 +128,12 @@ pub fn build_page_v1(
     encoding: Encoding,
 ) -> DataPage {
     let header = DataPageHeader::V1(DataPageHeaderV1 {
-            num_values: num_values as i32,
-            encoding: encoding.into(),
-            definition_level_encoding: Encoding::Rle.into(),
-            repetition_level_encoding: Encoding::Rle.into(),
-            statistics,
-        });
+        num_values: num_values as i32,
+        encoding: encoding.into(),
+        definition_level_encoding: Encoding::Rle.into(),
+        repetition_level_encoding: Encoding::Rle.into(),
+        statistics,
+    });
 
     DataPage::new(
         header,
@@ -180,19 +184,50 @@ pub fn _build_page_v2(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use crate::parquet_write::column_chunk_to_pages;
     use parquet2::compression::CompressionOptions;
-    use parquet2::deserialize::{HybridRleDecoderIter, HybridRleIter, native_cast, OptionalValues};
-    use parquet2::encoding::Encoding;
+    use parquet2::deserialize::{
+        native_cast, HybridEncoded, HybridRleDecoderIter, HybridRleIter, OptionalValues,
+    };
     use parquet2::encoding::hybrid_rle::Decoder;
-    use parquet2::FallibleStreamingIterator;
+    use parquet2::encoding::{hybrid_rle, uleb128, Encoding};
     use parquet2::metadata::SchemaDescriptor;
     use parquet2::page::split_buffer;
-    use parquet2::read::{BasicDecompressor, ColumnIterator, MutStreamingIterator, read_metadata, State};
-    use parquet2::schema::Repetition;
+    use parquet2::read::{
+        read_metadata, BasicDecompressor, ColumnIterator, MutStreamingIterator, State,
+    };
     use parquet2::schema::types::{ParquetType, PhysicalType};
-    use parquet2::write::{Compressor, DynIter, DynStreamingIterator, FileWriter, Version, WriteOptions};
-    use crate::parquet_write::column_chunk_to_pages;
+    use parquet2::schema::Repetition;
+    use parquet2::write::{
+        Compressor, DynIter, DynStreamingIterator, FileWriter, Version, WriteOptions,
+    };
+    use parquet2::FallibleStreamingIterator;
+    use std::io::Cursor;
+    #[test]
+    fn encode_column_tops() {
+        let def_level_count: usize = 113_000_000;
+        let mut buffer = vec![];
+        let mut bb = [0u8; 10];
+        let len = uleb128::encode((def_level_count << 1) as u64, &mut bb);
+        buffer.extend_from_slice(&bb[..len]);
+        buffer.extend_from_slice(&[1u8]);
+
+        // assert!(encode_iter(&mut buffer, std::iter::repeat(true).take(def_level_count), Version::V1).is_ok());
+
+        let iter = hybrid_rle::Decoder::new(buffer.as_slice(), 1);
+        let iter = HybridRleIter::new(iter, def_level_count);
+        for el in iter {
+            assert!(el.is_ok());
+            let he = el.unwrap();
+            match he {
+                HybridEncoded::Repeated(val, len) => {
+                    assert_eq!(val, true);
+                    assert_eq!(len, def_level_count);
+                }
+                _ => assert!(false),
+            }
+        }
+    }
 
     #[test]
     fn write_i32_column() {
@@ -216,7 +251,8 @@ mod tests {
             schema.columns()[0].descriptor.primitive_type.clone(),
             &page1,
             Some(1024),
-            Encoding::Plain);
+            Encoding::Plain,
+        );
 
         let pages = DynStreamingIterator::new(Compressor::new(
             pages.into_iter(),
@@ -254,16 +290,22 @@ mod tests {
                             match page {
                                 parquet2::page::Page::Data(page) => {
                                     let is_optional =
-                                        page.descriptor.primitive_type.field_info.repetition == Repetition::Optional;
+                                        page.descriptor.primitive_type.field_info.repetition
+                                            == Repetition::Optional;
                                     match (page.encoding(), is_optional) {
                                         (Encoding::Plain, true) => {
-                                            let (_, def_levels, _) = split_buffer(page).expect("split");
-                                            let validity = HybridRleDecoderIter::new(HybridRleIter::new(
-                                                Decoder::new(def_levels, 1),
-                                                page.num_values(),
-                                            ));
+                                            let (_, def_levels, _) =
+                                                split_buffer(page).expect("split");
+                                            let validity =
+                                                HybridRleDecoderIter::new(HybridRleIter::new(
+                                                    Decoder::new(def_levels, 1),
+                                                    page.num_values(),
+                                                ));
                                             let values = native_cast(page).expect("cast");
-                                            let values: Result<Vec<Option<i32>>, parquet2::error::Error> = OptionalValues::new(validity, values).collect();
+                                            let values: Result<
+                                                Vec<Option<i32>>,
+                                                parquet2::error::Error,
+                                            > = OptionalValues::new(validity, values).collect();
                                             if let Ok(v) = values {
                                                 assert_eq!(v, expected1);
                                             }
