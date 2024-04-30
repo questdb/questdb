@@ -38,6 +38,35 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
+    public void testLevelTwoPriceFailsWithEvenArgs() throws Exception {
+        assertException("select l2price(35, 8);", 19, "l2price requires an odd number of arguments.");
+    }
+
+    @Test
+    public void testLevelTwoPriceFailsWithNullTarget() throws Exception {
+        assertException("select l2price(null, 8, 17.2);", 15, "l2price requires a non-null first argument");
+    }
+
+    /**
+     * l2price should return null for the price if it encounters an order with null values.
+     *
+     * @throws Exception
+     */
+    @Test
+    public void testLevelTwoPriceIncludingNullValue() throws Exception {
+        assertQuery("l2price\n"
+                + "null\n", "select l2price(45, null, 3)");
+        assertQuery("l2price\n"
+                + "null\n", "select l2price(45, 3, null)");
+        assertQuery("l2price\n"
+                + "null\n", "select l2price(45, 5, 3.2, 12, null)");
+        assertQuery("l2price\n"
+                + "null\n", "select l2price(999999, 5, 3.2, 12, 5.1, 10, 12.3, 67, 42.4, 38, 29.9, 39, 40.3, null, 5.1)");
+        assertQuery("l2price\n"
+                + "21.408888888888885\n", "select l2price(45, 5, 3.2, 12, 5.1, 10, 12.3, 67, 42.4, 38, 29.9, 39, 40.3, null, 5.1)");
+    }
+
+    @Test
     public void testLevelTwoPriceWithAggregate() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as ( select timestamp_sequence(172800000000, 3600000000) ts, rnd_long(12, 20, 0) as size, rnd_double() as value from long_sequence(10))");
@@ -46,11 +75,6 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
             assertQuery("avg\n"
                     + "0.5617574066977766\n", "select avg(l2price(14, size, value)) from x");
         });
-    }
-
-    @Test
-    public void testLevelTwoPriceFailsWithEvenArgs() throws Exception {
-        assertException("select l2price(35, 8);", 19, "l2price requires an odd number of arguments.");
     }
 
     @Test
@@ -65,8 +89,8 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
             drainWalQueue();
 
             assertPlan("select avg(l2price(14, ask_size, ask_value)) " +
-                    "- avg(l2price(14, bid_size, bid_value))" +
-                    " as spread from x",
+                            "- avg(l2price(14, bid_size, bid_value))" +
+                            " as spread from x",
                     "VirtualRecord\n" +
                             "  functions: [avg1-avg]\n" +
                             "    Async Group By workers: 1\n" +

@@ -52,6 +52,12 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
         final int numberOfPairs = (args.size() - 1) / 2;
 
+        final Function target = args.getQuick(0);
+
+        if (target.isNullConstant()) {
+            throw SqlException.position(argPositions.getQuick(0)).put("l2price requires a non-null first argument.");
+        }
+
         switch (numberOfPairs) {
             case 0:
                 throw SqlException.position(argPositions.getLast()).put("not enough arguments for l2price");
@@ -89,54 +95,6 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class L2PriceFunctionN extends L2PriceBaseFunction {
-        public L2PriceFunctionN(ObjList<Function> args) {
-            super(args);
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            final long t = args.getQuick(0).getLong(rec);
-
-            double ta = 0; // target accumulator
-            double pa = 0; // price accumulator
-            double rt = t; // reduced target
-            double pp; // partial price
-
-            // expect (size, value) pairs
-            // equation is
-            // ((size[0] * value[0]) + (size[n] * value[n]) + ((target - size[0] - size[n]) * value[n+1])) / target
-            // ((ra)             + (rt * value[n+1])) / t
-            // get final price by partially filling against the last bin
-            for (int i = 1, n = args.size(); i < n; i += 2) {
-                final double size = args.getQuick(i).getDouble(rec);
-                final double value = args.getQuick(i+1).getDouble(rec);
-
-                // add size to acc
-                ta += size;
-
-                // if order not fulfilled
-                if (ta < t) {
-                    pa += (size * value);
-                    rt -= size;
-                    continue;
-                }
-
-                if (ta >= t) {
-                    if (i == 1) {
-                        return value;
-                    }
-
-                    pp = rt * value;
-                    return (pa + pp) / t;
-                }
-            }
-
-            // if never exceeded the target, then no price, since it can't be fulfilled
-            return Double.NaN;
-        }
-    }
-
     /**
      * Unrolled loop for 1 pair.
      */
@@ -150,6 +108,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             final double target = args.getQuick(0).getDouble(rec);
             final double size_0 = args.getQuick(1).getDouble(rec);
             final double value_0 = args.getQuick(2).getDouble(rec);
+
+            // if null values, can't continue calculating price
+            if (Double.isNaN(size_0) || Double.isNaN(value_0)) {
+                return Double.NaN;
+            }
 
             if (size_0 >= target)
                 return value_0;
@@ -173,6 +136,13 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             final double value_0 = args.getQuick(2).getDouble(rec);
             final double size_1 = args.getQuick(3).getDouble(rec);
             final double value_1 = args.getQuick(4).getDouble(rec);
+
+
+            // if null values, can't continue calculating price
+            if (Double.isNaN(size_0) || Double.isNaN(value_0)
+                    || Double.isNaN(size_1) || Double.isNaN(value_1)) {
+                return Double.NaN;
+            }
 
             if (size_0 >= target)
                 return value_0;
@@ -202,6 +172,12 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             final double value_1 = args.getQuick(4).getDouble(rec);
             final double size_2 = args.getQuick(5).getDouble(rec);
             final double value_2 = args.getQuick(6).getDouble(rec);
+
+            if (Double.isNaN(size_0) || Double.isNaN(value_0)
+                    || Double.isNaN(size_1) || Double.isNaN(value_1)
+                    || Double.isNaN(size_2) || Double.isNaN(value_2)) {
+                return Double.NaN;
+            }
 
             if (size_0 >= target)
                 return value_0;
@@ -239,6 +215,14 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             final double value_2 = args.getQuick(6).getDouble(rec);
             final double size_3 = args.getQuick(7).getDouble(rec);
             final double value_3 = args.getQuick(8).getDouble(rec);
+
+
+            if (Double.isNaN(size_0) || Double.isNaN(value_0)
+                    || Double.isNaN(size_1) || Double.isNaN(value_1)
+                    || Double.isNaN(size_2) || Double.isNaN(value_2)
+                    || Double.isNaN(size_3) || Double.isNaN(value_3)) {
+                return Double.NaN;
+            }
 
             if (size_0 >= target)
                 return value_0;
@@ -286,6 +270,15 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             final double size_4 = args.getQuick(9).getDouble(rec);
             final double value_4 = args.getQuick(10).getDouble(rec);
 
+
+            if (Double.isNaN(size_0) || Double.isNaN(value_0)
+                    || Double.isNaN(size_1) || Double.isNaN(value_1)
+                    || Double.isNaN(size_2) || Double.isNaN(value_2)
+                    || Double.isNaN(size_3) || Double.isNaN(value_3)
+                    || Double.isNaN(size_4) || Double.isNaN(value_4)) {
+                return Double.NaN;
+            }
+
             if (size_0 >= target)
                 return value_0;
 
@@ -314,6 +307,59 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
                         + (target - size_0 - size_1 - size_2 - size_3) * value_4) / target;
             }
 
+            return Double.NaN;
+        }
+    }
+
+    private static class L2PriceFunctionN extends L2PriceBaseFunction {
+        public L2PriceFunctionN(ObjList<Function> args) {
+            super(args);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final long t = args.getQuick(0).getLong(rec);
+
+            double ta = 0; // target accumulator
+            double pa = 0; // price accumulator
+            double rt = t; // reduced target
+            double pp; // partial price
+
+            // expect (size, value) pairs
+            // equation is
+            // ((size[0] * value[0]) + (size[n] * value[n]) + ((target - size[0] - size[n]) * value[n+1])) / target
+            // ((ra)             + (rt * value[n+1])) / t
+            // get final price by partially filling against the last bin
+            for (int i = 1, n = args.size(); i < n; i += 2) {
+                final double size = args.getQuick(i).getDouble(rec);
+                final double value = args.getQuick(i + 1).getDouble(rec);
+
+                // if null values, can't continue calculating price
+                if (Double.isNaN(size) || Double.isNaN(value)) {
+                    return Double.NaN;
+                }
+
+                // add size to acc
+                ta += size;
+
+                // if order not fulfilled
+                if (ta < t) {
+                    pa += (size * value);
+                    rt -= size;
+                    continue;
+                }
+
+                if (ta >= t) {
+                    if (i == 1) {
+                        return value;
+                    }
+
+                    pp = rt * value;
+                    return (pa + pp) / t;
+                }
+            }
+
+            // if never exceeded the target, then no price, since it can't be fulfilled
             return Double.NaN;
         }
     }
