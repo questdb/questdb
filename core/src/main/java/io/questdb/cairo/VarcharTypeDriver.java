@@ -287,7 +287,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         }
         boolean isAscii = hasAsciiFlag(raw);
         if (hasInlinedFlag(raw)) {
-            long auxLo = auxAddr + FULLY_INLINED_STRING_OFFSET;
+            long auxLo = auxEntry + FULLY_INLINED_STRING_OFFSET;
             return utf8SplitView.of(
                     auxLo,
                     auxLo,
@@ -295,7 +295,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                     isAscii);
         }
         return utf8SplitView.of(
-                auxAddr + INLINED_PREFIX_OFFSET,
+                auxEntry + INLINED_PREFIX_OFFSET,
                 dataAddr + getDataOffset(auxEntry),
                 (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
                 isAscii
