@@ -1,0 +1,3 @@
+[submodule "core/src/main/c/share/jemalloc"]
+	path = core/src/main/c/share/jemalloc
+	url = https://github.com/jemalloc/jemalloc.git

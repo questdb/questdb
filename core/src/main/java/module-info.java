@@ -837,6 +837,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()
             io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory,
+            io.questdb.griffin.engine.functions.str.ReplaceVarcharFunctionFactory,
             // regexp_replace()
             io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.RegexpReplaceVarcharFunctionFactory,
@@ -877,8 +878,10 @@ open module io.questdb {
             // strpos
             io.questdb.griffin.engine.functions.str.StrPosFunctionFactory,
             io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory,
+            io.questdb.griffin.engine.functions.str.StrPosVarcharFunctionFactory,
             // position
             io.questdb.griffin.engine.functions.str.PositionFunctionFactory,
+            io.questdb.griffin.engine.functions.str.PositionVarcharFunctionFactory,
             // Change string case
             io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory,
             io.questdb.griffin.engine.functions.str.ToUppercaseVarcharFunctionFactory,
@@ -913,6 +916,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.TrimFunctionFactory,
             io.questdb.griffin.engine.functions.str.LTrimFunctionFactory,
             io.questdb.griffin.engine.functions.str.RTrimFunctionFactory,
+            io.questdb.griffin.engine.functions.str.TrimVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LTrimVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.str.RTrimVarcharFunctionFactory,
 
             // starts_with
             io.questdb.griffin.engine.functions.str.StartsWithStrFunctionFactory,

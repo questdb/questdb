@@ -303,6 +303,14 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public int getContentLength() {
+            if (contentStart > -1) {
+                return (int) (ptr - contentStart);
+            } else {
+                return 0;
+            }
+        }
+
         public Request header(CharSequence name, CharSequence value) {
             beforeHeader();
             put(name).putAsciiInternal(": ").put(value);
@@ -363,17 +371,17 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
-        public Request putQuoted(@NotNull CharSequence cs) {
-            putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
-            return this;
-        }
-
-        @Override
-        public Request putUtf8(long lo, long hi) {
+        public Request putNonAscii(long lo, long hi) {
             final long size = hi - lo;
             checkCapacity(size);
             Vect.memcpy(ptr, lo, size);
             ptr += size;
+            return this;
+        }
+
+        @Override
+        public Request putQuoted(@NotNull CharSequence cs) {
+            putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
             return this;
         }
 
@@ -442,14 +450,6 @@ public abstract class HttpClient implements QuietCloseable {
             }
             eol();
             return this;
-        }
-
-        public int getContentLength() {
-            if (contentStart > -1) {
-                return (int) (ptr - contentStart);
-            } else {
-                return 0;
-            }
         }
 
         public Request url(CharSequence url) {

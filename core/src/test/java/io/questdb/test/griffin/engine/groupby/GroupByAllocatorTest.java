@@ -28,11 +28,13 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.Bytes;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -60,6 +62,28 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
         return Arrays.asList(new Object[][]{
                 {AllocatorType.THREAD_SAFE},
                 {AllocatorType.THREAD_UNSAFE},
+        });
+    }
+
+    @Test
+    public void testAlignment() throws Exception {
+        assertMemoryLeak(() -> {
+            long usedSpaceAligned;
+            int N = 5000;
+            try (GroupByAllocator alignedAllocator = new GroupByAllocatorArena(1024, 1024, true)) {
+                for (int i = 0; i < N; i++) {
+                    long ptr = alignedAllocator.malloc(1);
+                    Assert.assertEquals(Bytes.align8b(ptr), ptr);
+                }
+                usedSpaceAligned = alignedAllocator.allocated();
+            }
+
+            try (GroupByAllocator unalignedAllocator = new GroupByAllocatorArena(1024, 1024, false)) {
+                for (int i = 0; i < N; i++) {
+                    unalignedAllocator.malloc(1);
+                }
+                Assert.assertTrue(unalignedAllocator.allocated() < usedSpaceAligned);
+            }
         });
     }
 
