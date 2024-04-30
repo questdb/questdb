@@ -29,7 +29,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.str.Utf8Sequence;
 
 import java.io.Closeable;
 
@@ -61,6 +61,14 @@ public interface MemoryR extends Closeable {
 
     int getInt(long offset);
 
+    default DirectUtf8Sequence getIntegralVarcharA(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
+    default DirectUtf8Sequence getIntegralVarcharB(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
     long getLong(long offset);
 
     void getLong256(long offset, CharSink<?> sink);
@@ -81,11 +89,11 @@ public interface MemoryR extends Closeable {
 
     short getShort(long offset);
 
-    default Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
+    default Utf8Sequence getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
         throw new UnsupportedOperationException();
     }
 
-    default Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
+    default Utf8Sequence getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
         throw new UnsupportedOperationException();
     }
 
@@ -94,10 +102,6 @@ public interface MemoryR extends Closeable {
     CharSequence getStrB(long offset);
 
     int getStrLen(long offset);
-
-    DirectUtf8Sequence getVarcharA(long offset, int size, boolean ascii);
-
-    DirectUtf8Sequence getVarcharB(long offset, int size, boolean ascii);
 
     long offsetInPage(long offset);
 

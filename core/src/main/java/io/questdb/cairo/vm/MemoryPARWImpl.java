@@ -330,12 +330,6 @@ public class MemoryPARWImpl implements MemoryARW {
         return value;
     }
 
-    @Override
-    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
-        // paged memory does not support reading UTF8 strings from
-        throw new UnsupportedOperationException();
-    }
-
     public final CharSequence getStr0(long offset, CharSequenceView view) {
         final int len = getInt(offset);
         if (len == TableUtils.NULL_LEN) {
@@ -357,16 +351,6 @@ public class MemoryPARWImpl implements MemoryARW {
 
     public final int getStrLen(long offset) {
         return getInt(offset);
-    }
-
-    @Override
-    public DirectUtf8Sequence getVarcharA(long offset, int size, boolean ascii) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public DirectUtf8Sequence getVarcharB(long offset, int size, boolean ascii) {
-        throw new UnsupportedOperationException();
     }
 
     public boolean isMapped(long offset, long len) {

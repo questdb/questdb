@@ -141,8 +141,7 @@ public interface Utf8Sequence {
      * packed into a zero-padded long value, in little-endian order. This prefix is
      * stored inline in the auxiliary vector of a VARCHAR column, so asking for it is a
      * matter of optimized data access. This is not a general access method, it
-     * shouldn't be called except when looking to optimize the access of the VARCHAR
-     * column.
+     * shouldn't be called unless looking to optimize the access of the VARCHAR column.
      */
     default long zeroPaddedSixPrefix() {
         final int size = size();

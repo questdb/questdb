@@ -30,7 +30,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.str.Utf8Sequence;
 
 public class NullMemoryMR implements MemoryMR {
 
@@ -105,6 +105,16 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
+    public DirectUtf8Sequence getIntegralVarcharA(long offset, int size, boolean ascii) {
+        return null;
+    }
+
+    @Override
+    public DirectUtf8Sequence getIntegralVarcharB(long offset, int size, boolean ascii) {
+        return null;
+    }
+
+    @Override
     public long getLong(long offset) {
         return Numbers.LONG_NULL;
     }
@@ -152,12 +162,12 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
-    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
+    public Utf8Sequence getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
         return null;
     }
 
     @Override
-    public Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
+    public Utf8Sequence getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
         return null;
     }
 
@@ -174,16 +184,6 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public int getStrLen(long offset) {
         return TableUtils.NULL_LEN;
-    }
-
-    @Override
-    public DirectUtf8Sequence getVarcharA(long offset, int size, boolean ascii) {
-        return null;
-    }
-
-    @Override
-    public DirectUtf8Sequence getVarcharB(long offset, int size, boolean ascii) {
-        return null;
     }
 
     @Override

@@ -46,8 +46,8 @@ public class PageAddressCacheRecord implements Record, Closeable {
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private final Utf8SplitString utf8SplitViewA = new Utf8SplitString(true);
     private final Utf8SplitString utf8SplitViewB = new Utf8SplitString(true);
-    private final DirectUtf8String utf8viewA = new DirectUtf8String();
-    private final DirectUtf8String utf8viewB = new DirectUtf8String();
+    private final Utf8IntegralString utf8viewA = new Utf8IntegralString(true);
+    private final Utf8IntegralString utf8viewB = new Utf8IntegralString(true);
     private int frameIndex;
     private PageAddressCache pageAddressCache;
     private long rowIndex;
