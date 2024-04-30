@@ -315,6 +315,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.vector.aggregate.queue.capacity\tQDB_CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.volumes\tQDB_CAIRO_VOLUMES\t\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.enabled\tQDB_CAIRO_WAL_APPLY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.default.format\tQDB_CAIRO_WAL_DEFAULT_FORMAT\trow\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.look.ahead.txn.count\tQDB_CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT\t20\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.table.time.quota\tQDB_CAIRO_WAL_APPLY_TABLE_TIME_QUOTA\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.enabled.default\tQDB_CAIRO_WAL_ENABLED_DEFAULT\tfalse\tconf\tfalse\tfalse\n" +

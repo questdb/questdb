@@ -6394,7 +6394,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             walPath.trimTo(walPathLen);
 
             // Prepare memory to copy the column values.
-            // TODO(puzpuzpuz): try to use walRowMemory as data memory for var-size columns.
             int nonDroppedColumnCount = 0;
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 final int columnType = metadata.getColumnType(columnIndex);
