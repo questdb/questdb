@@ -18,7 +18,7 @@ pub fn column_chunk_to_pages(
     column_type: PrimitiveType,
     slice: &[i32],
     data_pagesize_limit: Option<usize>,
-    encoding: Encoding,
+    _encoding: Encoding,
 ) -> DynIter<'_, parquet2::error::Result<Page>> {
     let number_of_rows = slice.len();
     let max_page_size = data_pagesize_limit.unwrap_or(DEFAULT_PAGE_SIZE);
@@ -61,7 +61,7 @@ pub fn slice_to_page(column_type: PrimitiveType, chunk: &[i32]) -> Page {
 
     let mut buffer = vec![];
     encode_iter(&mut buffer, nulls_iter, Version::V1).expect("nulls encoding");
-    let definition_levels_byte_length = buffer.len();
+    let _definition_levels_byte_length = buffer.len();
 
     buffer.extend_from_slice(&values);
 
@@ -144,7 +144,7 @@ pub fn build_page_v1(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn build_page_v2(
+pub fn _build_page_v2(
     buffer: Vec<u8>,
     num_values: usize,
     num_rows: usize,
@@ -188,7 +188,7 @@ mod tests {
     use parquet2::FallibleStreamingIterator;
     use parquet2::metadata::SchemaDescriptor;
     use parquet2::page::split_buffer;
-    use parquet2::read::{BasicDecompressor, ColumnIterator, Decompressor, get_page_iterator, MutStreamingIterator, read_metadata, ReadColumnIterator, State};
+    use parquet2::read::{BasicDecompressor, ColumnIterator, MutStreamingIterator, read_metadata, State};
     use parquet2::schema::Repetition;
     use parquet2::schema::types::{ParquetType, PhysicalType};
     use parquet2::write::{Compressor, DynIter, DynStreamingIterator, FileWriter, Version, WriteOptions};
@@ -235,10 +235,6 @@ mod tests {
         let mut reader = Cursor::new(data);
 
         let metadata = read_metadata(&mut reader).expect("meta");
-
-        let row_group = 0;
-        let column = 0;
-        let column_metadata = &metadata.row_groups[row_group].columns()[column];
 
         let mut iter = ColumnIterator::new(
             reader,

@@ -59,7 +59,7 @@ impl TryFrom<i32> for ColumnType {
         }
     }
 }
-pub fn qdb_to_parquet_type(
+pub fn _qdb_to_parquet_type(
     column_name: &str,
     column_type: ColumnType,
 ) -> parquet2::error::Result<ParquetType> {
