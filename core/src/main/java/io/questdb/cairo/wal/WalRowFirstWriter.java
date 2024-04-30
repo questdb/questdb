@@ -518,6 +518,7 @@ public class WalRowFirstWriter implements WalWriter {
                 int fd = CopyWalSegmentUtils.rollRowFirstToSegment(
                         ff,
                         configuration.getWriterFileOpenOpts(),
+                        metadata,
                         rowMem,
                         path,
                         newSegmentId,

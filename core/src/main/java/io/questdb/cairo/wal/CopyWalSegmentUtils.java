@@ -110,45 +110,113 @@ public class CopyWalSegmentUtils {
         }
 
         if (!success) {
-            throw CairoException.critical(ff.errno()).put("failed to copy column file to new segment" +
-                            " [path=").put(newSegPath)
+            throw CairoException.critical(ff.errno()).put("failed to copy column file to new segment [path=").put(newSegPath)
                     .put(", column=").put(columnName)
                     .put(", startRowNumber=").put(startRowNumber)
                     .put(", rowCount=").put(rowCount)
-                    .put(", columnType=").put(columnType).put("]");
+                    .put(", columnType=").put(columnType)
+                    .put("]");
         }
     }
 
     public static int rollRowFirstToSegment(
             FilesFacade ff,
             long options,
+            WalWriterMetadata metadata,
             MemoryMA rowMem,
             @Transient Path walPath,
             int newSegment,
-            long offset,
+            long startOffset,
             long size,
             int commitMode
     ) {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment).concat(WAL_SEGMENT_FILE_NAME).$();
+        // TODO(puzpuzpuz): better error handling here
         int fd = openRW(ff, newSegPath, LOG, options);
 
-        boolean success = ff.copyData(rowMem.getFd(), fd, offset, size) == size;
-        if (success) {
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.fsync(fd);
+        final long alignedOffset = Files.floorPageSize(startOffset);
+        final long alignedExtraSize = startOffset - alignedOffset;
+        final long srcRowDataAddr = TableUtils.mapRO(ff, rowMem.getFd(), size + alignedExtraSize, alignedOffset, MEMORY_TAG);
+        final long destRowDataAddr = TableUtils.mapRW(ff, fd, size, MEMORY_TAG);
+        ff.madvise(destRowDataAddr, size, Files.POSIX_MADV_RANDOM);
+        try {
+            final int timestampIndex = metadata.getTimestampIndex();
+
+            final long srcAddr = srcRowDataAddr + alignedExtraSize;
+            long destRowId = 0;
+            for (long offset = 0; offset < size; ) {
+                final int columnIndex = Unsafe.getUnsafe().getInt(srcAddr + offset);
+                Unsafe.getUnsafe().putInt(destRowDataAddr + offset, columnIndex);
+                offset += Integer.BYTES;
+                if (columnIndex == WalRowFirstWriter.NEW_ROW_SEPARATOR) {
+                    destRowId++;
+                    continue;
+                }
+                if (columnIndex == timestampIndex) {
+                    // Designated timestamp column is written as 2 long values
+                    Unsafe.getUnsafe().putLong(destRowDataAddr + offset, Unsafe.getUnsafe().getLong(srcAddr + offset));
+                    Unsafe.getUnsafe().putLong(destRowDataAddr + offset + 8, destRowId);
+                    offset += 2 * Long.BYTES;
+                } else {
+                    final int columnType = metadata.getColumnType(columnIndex);
+                    final int columnSize = ColumnType.sizeOf(columnType);
+                    if (columnSize > 0) {
+                        // fixed-size column
+                        Vect.memcpy(destRowDataAddr + offset, srcAddr + offset, columnSize);
+                        offset += columnSize;
+                    } else {
+                        // var-size column
+                        switch (ColumnType.tagOf(columnType)) {
+                            case ColumnType.VARCHAR:
+                                final int varcharSize = VarcharTypeDriver.getPlainValueSize(srcAddr + offset);
+                                Unsafe.getUnsafe().putInt(destRowDataAddr + offset, varcharSize);
+                                if (varcharSize == NULL_LEN) {
+                                    Unsafe.getUnsafe().putInt(destRowDataAddr + offset, NULL_LEN);
+                                    offset += Integer.BYTES;
+                                } else {
+                                    final long bytes = Integer.BYTES + varcharSize;
+                                    Vect.memcpy(destRowDataAddr + offset, srcAddr + offset, bytes);
+                                    offset += bytes;
+                                }
+                                break;
+                            case ColumnType.STRING:
+                                final int stringLen = Unsafe.getUnsafe().getInt(srcAddr + offset);
+                                if (stringLen == NULL_LEN) {
+                                    Unsafe.getUnsafe().putInt(destRowDataAddr + offset, NULL_LEN);
+                                    offset += Integer.BYTES;
+                                } else {
+                                    final long bytes = Integer.BYTES + 2L * stringLen;
+                                    Vect.memcpy(destRowDataAddr + offset, srcAddr + offset, bytes);
+                                    offset += bytes;
+                                }
+                                break;
+                            case ColumnType.BINARY:
+                                final int binSize = Unsafe.getUnsafe().getInt(srcAddr + offset);
+                                if (binSize == NULL_LEN) {
+                                    Unsafe.getUnsafe().putLong(destRowDataAddr + offset, NULL_LEN);
+                                    offset += Long.BYTES;
+                                } else {
+                                    final long bytes = Long.BYTES + binSize;
+                                    Vect.memcpy(destRowDataAddr + offset, srcAddr + offset, bytes);
+                                    offset += bytes;
+                                }
+                                break;
+                            default:
+                                throw CairoException.nonCritical()
+                                        .put("Column type ").put(ColumnType.nameOf(columnType))
+                                        .put(" not supported by WAL writer");
+                        }
+                    }
+                }
             }
-        } else {
+
             if (commitMode != CommitMode.NOSYNC) {
-                ff.fsyncAndClose(fd);
-            } else {
-                ff.close(fd);
+                ff.msync(destRowDataAddr, size, commitMode == CommitMode.ASYNC);
             }
-            throw CairoException.critical(ff.errno()).put("failed to copy row-first file to new segment [path=").put(newSegPath)
-                    .put(", offset=").put(offset)
-                    .put(", size=").put(size)
-                    .put("]");
+            return fd;
+        } finally {
+            ff.munmap(destRowDataAddr, size, MEMORY_TAG);
         }
-        return fd;
     }
 
     private static boolean copyFixLenFile(
@@ -191,14 +259,18 @@ public class CopyWalSegmentUtils {
         if (!copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, ColumnType.LONG128, newOffsets, columnIndex, commitMode)) {
             return false;
         }
-        long size = rowCount << 4;
-        long srcDataTimestampAddr = TableUtils.mapRW(ff, primaryFd, size, MEMORY_TAG);
-        Vect.flattenIndex(srcDataTimestampAddr, rowCount);
-        if (commitMode != CommitMode.NOSYNC) {
-            ff.msync(srcDataTimestampAddr, size, commitMode == CommitMode.ASYNC);
+        final long size = rowCount << 4;
+        final long destTimestampDataAddr = TableUtils.mapRW(ff, primaryFd, size, MEMORY_TAG);
+        ff.madvise(destTimestampDataAddr, size, Files.POSIX_MADV_RANDOM);
+        try {
+            Vect.flattenIndex(destTimestampDataAddr, rowCount);
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.msync(destTimestampDataAddr, size, commitMode == CommitMode.ASYNC);
+            }
+            return true;
+        } finally {
+            ff.munmap(destTimestampDataAddr, size, MEMORY_TAG);
         }
-        ff.munmap(srcDataTimestampAddr, size, MEMORY_TAG);
-        return true;
     }
 
     private static boolean copyVarSizeFiles(
@@ -216,7 +288,7 @@ public class CopyWalSegmentUtils {
     ) {
         ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
         final long auxMemSize = columnTypeDriver.getAuxVectorSize(startRowNumber + rowCount);
-        final long auxMemAddr = TableUtils.mapRW(ff, auxMem.getFd(), auxMemSize, MEMORY_TAG);
+        final long auxMemAddr = TableUtils.mapRO(ff, auxMem.getFd(), auxMemSize, MEMORY_TAG);
         try {
             final long dataStartOffset = columnTypeDriver.getDataVectorOffset(auxMemAddr, startRowNumber);
             final long dataSize = columnTypeDriver.getDataVectorSize(auxMemAddr, startRowNumber, startRowNumber + rowCount - 1);
