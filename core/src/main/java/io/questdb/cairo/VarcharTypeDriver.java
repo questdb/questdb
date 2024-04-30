@@ -141,7 +141,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             }
         } else {
             auxMem.putInt(VARCHAR_HEADER_FLAG_NULL);
-            auxMem.skip(VARCHAR_INLINED_PREFIX_BYTES);
+            // zero 6 (VARCHAR_INLINED_PREFIX_BYTES) bytes
+            auxMem.putInt(0);
+            auxMem.putShort((short) 0);
             offset = dataMem.getAppendOffset();
         }
         // write 48 bit offset (little-endian)

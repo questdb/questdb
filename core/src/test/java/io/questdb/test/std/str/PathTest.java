@@ -33,7 +33,6 @@ import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
-import java.nio.file.FileSystems;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -46,7 +45,6 @@ public class PathTest {
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
-    private final char separator = FileSystems.getDefault().getSeparator().charAt(0);
     private Path path;
 
     @Before
@@ -88,19 +86,19 @@ public class PathTest {
 
     @Test
     public void testConcatNoSlash() {
-        TestUtils.assertEquals("xyz" + separator + "123", path.of("xyz").concat("123").$());
+        TestUtils.assertEquals("xyz" + Files.SEPARATOR + "123", path.of("xyz").concat("123").$());
         Assert.assertTrue(path.isAscii());
     }
 
     @Test
     public void testConcatNoSlashNonAscii() {
-        TestUtils.assertEquals("xyz" + separator + "раздватри", path.of("xyz").concat("раздватри").$());
+        TestUtils.assertEquals("xyz" + Files.SEPARATOR + "раздватри", path.of("xyz").concat("раздватри").$());
         Assert.assertFalse(path.isAscii());
     }
 
     @Test
     public void testConcatSlash() {
-        TestUtils.assertEquals("xyz" + separator + "123", path.of("xyz").slash().concat("123").$());
+        TestUtils.assertEquals("xyz" + Files.SEPARATOR + "123", path.of("xyz").slash().concat("123").$());
     }
 
     @Test
@@ -151,7 +149,7 @@ public class PathTest {
 
     @Test
     public void testConcatWithSlash() {
-        TestUtils.assertEquals("xyz" + separator + "123", path.of("xyz/").concat("123").$());
+        TestUtils.assertEquals("xyz" + Files.SEPARATOR + "123", path.of("xyz/").concat("123").$());
     }
 
     @Test
@@ -210,7 +208,7 @@ public class PathTest {
             try (Path p = new Path()) {
                 p.of("/xyz/").concat(p1.ptr()).$();
                 Assert.assertFalse(p.isAscii());
-                Assert.assertEquals(separator + "xyz" + separator + "abc" + separator + "123", p.toString());
+                Assert.assertEquals(Files.SEPARATOR + "xyz" + Files.SEPARATOR + "abc" + Files.SEPARATOR + "123", p.toString());
             }
         }
     }
@@ -290,7 +288,7 @@ public class PathTest {
 
         try (Path p = new Path()) {
             TestUtils.assertEquals(
-                    "9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999" + System.getProperty("file.separator") + "xyz",
+                    "9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999" + Files.SEPARATOR + "xyz",
                     p.of(b).concat("xyz").$()
             );
             Assert.assertTrue(p.isAscii());
