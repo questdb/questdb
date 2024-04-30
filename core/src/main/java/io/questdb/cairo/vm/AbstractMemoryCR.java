@@ -27,10 +27,7 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectString;
-import io.questdb.std.str.StableDirectString;
-import io.questdb.std.str.Utf8IntegralString;
-import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.str.*;
 
 // contiguous readable
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
@@ -42,8 +39,8 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private final Long256Impl long256B = new Long256Impl();
     private final Utf8SplitString utf8SplitViewA;
     private final Utf8SplitString utf8SplitViewB;
-    private final Utf8IntegralString utf8viewA;
-    private final Utf8IntegralString utf8viewB;
+    private final DirectUtf8String utf8viewA;
+    private final DirectUtf8String utf8viewB;
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
@@ -60,8 +57,8 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         }
         utf8SplitViewA = new Utf8SplitString(stableStrings);
         utf8SplitViewB = new Utf8SplitString(stableStrings);
-        utf8viewA = new Utf8IntegralString(stableStrings);
-        utf8viewB = new Utf8IntegralString(stableStrings);
+        utf8viewA = new DirectUtf8String(stableStrings);
+        utf8viewB = new DirectUtf8String(stableStrings);
     }
 
     public long addressOf(long offset) {
@@ -81,18 +78,18 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return getBin(offset, bsview);
     }
 
+    @Override
+    public DirectUtf8Sequence getDirectVarcharA(long offset, int size, boolean ascii) {
+        return getDirectVarchar(offset, size, utf8viewA, ascii);
+    }
+
+    @Override
+    public DirectUtf8Sequence getDirectVarcharB(long offset, int size, boolean ascii) {
+        return getDirectVarchar(offset, size, utf8viewB, ascii);
+    }
+
     public FilesFacade getFilesFacade() {
         return ff;
-    }
-
-    @Override
-    public Utf8IntegralString getIntegralVarcharA(long offset, int size, boolean ascii) {
-        return getIntegralVarchar(offset, size, utf8viewA, ascii);
-    }
-
-    @Override
-    public Utf8IntegralString getIntegralVarcharB(long offset, int size, boolean ascii) {
-        return getIntegralVarchar(offset, size, utf8viewB, ascii);
     }
 
     public Long256 getLong256A(long offset) {
@@ -158,7 +155,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return size;
     }
 
-    private Utf8IntegralString getIntegralVarchar(long offset, int size, Utf8IntegralString u8view, boolean ascii) {
+    private DirectUtf8String getDirectVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
         long addr = addressOf(offset);
         assert addr > 0;
         if (offset + size > size()) {

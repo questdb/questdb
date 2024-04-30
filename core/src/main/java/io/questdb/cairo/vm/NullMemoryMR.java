@@ -75,6 +75,16 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
+    public DirectUtf8Sequence getDirectVarcharA(long offset, int size, boolean ascii) {
+        return null;
+    }
+
+    @Override
+    public DirectUtf8Sequence getDirectVarcharB(long offset, int size, boolean ascii) {
+        return null;
+    }
+
+    @Override
     public double getDouble(long offset) {
         return Double.NaN;
     }
@@ -102,16 +112,6 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public int getInt(long offset) {
         return Numbers.INT_NULL;
-    }
-
-    @Override
-    public DirectUtf8Sequence getIntegralVarcharA(long offset, int size, boolean ascii) {
-        return null;
-    }
-
-    @Override
-    public DirectUtf8Sequence getIntegralVarcharB(long offset, int size, boolean ascii) {
-        return null;
     }
 
     @Override
