@@ -412,7 +412,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Nullable
-    private Utf8Sequence getSplitVarchar(int columnIndex, DirectUtf8String utf8view, Utf8SplitString utf8SplitView) {
+    private Utf8Sequence getSplitVarchar(int columnIndex, Utf8IntegralString utf8view, Utf8SplitString utf8SplitView) {
         final long auxPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
         if (auxPageAddress == 0) {
             return null; // Column top.
