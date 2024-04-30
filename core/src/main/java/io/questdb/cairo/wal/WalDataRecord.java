@@ -201,28 +201,6 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
-    public @Nullable Utf8Sequence getSplitVarcharA(int col) {
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return VarcharTypeDriver.getSplitValue(
-                recordIndex,
-                reader.getColumn(absoluteColumnIndex),
-                reader.getColumn(absoluteColumnIndex + 1),
-                1
-        );
-    }
-
-    @Override
-    public @Nullable Utf8Sequence getSplitVarcharB(int col) {
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return VarcharTypeDriver.getSplitValue(
-                recordIndex,
-                reader.getColumn(absoluteColumnIndex),
-                reader.getColumn(absoluteColumnIndex + 1),
-                2
-        );
-    }
-
-    @Override
     public CharSequence getStrA(int col) {
         final long offset = recordIndex * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);

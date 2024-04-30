@@ -242,16 +242,6 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
-    public @Nullable Utf8Sequence getSplitVarcharA(int col) {
-        return getSplitVarchar(col, 1);
-    }
-
-    @Override
-    public @Nullable Utf8Sequence getSplitVarcharB(int col) {
-        return getSplitVarchar(col, 2);
-    }
-
-    @Override
     public CharSequence getStrA(int col) {
         final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(

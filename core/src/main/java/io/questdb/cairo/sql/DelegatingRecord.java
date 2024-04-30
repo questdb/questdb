@@ -135,16 +135,6 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
-    public Utf8Sequence getSplitVarcharA(int col) {
-        return base.getSplitVarcharA(col);
-    }
-
-    @Override
-    public Utf8Sequence getSplitVarcharB(int col) {
-        return base.getSplitVarcharB(col);
-    }
-
-    @Override
     public void getStr(int col, Utf16Sink utf16Sink) {
         base.getStr(col, utf16Sink);
     }

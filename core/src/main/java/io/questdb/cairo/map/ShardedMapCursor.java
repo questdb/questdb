@@ -251,16 +251,6 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public Utf8Sequence getSplitVarcharA(int col) {
-            return baseRecord.getSplitVarcharA(col);
-        }
-
-        @Override
-        public Utf8Sequence getSplitVarcharB(int col) {
-            return baseRecord.getSplitVarcharB(col);
-        }
-
-        @Override
         public void getStr(int columnIndex, Utf16Sink utf16Sink) {
             baseRecord.getStr(columnIndex, utf16Sink);
         }

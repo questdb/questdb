@@ -244,16 +244,6 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public Utf8Sequence getSplitVarcharA(int columnIndex) {
-        return getSplitVarchar(columnIndex, 1);
-    }
-
-    @Override
-    public Utf8Sequence getSplitVarcharB(int columnIndex) {
-        return getSplitVarchar(columnIndex, 2);
-    }
-
-    @Override
     public CharSequence getStrA(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;

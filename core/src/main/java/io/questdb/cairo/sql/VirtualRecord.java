@@ -183,16 +183,6 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public Utf8Sequence getSplitVarcharA(int col) {
-        return getFunction(col).getSplitVarcharA(base);
-    }
-
-    @Override
-    public Utf8Sequence getSplitVarcharB(int col) {
-        return getFunction(col).getSplitVarcharB(base);
-    }
-
-    @Override
     public void getStr(int col, Utf16Sink utf16Sink) {
         getFunction(col).getStr(base, utf16Sink);
     }
