@@ -31,6 +31,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include "../share/os.h"
+#include "jemalloc-cmake/include/jemalloc/jemalloc.h"
 
 #ifdef __APPLE__
 
@@ -96,6 +97,21 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_currentTimeNanos
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
         (JNIEnv *e, jclass cl) {
     return errno;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_malloc
+        (JNIEnv *e, jclass cl, jlong size) {
+    return (jlong) je_malloc(size);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_realloc
+        (JNIEnv *e, jclass cl, jlong ptr, jlong size) {
+    return (jlong) je_realloc((void *) ptr, size);
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_std_Os_free
+        (JNIEnv *e, jclass cl, jlong ptr) {
+    je_free((void *) ptr);
 }
 
 #if defined(__linux__)

@@ -21,6 +21,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Build Rust Library
         run: |
           cd core/rust/qdbr
@@ -42,6 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Build in FreeBSD
         # @d44bf830e7d is the same as the tag v1, but it's guaranteed to be immutable.
         uses: vmactions/freebsd-vm@d44bf830e7d850111d27aa120d468c905e5980f4
@@ -79,6 +83,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Install toolchains (CXX/NASM)
         run: |
           brew install make cmake gcc nasm
@@ -125,12 +131,16 @@ jobs:
     container:
       image: debian:buster
     steps:
-      - uses: actions/checkout@v4
-      - name: Install toolchains (CXX/NASM/Rust)
+      - name: Install tools (CXX/NASM/Rust)
         run: |
           ldd --version
           apt-get update -y
           apt install git nasm python3 wget ca-certificates build-essential zstd -y
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install toolchains (Rust)
+        run: |
           python3 ./.github/prepare_rust_env.py
           echo "PATH=/github/home/.cargo/bin/:$PATH" >> "$GITHUB_ENV"
       - name: Install up-to-date CMake
@@ -146,6 +156,7 @@ jobs:
       - name: Generate Makefiles
         run: |
           cd ./core
+          # git submodule update --init
           cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: Build linux-amd64 CXX Library
         run: |
@@ -167,10 +178,10 @@ jobs:
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
     runs-on: ubuntu-latest
-    env:
-      generator: "CodeBlocks - Unix Makefiles"
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Increase file count and install tooling
         run: |
           sudo sysctl -w fs.file-max=500000
@@ -182,7 +193,7 @@ jobs:
       - name: Generate Makefiles
         run: |
           cd ./core
-          cmake -G "$generator" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: CMAKE linux-aarch64
         run: |
           cd ./core
@@ -210,10 +221,10 @@ jobs:
           key: nativelibs-armlinux-${{ github.sha }}
   build-cxx-windows:
     runs-on: ubuntu-latest
-    env:
-      generator: "CodeBlocks - Unix Makefiles"
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Increase file count and install tooling
         run: |
           sudo sysctl -w fs.file-max=500000
@@ -222,7 +233,7 @@ jobs:
       - name: Generate Makefiles
         run: |
           cd ./core
-          cmake -G "$generator" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+          cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
       - name: Download windows jni_md.h from JDK 11
         run: |
           cd core
