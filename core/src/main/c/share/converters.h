@@ -71,8 +71,7 @@ enum class ColumnType : int {
  * @param b the dst column type
  * @return packed value
  */
-constexpr int64_t pack_column_types(ColumnType a, ColumnType b)
-{
+constexpr int64_t pack_column_types(ColumnType a, ColumnType b) {
     return static_cast<int64_t>(a) << 32 | static_cast<int64_t>(b) & 0xffffffffL;
 }
 
@@ -93,10 +92,13 @@ enum class ConversionError {
  * @param rowCount the number of rows
  * @return
  */
-template <typename T1, typename T2>
-ConversionError convert_fixed_to_fixed_numeric(T1* srcMem, T2* dstMem, T1 srcSentinel, T2 dstSentinel, size_t rowCount)
-{
+template<typename T1, typename T2>
+ConversionError
+convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, bool srcNullable, T1 srcSentinel, bool dstNullable,
+                               T2 dstSentinel, size_t rowCount) {
     constexpr auto maxDstValue = std::numeric_limits<T2>::max();
+
+
     for (int i = 0; i < rowCount; i++) {
         if (srcMem[i] == srcSentinel || srcMem[i] > maxDstValue) {
             dstMem[i] = dstSentinel;
@@ -108,36 +110,74 @@ ConversionError convert_fixed_to_fixed_numeric(T1* srcMem, T2* dstMem, T1 srcSen
     return ConversionError::NONE;
 }
 
-template <ColumnType C> constexpr
+template<ColumnType C, typename T>
+constexpr bool is_matching_type() {
+    if constexpr (C == ColumnType::BYTE && std::is_same<T, int8_t>()) {
+        return true;
+    }
+    if constexpr (C == ColumnType::SHORT && std::is_same<T, int16_t>()) {
+        return true;
+    }
+    if constexpr (C == ColumnType::INT && std::is_same<T, int32_t>()) {
+        return true;
+    }
+    if constexpr (C == ColumnType::LONG && std::is_same<T, int64_t>()) {
+        return true;
+    }
+    if constexpr (C == ColumnType::FLOAT && std::is_same<T, float>()) {
+        return true;
+    }
+    if constexpr (C == ColumnType::DOUBLE && std::is_same<T, double>()) {
+        return true;
+    }
+    if constexpr (C == ColumnType::DATE && std::is_same<T, int64_t>()) {
+        return true;
+    }
+    if constexpr (C == ColumnType::TIMESTAMP && std::is_same<T, int64_t>()) {
+        return true;
+    }
+    return false;
+}
+
+template<ColumnType C>
+constexpr
 auto get_null_sentinel() {
     if constexpr (C == ColumnType::INT) {
         return INT32_MIN;
     } else if (C == ColumnType::LONG) {
         return INT64_MIN;
-    }
-    else if (C == ColumnType::DATE) {
+    } else if (C == ColumnType::DATE) {
         return INT64_MIN;
-    }
-    else if (C == ColumnType::TIMESTAMP) {
+    } else if (C == ColumnType::TIMESTAMP) {
         return INT64_MIN;
-    }
-    else if (C == ColumnType::FLOAT) {
+    } else if (C == ColumnType::FLOAT) {
         return std::nanf;
-    }
-    else if (C == ColumnType::DOUBLE) {
+    } else if (C == ColumnType::DOUBLE) {
         return std::nan;
-    }
-    else {
-        return 0;
+    } else {
+        return -1;
     }
 }
 
-enum class NullSentinels {
-    INT = INT32_MIN,
-    LONG = INT64_MIN,
-    FLOAT = std::nanf,
-
-};
+template<ColumnType C>
+constexpr
+bool is_nullable() {
+    if constexpr (C == ColumnType::INT) {
+        return true;
+    } else if (C == ColumnType::LONG) {
+        return true;
+    } else if (C == ColumnType::DATE) {
+        return true;
+    } else if (C == ColumnType::TIMESTAMP) {
+        return true;
+    } else if (C == ColumnType::FLOAT) {
+        return true;
+    } else if (C == ColumnType::DOUBLE) {
+        return true;
+    } else {
+        return false;
+    }
+}
 
 #endif //CONVERTERS_H
 
