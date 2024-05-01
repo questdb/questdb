@@ -846,6 +846,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
         }
+        if (columnIndex == tableMetadata.getTimestampIndex()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "cannot change type of designated timestamp column");
+        }
         int existingColumnType = tableMetadata.getColumnType(columnIndex);
         if (!isCompatibleCase(existingColumnType, newColumnType)) {
             throw SqlException.$(lexer.lastTokenPosition(), "incompatible column type change [existing=")
