@@ -288,18 +288,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         boolean isAscii = hasAsciiFlag(raw);
         if (hasInlinedFlag(raw)) {
             long auxLo = auxEntry + FULLY_INLINED_STRING_OFFSET;
-            return utf8SplitView.of(
-                    auxLo,
-                    auxLo,
-                    (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK,
-                    isAscii);
+            int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
+            assert size <= VARCHAR_MAX_BYTES_FULLY_INLINED;
+            return utf8SplitView.of(auxLo, auxLo, size, isAscii);
         }
-        return utf8SplitView.of(
-                auxEntry + INLINED_PREFIX_OFFSET,
-                dataAddr + getDataOffset(auxEntry),
-                (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK,
-                isAscii
-        );
+        long auxLo = auxEntry + INLINED_PREFIX_OFFSET;
+        long dataLo = dataAddr + getDataOffset(auxEntry);
+        int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
+        return utf8SplitView.of(auxLo, dataLo, size, isAscii);
     }
 
     /**

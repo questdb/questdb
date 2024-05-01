@@ -29,7 +29,8 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.VarcharTypeDriver.*;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 
 /**
  * An immutable flyweight for a UTF-8 string stored in a VARCHAR column. It may be
@@ -86,9 +87,17 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
         return Unsafe.getUnsafe().getLong(dataLo + offset);
     }
 
+    /**
+     * @param auxLo  address of the first UTF-8 byte in the auxiliary vector
+     * @param dataLo address of the first UTF-8 byte in the data vector.
+     *               When the full value is inlined into the auxiliary vector, this must be equal to auxLo.
+     * @param size   size in bytes of the UTF-8 value
+     * @param ascii  whether the value is all-ASCII
+     * @return this
+     */
     public Utf8SplitString of(long auxLo, long dataLo, int size, boolean ascii) {
         this.auxLo = auxLo;
-        this.dataLo = size > VARCHAR_MAX_BYTES_FULLY_INLINED ? dataLo : auxLo;
+        this.dataLo = dataLo;
         this.size = size;
         this.ascii = ascii;
         return this;
