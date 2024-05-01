@@ -39,8 +39,8 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private final Long256Impl long256B = new Long256Impl();
     private final Utf8SplitString utf8SplitViewA;
     private final Utf8SplitString utf8SplitViewB;
-    private final DirectUtf8String utf8viewA;
-    private final DirectUtf8String utf8viewB;
+    private final DirectUtf8String utf8ViewA;
+    private final DirectUtf8String utf8ViewB;
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
@@ -57,8 +57,8 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         }
         utf8SplitViewA = new Utf8SplitString(stableStrings);
         utf8SplitViewB = new Utf8SplitString(stableStrings);
-        utf8viewA = new DirectUtf8String(stableStrings);
-        utf8viewB = new DirectUtf8String(stableStrings);
+        utf8ViewA = new DirectUtf8String(stableStrings);
+        utf8ViewB = new DirectUtf8String(stableStrings);
     }
 
     public long addressOf(long offset) {
@@ -80,12 +80,12 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     @Override
     public DirectUtf8Sequence getDirectVarcharA(long offset, int size, boolean ascii) {
-        return getDirectVarchar(offset, size, utf8viewA, ascii);
+        return getDirectVarchar(offset, size, utf8ViewA, ascii);
     }
 
     @Override
     public DirectUtf8Sequence getDirectVarcharB(long offset, int size, boolean ascii) {
-        return getDirectVarchar(offset, size, utf8viewB, ascii);
+        return getDirectVarchar(offset, size, utf8ViewB, ascii);
     }
 
     public FilesFacade getFilesFacade() {

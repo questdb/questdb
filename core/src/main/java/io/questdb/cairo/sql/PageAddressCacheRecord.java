@@ -44,8 +44,8 @@ public class PageAddressCacheRecord implements Record, Closeable {
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
-    private final Utf8SplitString utf8SplitViewA = new Utf8SplitString(true);
-    private final Utf8SplitString utf8SplitViewB = new Utf8SplitString(true);
+    private final Utf8SplitString utf8ViewA = new Utf8SplitString(true);
+    private final Utf8SplitString utf8ViewB = new Utf8SplitString(true);
     private int frameIndex;
     private PageAddressCache pageAddressCache;
     private long rowIndex;
@@ -311,12 +311,12 @@ public class PageAddressCacheRecord implements Record, Closeable {
 
     @Override
     public Utf8Sequence getVarcharA(int columnIndex) {
-        return getVarchar(columnIndex, utf8SplitViewA);
+        return getVarchar(columnIndex, utf8ViewA);
     }
 
     @Override
     public Utf8Sequence getVarcharB(int columnIndex) {
-        return getVarchar(columnIndex, utf8SplitViewB);
+        return getVarchar(columnIndex, utf8ViewB);
     }
 
     @Override
@@ -413,17 +413,12 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Nullable
-    private Utf8Sequence getVarchar(int columnIndex, Utf8SplitString utf8SplitView) {
+    private Utf8Sequence getVarchar(int columnIndex, Utf8SplitString utf8View) {
         final long auxPageAddress = pageAddressCache.getAuxPageAddress(frameIndex, columnIndex);
         if (auxPageAddress == 0) {
             return null; // Column top.
         }
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        return VarcharTypeDriver.getSplitValue(
-                auxPageAddress,
-                dataPageAddress,
-                rowIndex,
-                utf8SplitView
-        );
+        return VarcharTypeDriver.getSplitValue(auxPageAddress, dataPageAddress, rowIndex, utf8View);
     }
 }
