@@ -1220,7 +1220,7 @@ public final class Utf8s {
             return false;
         }
         int i = VARCHAR_INLINED_PREFIX_BYTES;
-        for (; i <= prefixSize - Long.BYTES; i++) {
+        for (; i <= prefixSize - Long.BYTES; i += Long.BYTES) {
             if (l.longAt(i) != r.longAt(i)) {
                 return false;
             }
