@@ -177,8 +177,6 @@ auto convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, T1 srcSentinel,
     // i.e INT(NULL) -> BYTE(0)
     assert(dstNullable == true || dstNullable == false && dstSentinel == 0);
 
-    constexpr auto dstMinValue = std::numeric_limits<T2>().min();
-    constexpr auto dstMaxValue = std::numeric_limits<T2>().max();
 
     for (size_t i = 0; i < rowCount; i++) {
         if constexpr (srcNullable) {
