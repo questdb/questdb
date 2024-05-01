@@ -80,7 +80,7 @@ public class UnorderedVarcharMapBenchmark {
     public void benchOrderedMap() {
         orderedMap.clear();
         for (int i = 0; i < ROW_COUNT; i++) {
-            Utf8Sequence value = VarcharTypeDriver.getSplitValue(i, dataReadMemUnstable, auxReadMemUnstable, 0);
+            Utf8Sequence value = VarcharTypeDriver.getSplitValue(auxReadMemUnstable, dataReadMemUnstable, i, 0);
 
             MapKey mapKey = orderedMap.withKey();
             mapKey.putVarchar(value);
@@ -97,7 +97,7 @@ public class UnorderedVarcharMapBenchmark {
     public void benchVarcharMapStable() {
         varcharMap.clear();
         for (int i = 0; i < ROW_COUNT; i++) {
-            Utf8Sequence value = VarcharTypeDriver.getSplitValue(i, dataReadMemStable, auxReadMemStable, 0);
+            Utf8Sequence value = VarcharTypeDriver.getSplitValue(auxReadMemStable, dataReadMemStable, i, 0);
 
             MapKey mapKey = varcharMap.withKey();
             mapKey.putVarchar(value);
@@ -114,7 +114,7 @@ public class UnorderedVarcharMapBenchmark {
     public void benchVarcharMapUnstable() {
         varcharMap.clear();
         for (int i = 0; i < ROW_COUNT; i++) {
-            Utf8Sequence value = VarcharTypeDriver.getSplitValue(i, dataReadMemUnstable, auxReadMemUnstable, 0);
+            Utf8Sequence value = VarcharTypeDriver.getSplitValue(auxReadMemUnstable, dataReadMemUnstable, i, 0);
 
             MapKey mapKey = varcharMap.withKey();
             mapKey.putVarchar(value);

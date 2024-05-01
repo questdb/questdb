@@ -385,7 +385,7 @@ public class Utf8sTest {
             }
 
             for (int i = 0; i < n; i++) {
-                Utf8Sequence varchar = VarcharTypeDriver.getSplitValue(i, dataMem, auxMem, rnd.nextBoolean() ? 1 : 2);
+                Utf8Sequence varchar = VarcharTypeDriver.getSplitValue(auxMem, dataMem, i, rnd.nextBoolean() ? 1 : 2);
                 Assert.assertEquals(expectedOffsets.getQuick(i), VarcharTypeDriver.getDataVectorSize(auxMem, i * 16L));
                 String expectedValue = expectedValues.getQuick(i);
                 if (expectedValue == null) {
@@ -420,7 +420,7 @@ public class Utf8sTest {
             utf8Sink.repeat("a", len);
             String expectedStr = utf8Sink.toString();
             for (int i = 0; i < n; i++) {
-                Utf8Sequence varchar = VarcharTypeDriver.getSplitValue(i, dataMem, auxMem, 1);
+                Utf8Sequence varchar = VarcharTypeDriver.getSplitValue(auxMem, dataMem, i, 1);
                 Assert.assertEquals(expectedOffsets.getQuick(i), VarcharTypeDriver.getDataVectorSize(auxMem, i * 16L));
                 Assert.assertNotNull(varchar);
                 TestUtils.assertEquals(expectedStr, varchar.asAsciiCharSequence());

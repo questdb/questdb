@@ -234,13 +234,13 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     /**
      * Reads a UTF-8 value from a VARCHAR column.
      *
-     * @param rowNum  the row number to read
-     * @param dataMem base pointer of the data vector
      * @param auxMem  base pointer of the auxiliary vector
+     * @param dataMem base pointer of the data vector
+     * @param rowNum  the row number to read
      * @param ab      whether to return the A or B flyweight
      * @return a Utf8Sequence representing the value at rowNum, or null if the value is null
      */
-    public static Utf8Sequence getSplitValue(long rowNum, MemoryR dataMem, MemoryR auxMem, int ab) {
+    public static Utf8Sequence getSplitValue(MemoryR auxMem, MemoryR dataMem, long rowNum, int ab) {
         final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
         int raw = auxMem.getInt(auxOffset);
         assert raw != 0;
@@ -273,12 +273,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param utf8SplitView flyweight for the split string
      * @return utf8SplitView loaded with the read value, or null if the value is null
      */
-    public static Utf8Sequence getSplitValue(
-            long auxAddr,
-            long dataAddr,
-            long rowNum,
-            Utf8SplitString utf8SplitView
-    ) {
+    public static Utf8Sequence getSplitValue(long auxAddr, long dataAddr, long rowNum, Utf8SplitString utf8SplitView) {
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
         int raw = Unsafe.getUnsafe().getInt(auxEntry);
         assert raw != 0;

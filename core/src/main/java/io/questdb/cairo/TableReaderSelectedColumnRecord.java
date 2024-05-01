@@ -363,9 +363,7 @@ public class TableReaderSelectedColumnRecord implements Record {
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
         return VarcharTypeDriver.getSplitValue(
-                rowNum,
-                reader.getColumn(absoluteColumnIndex),
-                reader.getColumn(absoluteColumnIndex + 1),
+                reader.getColumn(absoluteColumnIndex + 1), reader.getColumn(absoluteColumnIndex), rowNum,
                 ab
         );
     }
