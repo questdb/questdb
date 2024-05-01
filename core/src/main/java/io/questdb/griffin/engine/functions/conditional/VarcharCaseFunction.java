@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 
@@ -46,13 +47,13 @@ public final class VarcharCaseFunction extends VarcharFunction implements CaseFu
     }
 
     @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        picker.pick(rec).getVarchar(rec, utf8Sink);
+    public Utf8Sequence getVarcharA(Record rec) {
+        return picker.pick(rec).getVarcharA(rec);
     }
 
     @Override
-    public Utf8Sequence getVarcharA(Record rec) {
-        return picker.pick(rec).getVarcharA(rec);
+    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        picker.pick(rec).getVarchar(rec, utf8Sink);
     }
 
     @Override
