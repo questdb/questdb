@@ -22,9 +22,11 @@
  *
  ******************************************************************************/
 
+#include <errno.h>
 #include <jni.h>
 #include <stddef.h>
 #include <sys/inotify.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 JNIEXPORT jint JNICALL Java_io_questdb_InotifyAccessor_inotifyInit(JNIEnv *e, jclass cl)
@@ -77,4 +79,8 @@ JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_getEventFilenameSizeOff
 JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_getSizeofEvent(JNIEnv *e, jclass cl)
 {
     return (jshort)sizeof(struct inotify_event);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_InotifyAccessor_readEvent(JNIEnv *e, jclass cl, jint fd, jlong buf, jint bufSize) {
+    return (jint)read(fd, (void *) buf, bufSize);
 }

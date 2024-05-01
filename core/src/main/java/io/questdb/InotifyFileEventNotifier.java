@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class InotifyFileEventNotifier implements FileEventNotifier {
 
     private final long buf;
-    private final int bufSize = InotifyAccessor.getSizeofEvent();
+    private final int bufSize = InotifyAccessor.getSizeofEvent() + 4096;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Path dirPath = new Path();
     private final int epfd;
@@ -83,16 +83,19 @@ public final class InotifyFileEventNotifier implements FileEventNotifier {
         if (closed.get()) {
             return;
         }
-
+/*
         if (EpollAccessor.epollWait(epfd, event, 1, -1) < 0) {
             throw new FileEventNotifierException("epoll_wait");
         }
-        // Read the inotify_event into the buffer
-        Files.read(fd, buf, bufSize, 0);
-        int len = Unsafe.getUnsafe().getInt(buf + InotifyAccessor.getEventFilenameSizeOffset());
 
+ */
+        // Read the inotify_event into the buffer
+        long res = InotifyAccessor.readEvent(fd, buf, bufSize);
+        if (res < 0) {
+            throw new FileEventNotifierException("read");
+        }
         // Compare the filename from the struct with our watched file
-        if (Utf8s.equals(fileName, buf + InotifyAccessor.getEventFilenameOffset(), len)) {
+        if (Utf8s.equals(fileName, buf + InotifyAccessor.getEventFilenameOffset(), fileName.size())) {
             callback.onFileEvent();
         }
 
