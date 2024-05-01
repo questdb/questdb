@@ -66,17 +66,15 @@ JNIEXPORT jint JNICALL Java_io_questdb_InotifyAccessor_getINMOVEDTO(JNIEnv *e, j
 
 JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_getEventFilenameOffset(JNIEnv *e, jclass cl)
 {
-    return (jshort) offsetof(struct inotify_event, name);
+    return (jshort)offsetof(struct inotify_event, name);
 }
-
 
 JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_getEventFilenameSizeOffset(JNIEnv *e, jclass cl)
 {
-    return (jshort) offsetof(struct inotify_event, len);
+    return (jshort)offsetof(struct inotify_event, len);
 }
-
 
 JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_getSizeofEvent(JNIEnv *e, jclass cl)
 {
-    return (jshort) sizeof(struct inotify_event);
+    return (jshort)sizeof(struct inotify_event);
 }
