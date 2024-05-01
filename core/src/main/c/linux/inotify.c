@@ -84,3 +84,37 @@ JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_getSizeofEvent(JNIEnv *
 JNIEXPORT jint JNICALL Java_io_questdb_InotifyAccessor_readEvent(JNIEnv *e, jclass cl, jint fd, jlong buf, jint bufSize) {
     return (jint)read(fd, (void *) buf, bufSize);
 }
+
+JNIEXPORT jlong JNICALL Java_io_questdb_InotifyAccessor_pipe
+        (JNIEnv *e, jclass cl) {
+    int fds[2];
+    int res = pipe(fds);
+    if (res < 0) {
+        return res;
+    }
+    return (jlong) fds[0] << 32 | (jlong) fds[1];
+}
+
+
+JNIEXPORT jint JNICALL Java_io_questdb_InotifyAccessor_readPipe
+        (JNIEnv *e, jclass cl, jint fd) {
+    char buf[1];
+    ssize_t s;
+    s = read((int) fd, &buf[0], 1);
+    if (s != 1) {
+        return -1;
+    }
+    return (jint) buf[0];
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_InotifyAccessor_writePipe
+        (JNIEnv *e, jclass cl, jint fd) {
+    char buf[1];
+    ssize_t s;
+    buf[0] = 1;
+    s = write((int) fd, &buf[0], 1);
+    if (s != 1) {
+        return -1;
+    }
+    return 0;
+}

@@ -61,6 +61,7 @@ public class FileWatcher implements QuietCloseable {
                     this.notifier.waitForChange(this.callback);
                 } catch (FileEventNotifierException exc) {
                     LOG.error().$(exc).$();
+                    // todo: maybe exit this loop instead? because we need to rearm
                 }
             } while (true);
 
@@ -77,6 +78,9 @@ public class FileWatcher implements QuietCloseable {
     }
 
     public void watch() {
-        reloadThread.start();
+        if (reloadThread.getState() == Thread.State.NEW) {
+            reloadThread.start();
+        }
+
     }
 }

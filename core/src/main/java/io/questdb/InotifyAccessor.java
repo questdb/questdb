@@ -50,7 +50,13 @@ public class InotifyAccessor {
 
     static native short inotifyRmWatch(int fd, int wd);
 
+    static native long pipe();
+
     static native int readEvent(int fd, long buf, int bufSize);
+
+    static native int readPipe(int fd);
+
+    static native int writePipe(int fd);
 
     static {
         IN_CLOSE_WRITE = getINCLOSEWRITE();

@@ -34,13 +34,13 @@ public class EpollAccessor {
     public static final int EPOLL_CTL_DEL;
     public static final int EPOLL_CTL_MOD;
     public static final short EVENTS_OFFSET;
-    public static final short SIZEOF_EVENT;
+    static final short SIZEOF_EVENT;
 
-    public static native int epollCreate();
+    static native int epollCreate();
 
-    public static native int epollCtl(int epfd, int op, int fd, long eventPtr);
+    static native int epollCtl(int epfd, int op, int fd, long eventPtr);
 
-    public static native int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
+    static native int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
 
     static native int eventFd();
 
