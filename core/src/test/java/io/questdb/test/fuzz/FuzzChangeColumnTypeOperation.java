@@ -132,7 +132,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         return true;
     }
 
-    private static int changeColumnTypeTo(Rnd rnd, int columnType) {
+    public static int changeColumnTypeTo(Rnd rnd, int columnType) {
         switch (columnType) {
             case ColumnType.STRING:
                 return rnd.nextBoolean() ? ColumnType.SYMBOL : ColumnType.VARCHAR;

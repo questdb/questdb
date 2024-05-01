@@ -850,29 +850,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
 
             boolean isDedupKey = metadata.isDedupKey(existingColIndex);
-            boolean existingColumnIndexed = metadata.isColumnIndexed(existingColIndex);
             if (existingType == newType) {
-                if (ColumnType.isSymbol(newType)) {
-                    // If symbol attributes change, rewrite symbol maps instead of the data.
-                    if (symbolMapWriters.getQuick(existingColIndex).isCached() != symbolCacheFlag) {
-                        changeCacheFlag(existingColIndex, symbolCacheFlag);
-                        return;
-                    }
-                    if (symbolMapWriters.getQuick(existingColIndex).getSymbolCapacity() != symbolCapacity) {
-                        changeSymbolCapacity(columnName, symbolCapacity);
-                        return;
-                    }
-                    if (isIndexed != existingColumnIndexed) {
-                        if (isIndexed) {
-                            addIndex(columnName, indexValueBlockCapacity);
-                        } else {
-                            dropIndex(columnName);
-                        }
-                        return;
-                    }
-                }
-                LOG.info().$("column type is the same, will not change the column type [table=").utf8(tableToken.getTableName()).$(", column=").utf8(columnName).I$();
-                return;
+                // It only makes sense to change symbol paramters
+                // It has to be another type of ALTER command since it's non-structural change in WAL tables
+                throw CairoException.nonCritical().put("cannot change column type, new type is the same as existing [table=")
+                        .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
             }
 
             int columnIndex = columnCount;
@@ -3107,10 +3089,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void cancelRowAndBump() {
         rowCancel();
         masterRef++;
-    }
-
-    private void changeSymbolCapacity(CharSequence name, int newSymbolCapacity) {
-        throw CairoException.nonCritical().put("changing symbol capacity is not implemented yet");
     }
 
     private void checkColumnName(CharSequence name) {
@@ -7774,7 +7752,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         ddlMem.skip(16);
     }
 
-    @NotNull
     private void writeIndex(@NotNull CharSequence columnName, int indexValueBlockSize, int columnIndex, SymbolColumnIndexer indexer) {
         // create indexer
         final long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);

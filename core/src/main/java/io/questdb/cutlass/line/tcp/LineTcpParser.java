@@ -81,8 +81,6 @@ public class LineTcpParser {
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final DirectUtf8String measurementName = new DirectUtf8String();
-    private final boolean stringAsTagSupported;
-    private final boolean symbolAsFieldSupported;
     private long bufAt;
     private ProtoEntity currentEntity;
     private byte entityHandler = -1;
@@ -95,14 +93,11 @@ public class LineTcpParser {
     private int nQuoteCharacters;
     private boolean nextValueCanBeOpenQuote;
     private boolean scape;
-    private boolean tagStartsWithQuote;
     private boolean tagsComplete;
     private long timestamp;
     private byte timestampUnit;
 
-    public LineTcpParser(boolean stringAsTagSupported, boolean symbolAsFieldSupported) {
-        this.stringAsTagSupported = stringAsTagSupported;
-        this.symbolAsFieldSupported = symbolAsFieldSupported;
+    public LineTcpParser() {
     }
 
     public long getBufferAddress() {
@@ -282,7 +277,6 @@ public class LineTcpParser {
                     } else if (isQuotedFieldValue) {
                         return getError(bufHi);
                     } else if (entityLo == bufAt) {
-                        tagStartsWithQuote = true;
                     }
 
                 default:
@@ -344,7 +338,6 @@ public class LineTcpParser {
         isQuotedFieldValue = false;
         entityLo = bufAt;
         tagsComplete = false;
-        tagStartsWithQuote = false;
         nEntities = 0;
         currentEntity = null;
         entityHandler = ENTITY_HANDLER_TABLE;
@@ -789,13 +782,13 @@ public class LineTcpParser {
             if (tagsComplete) {
                 if (valueLen > 0) {
                     byte lastByte = value.byteAt(valueLen - 1);
-                    return parse(lastByte, valueLen) && (symbolAsFieldSupported || type != ENTITY_TYPE_SYMBOL);
+                    return parse(lastByte, valueLen);
                 }
                 type = ENTITY_TYPE_NULL;
                 return true;
             }
             type = ENTITY_TYPE_TAG;
-            return !tagStartsWithQuote || valueLen < 2 || value.byteAt(valueLen - 1) != '"' || stringAsTagSupported;
+            return true;
         }
     }
 

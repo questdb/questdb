@@ -1737,8 +1737,13 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
-            validateExistingColumnName(columnName, "cannot change type");
+            int columnIndex = validateExistingColumnName(columnName, "cannot change type");
             validateNewColumnType(newType);
+            int existingType = metadata.getColumnType(columnIndex);
+            if (existingType == newType) {
+                throw CairoException.nonCritical().put("column '").put(columnName)
+                        .put("' type is already '").put(ColumnType.nameOf(newType)).put('\'');
+            }
             structureVersion++;
         }
 
@@ -1811,7 +1816,7 @@ public class WalWriter implements TableWriterAPI {
             structureVersion = getColumnStructureVersion();
         }
 
-        private void validateExistingColumnName(CharSequence columnName, String errorPrefix) {
+        private int validateExistingColumnName(CharSequence columnName, String errorPrefix) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0) {
                 throw CairoException.nonCritical().put(errorPrefix).put(", column does not exist [table=").put(tableToken.getTableName())
@@ -1821,6 +1826,7 @@ public class WalWriter implements TableWriterAPI {
                 throw CairoException.nonCritical().put(errorPrefix).put(" designated timestamp column [table=").put(tableToken.getTableName())
                         .put(", column=").put(columnName).put(']');
             }
+            return columnIndex;
         }
 
         private void validateNewColumnName(CharSequence columnName) {
@@ -1914,51 +1920,56 @@ public class WalWriter implements TableWriterAPI {
             if (existingColumnIndex > -1) {
                 int existingColumnType = metadata.getColumnType(existingColumnIndex);
                 if (existingColumnType > 0) {
-                    // Configure new column, it will be used if the uncommitted data is rolled to a new segment
-                    int newColumnIndex = columnCount;
-                    configureColumn(newColumnIndex, newType);
-                    if (ColumnType.isSymbol(newType)) {
-                        configureSymbolMapWriter(newColumnIndex, columnName, 0, -1);
-                    }
-                    columnCount++;
-                    // Roll last transaction to new segment
-                    rollUncommittedToNewSegment(existingColumnIndex, newType);
+                    if (existingColumnType != newType) {
+                        // Configure new column, it will be used if the uncommitted data is rolled to a new segment
+                        int newColumnIndex = columnCount;
+                        configureColumn(newColumnIndex, newType);
+                        if (ColumnType.isSymbol(newType)) {
+                            configureSymbolMapWriter(newColumnIndex, columnName, 0, -1);
+                        }
+                        columnCount++;
+                        // Roll last transaction to new segment
+                        rollUncommittedToNewSegment(existingColumnIndex, newType);
 
-                    if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
-                        metadata.changeColumnType(columnName, newType);
-                        path.trimTo(rootLen).slash().put(segmentId);
-
-                        markColumnRemoved(existingColumnIndex, existingColumnType);
-                        if (!rollSegmentOnNextRow) {
-                            // this means we have rolled uncommitted rows to a new segment already
-                            // we should switch metadata to this new segment
+                        if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
+                            metadata.changeColumnType(columnName, newType);
                             path.trimTo(rootLen).slash().put(segmentId);
-                            // this will close old _meta file and create the new one
-                            metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
 
-                            if (segmentRowCount == 0) {
-                                openColumnFiles(columnName, newType, newColumnIndex, path.size());
-                                LOG.info().$("==== open column files [path=").$(path).$(Files.SEPARATOR).$(segmentId)
-                                        .$(", columnName=").utf8(columnName)
-                                        .$(", from=").$(ColumnType.nameOf(existingColumnType))
-                                        .$(", to=").$(ColumnType.nameOf(newType))
-                                        .$(", segmentRowCount=").$(segmentRowCount)
-                                        .$(", currentTxnStartRowNum=").$(currentTxnStartRowNum)
-                                        .I$();
+                            markColumnRemoved(existingColumnIndex, existingColumnType);
+                            if (!rollSegmentOnNextRow) {
+                                // this means we have rolled uncommitted rows to a new segment already
+                                // we should switch metadata to this new segment
+                                path.trimTo(rootLen).slash().put(segmentId);
+                                // this will close old _meta file and create the new one
+                                metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
+
+                                if (segmentRowCount == 0) {
+                                    openColumnFiles(columnName, newType, newColumnIndex, path.size());
+                                    LOG.info().$("==== open column files [path=").$(path).$(Files.SEPARATOR).$(segmentId)
+                                            .$(", columnName=").utf8(columnName)
+                                            .$(", from=").$(ColumnType.nameOf(existingColumnType))
+                                            .$(", to=").$(ColumnType.nameOf(newType))
+                                            .$(", segmentRowCount=").$(segmentRowCount)
+                                            .$(", currentTxnStartRowNum=").$(currentTxnStartRowNum)
+                                            .I$();
+                                }
                             }
+                            if (securityContext != null) {
+                                ddlListener.onColumnTypeChanged(securityContext, metadata.getTableToken(), columnName, existingColumnType, newType);
+                            }
+                            path.trimTo(rootLen);
+                            LOG.info().$("changed column type in WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId)
+                                    .$(", columnName=").utf8(columnName)
+                                    .$(", from=").$(ColumnType.nameOf(existingColumnType))
+                                    .$(", to=").$(ColumnType.nameOf(newType))
+                                    .I$();
+                        } else {
+                            throw CairoException.critical(0).put("column '").put(columnName)
+                                    .put("' was removed, cannot apply commit because of concurrent table definition change");
                         }
-                        if (securityContext != null) {
-                            ddlListener.onColumnTypeChanged(securityContext, metadata.getTableToken(), columnName, existingColumnType, newType);
-                        }
-                        path.trimTo(rootLen);
-                        LOG.info().$("changed column type in WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId)
-                                .$(", columnName=").utf8(columnName)
-                                .$(", from=").$(ColumnType.nameOf(existingColumnType))
-                                .$(", to=").$(ColumnType.nameOf(newType))
-                                .I$();
                     } else {
-                        throw CairoException.critical(0).put("column '").put(columnName)
-                                .put("' was removed, cannot apply commit because of concurrent table definition change");
+                        throw CairoException.nonCritical().put("column '").put(columnName)
+                                .put("' type is already '").put(ColumnType.nameOf(newType)).put('\'');
                     }
                 }
             } else {

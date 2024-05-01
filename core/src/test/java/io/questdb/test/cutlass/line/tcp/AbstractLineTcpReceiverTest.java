@@ -202,11 +202,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean isSymbolAsFieldSupported() {
-            return symbolAsFieldSupported;
-        }
-
-        @Override
         public boolean isUseLegacyStringDefault() {
             return useLegacyStringDefault;
         }
@@ -392,7 +387,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             sendToSocket(socket, lineData);
         } catch (Exception e) {
             Assert.fail("Data sending failed [e=" + e + "]");
-            LOG.error().$(e).$();
         }
     }
 

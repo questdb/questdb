@@ -850,6 +850,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "cannot change type of designated timestamp column");
         }
         int existingColumnType = tableMetadata.getColumnType(columnIndex);
+        if (newColumnType == existingColumnType) {
+            throw SqlException.$(lexer.lastTokenPosition(), "column '").put(columnName)
+                    .put("' type is already '").put(ColumnType.nameOf(existingColumnType)).put('\'');
+        }
         if (!isCompatibleCase(existingColumnType, newColumnType)) {
             throw SqlException.$(lexer.lastTokenPosition(), "incompatible column type change [existing=")
                     .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');

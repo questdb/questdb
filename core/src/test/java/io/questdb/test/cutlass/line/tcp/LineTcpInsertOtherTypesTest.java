@@ -789,6 +789,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "A\t1970-01-01T00:00:07.000000Z\n" +
                         "@plant2\t1970-01-01T00:00:08.000000Z\n" +
                         "@plant\t1970-01-01T00:00:09.000000Z\n" +
+                        "\"@plant\"\t1970-01-01T00:00:10.000000Z\n" +
                         "\t1970-01-01T00:00:11.000000Z\n",
                 new CharSequence[]{
                         "e", // valid
@@ -821,6 +822,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "A\t1970-01-01T00:00:07.000000Z\n" +
                         "@plant2\t1970-01-01T00:00:08.000000Z\n" +
                         "@plant\t1970-01-01T00:00:09.000000Z\n" +
+                        "\"@plant\"\t1970-01-01T00:00:10.000000Z\n" +
                         "\t1970-01-01T00:00:11.000000Z\n" +
                         "\"abcd\t1970-01-01T00:00:12.000000Z\n",
                 new CharSequence[]{
@@ -942,26 +944,32 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "e\t1970-01-01T00:00:01.000000Z\n" +
                         "xxx\t1970-01-01T00:00:02.000000Z\n" +
                         "paff\t1970-01-01T00:00:03.000000Z\n" +
+                        "paff\"\t1970-01-01T00:00:05.000000Z\n" +
+                        "null\t1970-01-01T00:00:06.000000Z\n" +
+                        "yyy\t1970-01-01T00:00:07.000000Z\n" +
+                        "tt\"tt\"\t1970-01-01T00:00:09.000000Z\n" +
+                        "\"tt\"tt\t1970-01-01T00:00:10.000000Z\n" +
                         "tt\"tt\t1970-01-01T00:00:11.000000Z\n" +
-                        "tt\"tt\" \n" +
-                        " =, ,=\"\t1970-01-01T00:00:12.000000Z\n" +
+                        "tt\"tt\" \n =, ,=\"\t1970-01-01T00:00:12.000000Z\n" +
+                        "A\t1970-01-01T00:00:13.000000Z\n" +
+                        "@plant2\t1970-01-01T00:00:14.000000Z\n" +
                         "\t1970-01-01T00:00:15.000000Z\n",
                 new CharSequence[]{
-                        "\"e\"", // valid
-                        "\"xxx\"", // valid
-                        "\"paff\"", // valid
-                        "\"paff", // discarded bad value
-                        "paff\"", // discarded bad value
-                        "null", // discarded bad type symbol
-                        "yyy", // discarded bad type symbol
-                        "\"tt\"tt\"", // discarded bad value
-                        "tt\"tt\"", // discarded bad value
-                        "\"tt\"tt", // discarded bad value
-                        "\"tt\\\"tt\"", // valid
-                        "\"tt\\\"tt\\\" \\\n =, ,=\\\"\"", // valid
-                        "A", // discarded bad type symbol
-                        "@plant2", // discarded bad type symbol
-                        "" // valid null
+                        "\"e\"", // 1, valid
+                        "\"xxx\"", // 2, valid
+                        "\"paff\"", // 3, valid
+                        "\"paff", // 4, invalid
+                        "paff\"", // 5, valid
+                        "null", // 6, valid
+                        "yyy", // 7, valid
+                        "\"tt\"tt\"", // 8, discarded bad value
+                        "tt\"tt\"", // 9, valid
+                        "\"tt\"tt", // 10, valid
+                        "\"tt\\\"tt\"", // 11, valid
+                        "\"tt\\\"tt\\\" \\\n =, ,=\\\"\"", // 12, valid
+                        "A", // 13, valid
+                        "@plant2", // 14, valid
+                        "" // 15, valid null
                 },
                 false
         );

@@ -128,6 +128,7 @@ public class TableData {
         switch (colType) {
             case DOUBLE:
                 return "null";
+            case VARCHAR:
             case STRING:
             case SYMBOL:
             case TIMESTAMP:
