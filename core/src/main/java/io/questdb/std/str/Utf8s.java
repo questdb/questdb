@@ -735,7 +735,16 @@ public final class Utf8s {
 
     public static boolean startsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence prefix) {
         final int prefixSize = prefix.size();
-        return seq.size() >= prefixSize && equalPrefixBytes(seq, prefix, prefixSize);
+        return prefixSize == 0 || seq.size() >= prefixSize &&
+                equalPrefixBytes(seq, seq.zeroPaddedSixPrefix(), prefix, prefix.zeroPaddedSixPrefix(), prefixSize);
+    }
+
+    public static boolean startsWith(
+            @NotNull Utf8Sequence seq, long seqSixPrefix, @NotNull Utf8Sequence startsWith, long startsWithSixPrefix
+    ) {
+        final int prefixSize = startsWith.size();
+        return prefixSize == 0 || seq.size() >= prefixSize &&
+                equalPrefixBytes(seq, seqSixPrefix, startsWith, startsWithSixPrefix, prefixSize);
     }
 
     public static boolean startsWithAscii(@NotNull Utf8Sequence seq, @NotNull CharSequence asciiStarts) {
@@ -1203,12 +1212,11 @@ public final class Utf8s {
         return pos;
     }
 
-    private static boolean equalPrefixBytes(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r, int prefixSize) {
-        if (prefixSize == 0) {
-            return true;
-        }
+    private static boolean equalPrefixBytes(
+            @NotNull Utf8Sequence l, long lSixPrefix, @NotNull Utf8Sequence r, long rSixPrefix, int prefixSize
+    ) {
         long prefixMask = (1L << 8 * Math.min(VARCHAR_INLINED_PREFIX_BYTES, prefixSize)) - 1;
-        if (((l.zeroPaddedSixPrefix() & prefixMask) ^ r.zeroPaddedSixPrefix()) != 0) {
+        if (((lSixPrefix ^ rSixPrefix) & prefixMask) != 0) {
             return false;
         }
         int i = VARCHAR_INLINED_PREFIX_BYTES;

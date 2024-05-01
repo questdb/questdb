@@ -63,17 +63,25 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
     }
 
     public static class ConstStartsWithVarcharFunction extends BooleanFunction implements UnaryFunction {
-        private final Utf8String prefix;
+        private final Utf8String startsWith;
+        private final long startsWithSixPrefix;
         private final Function value;
 
-        public ConstStartsWithVarcharFunction(Function value, @Transient Utf8Sequence prefix) {
+        public ConstStartsWithVarcharFunction(Function value, @Transient Utf8Sequence startsWith) {
             this.value = value;
-            this.prefix = prefix != null ? Utf8String.newInstance(prefix) : null;
+            if (startsWith != null) {
+                this.startsWith = Utf8String.newInstance(startsWith);
+                this.startsWithSixPrefix = startsWith.zeroPaddedSixPrefix();
+            } else {
+                this.startsWith = null;
+                this.startsWithSixPrefix = 0;
+            }
         }
 
-        public ConstStartsWithVarcharFunction(Function value, @Transient CharSequence prefix) {
+        public ConstStartsWithVarcharFunction(Function value, @Transient CharSequence startsWith) {
             this.value = value;
-            this.prefix = new Utf8String(prefix);
+            this.startsWith = new Utf8String(startsWith);
+            this.startsWithSixPrefix = this.startsWith.zeroPaddedSixPrefix();
         }
 
         @Override
@@ -83,18 +91,18 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            if (prefix == null) {
+            if (startsWith == null) {
                 return false;
             }
             Utf8Sequence us = value.getVarcharA(rec);
-            return us != null && Utf8s.startsWith(us, prefix);
+            return us != null && Utf8s.startsWith(us, us.zeroPaddedSixPrefix(), startsWith, startsWithSixPrefix);
         }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" like ");
-            sink.val(prefix);
+            sink.val(startsWith);
             sink.val('%');
         }
     }
