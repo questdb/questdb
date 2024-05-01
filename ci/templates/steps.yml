@@ -66,6 +66,8 @@ steps:
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
+    env:
+      qdb_no_jemalloc: $(qdb_no_jemalloc)
   - task: Maven@3
     displayName: "Run tests with Coverage"
     inputs:
