@@ -26,27 +26,27 @@
 #include <sys/inotify.h>
 #include <unistd.h>
 
-JNIEXPORT jlong JNICALL Java_io_questdb_InotifyAccessor_inotifyInit(JNIEnv *e, jclass cl)
+JNIEXPORT jint JNICALL Java_io_questdb_InotifyAccessor_inotifyInit(JNIEnv *e, jclass cl)
 {
-    return (jlong)inotify_init();
+    return (jint)inotify_init();
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_InotifyAccessor_inotifyAddWatch(JNIEnv *e, jclass cl, jlong fd, jlong pathPtr, jint flags)
+JNIEXPORT jint JNICALL Java_io_questdb_InotifyAccessor_inotifyAddWatch(JNIEnv *e, jclass cl, jint fd, jlong pathPtr, jint flags)
 {
-    return (jlong)inotify_add_watch(
+    return (jint)inotify_add_watch(
         fd,
         (char *)pathPtr,
         flags);
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_inotifyRmWatch(JNIEnv *e, jclass cl, jlong fd, jlong wd)
+JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_inotifyRmWatch(JNIEnv *e, jclass cl, jint fd, jint wd)
 {
     return (jshort)inotify_rm_watch(
         fd,
         wd);
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_closeFd(JNIEnv *e, jclass cl, jlong fd)
+JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_closeFd(JNIEnv *e, jclass cl, jint fd)
 {
     return (jshort)close(fd);
 }

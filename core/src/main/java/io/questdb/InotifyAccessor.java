@@ -30,7 +30,7 @@ public class InotifyAccessor {
     public static final int IN_MODIFY;
     public static final int IN_MOVED_TO;
 
-    static native short closeFd(long fd);
+    static native short closeFd(int fd);
 
     static native int getINCLOSEWRITE();
 
@@ -40,11 +40,11 @@ public class InotifyAccessor {
 
     static native int getINMOVEDTO();
 
-    static native long inotifyAddWatch(long fd, long pathPtr, int flags);
+    static native int inotifyAddWatch(int fd, long pathPtr, int flags);
 
-    static native long inotifyInit();
+    static native int inotifyInit();
 
-    static native short inotifyRmWatch(long fd, long wd);
+    static native short inotifyRmWatch(int fd, int wd);
 
 
     static {

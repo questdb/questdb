@@ -25,22 +25,22 @@
 package io.questdb.network;
 
 public class EpollAccessor {
+    public static final short DATA_OFFSET;
+    public static final int EPOLLET;
     public static final int EPOLLIN;
+    public static final int EPOLLONESHOT;
     public static final int EPOLLOUT;
     public static final int EPOLL_CTL_ADD;
     public static final int EPOLL_CTL_DEL;
     public static final int EPOLL_CTL_MOD;
+    public static final short EVENTS_OFFSET;
     public static final short SIZEOF_EVENT;
-    static final short DATA_OFFSET;
-    static final int EPOLLET;
-    static final int EPOLLONESHOT;
-    static final short EVENTS_OFFSET;
 
-    static native int epollCreate();
+    public static native int epollCreate();
 
-    static native int epollCtl(int epfd, int op, int fd, long eventPtr);
+    public static native int epollCtl(int epfd, int op, int fd, long eventPtr);
 
-    static native int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
+    public static native int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
 
     static native int eventFd();
 
