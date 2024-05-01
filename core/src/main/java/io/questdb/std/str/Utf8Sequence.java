@@ -55,14 +55,11 @@ public interface Utf8Sequence {
 
     /**
      * Called as a part of equality check that has already ensured the two strings
-     * have the same byte size. This is especially relevant when comparing two values
-     * from a VARCHAR column: same size guarantees they are either both inlined or
-     * both not inlined, which means the same `Utf8Sequence` implementation is on
-     * both sides.
+     * have the same byte size.
      */
     default boolean equalsAssumingSameSize(Utf8Sequence other, int size) {
         int i = 0;
-        for (int n = size - 7; i < n; i += 8) {
+        for (int n = size - Long.BYTES; i <= n; i += Long.BYTES) {
             if (longAt(i) != other.longAt(i)) {
                 return false;
             }

@@ -36,15 +36,15 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
  * An immutable flyweight for a UTF-8 string stored in a VARCHAR column. It may be
  * stored in two formats:
  * <br/>
- * - fully inlined into the auxiliary vector (if up to 9 bytes)
+ * - fully inlined into the auxiliary vector (if up to 9 bytes). In this case, dataLo == auxLo.
  * - fully stored in the data vector, plus the first 6 bytes in the auxiliary vector
  */
 public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final boolean stable;
-    protected long dataLo;
     private boolean ascii;
     private long auxLo;
+    private long dataLo;
     private int size;
 
     public Utf8SplitString(boolean stable) {
