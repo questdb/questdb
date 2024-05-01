@@ -43,10 +43,15 @@ public class FileWatcher implements QuietCloseable {
     ) {
         this.callback = callback;
         this.notifier = notifier;
+
+        if (this.callback == null) {
+            throw new IllegalArgumentException("callback is null");
+        }
+
+        if (this.notifier == null) {
+            throw new IllegalArgumentException("notifier is null");
+        }
         reloadThread = new Thread(() -> {
-            if (this.notifier == null || this.callback == null) {
-                return;
-            }
 
             do {
                 if (closed) {

@@ -30,7 +30,9 @@ public class InotifyAccessor {
     public static final int IN_MODIFY;
     public static final int IN_MOVED_TO;
 
-    static native short closeFd(int fd);
+    static native short getEventFilenameOffset();
+
+    static native short getEventFilenameSizeOffset();
 
     static native int getINCLOSEWRITE();
 
@@ -40,12 +42,13 @@ public class InotifyAccessor {
 
     static native int getINMOVEDTO();
 
+    static native short getSizeofEvent();
+
     static native int inotifyAddWatch(int fd, long pathPtr, int flags);
 
     static native int inotifyInit();
 
     static native short inotifyRmWatch(int fd, int wd);
-
 
     static {
         IN_CLOSE_WRITE = getINCLOSEWRITE();

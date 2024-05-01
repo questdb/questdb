@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 #include <jni.h>
+#include <stddef.h>
 #include <sys/inotify.h>
 #include <unistd.h>
 
@@ -46,11 +47,6 @@ JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_inotifyRmWatch(JNIEnv *
         wd);
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_closeFd(JNIEnv *e, jclass cl, jint fd)
-{
-    return (jshort)close(fd);
-}
-
 JNIEXPORT jint JNICALL Java_io_questdb_InotifyAccessor_getINMODIFY(JNIEnv *e, jclass cl)
 {
     return IN_MODIFY;
@@ -66,4 +62,21 @@ JNIEXPORT jint JNICALL Java_io_questdb_InotifyAccessor_getINCREATE(JNIEnv *e, jc
 JNIEXPORT jint JNICALL Java_io_questdb_InotifyAccessor_getINMOVEDTO(JNIEnv *e, jclass cl)
 {
     return IN_MOVED_TO;
+}
+
+JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_getEventFilenameOffset(JNIEnv *e, jclass cl)
+{
+    return (jshort) offsetof(struct inotify_event, name);
+}
+
+
+JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_getEventFilenameSizeOffset(JNIEnv *e, jclass cl)
+{
+    return (jshort) offsetof(struct inotify_event, len);
+}
+
+
+JNIEXPORT jshort JNICALL Java_io_questdb_InotifyAccessor_getSizeofEvent(JNIEnv *e, jclass cl)
+{
+    return (jshort) sizeof(struct inotify_event);
 }
