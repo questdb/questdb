@@ -27,7 +27,6 @@
 #include <cassert>
 #include <type_traits>
 #include <cmath>
-#include <__algorithm/clamp.h>
 #include <bit>
 
 /**
@@ -83,21 +82,6 @@ enum class ConversionError {
     UNSUPPORTED_CAST = 1,
 };
 
-/**
- * Checks if the T1 value is within the range of the T2's min and max bounds.
- * @tparam T1
- * @tparam T2
- * @param value
- * @return
- */
-template<typename T1, typename T2>
-constexpr bool not_in_range(T1 value) {
-    if (std::is_same<T1, int32_t>() && std::is_same<T2, int64_t>()) {
-        printf("clamp: %d\n", std::clamp<T1>(value, std::numeric_limits<T2>::min(), std::numeric_limits<T2>::max()));
-    }
-    return std::clamp<T1>(value, std::numeric_limits<T2>::min(), std::numeric_limits<T2>::max()) != value;
-}
-
 template<ColumnType C, typename T>
 constexpr bool is_matching_type() {
     if constexpr (C == ColumnType::BYTE && std::is_same<T, int8_t>()) {
@@ -130,7 +114,6 @@ constexpr bool is_matching_type() {
 constexpr static int32_t FLOAT_NULL_SENTINEL = 0x7fc00000;
 constexpr static int64_t DOUBLE_NULL_SENTINEL = 0x7ff8000000000000L;
 
-
 template<ColumnType C, typename T>
 constexpr
 T get_null_sentinel() {
@@ -141,17 +124,18 @@ T get_null_sentinel() {
     } else if (C == ColumnType::TIMESTAMP) {
         return static_cast<T>(0x8000000000000000L);
     } else if (C == ColumnType::FLOAT) {
-        return *((float *) (&FLOAT_NULL_SENTINEL));
+        // ReSharper disable once CppCStyleCast
+        return *((float *) (&FLOAT_NULL_SENTINEL)); // INTENTIONAL
     } else if (C == ColumnType::DOUBLE) {
-        return *((double *) (&DOUBLE_NULL_SENTINEL));
+        // ReSharper disable once CppCStyleCast
+        return *((double *) (&DOUBLE_NULL_SENTINEL)); // INTENTIONAL
     } else {
         return static_cast<T>(0);
     }
 }
 
 template<ColumnType C>
-constexpr
-bool is_nullable() {
+constexpr bool is_nullable() {
     if constexpr (C == ColumnType::INT) {
         return true;
     } else if (C == ColumnType::LONG) {
@@ -184,24 +168,12 @@ bool is_nullable() {
  * @return
  */
 template<typename T1, typename T2>
-ConversionError
-convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, bool srcNullable, T1 srcSentinel, bool dstNullable,
-                               T2 dstSentinel, size_t rowCount) {
+auto convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, bool srcNullable, T1 srcSentinel, bool dstNullable,
+                                    T2 dstSentinel, size_t rowCount) -> ConversionError {
     // if dst is nullable, then we have a sentinel
     // else the sentinel must be 0
     // i.e INT(NULL) -> BYTE(0)
     assert(dstNullable == true || dstNullable == false && dstSentinel == 0);
-
-    if (std::is_same<T1, float>() && std::is_same<T2, double>()) {
-        printf("src mem %p\n", srcMem);
-        printf("dst mem %p\n", dstMem);
-        printf("src nullable %d\n", srcNullable);
-        printf("dst nullable %d\n", dstNullable);
-        printf("src sentinel %f\n", srcSentinel);
-        printf("dst sentinel %f\n", dstSentinel);
-        printf("src first  value %f\n", srcMem[0]);
-        printf("first value is nan %d\n", std::isnan(srcMem[0]));
-    }
 
     constexpr auto dstMinValue = std::numeric_limits<T2>().min();
     constexpr auto dstMaxValue = std::numeric_limits<T2>().max();
@@ -220,18 +192,6 @@ convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, bool srcNullable, T1 srcS
                 }
             }
         }
-
-
-        // // potentially narrowing
-        // // if nullable on both sides, we can convert out of range to null
-        // if constexpr (sizeof(T1) > sizeof(T2)) {
-        //     if (srcNullable && dstNullable) {
-        //         if (srcMem[i] < static_cast<T1>(dstMinValue) || srcMem[i] > static_cast<T1>(dstMaxValue)) {
-        //             dstMem[i] = dstSentinel;
-        //             continue;
-        //         }
-        //     }
-        // }
 
         dstMem[i] = static_cast<T2>(srcMem[i]);
     }
