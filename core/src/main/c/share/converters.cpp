@@ -26,7 +26,7 @@
 
 #include "converters.h"
 
-
+// Used to clean up noise in the switch statement
 #define macro_dispatch_fixed_to_fixed(a, b, a_ty, b_ty) \
 case pack_column_types(a, b): \
         static_assert(is_matching_type<a, a_ty>()); \
@@ -50,7 +50,7 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
     const auto srcColumnType = static_cast<ColumnType>(srcType);
     const auto dstColumnType = static_cast<ColumnType>(dstType);
 
-    ConversionError status = ConversionError::NONE;
+    ConversionError status;
 
     switch (pack_column_types(srcColumnType, dstColumnType)) {
         // BYTE

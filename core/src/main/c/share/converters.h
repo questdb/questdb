@@ -82,6 +82,12 @@ enum class ConversionError {
     UNSUPPORTED_CAST = 1,
 };
 
+/**
+ * Ensures that the Java type aligns with the C++ type.
+ * @tparam C
+ * @tparam T
+ * @return
+ */
 template<ColumnType C, typename T>
 constexpr bool is_matching_type() {
     if constexpr (C == ColumnType::BYTE && std::is_same<T, int8_t>()) {
@@ -110,6 +116,7 @@ constexpr bool is_matching_type() {
 
 constexpr static int32_t FLOAT_NULL_SENTINEL = 0x7fc00000;
 constexpr static int64_t DOUBLE_NULL_SENTINEL = 0x7ff8000000000000L;
+
 
 template<ColumnType C, typename T>
 constexpr
@@ -150,9 +157,7 @@ constexpr bool is_nullable() {
 
 /**
  * Convert between fixed numeric types.
- * Expected behaviour:
- *      For nullable types, any over/under flow should be converted to a null.
- *      For non-nullable types, any overflow will be left as is i.e 100,000 -> short will be -31072.
+ * Expected to align with SQL CAST behaviour.
  * @tparam T1 the source type
  * @tparam T2 the destination type
  * @param srcMem the source type mmap column
