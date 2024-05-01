@@ -483,8 +483,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                         manipulator.restructure(writer);
                         structVersion = writer.getMetadataVersion();
                     }
-                    metadata.createTransitionIndex(structVersion);
-                    metadata.applyTransitionIndex();
+                    metadata.prepareTransition(structVersion);
+                    metadata.applyTransition();
                 }
                 StringSink sink = new StringSink();
                 for (int i = 0; i < metadata.getColumnCount(); i++) {

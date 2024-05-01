@@ -1575,7 +1575,7 @@ public class WalWriterTest extends AbstractCairoTest {
             tableToken = createTable(model);
 
             final int rowsToInsertTotal = 100;
-            final long pointer = Unsafe.getUnsafe().allocateMemory(rowsToInsertTotal);
+            final long pointer = Unsafe.malloc(rowsToInsertTotal, MemoryTag.NATIVE_DEFAULT);
             try {
                 final long ts = Os.currentTimeMicros();
                 final Long256Impl long256 = new Long256Impl();
@@ -1755,7 +1755,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertEquals(i, reader.size());
                 }
             } finally {
-                Unsafe.getUnsafe().freeMemory(pointer);
+                Unsafe.free(pointer, rowsToInsertTotal, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }

@@ -694,7 +694,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return reader;
     }
 
-    private void createNewColumnList(int columnCount, TableReaderMetadata.TransitionIndex transitionIndex, int columnCountShl) {
+    private void createNewColumnList(int columnCount, TableReaderMetadataTransitionIndex transitionIndex, int columnCountShl) {
         LOG.debug().$("resizing columns file list [table=").utf8(tableToken.getTableName()).I$();
         int capacity = partitionCount << columnCountShl;
         final ObjList<MemoryMR> toColumns = new ObjList<>(capacity + 2);
@@ -1143,10 +1143,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         while (true) {
-            TableReaderMetadata.TransitionIndex transitionIndex;
             try {
-                transitionIndex = metadata.createTransitionIndex(txnMetadataVersion);
-                if (transitionIndex == null) {
+                if (!metadata.prepareTransition(txnMetadataVersion)) {
                     if (clock.getTicks() < deadline) {
                         return false;
                     }
@@ -1160,7 +1158,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
 
             assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
-            metadata.applyTransitionIndex();
+            TableReaderMetadataTransitionIndex transitionIndex = metadata.applyTransition();
             if (reshuffleColumns) {
                 final int columnCount = metadata.getColumnCount();
 
@@ -1279,7 +1277,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txPartitionNameTxn);
     }
 
-    private void reshuffleColumns(int columnCount, TableReaderMetadata.TransitionIndex transitionIndex) {
+    private void reshuffleColumns(int columnCount, TableReaderMetadataTransitionIndex transitionIndex) {
         LOG.debug().$("reshuffling columns file list [table=").utf8(tableToken.getTableName()).I$();
         int iterateCount = Math.max(columnCount, this.columnCount);
 
@@ -1343,7 +1341,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void reshuffleSymbolMapReaders(TableReaderMetadata.TransitionIndex transitionIndex, int columnCount) {
+    private void reshuffleSymbolMapReaders(TableReaderMetadataTransitionIndex transitionIndex, int columnCount) {
         if (columnCount > this.columnCount) {
             symbolMapReaders.setPos(columnCount);
         }

@@ -319,7 +319,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     }
 
                     try {
-                        metadata.createTransitionIndex(0);
+                        metadata.prepareTransition(0);
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Invalid metadata at ");
