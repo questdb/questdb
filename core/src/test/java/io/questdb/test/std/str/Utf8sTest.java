@@ -522,20 +522,24 @@ public class Utf8sTest {
         DirectUtf8String str = new DirectUtf8String();
         str.of(mem, mem + size);
         try {
-            Utf8StringSink sink = new Utf8StringSink();
-            sink.repeat("a", size);
-            Utf8s.strCpy(sink, size, mem);
+            Utf8StringSink strSink = new Utf8StringSink();
+            strSink.repeat("a", size);
 
-            TestUtils.assertEquals(sink, str);
+            Utf8s.strCpy(strSink, size, mem);
+            TestUtils.assertEquals(strSink, str);
 
             // overwrite the sink contents
-            sink.clear();
-            sink.repeat("b", size);
-            sink.clear();
+            strSink.clear();
+            strSink.repeat("b", size);
+            strSink.clear();
 
-            Utf8s.strCpy(mem, mem + size, sink);
+            Utf8s.strCpy(mem, mem + size, strSink);
+            TestUtils.assertEquals(strSink, str);
 
-            TestUtils.assertEquals(sink, str);
+            // test with DirectUtf8Sink too
+            DirectUtf8Sink directSink = new DirectUtf8Sink(size);
+            Utf8s.strCpy(mem, mem + size, directSink);
+            TestUtils.assertEquals(strSink, directSink);
         } finally {
             Unsafe.free(mem, size, MemoryTag.NATIVE_DEFAULT);
         }

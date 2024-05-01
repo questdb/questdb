@@ -760,7 +760,7 @@ public final class Utf8s {
 
     public static void strCpy(long srcLo, long srcHi, @NotNull Utf8Sink dest) {
         for (long i = srcLo; i < srcHi; i++) {
-            dest.put(Unsafe.getUnsafe().getByte(i));
+            dest.putAny(Unsafe.getUnsafe().getByte(i));
         }
     }
 
@@ -1139,7 +1139,7 @@ public final class Utf8s {
             if (b == 0) {
                 break;
             }
-            sink.put(b);
+            sink.putAny(b);
         }
     }
 
