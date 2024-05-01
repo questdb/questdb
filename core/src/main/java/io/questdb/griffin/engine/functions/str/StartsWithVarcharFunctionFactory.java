@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -56,17 +57,17 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
         Function varcharFunc = args.get(0);
         Function prefixFunc = args.get(1);
         if (prefixFunc.isConstant()) {
-            return new ConstStartsWithVarcharFunction(varcharFunc, prefixFunc.getVarcharA(null));
+            return new ConstFunc(varcharFunc, prefixFunc.getVarcharA(null));
         }
         return new Func(varcharFunc, prefixFunc);
     }
 
-    public static class ConstStartsWithVarcharFunction extends BooleanFunction implements UnaryFunction {
-        private final Utf8String startsWith;
+    public static class ConstFunc extends BooleanFunction implements UnaryFunction {
+        protected final Utf8String startsWith;
+        protected final Function value;
         private final long startsWithSixPrefix;
-        private final Function value;
 
-        public ConstStartsWithVarcharFunction(Function value, @Transient Utf8Sequence startsWith) {
+        public ConstFunc(Function value, @Transient Utf8Sequence startsWith) {
             this.value = value;
             if (startsWith != null) {
                 this.startsWith = Utf8String.newInstance(startsWith);
@@ -77,7 +78,7 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
             }
         }
 
-        public ConstStartsWithVarcharFunction(Function value, @Transient CharSequence startsWith) {
+        public ConstFunc(Function value, @Transient CharSequence startsWith) {
             this.value = value;
             this.startsWith = new Utf8String(startsWith);
             this.startsWithSixPrefix = this.startsWith.zeroPaddedSixPrefix();
@@ -96,21 +97,28 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
             Utf8Sequence us = value.getVarcharA(rec);
             return us != null && Utf8s.startsWith(us, us.zeroPaddedSixPrefix(), startsWith, startsWithSixPrefix);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME).val('(');
+            sink.val(value).val(", ");
+            sink.val(startsWith).val(')');
+        }
     }
 
     private static class Func extends BooleanFunction implements BinaryFunction {
-        private final Function prefixFunc;
-        private final Function varcharFunc;
+        private final Function startsWith;
+        private final Function value;
 
-        public Func(Function varcharFunc, Function prefixFunc) {
-            this.varcharFunc = varcharFunc;
-            this.prefixFunc = prefixFunc;
+        public Func(Function value, Function startsWith) {
+            this.value = value;
+            this.startsWith = startsWith;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            Utf8Sequence varchar = varcharFunc.getVarcharA(rec);
-            Utf8Sequence prefix = prefixFunc.getVarcharA(rec);
+            Utf8Sequence varchar = value.getVarcharA(rec);
+            Utf8Sequence prefix = startsWith.getVarcharA(rec);
             if (varchar == null || prefix == null) {
                 return false;
             }
@@ -119,7 +127,7 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Function getLeft() {
-            return varcharFunc;
+            return value;
         }
 
         @Override
@@ -129,7 +137,14 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Function getRight() {
-            return prefixFunc;
+            return startsWith;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME).val('(');
+            sink.val(value).val(", ");
+            sink.val(startsWith).val(')');
         }
     }
 }
