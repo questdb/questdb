@@ -139,14 +139,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     short getShort(Record rec);
 
-    default @Nullable Utf8Sequence getSplitVarcharA(Record rec) {
-        return getVarcharA(rec);
-    }
-
-    default @Nullable Utf8Sequence getSplitVarcharB(Record rec) {
-        return getVarcharB(rec);
-    }
-
     void getStr(Record rec, Utf16Sink utf16Sink);
 
     void getStr(Record rec, Utf16Sink sink, int arrayIndex);

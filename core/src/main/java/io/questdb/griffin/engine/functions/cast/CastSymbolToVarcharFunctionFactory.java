@@ -65,16 +65,6 @@ public class CastSymbolToVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Utf8Sequence getSplitVarcharA(Record rec) {
-            return arg.getSplitVarcharA(rec);
-        }
-
-        @Override
-        public Utf8Sequence getSplitVarcharB(Record rec) {
-            return arg.getSplitVarcharB(rec);
-        }
-
-        @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
             arg.getVarchar(rec, utf8Sink);
         }

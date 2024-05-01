@@ -46,16 +46,6 @@ public final class VarcharCaseFunction extends VarcharFunction implements CaseFu
     }
 
     @Override
-    public Utf8Sequence getSplitVarcharA(Record rec) {
-        return picker.pick(rec).getSplitVarcharA(rec);
-    }
-
-    @Override
-    public Utf8Sequence getSplitVarcharB(Record rec) {
-        return picker.pick(rec).getSplitVarcharB(rec);
-    }
-
-    @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         picker.pick(rec).getVarchar(rec, utf8Sink);
     }

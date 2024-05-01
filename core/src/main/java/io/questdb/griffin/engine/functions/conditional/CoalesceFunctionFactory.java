@@ -864,24 +864,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Utf8Sequence getSplitVarcharA(Record rec) {
-            Utf8Sequence value = args0.getSplitVarcharA(rec);
-            if (value != null) {
-                return value;
-            }
-            return args1.getSplitVarcharA(rec);
-        }
-
-        @Override
-        public Utf8Sequence getSplitVarcharB(Record rec) {
-            Utf8Sequence value = args0.getSplitVarcharB(rec);
-            if (value != null) {
-                return value;
-            }
-            return args1.getSplitVarcharB(rec);
-        }
-
-        @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
             Utf8Sequence sequence = getVarcharA(rec);
             if (sequence != null) {
@@ -967,30 +949,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public ObjList<Function> getArgs() {
             return args;
-        }
-
-        @Override
-        public Utf8Sequence getSplitVarcharA(Record rec) {
-            for (int i = 0; i < size; i++) {
-                Function arg = args.getQuick(i);
-                Utf8Sequence value = arg.getSplitVarcharA(rec);
-                if (value != null) {
-                    return value;
-                }
-            }
-            return null;
-        }
-
-        @Override
-        public Utf8Sequence getSplitVarcharB(Record rec) {
-            for (int i = 0; i < size; i++) {
-                Function arg = args.getQuick(i);
-                Utf8Sequence value = arg.getSplitVarcharB(rec);
-                if (value != null) {
-                    return value;
-                }
-            }
-            return null;
         }
 
         @Override

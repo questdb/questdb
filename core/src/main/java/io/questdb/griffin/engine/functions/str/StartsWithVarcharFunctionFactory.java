@@ -118,8 +118,8 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            Utf8Sequence varchar = varcharFunc.getSplitVarcharA(rec);
-            Utf8Sequence prefix = prefixFunc.getSplitVarcharA(rec);
+            Utf8Sequence varchar = varcharFunc.getVarcharA(rec);
+            Utf8Sequence prefix = prefixFunc.getVarcharA(rec);
             if (varchar == null || prefix == null) {
                 return false;
             }

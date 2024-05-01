@@ -214,16 +214,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public Utf8Sequence getSplitVarcharA(Record rec) {
-        return wrappedFunction.getSplitVarcharA(rec);
-    }
-
-    @Override
-    public Utf8Sequence getSplitVarcharB(Record rec) {
-        return wrappedFunction.getSplitVarcharB(rec);
-    }
-
-    @Override
     public void getStr(Record rec, Utf16Sink utf16Sink) {
         wrappedFunction.getStr(rec, utf16Sink);
     }
