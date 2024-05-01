@@ -24,8 +24,10 @@
 #ifndef CONVERTERS_H
 #define CONVERTERS_H
 
+#include <cassert>
 #include <type_traits>
 #include <cmath>
+#include <__algorithm/clamp.h>
 
 /**
  * ColumnType enum, matching the Java definitions.
@@ -83,12 +85,16 @@ enum class ConversionError {
 /**
  * Convert between fixed numeric types.
  * Expected behaviour:
- *      For nullable types, any overflow should be converted to a null.
+ *      For nullable types, any over/under flow should be converted to a null.
  *      For non-nullable types, any overflow will be left as is i.e 100,000 -> short will be -31072.
  * @tparam T1 the source type
  * @tparam T2 the destination type
  * @param srcMem the source type mmap column
  * @param dstMem the destination type mmap column
+ * @param srcNullable whether source is nullable
+ * @param srcSentinel the source null sentinel
+ * @param dstNullable whether destination is nullable
+ * @param dstSentinel the destination null sentinel
  * @param rowCount the number of rows
  * @return
  */
@@ -96,18 +102,46 @@ template<typename T1, typename T2>
 ConversionError
 convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, bool srcNullable, T1 srcSentinel, bool dstNullable,
                                T2 dstSentinel, size_t rowCount) {
-    constexpr auto maxDstValue = std::numeric_limits<T2>::max();
-
+    // if dst is nullable, then we have a sentinel
+    // else the sentinel must be 0
+    // i.e INT(NULL) -> BYTE(0)
+    assert(dstNullable == true || dstNullable == false && dstSentinel == 0);
 
     for (int i = 0; i < rowCount; i++) {
-        if (srcMem[i] == srcSentinel || srcMem[i] > maxDstValue) {
-            dstMem[i] = dstSentinel;
-        } else {
-            dstMem[i] = static_cast<T2>(srcMem[i]);
+        // if source is nullable and its a null, convert it to a null (or 0 if dst is non nullable)
+        if constexpr (srcNullable) {
+            if (srcMem[i] == srcSentinel) {
+                dstMem[i] = dstSentinel;
+                continue;
+            }
         }
+
+        // if both are nullable, and src is outside range of dst, then map it to a null
+        if constexpr (srcNullable && dstNullable) {
+            assert(srcMem[i] != srcSentinel);
+            if (not_in_range<T1, T2>(srcMem[i])) {
+                dstMem[i] = dstSentinel;
+                continue;
+            }
+        }
+
+        // otherwise, we cast and copy
+        dstMem[i] = static_cast<T2>(srcMem[i]);
     }
 
     return ConversionError::NONE;
+}
+
+/**
+ * Checks if the T1 value is within the range of the T2's min and max bounds.
+ * @tparam T1
+ * @tparam T2
+ * @param value
+ * @return
+ */
+template<typename T1, typename T2>
+constexpr bool not_in_range(T1 value) {
+    return std::clamp<T1>(value, std::numeric_limits<T2>::min(), std::numeric_limits<T2>::max()) != value;
 }
 
 template<ColumnType C, typename T>
@@ -155,7 +189,7 @@ auto get_null_sentinel() {
     } else if (C == ColumnType::DOUBLE) {
         return std::nan;
     } else {
-        return -1;
+        return 0;
     }
 }
 
