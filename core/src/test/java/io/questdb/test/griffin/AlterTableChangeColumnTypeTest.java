@@ -108,22 +108,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testChangeSymbolToVarcharReleaseWriters() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-            drainWalQueue();
-            engine.releaseInactive();
-            ddl("alter table x alter column ik type varchar", sqlExecutionContext);
-            drainWalQueue();
-
-            insert("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
-            drainWalQueue();
-
-            assertSql("ik\nabc\n", "select ik from x limit -1");
-        });
-    }
-
-    @Test
     public void testChangeStringToIndexedSymbol() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -214,6 +198,22 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeSymbolToVarcharReleaseWriters() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            drainWalQueue();
+            engine.releaseInactive();
+            ddl("alter table x alter column ik type varchar", sqlExecutionContext);
+            drainWalQueue();
+
+            insert("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ik\nabc\n", "select ik from x limit -1");
+        });
+    }
+
+    @Test
     public void testChangeTypePreservesColumnOrder() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -289,6 +289,88 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testColumnDoesNotExist() throws Exception {
         assertFailure("alter table x alter column non_existing", 27, "column 'non_existing' does not exists in table 'x'");
+    }
+
+    @Test
+    public void testFixedSizeColumnEquivalentToCast() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            drainWalQueue();
+            final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP"};
+            final char[] col_names = {'l', 'f', 'i', 'j', 'e', 'd', 'k'};
+            char srcColName;
+            String srcType;
+            String dstType;
+
+            for (int i = 0, n = types.length; i < n; i++) {
+                for (int j = 0, m = types.length; j < m; j++) {
+                    // skip unsupported noop conversion
+                    if (i == j) {
+                        continue;
+                    }
+
+                    srcType = types[i];
+                    srcColName = col_names[i];
+                    dstType = types[j];
+
+                    LOG.info().$("checking `" + srcType + "` to `" + dstType + "` conversion");
+
+                    ddl("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
+                    insert("insert into y select " + srcColName + " as converted, " + srcColName + "::" + dstType + " as casted, " + srcColName + " as original from x");
+                    drainWalQueue();
+                    ddl("alter table y alter column converted type " + dstType, sqlExecutionContext);
+                    drainWalQueue();
+
+                    try {
+                        assertQuery(
+                                "count_distinct\tfirst\n1\ttrue\n",
+                                "select count_distinct('equivalent'), first(equivalent) from (select (converted = casted) as equivalent from y)",
+                                null,
+                                false,
+                                true
+                        );
+                        assertQuery("column\ttype\n" +
+                                "converted\t" + dstType + "\n" +
+                                "casted\t" + dstType + "\n" +
+                                "original\t" + srcType + "\n", "select \"column\", type from table_columns('y')", null, false, false);
+                    } catch (AssertionError e) {
+                        // if the column wasn't converted
+                        if (e.getMessage().contains("column")) {
+                            throw e;
+                        } else {
+                            // dump the difference in data
+                            assertSql("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n", "select converted, casted, original from y");
+                        }
+                    } finally {
+                        drop("drop table y");
+                        drainWalQueue();
+                    }
+                }
+
+            }
+
+//            "create table x as (" +
+//                    "select" +
+//                    " cast(x as int) i," +
+//                    " rnd_symbol('msft','ibm', 'googl') sym," +
+//                    " round(rnd_double(0)*100, 3) amt," +
+//                    " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp," +
+//                    " rnd_boolean() b," +
+//                    " rnd_str(5,1024,2) c," +
+//                    " rnd_double(2) d," +
+//                    " rnd_float(2) e," +
+//                    " rnd_short(10,1024) f," +
+//                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+//                    " rnd_symbol(4,4,4,2) ik," +
+//                    " rnd_long() j," +
+//                    " timestamp_sequence(0, 1000000000) k," +
+//                    " rnd_byte(2,50) l," +
+//                    " rnd_bin(10, 20, 2) m," +
+//                    " rnd_varchar(5,64,2) v" +
+//                    " from long_sequence(1000)" +
+//                    "), index(ik) timestamp (timestamp) PARTITION BY HOUR " +
+//                    (walEnabled ? "WAL" : "BYPASS WAL")
+        });
     }
 
     @Test

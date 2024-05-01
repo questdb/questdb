@@ -86,10 +86,12 @@ public class ColumnTypeConverter {
     private static boolean convertFixedToFixed(long rowCount, long skipRows, int srcFixFd, int dstFixFd, int srcColumnType, int dstColumnType, FilesFacade ff, long appendPageSize) {
         MemoryCMORImpl srcFixMem = srcFixMemTL.get();
         MemoryCMARW dstFixMem = dstFixMemTL.get();
+        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
 
         try {
-            srcFixMem.ofOffset(ff, srcFixFd, null, ColumnType.sizeOf(srcColumnType) * skipRows, ColumnType.sizeOf(srcColumnType) * rowCount, memoryTag, CairoConfiguration.O_NONE);
-            dstFixMem.of(ff, dstFixFd, null, appendPageSize, ColumnType.sizeOf(dstColumnType) * rowCount, memoryTag);
+            srcFixMem.ofOffset(ff, srcFixFd, null, srcColumnTypeSize * skipRows, srcColumnTypeSize * rowCount, memoryTag, CairoConfiguration.O_NONE);
+            dstFixMem.of(ff, dstFixFd, null, appendPageSize, dstColumnTypeSize * rowCount, memoryTag);
             dstFixMem.jumpTo(0);
             long succeeded = ConvertersNative.fixedToFixed(srcFixMem.getPageAddress(0), srcColumnType, dstFixMem.getPageAddress(0), dstColumnType, rowCount);
             switch ((int) succeeded) {
@@ -105,6 +107,36 @@ public class ColumnTypeConverter {
             srcFixMem.detachFdClose();
             dstFixMem.detachFdClose();
         }
+
+        //        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        //        final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
+        //        long srcMapAddressRaw = 0;
+        //        long dstMapAddressRaw = 0;
+        //
+        //        try {
+        //            srcMapAddressRaw = rowCount > 0 ?
+        //                    TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * srcColumnTypeSize, rowCount * srcColumnType, false, memoryTag)
+        //                    : 0;
+        //
+        //            dstMapAddressRaw = rowCount > 0 ?
+        //                    TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, rowCount * dstColumnTypeSize, true, memoryTag)
+        //                    : 0;
+        //
+        //            long succeeded = ConvertersNative.fixedToFixed(Math.abs(srcMapAddressRaw), srcColumnType, Math.abs(dstMapAddressRaw), dstColumnType, rowCount);
+        //            switch ((int) succeeded) {
+        //                case ConvertersNative.ConversionError.NONE:
+        //                    return true;
+        //                case ConvertersNative.ConversionError.UNSUPPORTED_CAST:
+        //                    throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
+        //                default:
+        //                    throw CairoException.critical(0).put("Unknown return code from native call: ").put(succeeded);
+        //            }
+        //        } catch (Exception ex) {
+        //            throw ex;
+        //        } finally {
+        //            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipRows * srcColumnTypeSize, rowCount * srcColumnType, memoryTag);
+        //            TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddressRaw, 0, rowCount * dstColumnType, memoryTag);
+        //        }
     }
 
     private static boolean convertFromString(long skipRows, long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd, int dstColumnType, FilesFacade ff, long appendPageSize, SymbolMapWriterLite symbolMapWriter, ColumnConversionOffsetSink columnSizesSink) {
