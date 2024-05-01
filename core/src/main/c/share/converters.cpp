@@ -31,12 +31,13 @@
 case pack_column_types(a, b): \
         static_assert(is_matching_type<a, a_ty>()); \
         static_assert(is_matching_type<b, b_ty>()); \
-        status = convert_fixed_to_fixed_numeric<a_ty, b_ty>(reinterpret_cast<a_ty*>(srcMem), reinterpret_cast<b_ty*>(dstMem), \
-            is_nullable<a>(), get_null_sentinel<a, a_ty>(), is_nullable<b>(), get_null_sentinel<b, b_ty>(), static_cast<size_t>(rowCount)); \
+        status = convert_fixed_to_fixed_numeric<a_ty, b_ty, is_nullable<a>(), is_nullable<b>()>(reinterpret_cast<a_ty*>(srcMem), reinterpret_cast<b_ty*>(dstMem), \
+          get_null_sentinel<a, a_ty>(), get_null_sentinel<b, b_ty>(), static_cast<size_t>(rowCount)); \
 break;
 
 extern "C" {
-JNIEXPORT jlong JNICALL
+JNIEXPORT jlong
+JNICALL
 Java_io_questdb_griffin_ConvertersNative_fixedToFixed
 (
     JNIEnv */*env*/,

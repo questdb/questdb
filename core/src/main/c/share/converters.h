@@ -169,8 +169,8 @@ constexpr bool is_nullable() {
  * @param rowCount the number of rows
  * @return
  */
-template<typename T1, typename T2>
-auto convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, bool srcNullable, T1 srcSentinel, bool dstNullable,
+template<typename T1, typename T2, bool srcNullable, bool dstNullable>
+auto convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, T1 srcSentinel,
                                     T2 dstSentinel, size_t rowCount) -> ConversionError {
     // if dst is nullable, then we have a sentinel
     // else the sentinel must be 0
@@ -181,7 +181,7 @@ auto convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, bool srcNullable, T1
     constexpr auto dstMaxValue = std::numeric_limits<T2>().max();
 
     for (size_t i = 0; i < rowCount; i++) {
-        if (srcNullable) {
+        if constexpr (srcNullable) {
             if constexpr (std::is_same<T1, float>() || std::is_same<T1, double>()) {
                 if (std::isnan(srcMem[i])) {
                     dstMem[i] = dstSentinel;
