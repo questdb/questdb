@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -96,14 +95,6 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
             }
             Utf8Sequence us = value.getVarcharA(rec);
             return us != null && Utf8s.startsWith(us, us.zeroPaddedSixPrefix(), startsWith, startsWithSixPrefix);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(value);
-            sink.val(" like ");
-            sink.val(startsWith);
-            sink.val('%');
         }
     }
 
