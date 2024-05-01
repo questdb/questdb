@@ -733,10 +733,10 @@ public final class Utf8s {
         return h;
     }
 
-    public static boolean startsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence prefix) {
-        final int prefixSize = prefix.size();
-        return prefixSize == 0 || seq.size() >= prefixSize &&
-                equalPrefixBytes(seq, seq.zeroPaddedSixPrefix(), prefix, prefix.zeroPaddedSixPrefix(), prefixSize);
+    public static boolean startsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence startsWith) {
+        final int startsWithSize = startsWith.size();
+        return startsWithSize == 0 || seq.size() >= startsWithSize &&
+                equalPrefixBytes(seq, seq.zeroPaddedSixPrefix(), startsWith, startsWith.zeroPaddedSixPrefix(), startsWithSize);
     }
 
     public static boolean startsWith(
