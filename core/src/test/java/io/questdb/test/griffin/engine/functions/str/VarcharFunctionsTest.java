@@ -193,21 +193,97 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStartsWith() throws Exception {
+    public void testStartsWithLongPrefix() throws Exception {
         assertQuery(
                 "k\tstarts_with\n" +
-                        "xabc\tfalse\n" +
-                        "ab\tfalse\n" +
-                        "abcx\ttrue\n" +
+                        "xabcdefghijk\tfalse\n" +
+                        "xabcdefghijk\tfalse\n" +
+                        "abcdefghijx\tfalse\n" +
                         "xx\tfalse\n" +
-                        "abcx\ttrue\n" +
                         "xx\tfalse\n" +
-                        "ab\tfalse\n" +
                         "xx\tfalse\n" +
+                        "abcdefghij\tfalse\n" +
+                        "abcdefghijx\tfalse\n" +
+                        "xabcdefghijk\tfalse\n" +
                         "ab\tfalse\n" +
-                        "xabc\tfalse\n",
-                "select k, starts_with(k, 'abc') from x",
-                "create table x as (select rnd_varchar('xabc', 'abcx', 'ab', 'xx') k from long_sequence(10))",
+                        "ab\tfalse\n" +
+                        "abcdefghij\tfalse\n" +
+                        "ab\tfalse\n" +
+                        "abcdefghijx\tfalse\n" +
+                        "abcdefghijx\tfalse\n" +
+                        "xabcdefghijk\tfalse\n" +
+                        "xabcdefghijk\tfalse\n" +
+                        "abcdefghijx\tfalse\n" +
+                        "abcdefghijkx\ttrue\n" +
+                        "ab\tfalse\n",
+                "select k, starts_with(k, 'abcdefghijk') from x",
+                "create table x as (select rnd_varchar(" +
+                        "'xabcdefghijk', 'abcdefghijx', 'abcdefghij', 'abcdefghijkx', 'ab', 'xx'" +
+                        ") k from long_sequence(20))",
+                null, true, true
+        );
+    }
+
+    @Test
+    public void testStartsWithMidsizePrefix() throws Exception {
+        assertQuery(
+                "k\tstarts_with\n" +
+                        "xabcdefgh\tfalse\n" +
+                        "abcdefg\tfalse\n" +
+                        "xx\tfalse\n" +
+                        "abcdefghxxxx\ttrue\n" +
+                        "abcdefghx\ttrue\n" +
+                        "abcdefg\tfalse\n" +
+                        "abcdefgx\tfalse\n" +
+                        "ab\tfalse\n" +
+                        "abcdefghx\ttrue\n" +
+                        "xabcdefgh\tfalse\n" +
+                        "abcdefghx\ttrue\n" +
+                        "xx\tfalse\n" +
+                        "abcdefg\tfalse\n" +
+                        "abcdefghx\ttrue\n" +
+                        "ab\tfalse\n" +
+                        "ab\tfalse\n" +
+                        "ab\tfalse\n" +
+                        "xabcdefgh\tfalse\n" +
+                        "abcdefg\tfalse\n" +
+                        "xabcdefgh\tfalse\n",
+                "select k, starts_with(k, 'abcdefgh') from x",
+                "create table x as (select rnd_varchar(" +
+                        "'xabcdefgh', 'abcdefgx', 'abcdefg', 'abcdefghx', 'abcdefghxxxx', 'ab', 'xx'" +
+                        ") k from long_sequence(20))",
+                null, true, true
+        );
+    }
+
+    @Test
+    public void testStartsWithShortPrefix() throws Exception {
+        assertQuery(
+                "k\tstarts_with\n" +
+                        "xabcde\tfalse\n" +
+                        "abcde\ttrue\n" +
+                        "xx\tfalse\n" +
+                        "abcdexxxx\ttrue\n" +
+                        "abcdex\ttrue\n" +
+                        "abcde\ttrue\n" +
+                        "abcdx\tfalse\n" +
+                        "ab\tfalse\n" +
+                        "abcdex\ttrue\n" +
+                        "xabcde\tfalse\n" +
+                        "abcdex\ttrue\n" +
+                        "xx\tfalse\n" +
+                        "abcde\ttrue\n" +
+                        "abcdex\ttrue\n" +
+                        "ab\tfalse\n" +
+                        "ab\tfalse\n" +
+                        "ab\tfalse\n" +
+                        "xabcde\tfalse\n" +
+                        "abcde\ttrue\n" +
+                        "xabcde\tfalse\n",
+                "select k, starts_with(k, 'abcde') from x",
+                "create table x as (select rnd_varchar(" +
+                        "'xabcde', 'abcdx', 'abcde', 'abcdex', 'abcdexxxx', 'ab', 'xx'" +
+                        ") k from long_sequence(20))",
                 null, true, true
         );
     }
