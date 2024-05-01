@@ -20,6 +20,5 @@ jobs:
       javadoc_profile: ""
       jdk: "1.11"
       os: Linux
-      qdb_no_jemalloc: "true"
     steps:
       - template: steps.yml
