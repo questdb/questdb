@@ -148,7 +148,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_keventRegister
     );
 }
 
-
 JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_keventGetBlocking
         (JNIEnv *e, jclass cl, jint kq, jlong eventList, jint nEvents) {
     return (jint) kevent(

@@ -24,13 +24,36 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.ServerMain;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.Chars;
 
 public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
     public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactory();
+
+    public static UsernamePasswordMatcher newPgWireUsernamePasswordMatcher(PGWireConfiguration configuration) {
+        String defaultUsername = configuration.getDefaultUsername();
+        String defaultPassword = configuration.getDefaultPassword();
+        boolean defaultUserEnabled = !Chars.empty(defaultUsername) && !Chars.empty(defaultPassword);
+
+        String readOnlyUsername = configuration.getReadOnlyUsername();
+        String readOnlyPassword = configuration.getReadOnlyPassword();
+        boolean readOnlyUserValid = !Chars.empty(readOnlyUsername) && !Chars.empty(readOnlyPassword);
+        boolean readOnlyUserEnabled = configuration.isReadOnlyUserEnabled() && readOnlyUserValid;
+
+        if (defaultUserEnabled && readOnlyUserEnabled) {
+            return new CombiningUsernamePasswordMatcher(
+                    new StaticUsernamePasswordMatcher(defaultUsername, defaultPassword),
+                    new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyPassword)
+            );
+        } else if (defaultUserEnabled) {
+            return new StaticUsernamePasswordMatcher(defaultUsername, defaultPassword);
+        } else if (readOnlyUserEnabled) {
+            return new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyPassword);
+        } else {
+            return NeverMatchUsernamePasswordMatcher.INSTANCE;
+        }
+    }
 
     @Override
     public Authenticator getPgWireAuthenticator(
@@ -44,15 +67,7 @@ public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthentica
         // But the Default implementation does not use FactoryProviders at all. There is a single static field INSTANCE, see above.
         // Thus, there is nothing what could own and close the buffers. So we allocate buffers for each authenticator
         // and the authenticator will be responsible for closing them.
-        DirectUtf8Sink defaultUserPasswordSink = new DirectUtf8Sink(4);
-        DirectUtf8Sink readOnlyUserPasswordSink = new DirectUtf8Sink(4);
-        UsernamePasswordMatcher matcher = new CustomCloseActionPasswordMatcherDelegate(
-                ServerMain.newPgWireUsernamePasswordMatcher(configuration, defaultUserPasswordSink, readOnlyUserPasswordSink),
-                () -> {
-                    defaultUserPasswordSink.close();
-                    readOnlyUserPasswordSink.close();
-                }
-        );
+        final UsernamePasswordMatcher matcher = newPgWireUsernamePasswordMatcher(configuration);
 
         return new CleartextPasswordPgWireAuthenticator(
                 configuration,

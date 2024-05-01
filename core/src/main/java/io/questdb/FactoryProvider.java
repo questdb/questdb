@@ -41,7 +41,7 @@ public interface FactoryProvider extends QuietCloseable {
     @NotNull
     HttpAuthenticatorFactory getHttpAuthenticatorFactory();
 
-    PgWireAuthenticatorFactory getPgWireAuthenticationFactory();
+    PgWireAuthenticatorFactory getPgWireAuthenticatorFactory();
 
     @NotNull
     HttpCookieHandler getHttpCookieHandler();

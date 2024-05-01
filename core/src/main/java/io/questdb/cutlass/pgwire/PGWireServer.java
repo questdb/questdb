@@ -153,7 +153,7 @@ public class PGWireServer implements Closeable {
                         );
 
                         FactoryProvider factoryProvider = configuration.getFactoryProvider();
-                        Authenticator authenticator = factoryProvider.getPgWireAuthenticationFactory().getPgWireAuthenticator(
+                        Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(
                                 configuration,
                                 circuitBreaker,
                                 registry,

@@ -25,11 +25,15 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.*;
-import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
+import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
+import io.questdb.network.Socket;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.BootstrapTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -40,7 +44,6 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
 
 public class PGErrorHandlingTest extends BootstrapTest {
 
@@ -97,15 +100,6 @@ public class PGErrorHandlingTest extends BootstrapTest {
 
     @Test
     public void testUnexpectedErrorOutsideSQLExecutionResultsInDisconnect() throws Exception {
-        Supplier<UsernamePasswordMatcher> supplier = () -> {
-            return new UsernamePasswordMatcher() {
-                @Override
-                public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
-                    throw new RuntimeException("error outside of sql execution");
-                }
-            };
-        };
-
         final Bootstrap bootstrap = new Bootstrap(
                 new PropBootstrapConfiguration() {
                     @Override
@@ -118,12 +112,49 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                 bootstrap.getBuildInformation(),
                                 FilesFacadeImpl.INSTANCE,
                                 bootstrap.getMicrosecondClock(),
-                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration),
-                                supplier
+                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
+                                    @Override
+                                    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+                                        return (pgWireConfiguration, circuitBreaker, registry, optionsListener) -> new Authenticator() {
+                                            @Override
+                                            public CharSequence getPrincipal() {
+                                                return null;
+                                            }
+
+                                            @Override
+                                            public long getRecvBufPos() {
+                                                return 0;
+                                            }
+
+                                            @Override
+                                            public long getRecvBufPseudoStart() {
+                                                return 0;
+                                            }
+
+                                            @Override
+                                            public int handleIO() {
+                                                return 0;
+                                            }
+
+                                            @Override
+                                            public void init(@NotNull Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
+                                            }
+
+                                            @Override
+                                            public boolean isAuthenticated() {
+                                                throw new RuntimeException("Test error");
+                                            }
+
+                                            @Override
+                                            public void close() {
+                                                Misc.free(circuitBreaker);
+                                            }
+                                        };
+                                    }
+                                }
                         );
                     }
                 },
-
                 getServerMainArgs()
         );
 

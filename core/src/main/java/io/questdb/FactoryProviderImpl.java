@@ -54,7 +54,7 @@ public class FactoryProviderImpl implements FactoryProvider {
     }
 
     @Override
-    public PgWireAuthenticatorFactory getPgWireAuthenticationFactory() {
+    public PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
         return pgWireAuthenticatorFactory;
     }
 

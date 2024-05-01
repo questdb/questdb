@@ -24,7 +24,10 @@
 
 package io.questdb.cutlass.pgwire;
 
-public class CombiningUsernamePasswordMatcher implements UsernamePasswordMatcher {
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
+
+public class CombiningUsernamePasswordMatcher implements UsernamePasswordMatcher, QuietCloseable {
 
     private final UsernamePasswordMatcher first;
     private final UsernamePasswordMatcher second;
@@ -32,6 +35,12 @@ public class CombiningUsernamePasswordMatcher implements UsernamePasswordMatcher
     public CombiningUsernamePasswordMatcher(UsernamePasswordMatcher first, UsernamePasswordMatcher second) {
         this.first = first;
         this.second = second;
+    }
+
+    @Override
+    public void close() {
+        Misc.freeIfCloseable(first);
+        Misc.freeIfCloseable(second);
     }
 
     @Override

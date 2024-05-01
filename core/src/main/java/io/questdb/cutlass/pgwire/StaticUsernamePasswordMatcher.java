@@ -25,21 +25,25 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.std.Chars;
-import io.questdb.std.Vect;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8s;
 
-public class StaticUsernamePasswordMatcher implements UsernamePasswordMatcher {
-    private final int passwordLen;
-    private final long passwordPtr;
+public class StaticUsernamePasswordMatcher implements UsernamePasswordMatcher, QuietCloseable {
     private final String username;
+    private DirectUtf8Sink password = new DirectUtf8Sink(4);
 
-    public StaticUsernamePasswordMatcher(String username, long passwordPtr, int passwordLen) {
+    public StaticUsernamePasswordMatcher(String username, CharSequence password) {
         assert !Chars.empty(username);
-        assert passwordPtr != 0;
-        assert passwordLen > 0;
 
         this.username = username;
-        this.passwordPtr = passwordPtr;
-        this.passwordLen = passwordLen;
+        this.password.put(password);
+    }
+
+    @Override
+    public void close() {
+        this.password = Misc.free(password);
     }
 
     @Override
@@ -47,7 +51,6 @@ public class StaticUsernamePasswordMatcher implements UsernamePasswordMatcher {
         return username != null
                 && this.username != null
                 && Chars.equals(this.username, username)
-                && this.passwordLen == passwordLen
-                && Vect.memeq(this.passwordPtr, passwordPtr, passwordLen);
+                && Utf8s.equals(password, passwordPtr, passwordLen);
     }
 }

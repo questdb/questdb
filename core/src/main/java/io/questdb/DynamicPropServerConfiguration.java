@@ -73,7 +73,6 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         this.fileEventCallback = new ConfigReloader(this);
     }
 
-
     public DynamicPropServerConfiguration(
             String root,
             Properties properties,
