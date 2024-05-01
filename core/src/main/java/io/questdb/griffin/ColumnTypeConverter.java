@@ -68,7 +68,7 @@ public class ColumnTypeConverter {
             return convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
         }
         if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
-            return convertFixedToFixedRaw(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, appendPageSize);
+            return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, appendPageSize);
         } else if (ColumnType.isVarSize(srcColumnType)) {
             switch (srcColumnType) {
                 case ColumnType.STRING:
@@ -84,32 +84,6 @@ public class ColumnTypeConverter {
     }
 
     private static boolean convertFixedToFixed(long rowCount, long skipRows, int srcFixFd, int dstFixFd, int srcColumnType, int dstColumnType, FilesFacade ff, long appendPageSize) {
-        MemoryCMORImpl srcFixMem = srcFixMemTL.get();
-        MemoryCMARW dstFixMem = dstFixMemTL.get();
-        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
-        final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
-
-        try {
-            srcFixMem.ofOffset(ff, srcFixFd, null, srcColumnTypeSize * skipRows, srcColumnTypeSize * rowCount, memoryTag, CairoConfiguration.O_NONE);
-            dstFixMem.of(ff, dstFixFd, null, appendPageSize, dstColumnTypeSize * rowCount, memoryTag);
-            dstFixMem.jumpTo(0);
-            long succeeded = ConvertersNative.fixedToFixed(srcFixMem.getPageAddress(0), srcColumnType, dstFixMem.getPageAddress(0), dstColumnType, rowCount);
-            switch ((int) succeeded) {
-                case ConvertersNative.ConversionError.NONE:
-                    return true;
-                case ConvertersNative.ConversionError.UNSUPPORTED_CAST:
-                    throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
-
-                default:
-                    throw CairoException.critical(0).put("Unknown return code from native call: ").put(succeeded);
-            }
-        } finally {
-            srcFixMem.detachFdClose();
-            dstFixMem.detachFdClose();
-        }
-    }
-
-    private static boolean convertFixedToFixedRaw(long rowCount, long skipRows, int srcFixFd, int dstFixFd, int srcColumnType, int dstColumnType, FilesFacade ff, long appendPageSize) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
         long srcMapAddressRaw = 0;
@@ -117,7 +91,7 @@ public class ColumnTypeConverter {
 
         try {
             srcMapAddressRaw = rowCount > 0 ?
-                    TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * srcColumnTypeSize, rowCount * srcColumnType, false, memoryTag)
+                    TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * srcColumnTypeSize, rowCount * srcColumnTypeSize, false, memoryTag)
                     : 0;
 
             if (rowCount > 0) {
@@ -137,8 +111,8 @@ public class ColumnTypeConverter {
         } catch (Exception ex) {
             throw ex;
         } finally {
-            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipRows * srcColumnTypeSize, rowCount * srcColumnType, memoryTag);
-            TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddressRaw, 0, rowCount * dstColumnType, memoryTag);
+            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipRows * srcColumnTypeSize, rowCount * srcColumnTypeSize, memoryTag);
+            TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddressRaw, 0, rowCount * dstColumnTypeSize, memoryTag);
         }
     }
 
