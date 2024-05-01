@@ -33,35 +33,23 @@ import io.questdb.cutlass.pgwire.DefaultPgWireAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.SocketFactory;
-import io.questdb.std.Misc;
-import io.questdb.std.str.DirectUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class FactoryProviderImpl implements FactoryProvider {
     private final DefaultWalJobFactory defaultWalJobFactory = new DefaultWalJobFactory();
     private final LineAuthenticatorFactory lineAuthenticatorFactory;
-    private final PgWireAuthenticatorFactory pgWireAuthenticatorFactory;
     private final SecurityContextFactory securityContextFactory;
-    private DirectUtf8Sink defaultUserPasswordSink;
-    private DirectUtf8Sink readOnlyUserPasswordSink;
+    private final PgWireAuthenticatorFactory pgWireAuthenticatorFactory;
 
     public FactoryProviderImpl(ServerConfiguration configuration) {
         this.lineAuthenticatorFactory = ServerMain.getLineAuthenticatorFactory(configuration);
         this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
-        this.readOnlyUserPasswordSink = new DirectUtf8Sink(4);
-        this.defaultUserPasswordSink = new DirectUtf8Sink(4);
-        this.pgWireAuthenticatorFactory = DefaultPgWireAuthenticatorFactory.INSTANCE;
+        this.pgWireAuthenticatorFactory = new DefaultPgWireAuthenticatorFactory(configuration);
     }
 
     @Override
     public PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
         return pgWireAuthenticatorFactory;
-    }
-
-    @Override
-    public void close() {
-        defaultUserPasswordSink = Misc.free(defaultUserPasswordSink);
-        readOnlyUserPasswordSink = Misc.free(readOnlyUserPasswordSink);
     }
 
     @Override

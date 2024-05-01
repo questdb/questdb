@@ -36,7 +36,6 @@ import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.metrics.DefaultMetricsConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -92,11 +91,6 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return pgWireConfiguration;
-    }
-
-    @Override
-    public UsernamePasswordMatcher getUsernamePasswordMatcher() {
-        return new DynamicUsernamePasswordMatcher(this);
     }
 
     @Override

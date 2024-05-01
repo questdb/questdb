@@ -99,9 +99,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             try (Connection conn = getConnection("nevets", "ralks")) {
                 Assert.assertFalse(conn.isClosed());
             }
-
             Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
-
         }
     }
 

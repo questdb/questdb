@@ -8,7 +8,6 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -186,11 +185,6 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return delegate.get().getPGWireConfiguration();
-    }
-
-    @Override
-    public UsernamePasswordMatcher getUsernamePasswordMatcher() {
-        return new DynamicUsernamePasswordMatcher(this);
     }
 
     @Override

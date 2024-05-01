@@ -27,77 +27,76 @@ package io.questdb;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.SimpleReadWriteLock;
-import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
 
 public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, QuietCloseable {
-    private final DirectUtf8Sink defaultUserPasswordSink;
+    private final DirectUtf8Sink defaultPassword;
     private final SimpleReadWriteLock lock;
-    private final DirectUtf8Sink readOnlyUserPasswordSink;
+    private final DirectUtf8Sink readOnlyPassword;
     private final ServerConfiguration serverConfiguration;
-    private int defaultUserPasswordLen;
     private PGWireConfiguration pgwireConfiguration;
-    private int readOnlyUserPasswordLen;
 
-    public DynamicUsernamePasswordMatcher(ServerConfiguration serverConfiguration) {
+    /**
+     * Creates instance of dynamic username/password matcher. When serverConfiguration is provided,
+     * it acts as "factory" for the PG wire configuration. The matcher will be checking if
+     * pgWireConfiguration changed on the server configuration.
+     *
+     * @param serverConfiguration server configuration that is triggering reload. It is nullable. When null,
+     *                            username and password are not reloaded.
+     * @param pgWireConfiguration the initial PG wire configuration instance.
+     */
+    public DynamicUsernamePasswordMatcher(@Nullable ServerConfiguration serverConfiguration, PGWireConfiguration pgWireConfiguration) {
         this.serverConfiguration = serverConfiguration;
-        this.pgwireConfiguration = serverConfiguration.getPGWireConfiguration();
-
-        this.defaultUserPasswordSink = new DirectUtf8Sink(4);
-        this.defaultUserPasswordSink.put(this.pgwireConfiguration.getDefaultPassword());
-        this.defaultUserPasswordLen = this.pgwireConfiguration.getDefaultPassword().length();
-        this.readOnlyUserPasswordSink = new DirectUtf8Sink(4);
-        this.readOnlyUserPasswordSink.put(this.pgwireConfiguration.getReadOnlyPassword());
-        this.readOnlyUserPasswordLen = this.pgwireConfiguration.getReadOnlyPassword().length();
-
+        this.pgwireConfiguration = pgWireConfiguration;
+        this.defaultPassword = new DirectUtf8Sink(4);
+        this.defaultPassword.put(this.pgwireConfiguration.getDefaultPassword());
+        this.readOnlyPassword = new DirectUtf8Sink(4);
+        this.readOnlyPassword.put(this.pgwireConfiguration.getReadOnlyPassword());
         lock = new SimpleReadWriteLock();
     }
 
     @Override
     public void close() {
-        this.defaultUserPasswordSink.close();
-        this.readOnlyUserPasswordSink.close();
+        Misc.free(this.defaultPassword);
+        Misc.free(this.readOnlyPassword);
     }
 
     @Override
     public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
-        if (this.serverConfiguration.getPGWireConfiguration() != this.pgwireConfiguration) {
+        if (this.serverConfiguration != null && this.serverConfiguration.getPGWireConfiguration() != this.pgwireConfiguration) {
 
             if (this.lock.writeLock().tryLock()) {
-                // Update the cached pgwire config
-                this.pgwireConfiguration = this.serverConfiguration.getPGWireConfiguration();
-
-                // Update the default and readonly user password sinks
-                this.defaultUserPasswordSink.clear();
-                this.defaultUserPasswordSink.put(this.pgwireConfiguration.getDefaultPassword());
-                this.defaultUserPasswordLen = this.pgwireConfiguration.getDefaultPassword().length();
-                this.readOnlyUserPasswordSink.clear();
-                this.readOnlyUserPasswordSink.put(this.pgwireConfiguration.getReadOnlyPassword());
-                this.readOnlyUserPasswordLen = this.pgwireConfiguration.getReadOnlyPassword().length();
-
-                this.lock.writeLock().unlock();
+                try {
+                    // Update the cached pgwire config
+                    this.pgwireConfiguration = this.serverConfiguration.getPGWireConfiguration();
+                    // Update the default and readonly user password sinks
+                    this.defaultPassword.clear();
+                    this.defaultPassword.put(this.pgwireConfiguration.getDefaultPassword());
+                    this.readOnlyPassword.clear();
+                    this.readOnlyPassword.put(this.pgwireConfiguration.getReadOnlyPassword());
+                } finally {
+                    this.lock.writeLock().unlock();
+                }
             }
         }
 
         this.lock.readLock().lock();
-
         try {
             if (username.length() == 0) {
                 return false;
             }
             if (Chars.equals(username, this.pgwireConfiguration.getDefaultUsername())) {
-                return passwordLen == this.defaultUserPasswordLen && Vect.memeq(this.defaultUserPasswordSink.ptr(), passwordPtr, passwordLen);
-            } else if (Chars.equals(username, this.pgwireConfiguration.getReadOnlyUsername())) {
-                if (!this.pgwireConfiguration.isReadOnlyUserEnabled()) {
-                    return false;
-                }
-                return passwordLen == this.readOnlyUserPasswordLen && Vect.memeq(this.readOnlyUserPasswordSink.ptr(), passwordPtr, passwordLen);
+                return Utf8s.equals(defaultPassword, passwordPtr, passwordLen);
+            } else if (this.pgwireConfiguration.isReadOnlyUserEnabled() && Chars.equals(username, this.pgwireConfiguration.getReadOnlyUsername())) {
+                return Utf8s.equals(readOnlyPassword, passwordPtr, passwordLen);
             } else {
                 return false;
             }
-
         } finally {
             this.lock.readLock().unlock();
         }

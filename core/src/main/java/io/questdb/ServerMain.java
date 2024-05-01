@@ -71,7 +71,6 @@ public class ServerMain implements Closeable {
     private boolean initialized;
     private WorkerPoolManager workerPoolManager;
 
-
     public ServerMain(String... args) {
         this(new Bootstrap(args));
     }

@@ -24,35 +24,18 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.DynamicUsernamePasswordMatcher;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.std.Chars;
+import org.jetbrains.annotations.Nullable;
 
 public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
-    public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactory();
+    public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactory(null);
+    private final ServerConfiguration serverConfiguration;
 
-    public static UsernamePasswordMatcher newPgWireUsernamePasswordMatcher(PGWireConfiguration configuration) {
-        String defaultUsername = configuration.getDefaultUsername();
-        String defaultPassword = configuration.getDefaultPassword();
-        boolean defaultUserEnabled = !Chars.empty(defaultUsername) && !Chars.empty(defaultPassword);
-
-        String readOnlyUsername = configuration.getReadOnlyUsername();
-        String readOnlyPassword = configuration.getReadOnlyPassword();
-        boolean readOnlyUserValid = !Chars.empty(readOnlyUsername) && !Chars.empty(readOnlyPassword);
-        boolean readOnlyUserEnabled = configuration.isReadOnlyUserEnabled() && readOnlyUserValid;
-
-        if (defaultUserEnabled && readOnlyUserEnabled) {
-            return new CombiningUsernamePasswordMatcher(
-                    new StaticUsernamePasswordMatcher(defaultUsername, defaultPassword),
-                    new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyPassword)
-            );
-        } else if (defaultUserEnabled) {
-            return new StaticUsernamePasswordMatcher(defaultUsername, defaultPassword);
-        } else if (readOnlyUserEnabled) {
-            return new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyPassword);
-        } else {
-            return NeverMatchUsernamePasswordMatcher.INSTANCE;
-        }
+    public DefaultPgWireAuthenticatorFactory(@Nullable ServerConfiguration serverConfiguration) {
+        this.serverConfiguration = serverConfiguration;
     }
 
     @Override
@@ -67,7 +50,7 @@ public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthentica
         // But the Default implementation does not use FactoryProviders at all. There is a single static field INSTANCE, see above.
         // Thus, there is nothing what could own and close the buffers. So we allocate buffers for each authenticator
         // and the authenticator will be responsible for closing them.
-        final UsernamePasswordMatcher matcher = newPgWireUsernamePasswordMatcher(configuration);
+        final UsernamePasswordMatcher matcher = new DynamicUsernamePasswordMatcher(serverConfiguration, configuration);
 
         return new CleartextPasswordPgWireAuthenticator(
                 configuration,
