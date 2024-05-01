@@ -102,9 +102,6 @@ constexpr bool is_matching_type() {
     if constexpr (C == ColumnType::DOUBLE && std::is_same<T, double>()) {
         return true;
     }
-    if constexpr (C == ColumnType::DATE && std::is_same<T, int64_t>()) {
-        return true;
-    }
     if constexpr (C == ColumnType::TIMESTAMP && std::is_same<T, int64_t>()) {
         return true;
     }
