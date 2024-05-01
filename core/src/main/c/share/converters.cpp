@@ -51,6 +51,13 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
     const auto srcColumnType = static_cast<ColumnType>(srcType);
     const auto dstColumnType = static_cast<ColumnType>(dstType);
 
+    // fast path for no-op conversion
+    if ((srcColumnType == ColumnType::LONG && dstColumnType == ColumnType::TIMESTAMP)
+        || (srcColumnType == ColumnType::TIMESTAMP && dstColumnType == ColumnType::LONG)) {
+        return static_cast<jlong>(convert_fixed_to_fixed_numeric_fast(reinterpret_cast<int64_t *>(srcMem),
+                                                                      reinterpret_cast<int64_t *>(dstMem), rowCount));
+    }
+
     ConversionError status;
 
     switch (pack_column_types(srcColumnType, dstColumnType)) {
@@ -81,7 +88,6 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::INT, int64_t, int32_t)
         macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::FLOAT, int64_t, float)
         macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::DOUBLE, int64_t, double)
-        macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::TIMESTAMP, int64_t, int64_t)
         // FLOAT
         macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::BYTE, float, int8_t)
         macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::SHORT, float, int16_t)
@@ -100,7 +106,6 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::BYTE, int64_t, int8_t)
         macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::SHORT, int64_t, int16_t)
         macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::INT, int64_t, int32_t)
-        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::LONG, int64_t, int64_t)
         macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::FLOAT, int64_t, float)
         macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::DOUBLE, int64_t, double)
         default:

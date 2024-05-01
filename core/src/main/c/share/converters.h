@@ -177,7 +177,6 @@ auto convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, T1 srcSentinel,
     // i.e INT(NULL) -> BYTE(0)
     assert(dstNullable == true || dstNullable == false && dstSentinel == 0);
 
-
     for (size_t i = 0; i < rowCount; i++) {
         if constexpr (srcNullable) {
             if constexpr (std::is_same<T1, float>() || std::is_same<T1, double>()) {
@@ -197,6 +196,28 @@ auto convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, T1 srcSentinel,
     }
 
 
+    return ConversionError::NONE;
+}
+
+/**
+ * Convert between fixed numeric types.
+ * Expected to align with SQL CAST behaviour.
+ * @tparam T1 the source type
+ * @tparam T2 the destination type
+ * @param srcMem the source type mmap column
+ * @param dstMem the destination type mmap column
+ * @param srcNullable whether source is nullable
+ * @param srcSentinel the source null sentinel
+ * @param dstNullable whether destination is nullable
+ * @param dstSentinel the destination null sentinel
+ * @param rowCount the number of rows
+ * @return
+ */
+template<typename T1, typename T2>
+auto convert_fixed_to_fixed_numeric_fast(T1 *srcMem, T2 *dstMem, size_t rowCount) -> ConversionError {
+    for (size_t i = 0; i < rowCount; i++) {
+        dstMem[i] = static_cast<T2>(srcMem[i]);
+    }
     return ConversionError::NONE;
 }
 
