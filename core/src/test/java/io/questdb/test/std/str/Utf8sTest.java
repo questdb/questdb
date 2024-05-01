@@ -493,9 +493,30 @@ public class Utf8sTest {
 
     @Test
     public void testStartsWith() {
-        Assert.assertTrue(Utf8s.startsWith(utf8("фу бар баз"), utf8("фу")));
-        Assert.assertFalse(Utf8s.startsWith(utf8("фу бар баз"), utf8("бар")));
-        Assert.assertTrue(Utf8s.startsWith(utf8("фу бар баз"), Utf8String.EMPTY));
+        String asciiShort = "abcdef";
+        String asciiMid = "abcdefgh";
+        String asciiLong = "abcdefghijk";
+        Assert.assertTrue(Utf8s.startsWith(utf8(asciiShort), utf8("ab")));
+        Assert.assertTrue(Utf8s.startsWith(utf8(asciiShort), utf8(asciiShort)));
+        Assert.assertFalse(Utf8s.startsWith(utf8(asciiShort), utf8(asciiMid)));
+        Assert.assertFalse(Utf8s.startsWith(utf8(asciiShort), utf8(asciiLong)));
+        Assert.assertFalse(Utf8s.startsWith(utf8(asciiShort), utf8("abcdex")));
+
+        Assert.assertTrue(Utf8s.startsWith(utf8(asciiMid), utf8(asciiMid)));
+        Assert.assertFalse(Utf8s.startsWith(utf8(asciiMid), utf8(asciiLong)));
+        Assert.assertFalse(Utf8s.startsWith(utf8(asciiMid), utf8("abcdefgx")));
+        Assert.assertFalse(Utf8s.startsWith(utf8(asciiMid), utf8("xabcde")));
+
+        Assert.assertTrue(Utf8s.startsWith(utf8(asciiLong), utf8(asciiShort)));
+        Assert.assertTrue(Utf8s.startsWith(utf8(asciiLong), utf8(asciiMid)));
+        Assert.assertFalse(Utf8s.startsWith(utf8(asciiLong), utf8("xabcdefghijk")));
+        Assert.assertFalse(Utf8s.startsWith(utf8(asciiLong), utf8("abcdefghijkl")));
+        Assert.assertFalse(Utf8s.startsWith(utf8(asciiLong), utf8("x")));
+
+        String nonAsciiLong = "фу бар баз";
+        Assert.assertTrue(Utf8s.startsWith(utf8(nonAsciiLong), utf8("фу")));
+        Assert.assertFalse(Utf8s.startsWith(utf8(nonAsciiLong), utf8("бар")));
+        Assert.assertTrue(Utf8s.startsWith(utf8(nonAsciiLong), Utf8String.EMPTY));
         Assert.assertFalse(Utf8s.startsWith(Utf8String.EMPTY, utf8("фу-фу-фу")));
     }
 
@@ -514,6 +535,50 @@ public class Utf8sTest {
         Assert.assertFalse(Utf8s.startsWithLowerCaseAscii(utf8("foo bar baz"), utf8("bar")));
         Assert.assertTrue(Utf8s.startsWithLowerCaseAscii(utf8("foo bar baz"), Utf8String.EMPTY));
         Assert.assertFalse(Utf8s.startsWithLowerCaseAscii(Utf8String.EMPTY, utf8("foo")));
+    }
+
+    @Test
+    public void testStartsWithSixPrefix() {
+        Utf8String asciiShort = utf8("abcdef");
+        Utf8String asciiMid = utf8("abcdefgh");
+        Utf8String asciiLong = utf8("abcdefghijk");
+        long sixPrefixShort = asciiShort.zeroPaddedSixPrefix();
+        long sixPrefixMid = asciiMid.zeroPaddedSixPrefix();
+        long sixPrefixLong = asciiLong.zeroPaddedSixPrefix();
+
+        Utf8String ab = utf8("ab");
+        Utf8String abcdex = utf8("abcdex");
+        Assert.assertTrue(Utf8s.startsWith(asciiShort, sixPrefixShort, ab, ab.zeroPaddedSixPrefix()));
+        Assert.assertTrue(Utf8s.startsWith(asciiShort, sixPrefixShort, asciiShort, sixPrefixShort));
+        Assert.assertFalse(Utf8s.startsWith(asciiShort, sixPrefixShort, asciiMid, sixPrefixMid));
+        Assert.assertFalse(Utf8s.startsWith(asciiShort, sixPrefixShort, asciiLong, sixPrefixLong));
+        Assert.assertFalse(Utf8s.startsWith(asciiShort, sixPrefixShort, abcdex, abcdex.zeroPaddedSixPrefix()));
+
+        Utf8String abcdefgx = utf8("abcdefgx");
+        Utf8String xabcde = utf8("xabcde");
+        Assert.assertTrue(Utf8s.startsWith(asciiMid, sixPrefixMid, asciiMid, sixPrefixMid));
+        Assert.assertFalse(Utf8s.startsWith(asciiMid, sixPrefixMid, asciiLong, sixPrefixLong));
+        Assert.assertFalse(Utf8s.startsWith(asciiMid, sixPrefixMid, abcdefgx, abcdefgx.zeroPaddedSixPrefix()));
+        Assert.assertFalse(Utf8s.startsWith(asciiMid, sixPrefixMid, xabcde, xabcde.zeroPaddedSixPrefix()));
+
+        Utf8String xabcdefghijk = utf8("xabcdefghijk");
+        Utf8String abcdefghijkl = utf8("abcdefghijkl");
+        Utf8String x = utf8("x");
+        Assert.assertTrue(Utf8s.startsWith(asciiLong, sixPrefixLong, asciiShort, sixPrefixShort));
+        Assert.assertTrue(Utf8s.startsWith(asciiLong, sixPrefixLong, asciiMid, sixPrefixMid));
+        Assert.assertFalse(Utf8s.startsWith(asciiLong, sixPrefixLong, xabcdefghijk, xabcdefghijk.zeroPaddedSixPrefix()));
+        Assert.assertFalse(Utf8s.startsWith(asciiLong, sixPrefixLong, abcdefghijkl, abcdefghijkl.zeroPaddedSixPrefix()));
+        Assert.assertFalse(Utf8s.startsWith(asciiLong, sixPrefixLong, x, x.zeroPaddedSixPrefix()));
+
+        Utf8String nonAsciiLong = utf8("фу бар баз");
+        Utf8String fu = utf8("фу");
+        Utf8String bar = utf8("бар");
+        Utf8String fufufu = utf8("фу-фу-фу");
+        long sixPrefixNaLong = nonAsciiLong.zeroPaddedSixPrefix();
+        Assert.assertTrue(Utf8s.startsWith(nonAsciiLong, sixPrefixNaLong, fu, fu.zeroPaddedSixPrefix()));
+        Assert.assertFalse(Utf8s.startsWith(nonAsciiLong, sixPrefixNaLong, bar, bar.zeroPaddedSixPrefix()));
+        Assert.assertTrue(Utf8s.startsWith(nonAsciiLong, sixPrefixNaLong, Utf8String.EMPTY, 0L));
+        Assert.assertFalse(Utf8s.startsWith(Utf8String.EMPTY, 0L, fufufu, fufufu.zeroPaddedSixPrefix()));
     }
 
     @Test
