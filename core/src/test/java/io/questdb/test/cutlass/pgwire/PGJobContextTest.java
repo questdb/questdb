@@ -11861,8 +11861,8 @@ create table tab as (
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             PreparedStatement tbl = connection.prepareStatement("create table x as (" +
                     "select " +
-                    "rnd_varchar('A','ABCDEFGHI','abcdefghijk') v, " +
-                    "rnd_str('A','ABCDEFGHI','abcdefghijk') s, " +
+                    "rnd_varchar(null, 'A','ABCDEFGHI','abcdefghijk') v, " +
+                    "rnd_str(null, 'A','ABCDEFGHI','abcdefghijk') s, " +
                     "from long_sequence(5)" +
                     ")");
             tbl.execute();
@@ -11874,23 +11874,39 @@ create table tab as (
                 insert.execute();
             }
 
-            PreparedStatement stmnt = connection.prepareStatement(query);
-            stmnt.setString(1, "D");
-            stmnt.setString(2, "D");
-
-            ResultSet rs = stmnt.executeQuery();
-
-            final String expected = "v[VARCHAR],s[VARCHAR]\n" +
-                    "A,A\n" +
-                    "ABCDEFGHI,abcdefghijk\n" +
-                    "abcdefghijk,abcdefghijk\n" +
-                    "abcdefghijk,ABCDEFGHI\n" +
-                    "A,ABCDEFGHI\n" +
-                    "E,E\n" +
-                    "F,F\n" +
-                    "G,G\n" +
-                    "H,H\n";
-            assertResultSet(expected, sink, rs);
+            try (PreparedStatement stmnt = connection.prepareStatement(query)) {
+                stmnt.setString(1, "D");
+                stmnt.setString(2, "D");
+                try (ResultSet rs = stmnt.executeQuery()) {
+                    final String expected = "v[VARCHAR],s[VARCHAR]\n" +
+                            "null,ABCDEFGHI\n" +
+                            "A,abcdefghijk\n" +
+                            "A,abcdefghijk\n" +
+                            "ABCDEFGHI,abcdefghijk\n" +
+                            "ABCDEFGHI,null\n" +
+                            "E,E\n" +
+                            "F,F\n" +
+                            "G,G\n" +
+                            "H,H\n";
+                    assertResultSet(expected, sink, rs);
+                }
+            }
+            try (PreparedStatement stmnt = connection.prepareStatement(query)) {
+                stmnt.setString(1, null);
+                stmnt.setString(2, null);
+                try (ResultSet rs = stmnt.executeQuery()) {
+                    final String expected = "v[VARCHAR],s[VARCHAR]\n" +
+                            "A,abcdefghijk\n" +
+                            "A,abcdefghijk\n" +
+                            "ABCDEFGHI,abcdefghijk\n" +
+                            "D,D\n" +
+                            "E,E\n" +
+                            "F,F\n" +
+                            "G,G\n" +
+                            "H,H\n";
+                    assertResultSet(expected, sink, rs);
+                }
+            }
         });
     }
 
