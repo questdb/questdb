@@ -39,6 +39,7 @@ public final class InotifyFileWatcher extends FileWatcher {
         if (this.fd < 0) {
             throw new FileWatcherException("inotify_init");
         }
+        Files.bumpFileCount(this.fd);
 
         this.dirPath.of(filePath).parent().$();
         this.fileName.put(Paths.get(filePath.toString()).getFileName().toString());
@@ -73,6 +74,8 @@ public final class InotifyFileWatcher extends FileWatcher {
 
         this.readEndFd = (int) (fds >>> 32);
         this.writeEndFd = (int) fds;
+        Files.bumpFileCount(this.readEndFd);
+        Files.bumpFileCount(this.writeEndFd);
 
         if (epoll.control(readEndFd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
             // todo: add errno
