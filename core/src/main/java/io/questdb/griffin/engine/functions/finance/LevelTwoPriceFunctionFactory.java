@@ -312,20 +312,18 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
                 // add size to acc
                 ta += size;
 
-                // if order not fulfilled
-                if (ta < t) {
-                    pa += (size * value);
-                    rt -= size;
-                    continue;
-                }
-
                 if (ta >= t) {
+                    // order is fulfilled
                     if (i == 1) {
                         return value;
                     }
 
                     pp = rt * value;
                     return (pa + pp) / t;
+                } else {
+                    // order is not fulfilled, so aggregate partial pricing
+                    pa += (size * value);
+                    rt -= size;
                 }
             }
 
