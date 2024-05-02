@@ -54,8 +54,8 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
         final Function target = args.getQuick(0);
 
         if (target.isNullConstant()) {
-            throw SqlException.position(argPositions.getQuick(0)).put("l2price requires a non-null first argument.");
-        }
+            return target;
+       }
 
         switch (numberOfPairs) {
             case 0:
