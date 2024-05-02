@@ -41,7 +41,7 @@ import io.questdb.std.ObjList;
 public class LevelTwoPriceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "l2price(LV)";
+        return "l2price(DV)";
     }
 
     @Override
