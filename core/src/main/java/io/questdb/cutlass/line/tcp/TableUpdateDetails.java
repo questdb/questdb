@@ -65,10 +65,12 @@ public class TableUpdateDetails implements Closeable {
     private long eventsProcessedSinceReshuffle = 0;
     private boolean isDropped;
     private long lastMeasurementMillis = Long.MAX_VALUE;
+    private final boolean writerIsLocal;
     private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
     private volatile boolean writerInError;
+    private long latestKnownMetadataVersion;
     private int writerThreadId;
 
     public TableUpdateDetails(
@@ -100,13 +102,11 @@ public class TableUpdateDetails implements Closeable {
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             //noinspection resource
-            this.localDetailsArray[i] = new ThreadLocalDetails(
-                    netIoJobs[i].getSymbolCachePool(),
-                    writer.getMetadata().getColumnCount()
-            );
+            this.localDetailsArray[i] = new ThreadLocalDetails(netIoJobs[i].getSymbolCachePool());
         }
         this.tableNameUtf8 = tableNameUtf8;
         this.commitOnClose = true;
+        this.writerIsLocal = false;
     }
 
     protected TableUpdateDetails(
@@ -136,13 +136,9 @@ public class TableUpdateDetails implements Closeable {
         this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
         this.commitInterval = commitInterval;
         this.nextCommitTime = millisecondClock.getTicks() + this.commitInterval;
-        this.localDetailsArray = new ThreadLocalDetails[]{
-                new ThreadLocalDetails(
-                        symbolCachePool,
-                        writer.getMetadata().getColumnCount()
-                )
-        };
+        this.localDetailsArray = new ThreadLocalDetails[]{new ThreadLocalDetails(symbolCachePool)};
         this.tableNameUtf8 = tableNameUtf8;
+        this.writerIsLocal = true;
     }
 
     public void addReference(int workerId) {
@@ -434,21 +430,36 @@ public class TableUpdateDetails implements Closeable {
         private boolean clean = true;
         private String colNameUtf16;
         private Utf8String colNameUtf8;
-        private int columnCount;
-        private TableRecordMetadata latestKnownMetadata;
+        private GenericRecordMetadata latestKnownMetadata;
         private String symbolNameTemp;
         private TxReader txReader;
 
         ThreadLocalDetails(
-                Pool<SymbolCache> symbolCachePool,
-                int columnCount
+                Pool<SymbolCache> symbolCachePool
         ) {
             // symbol caches are passed from the outside
             // to provide global lifecycle management for when ThreadLocalDetails cease to exist
             // the cache continue to live
             this.symbolCachePool = symbolCachePool;
-            this.columnCount = columnCount;
             columnTypeMeta.add(0);
+        }
+
+        public void addColumn(String columnNameUtf16, int columnWriterIndex, int columnType) {
+            if (latestKnownMetadata != null) {
+                latestKnownMetadata.add(
+                        new TableColumnMetadata(
+                                columnNameUtf16,
+                                columnType,
+                                false,
+                                0,
+                                false,
+                                null,
+                                columnWriterIndex,
+                                false
+                        )
+                );
+                latestKnownMetadataVersion++;
+            }
         }
 
         @Override
@@ -456,7 +467,6 @@ public class TableUpdateDetails implements Closeable {
             Misc.freeObjList(symbolCacheByColumnIndex);
             Misc.free(path);
             txReader = Misc.free(txReader);
-            latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
         private DirectUtf8SymbolLookup addSymbolCache(int colWriterIndex) {
@@ -497,6 +507,29 @@ public class TableUpdateDetails implements Closeable {
                 symbolCacheByColumnIndex.extendAndSet(colWriterIndex, symCache);
                 return symCache;
             }
+        }
+
+        private GenericRecordMetadata deepCopyOfDense(TableRecordMetadata that) {
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            for (int i = 0, n = that.getColumnCount(); i < n; i++) {
+                int columnType = that.getColumnType(i);
+                if (columnType > 0) {
+                    metadata.add(
+                            new TableColumnMetadata(
+                                    that.getColumnName(i),
+                                    that.getColumnType(i),
+                                    that.isColumnIndexed(i),
+                                    that.getIndexValueBlockCapacity(i),
+                                    that.isSymbolTableStatic(i),
+                                    that.getMetadata(i),
+                                    that.getWriterIndex(i),
+                                    that.isDedupKey(i)
+                            )
+                    );
+                }
+            }
+            metadata.setTimestampIndex(that.getTimestampIndex());
+            return metadata;
         }
 
         private int getColumnIndex0(DirectUtf8Sequence colNameUtf8, boolean hasNonAsciiChars, @NotNull TableRecordMetadata metadata) {
@@ -564,8 +597,7 @@ public class TableUpdateDetails implements Closeable {
             return symIndex;
         }
 
-        private void updateColumnTypeCache(int colIndex, int writerColIndex, TableRecordMetadata metadata) {
-            columnCount = metadata.getColumnCount();
+        private void updateColumnTypeCache(int colIndex, int writerColIndex, GenericRecordMetadata metadata) {
             final int colType = metadata.getColumnType(colIndex);
             final int geoHashBits = ColumnType.getGeoHashBits(colType);
             columnTypes.extendAndSet(writerColIndex, colType);
@@ -597,7 +629,6 @@ public class TableUpdateDetails implements Closeable {
                 txReader.clear();
             }
             clean = true;
-            latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
         void clearColumnTypes() {
@@ -697,7 +728,7 @@ public class TableUpdateDetails implements Closeable {
 
         long getMetadataVersion() {
             if (latestKnownMetadata != null) {
-                return latestKnownMetadata.getMetadataVersion();
+                return latestKnownMetadataVersion;
             }
             return ANY_TABLE_VERSION;
         }
@@ -724,16 +755,24 @@ public class TableUpdateDetails implements Closeable {
             // Second, check if writer's structure version has changed
             // compared with the known metadata.
             if (latestKnownMetadata != null) {
-                long metadataVersion = writerAPI.getMetadataVersion();
-                if (latestKnownMetadata.getMetadataVersion() != metadataVersion) {
+                if (latestKnownMetadataVersion != writerAPI.getMetadataVersion()) {
                     // clear() frees latestKnownMetadata and sets it to null
                     clear();
+                    latestKnownMetadata = null;
                 }
             }
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
                 try {
-                    latestKnownMetadata = engine.getLegacyMetadata(tableToken);
+                    if (writerIsLocal) {
+                        latestKnownMetadata = deepCopyOfDense(writerAPI.getMetadata());
+                        latestKnownMetadataVersion = writerAPI.getMetadataVersion();
+                    } else {
+                        try (var meta = engine.getLegacyMetadata(tableToken)) {
+                            latestKnownMetadata = deepCopyOfDense(meta);
+                            latestKnownMetadataVersion = meta.getMetadataVersion();
+                        }
+                    }
                 } catch (CairoException | TableReferenceOutOfDateException ex) {
                     if (isWal()) {
                         LOG.critical().$("could not write to WAL [ex=").$(ex).I$();

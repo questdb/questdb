@@ -350,64 +350,6 @@ public class ColumnTypeConverter {
         }
     }
 
-//    private static boolean convertStringToVarcharCorrupt(long rowCount, int srcVarFd, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize) {
-//        MemoryCMORImpl srcVarMem = srcVarMemTL.get();
-//        MemoryCMARW dstVarMem = dstVarMemTL.get();
-//        MemoryCMARW dstFixMem = dstFixMemTL.get();
-//        var sink = sinkUtf8TL.get();
-//
-//        boolean corrupt = false;
-//        try {
-//            srcVarMem.ofOffset(ff, srcVarFd, null, 0, ff.length(srcVarFd), MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE);
-//            dstVarMem.of(ff, dstVarFd, null, appendPageSize, appendPageSize, MemoryTag.MMAP_TABLE_WRITER);
-//            dstVarMem.jumpTo(0);
-//            dstFixMem.of(ff, dstFixFd, null, appendPageSize, VarcharTypeDriver.INSTANCE.auxRowsToBytes(rowCount), MemoryTag.MMAP_TABLE_WRITER);
-//            dstFixMem.jumpTo(0);
-//
-//            long offset = 0;
-//            for (long i = 0; i < rowCount; i++) {
-//                final int length;
-//                if (srcVarMem.size() < offset + 4) {
-//                    srcVarMem.growToFileSize();
-//                    if (srcVarMem.size() < offset + 4) {
-//                        // Still not big enough, pad with nulls
-//                        LOG.critical().$("cannot read STRING column data vector size, column data is corrupt, padding with NULL values [srcVarFd=").$(srcVarFd)
-//                                .$(", rowOffset=").$(i).I$();
-//                        corrupt = true;
-//                        length = -1;
-//                    } else {
-//                        length = srcVarMem.getInt(offset);
-//                    }
-//                } else {
-//                    length = srcVarMem.getInt(offset);
-//                }
-//
-//                if (!corrupt && length > 0 && srcVarMem.size() < offset + Vm.getStorageLength(length)) {
-//                    srcVarMem.growToFileSize();
-//                    if (srcVarMem.size() < offset + Vm.getStorageLength(length)) {
-//                        // Still not big enough, pad with nulls
-//                        LOG.critical().$("cannot read STRING column data vector size, column data is corrupt, padding with NULL values [srcVarFd=").$(srcVarFd)
-//                                .$(", rowOffset=").$(i).I$();
-//                        corrupt = true;
-//                    }
-//                }
-//
-//                if (!corrupt) {
-//                    offset = convertStrToVarchar(srcVarMem, offset, sink, dstVarMem, dstFixMem);
-//                } else {
-//                    VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, null);
-//                }
-//            }
-//        } finally {
-//            sink.clear();
-//            sink.resetCapacity();
-//            dstVarMem.close(true);
-//            dstFixMem.close(true);
-//            srcVarMem.close();
-//        }
-//        return corrupt;
-//    }
-
     private static void convertSymbolToString(long rowCount, long symbolMapAddress, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize, SymbolTable symbolTable, ColumnConversionOffsetSink columnSizesSink) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         MemoryCMARW dstVarMem = dstVarMemTL.get();
@@ -470,65 +412,6 @@ public class ColumnTypeConverter {
             dstVarMem.detachFdClose();
         }
     }
-
-
-//    private static boolean convertVarcharToStringCorrupt(long rowCount, int srcVarFd, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize) {
-//        MemoryCMORImpl srcVarMem = srcVarMemTL.get();
-//        MemoryCMORImpl srcFixMem = srcFixMemTL.get();
-//        MemoryCMARW dstVarMem = dstVarMemTL.get();
-//        MemoryCMARW dstFixMem = dstFixMemTL.get();
-//        StringSink sink = sinkUtf16TL.get();
-//        boolean corrupt = false;
-//
-//        try {
-//
-//            srcFixMem.ofOffset(ff, srcVarFd, null, 0, VarcharTypeDriver.INSTANCE.getAuxVectorSize(rowCount), MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE);
-//            srcVarMem.ofOffset(ff, srcVarFd, null, 0, ff.length(srcVarFd), MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE);
-//
-//            dstVarMem.of(ff, dstVarFd, null, appendPageSize, appendPageSize, MemoryTag.MMAP_TABLE_WRITER);
-//            dstVarMem.jumpTo(0);
-//            dstFixMem.of(ff, dstFixFd, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), MemoryTag.MMAP_TABLE_WRITER);
-//            dstFixMem.jumpTo(0);
-//
-//            for (long i = 0; i < rowCount; i++) {
-//                if (!corrupt) {
-//                    Utf8Sequence utf8;
-//                    try {
-//                        utf8 = VarcharTypeDriver.getValueChecked(i, srcFixMem, srcVarMem, 1);
-//                    } catch (CairoException ex) {
-//                        srcVarMem.growToFileSize();
-//                        srcFixMem.growToFileSize();
-//
-//                        try {
-//                            utf8 = VarcharTypeDriver.getValueChecked(i, srcFixMem, srcVarMem, 1);
-//                        } catch (CairoException ex2) {
-//                            LOG.critical().$("cannot read VARCHAR column data vector size, column data is corrupt, padding with NULL values [srcVarFd=").$(srcVarFd)
-//                                    .$(", rowOffset=").$(i).I$();
-//                            corrupt = true;
-//                            utf8 = null;
-//                        }
-//                    }
-//
-//                    if (!corrupt && utf8 != null) {
-//                        sink.clear();
-//                        sink.put(utf8);
-//                        StringTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
-//                    } else {
-//                        StringTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
-//                    }
-//                } else {
-//                    StringTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
-//                }
-//            }
-//        } finally {
-//            sink.clear();
-//            dstVarMem.close(true);
-//            dstFixMem.close(true);
-//            srcVarMem.close();
-//        }
-//        return corrupt;
-//    }
-
 }
 
 

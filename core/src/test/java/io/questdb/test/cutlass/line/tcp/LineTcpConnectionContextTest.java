@@ -1773,6 +1773,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "tv1\ttv2\tZen Internet Ltd\t\t2016-06-13T17:43:50.100400Z\n" +
                     "tv1\ttv2\tZen=Internet,Ltd\t\t2016-06-13T17:43:50.100400Z\n" +
                     "t\"v1\tt\"v2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
+                    "\"tv1\"\ttv2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
                     "tv1\"\ttv2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
                     "\"tv1\ttv2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
                     "tv1\ttv2\tZen Internet Ltd\tfv2\t2016-06-13T17:43:50.100400Z\n";
