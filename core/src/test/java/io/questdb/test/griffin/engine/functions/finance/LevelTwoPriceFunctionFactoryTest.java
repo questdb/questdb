@@ -43,8 +43,8 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
-    public void testLevelTwoPriceFailsWithNullTarget() throws Exception {
-        assertException("select l2price(null, 8, 17.2);", 15, "l2price requires a non-null first argument");
+    public void testLevelTwoPriceReturnsNullWithNullTarget() throws Exception {
+        assertQuery("l2price\nnull\n", "select l2price(null, 8, 17.2);");
     }
 
     /**
@@ -128,8 +128,20 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testInconvertibleTypes() throws Exception {
-        assertQuery("l2price\n5\n", "select l2price(1.3, '31', 5)");
-        assertFailure("inconvertible value", "select l2price(1.3, '31abascsd', 5)");
+        assertQuery("l2price\n5.0\n", "select l2price(1.3, '31', 5)");
+        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, '31abascsd')");
+        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, '31abascsd', 1)");
+        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, '31abascsd')");
+        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, '31abascsd', 1)");
+        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, '31abascsd')");
+        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, '31abascsd', 1)");
+        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, 1, 1, '31abascsd')");
+        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, 1, '31abascsd', 1)");
+        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, 1, 1, 1, 1, '31abascsd')");
+        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, 1, 1, 1, '31abascsd', 1)");
+        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, '31abascsd')");
+        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, '31abascsd', 1)");
+
     }
 
     @Override
