@@ -619,12 +619,18 @@ public class InfluxDBClientTest extends AbstractTest {
         }})) {
             serverMain.start();
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
-                influxDB.setLogLevel(InfluxDB.LogLevel.FULL);
+                influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
 
                 List<String> points = new ArrayList<>();
                 long milliTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T05:00:00.000001Z");
                 points.add("m1,tag1=\"value1\" f1=1i,y=12i " + milliTime);
-                influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.MICROSECONDS, points);
+                influxDB.write(Point.measurement("m1")
+                        .tag("tag1", "\"value1\"")
+                        .addField("f1", 1)
+                        .addField("y", 12)
+                        .time(milliTime, TimeUnit.MICROSECONDS)
+                        .build()
+                );
             }
 
             serverMain.awaitTable("m1");
