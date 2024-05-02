@@ -35,6 +35,9 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     public void testLevelTwoPrice() throws Exception {
         assertQuery("l2price\n" +
                 "9.825714285714286\n", "select l2price(35, 8, 5.2, 23, 9.3, 42, 22.1)");
+        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)"); // fail
+        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertFailure("[15] not enough arguments for l2price", "select l2price(100)");
     }
 
     @Test
@@ -124,6 +127,30 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "- l2price(14, bid_size, bid_value)" +
                             " as spread from x");
         });
+    }
+
+    @Test
+    public void testLevelTwoPriceUnrolled() throws Exception {
+        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1)"); // fail
+        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1)");  // win
+        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1)"); // fail
+        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1)"); // win
+        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1)"); // fail
+        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(15, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1)"); // fail
+        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(15, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(20, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)"); // fail
+        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(15, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(20, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(25, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
     }
 
     @Test
