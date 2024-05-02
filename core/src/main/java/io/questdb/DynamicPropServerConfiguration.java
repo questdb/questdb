@@ -199,7 +199,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
 
     @Override
     public void init(CairoEngine engine, FreeOnExit freeOnExit) {
-        delegate.get().init(engine, freeOnExit);
+        delegate.get().init(this, engine, freeOnExit);
     }
 
     @Override

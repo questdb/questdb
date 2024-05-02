@@ -1351,6 +1351,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.factoryProvider = fpf.getInstance(this, engine, freeOnExit);
     }
 
+    public void init(ServerConfiguration config, CairoEngine engine, FreeOnExit freeOnExit) {
+        this.factoryProvider = fpf.getInstance(config, engine, freeOnExit);
+    }
+
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
         final int[] result = new int[workerCount];
         String value = getString(properties, env, key, null);
