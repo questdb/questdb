@@ -102,13 +102,27 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             case ColumnType.DOUBLE:
             case ColumnType.TIMESTAMP:
                 int nextColType = columnType;
-                while (nextColType == columnType) { // disallow noop conversion
+                // disallow noop conversion
+                // disallow conversions from non-nullable to nullable
+                while (nextColType == columnType || isNullable(columnType) != isNullable(nextColType)) {
                     nextColType = numericColumnTypes[rnd.nextInt(numericColumnTypes.length)];
                 }
                 return nextColType;
 
         }
         return columnType;
+    }
+
+    private static boolean isNullable(int columnType) {
+        switch (columnType) {
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.UUID:
+            case ColumnType.IPv4:
+                return false;
+            default:
+                return true;
+        }
     }
 
     public static RecordMetadata generateColumnTypeChange(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd, RecordMetadata tableMetadata) {
