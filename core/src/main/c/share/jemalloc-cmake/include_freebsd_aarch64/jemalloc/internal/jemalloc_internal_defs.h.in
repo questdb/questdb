@@ -209,7 +209,7 @@
  * system does not explicitly support huge pages; system calls that require
  * explicit huge page support are separately configured.
  */
-#define LG_HUGEPAGE 29
+#define LG_HUGEPAGE 21
 
 /*
  * If defined, adjacent virtual memory mappings with identical attributes
