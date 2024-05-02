@@ -813,6 +813,7 @@ io.questdb.griffin.engine.functions.str.QuoteIdentFunctionFactory
 
 #starts_with()
 io.questdb.griffin.engine.functions.str.StartsWithStrFunctionFactory
+io.questdb.griffin.engine.functions.str.StartsWithVarcharFunctionFactory
 
 # split_part()
 io.questdb.griffin.engine.functions.str.SplitPartFunctionFactory
