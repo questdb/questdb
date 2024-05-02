@@ -29,7 +29,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 
 /**
@@ -65,11 +64,6 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     public void clear() {
         this.prefixLo = this.dataLo = 0;
         this.ascii = false;
-    }
-
-    @Override
-    public boolean equalsAssumingSameSize(Utf8Sequence other, int size) {
-        return zeroPaddedSixPrefix() == other.zeroPaddedSixPrefix() && dataEquals(other);
     }
 
     @Override
@@ -123,20 +117,5 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     @Override
     public long zeroPaddedSixPrefix() {
         return Unsafe.getUnsafe().getLong(prefixLo) & VARCHAR_INLINED_PREFIX_MASK;
-    }
-
-    private boolean dataEquals(Utf8Sequence other) {
-        int i = VARCHAR_INLINED_PREFIX_BYTES;
-        for (int n = size() - Long.BYTES + 1; i < n; i += Long.BYTES) {
-            if (longAt(i) != other.longAt(i)) {
-                return false;
-            }
-        }
-        for (int n = size(); i < n; i++) {
-            if (byteAt(i) != other.byteAt(i)) {
-                return false;
-            }
-        }
-        return true;
     }
 }

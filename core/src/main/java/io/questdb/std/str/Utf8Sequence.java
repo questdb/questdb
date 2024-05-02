@@ -54,25 +54,6 @@ public interface Utf8Sequence {
     byte byteAt(int index);
 
     /**
-     * Called as a part of equality check that has already ensured the two strings
-     * have the same byte size.
-     */
-    default boolean equalsAssumingSameSize(Utf8Sequence other, int size) {
-        int i = 0;
-        for (int n = size - Long.BYTES; i <= n; i += Long.BYTES) {
-            if (longAt(i) != other.longAt(i)) {
-                return false;
-            }
-        }
-        for (; i < size; i++) {
-            if (byteAt(i) != other.byteAt(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
      * Returns `true` if it's guaranteed that the contents of this UTF-8 sequence are
      * all ASCII characters. Returning `false` does not guarantee anything.
      */
