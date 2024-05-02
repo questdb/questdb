@@ -121,8 +121,7 @@ public final class Numbers {
             if (targetScale-- == scale) {
                 sink.putAscii('.');
             }
-            int val = scaled / factor % 10;
-            sink.putAscii((char) ('0' + val));
+            sink.putAscii((char) ('0' + scaled / factor % 10));
             factor /= 10;
         }
     }
