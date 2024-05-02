@@ -286,18 +286,6 @@ public final class Utf8s {
         return true;
     }
 
-    public static boolean equalsNc(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
-        if (l == null && r == null) {
-            return true;
-        }
-
-        if (l == null || r == null) {
-            return false;
-        }
-
-        return equals(l, r);
-    }
-
     public static boolean equalsNcAscii(@NotNull CharSequence asciiSeq, @Nullable Utf8Sequence seq) {
         return seq != null && equalsAscii(asciiSeq, seq);
     }
