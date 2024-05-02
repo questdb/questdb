@@ -444,10 +444,10 @@ public class InfluxDBClientTest extends AbstractTest {
                         "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                         "error in line 1: Could not parse entire line, field value is invalid. Field: d; value: 10a24.2\",\"line\":1,\"errorId\":");
 
-                assertRequestErrorContains(influxDB, points, "badPoint,tag1=\"asdf\" d=1024.2", "{" +
+                assertRequestErrorContains(influxDB, points, "badPoint tag1=aasdf,d=1024.2", "{" +
                         "\"code\":\"invalid\"," +
                         "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                        "error in line 1: Could not parse entire line, tag value is invalid. Tag: tag1; value: \\\"asdf\\\"\",\"line\":1,\"errorId\":");
+                        "error in line 1: Could not parse entire line, field value is invalid. Field: tag1; value: aasdf\",\"line\":1,\"errorId\":");
             }
 
             assertSql(serverMain.getEngine(), "SELECT count() FROM good_point", "count\n0\n");
