@@ -44,14 +44,10 @@ import static io.questdb.cairo.TableUtils.iFile;
 public class ConvertOperatorImpl implements Closeable {
     private static final Log LOG = LogFactory.getLog(ConvertOperatorImpl.class);
     private final long appendPageSize;
+    private final ColumnVersionWriter columnVersionWriter;
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final long fileOpenOpts;
-    private final Path path;
-    private final PurgingOperator purgingOperator;
-    private final ColumnVersionWriter columnVersionWriter;
-    private final int rootLen;
-    private final TableWriter tableWriter;
     private final ColumnConversionOffsetSink noopConversionOffsetSink = new ColumnConversionOffsetSink() {
         @Override
         public void setDestSizes(long primarySize, long auxSize) {
@@ -61,7 +57,10 @@ public class ConvertOperatorImpl implements Closeable {
         public void setSrcOffsets(long primaryOffset, long auxOffset) {
         }
     };
-
+    private final Path path;
+    private final PurgingOperator purgingOperator;
+    private final int rootLen;
+    private final TableWriter tableWriter;
     private int partitionUpdated;
     private SymbolMapReaderImpl symbolMapReader;
     private SymbolMapper symbolMapper;
@@ -143,38 +142,42 @@ public class ConvertOperatorImpl implements Closeable {
                     long rowCount = maxRow - columnTop;
                     long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
 
-                    path.trimTo(rootLen);
-                    TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
-                    int pathTrimToLen = path.size();
+                    if (rowCount > 0) {
+                        path.trimTo(rootLen);
+                        TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+                        int pathTrimToLen = path.size();
 
-                    int srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
-                    try {
-                        long srcFds = openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen);
-                        long dstFds = openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
+                        int srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
+                        try {
+                            long srcFds = openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen);
+                            long dstFds = openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
 
-                        srcFixFd = Numbers.decodeLowInt(srcFds);
-                        srcVarFd = Numbers.decodeHighInt(srcFds);
-                        dstFixFd = Numbers.decodeLowInt(dstFds);
-                        dstVarFd = Numbers.decodeHighInt(dstFds);
+                            srcFixFd = Numbers.decodeLowInt(srcFds);
+                            srcVarFd = Numbers.decodeHighInt(srcFds);
+                            dstFixFd = Numbers.decodeLowInt(dstFds);
+                            dstVarFd = Numbers.decodeHighInt(dstFds);
 
-                        LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen))
-                                .$(", column=").$(columnName)
-                                .$(", from=").$(ColumnType.nameOf(existingType))
-                                .$(", to=").$(ColumnType.nameOf(newType))
-                                .$(", rowCount=").$(rowCount).I$();
-
-                        boolean ok = ColumnTypeConverter.convertColumn(0, rowCount, existingType, srcFixFd, srcVarFd, symbolTable, newType, dstFixFd, dstVarFd, symbolMapperWriter, ff, appendPageSize, noopConversionOffsetSink);
-                        if (!ok) {
-                            LOG.critical().$("failed to convert column, column is corrupt [at=").$(path.trimTo(pathTrimToLen))
+                            LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen))
                                     .$(", column=").$(columnName)
                                     .$(", from=").$(ColumnType.nameOf(existingType))
                                     .$(", to=").$(ColumnType.nameOf(newType))
-                                    .$(", srcFixFd=").$(srcFixFd)
-                                    .$(", srcVarFd=").$(srcVarFd).I$();
-                            throw CairoException.nonCritical().put("Failed to convert column. Column data is corrupt [name=").put(columnName).put(']');
+                                    .$(", rowCount=").$(rowCount).I$();
+
+
+                            assert rowCount >= 0;
+                            boolean ok = ColumnTypeConverter.convertColumn(0, rowCount, existingType, srcFixFd, srcVarFd, symbolTable, newType, dstFixFd, dstVarFd, symbolMapperWriter, ff, appendPageSize, noopConversionOffsetSink);
+                            if (!ok) {
+                                LOG.critical().$("failed to convert column, column is corrupt [at=").$(path.trimTo(pathTrimToLen))
+                                        .$(", column=").$(columnName)
+                                        .$(", from=").$(ColumnType.nameOf(existingType))
+                                        .$(", to=").$(ColumnType.nameOf(newType))
+                                        .$(", srcFixFd=").$(srcFixFd)
+                                        .$(", srcVarFd=").$(srcVarFd).I$();
+                                throw CairoException.nonCritical().put("Failed to convert column. Column data is corrupt [name=").put(columnName).put(']');
+                            }
+                        } finally {
+                            closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
                         }
-                    } finally {
-                        closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
                     }
 
                     long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);

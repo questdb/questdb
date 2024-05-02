@@ -48,8 +48,10 @@ import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -66,6 +68,8 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
     private static final StringSink sink = new StringSink();
+    private static final short[] integerColumnTypes = new short[]{ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG};
+    private static int defaultFloatScale;
     protected final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
     private final int batchSize = 10;
     private final String[][] colNameBases = new String[][]{
@@ -105,6 +109,51 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     private boolean sendSymbolsWithSpace = false;
     private boolean symbolAsFieldSupported;
     private SOCountDownLatch threadPushFinished;
+
+    public static int changeColumnTypeTo(Rnd rnd, int columnType) {
+        int nextColType = columnType;
+        switch (columnType) {
+            case ColumnType.STRING:
+                return rnd.nextBoolean() ? ColumnType.SYMBOL : ColumnType.VARCHAR;
+            case ColumnType.SYMBOL:
+                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.VARCHAR;
+            case ColumnType.VARCHAR:
+                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.SYMBOL;
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+                while (nextColType == columnType) { // disallow noop conversion
+                    nextColType = integerColumnTypes[rnd.nextInt(integerColumnTypes.length)];
+                }
+                return nextColType;
+            case ColumnType.FLOAT:
+                return ColumnType.DOUBLE;
+            case ColumnType.DOUBLE:
+                return ColumnType.FLOAT;
+            case TIMESTAMP:
+                return ColumnType.LONG;
+
+        }
+        return columnType;
+    }
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        defaultFloatScale = CursorPrinter.FLOAT_SCALE;
+        AbstractBootstrapTest.setUpStatic();
+        // Max out printer float scale so that float printed same as doubles, e.g.
+        // Without that float 54.0 is printed as 54.0000 and double 54.0 is printed as 54.0
+        // This is needed to allow random column conversions that can change a double column to float
+        // in the table and still match the expected sent row values.
+        CursorPrinter.FLOAT_SCALE = 10;
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        CursorPrinter.FLOAT_SCALE = defaultFloatScale;
+        AbstractBootstrapTest.tearDownStatic();
+    }
 
     public void ingest(CairoEngine engine, int port) {
         int waitCount = numOfThreads;
@@ -402,8 +451,8 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                             for (int i = 0; i < meta.getColumnCount(); i++) {
                                 int colIndex = (startColIndex + i) % meta.getColumnCount();
                                 int type = meta.getColumnType(colIndex);
-                                if (type > 0 && FuzzChangeColumnTypeOperation.canGenerateColumnTypeChange(meta.getColumnType(colIndex))) {
-                                    int newType = FuzzChangeColumnTypeOperation.changeColumnTypeTo(random, type);
+                                if (type > 0 && FuzzChangeColumnTypeOperation.canGenerateColumnTypeChange(meta, colIndex)) {
+                                    int newType = changeColumnTypeTo(random, type);
                                     try {
                                         engine.ddl("ALTER TABLE " + tableName + " ALTER COLUMN "
                                                 + meta.getColumnName(colIndex) + " TYPE " + nameOf(newType), executionContext);
