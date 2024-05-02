@@ -851,6 +851,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
             }
 
+            commit();
+
             LOG.info().$("converting column [table=").$(tableToken).$(", column=").$(columnName)
                     .$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
@@ -879,7 +881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // maintain sparse list of symbol writers
                 symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
             }
-            getConvertOperator().convertColumn(columnName, existingColIndex, existingType, columnIndex, newType, columnVersionWriter);
+            getConvertOperator().convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
 
             // Column converted, add new one to _meta file and remove the existing column
             addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, existingColIndex);
@@ -4666,7 +4668,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private ConvertOperatorImpl getConvertOperator() {
         if (convertOperatorImpl == null) {
-            convertOperatorImpl = new ConvertOperatorImpl(configuration, this, columnVersionWriter, path, rootLen, getPurgingOperator());
+            convertOperatorImpl = new ConvertOperatorImpl(configuration, this, columnVersionWriter, path, rootLen, getPurgingOperator(), messageBus);
         }
         return convertOperatorImpl;
     }
