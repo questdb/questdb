@@ -126,6 +126,12 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
         });
     }
 
+    @Test
+    public void testInconvertibleTypes() throws Exception {
+        assertQuery("l2price\n5\n", "select l2price(1.3, '31', 5)");
+        assertFailure("inconvertible value", "select l2price(1.3, '31abascsd', 5)");
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new LevelTwoPriceFunctionFactory();
