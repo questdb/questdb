@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -36,6 +38,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 public class EqVarcharFunctionFactory implements FunctionFactory {
 
@@ -57,22 +60,20 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        // Optimizations:
-        // 1. If one arg is a compile-time constant, cache its value
-        // 2. If one arg is not a column value, ensure it is the second argument because
-        //    the 1st argument chooses the optimal varchar column data access pattern
-
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
 
-        if (a.isConstant() && !b.isConstant()) {
+        if (a.isConstant()) {
             return createHalfConstantFunc(a, b);
         }
-        if (!a.isConstant() && b.isConstant()) {
+        if (b.isConstant()) {
             return createHalfConstantFunc(b, a);
         }
-        if (a.isRuntimeConstant() && !b.isRuntimeConstant()) {
-            return new Func(b, a);
+        if (a.isRuntimeConstant()) {
+            return new HalfRuntimeConstFunc(a, b);
+        }
+        if (b.isRuntimeConstant()) {
+            return new HalfRuntimeConstFunc(b, a);
         }
         return new Func(a, b);
     }
@@ -85,13 +86,15 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
         return new ConstCheckFunc(varFunc, constValue);
     }
 
-    public static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final Utf8Sequence constant;
+        private final long constantSixPrefix;
 
-        public ConstCheckFunc(Function arg, Utf8Sequence constant) {
+        ConstCheckFunc(Function arg, @NotNull Utf8Sequence constant) {
             this.arg = arg;
             this.constant = constant;
+            this.constantSixPrefix = constant.zeroPaddedSixPrefix();
         }
 
         @Override
@@ -101,11 +104,8 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // argument order to equalsNc is important: the first argument can be either an inlined or
-            // a split varchar. That implementation should choose the data access pattern that is optimal
-            // for it, and the constant implementation can easily adapt to both patterns.
             final Utf8Sequence val = arg.getVarcharA(rec);
-            return negated != (val != null && Utf8s.equals(val, constant));
+            return negated != (val != null && Utf8s.equals(val, val.zeroPaddedSixPrefix(), constant, constantSixPrefix));
         }
 
         @Override
@@ -118,24 +118,21 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func extends AbstractEqBinaryFunction {
-        public Func(Function left, Function right) {
+    static class Func extends AbstractEqBinaryFunction {
+        Func(Function left, Function right) {
             super(left, right);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            // important to compare A and B varchars in case
-            // these are columns of the same record
-            // records have re-usable character sequences
+            // getVarcharA/B returns a reusable sequence object.
+            // When using two at once, it's important to use both A and B.
             final Utf8Sequence a = left.getVarcharA(rec);
             final Utf8Sequence b = right.getVarcharB(rec);
-
             if (a == null) {
                 return negated != (b == null);
             }
-
-            return negated != Utf8s.equalsNc(a, b);
+            return negated != Utf8s.equals(a, b);
         }
 
         @Override
@@ -148,10 +145,45 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static class HalfRuntimeConstFunc extends AbstractEqBinaryFunction {
+        private Utf8Sequence cachedRuntimeConst;
+        private long cachedSixPrefix;
+
+        HalfRuntimeConstFunc(Function runtimeConst, Function arg) {
+            super(arg, runtimeConst);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final Utf8Sequence a = left.getVarcharA(rec);
+            final Utf8Sequence b = cachedRuntimeConst;
+            if (a == null || b == null) {
+                return negated != (a == b);
+            }
+            return negated != Utf8s.equals(a, a.zeroPaddedSixPrefix(), b, cachedSixPrefix);
+        }
+
+        @Override
+        public String getName() {
+            if (negated) {
+                return "!=";
+            } else {
+                return "=";
+            }
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            cachedRuntimeConst = right.getVarcharA(null);
+            cachedSixPrefix = cachedRuntimeConst != null ? cachedRuntimeConst.zeroPaddedSixPrefix() : 0L;
+        }
+    }
+
+    static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
 
-        public NullCheckFunc(Function arg) {
+        NullCheckFunc(Function arg) {
             this.arg = arg;
         }
 
