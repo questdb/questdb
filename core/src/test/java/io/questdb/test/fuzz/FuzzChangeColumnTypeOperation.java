@@ -41,6 +41,10 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     private final int indexValueBlockCapacity;
     private final int newColumnType;
     private final int symbolCapacity;
+    private static final short[] numericColumnTypes = {
+            ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
+            ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP
+    };
 
     public FuzzChangeColumnTypeOperation(String columName, int newColumnType, int symbolCapacity, boolean indexFlag, int indexValueBlockCapacity, boolean cacheSymbolMap) {
         this.columName = columName;
@@ -53,31 +57,72 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
 
     public static boolean canChangeColumnType(RecordMetadata meta) {
         for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
-            if (FuzzChangeColumnTypeOperation.canGenerateColumnTypeChange(meta.getColumnType(i))) {
+            if (FuzzChangeColumnTypeOperation.canGenerateColumnTypeChange(meta, i)) {
                 return true;
             }
         }
         return false;
     }
 
-    public static boolean canGenerateColumnTypeChange(int columnType) {
+    public static boolean canGenerateColumnTypeChange(RecordMetadata meta, int columnIndex) {
+        if (columnIndex == meta.getTimestampIndex()) {
+            return false;
+        }
+
+        int columnType = meta.getColumnType(columnIndex);
         switch (columnType) {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
             case ColumnType.VARCHAR:
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.TIMESTAMP:
                 return true;
         }
         return false;
     }
 
+    public static int changeColumnTypeTo(Rnd rnd, int columnType) {
+        switch (columnType) {
+            case ColumnType.STRING:
+                return rnd.nextBoolean() ? ColumnType.SYMBOL : ColumnType.VARCHAR;
+            case ColumnType.SYMBOL:
+                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.VARCHAR;
+            case ColumnType.VARCHAR:
+                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.SYMBOL;
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.TIMESTAMP:
+                int nextColType = columnType;
+                while (nextColType == columnType) { // disallow noop conversion
+                    nextColType = numericColumnTypes[rnd.nextInt(numericColumnTypes.length)];
+                }
+                return nextColType;
+
+        }
+        return columnType;
+    }
+
     public static RecordMetadata generateColumnTypeChange(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd, RecordMetadata tableMetadata) {
         FuzzTransaction transaction = new FuzzTransaction();
         int startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
+
+        // guard against converting designated timestamp
+        while (startColumnIndex == tableMetadata.getTimestampIndex()) {
+            startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
+        }
+
         for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
             int columnIndex = (startColumnIndex + i) % tableMetadata.getColumnCount();
-
-            int type = tableMetadata.getColumnType(columnIndex);
-            if (canGenerateColumnTypeChange(type)) {
+            if (columnIndex != tableMetadata.getTimestampIndex() && canGenerateColumnTypeChange(tableMetadata, columnIndex)) {
                 String columnName = tableMetadata.getColumnName(columnIndex);
                 int columnType = tableMetadata.getColumnType(columnIndex);
                 int newColType = changeColumnTypeTo(rnd, columnType);
@@ -130,17 +175,5 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         AlterOperation alterOp = builder.build();
         wApi.apply(alterOp, true);
         return true;
-    }
-
-    public static int changeColumnTypeTo(Rnd rnd, int columnType) {
-        switch (columnType) {
-            case ColumnType.STRING:
-                return rnd.nextBoolean() ? ColumnType.SYMBOL : ColumnType.VARCHAR;
-            case ColumnType.SYMBOL:
-                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.VARCHAR;
-            case ColumnType.VARCHAR:
-                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.SYMBOL;
-        }
-        return columnType;
     }
 }

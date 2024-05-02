@@ -839,6 +839,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw CairoException.nonCritical().put("cannot change column type, column does not exists [table=")
                         .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
             }
+
+            if (existingColIndex == metadata.getTimestampIndex()) {
+                throw CairoException.nonCritical().put("cannot change column type, column is the designated timestamp [table=")
+                        .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+            }
+
             int existingType = metadata.getColumnType(existingColIndex);
             if (existingType < 0) {
                 throw CairoException.nonCritical().put("cannot change column type, column is deleted [table=")
@@ -851,7 +857,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             boolean isDedupKey = metadata.isDedupKey(existingColIndex);
             if (existingType == newType) {
-                // It only makes sense to change symbol paramters
+                // It only makes sense to change symbol parameters
                 // It has to be another type of ALTER command since it's non-structural change in WAL tables
                 throw CairoException.nonCritical().put("cannot change column type, new type is the same as existing [table=")
                         .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');

@@ -68,7 +68,7 @@ public class ColumnTypeConverter {
             return convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
         }
         if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
-            return convertFixedToFixed(rowCount, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, appendPageSize);
+            return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink);
         } else if (ColumnType.isVarSize(srcColumnType)) {
             switch (srcColumnType) {
                 case ColumnType.STRING:
@@ -83,8 +83,32 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static boolean convertFixedToFixed(long rowCount, int srcFixFd, int dstFixFd, int srcColumnType, int dstColumnType, FilesFacade ff, long appendPageSize) {
-        throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
+    private static boolean convertFixedToFixed(long rowCount, long skipRows, int srcFixFd, int dstFixFd, int srcColumnType, int dstColumnType, FilesFacade ff, ColumnConversionOffsetSink columnSizesSink) {
+        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
+        long srcMapAddressRaw = 0;
+        long dstMapAddressRaw = 0;
+
+        try {
+            srcMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * srcColumnTypeSize, rowCount * srcColumnTypeSize, false, memoryTag);
+            columnSizesSink.setSrcOffsets(rowCount * srcColumnTypeSize, -1);
+            ff.truncate(dstFixFd, rowCount * dstColumnTypeSize);
+            dstMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, rowCount * dstColumnTypeSize, true, memoryTag);
+            columnSizesSink.setDestSizes(rowCount * dstColumnTypeSize, -1);
+
+            long succeeded = ConvertersNative.fixedToFixed(Math.abs(srcMapAddressRaw), srcColumnType, Math.abs(dstMapAddressRaw), dstColumnType, rowCount);
+            switch ((int) succeeded) {
+                case ConvertersNative.ConversionError.NONE:
+                    return true;
+                case ConvertersNative.ConversionError.UNSUPPORTED_CAST:
+                    throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
+                default:
+                    throw CairoException.critical(0).put("Unknown return code from native call: ").put(succeeded);
+            }
+        } finally {
+            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipRows * srcColumnTypeSize, rowCount * srcColumnTypeSize, memoryTag);
+            TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddressRaw, 0, rowCount * dstColumnTypeSize, memoryTag);
+        }
     }
 
     private static boolean convertFromString(long skipRows, long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd, int dstColumnType, FilesFacade ff, long appendPageSize, SymbolMapWriterLite symbolMapWriter, ColumnConversionOffsetSink columnSizesSink) {
@@ -94,7 +118,7 @@ public class ColumnTypeConverter {
         try {
             skipDataSize = skipRows > 0 ? typeDriver.getDataVectorSizeAtFromFd(ff, srcFixFd, skipRows - 1) : 0;
             dataSize = typeDriver.getDataVectorSizeAtFromFd(ff, srcFixFd, skipRows + rowCount - 1);
-            if (dataSize < typeDriver.getDataVectorMinEntrySize() && rowCount > 0) {
+            if (dataSize < typeDriver.getDataVectorMinEntrySize()) {
                 throw CairoException.nonCritical().put("String column data vector size is less than minimum entry size [size=").put(dataSize)
                         .put(", srcFixFd=").put(srcFixFd).put(']');
             }
@@ -142,9 +166,7 @@ public class ColumnTypeConverter {
     ) {
         long symbolMapAddressRaw;
         columnSizesSink.setSrcOffsets(skipRows * Integer.BYTES, -1);
-        symbolMapAddressRaw = rowCount > 0 ?
-                TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * Integer.BYTES, rowCount * Integer.BYTES, false, memoryTag)
-                : 0;
+        symbolMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * Integer.BYTES, rowCount * Integer.BYTES, false, memoryTag);
 
         try {
             long symbolMapAddress = Math.abs(symbolMapAddressRaw);
@@ -383,3 +405,5 @@ public class ColumnTypeConverter {
         }
     }
 }
+
+

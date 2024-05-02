@@ -122,22 +122,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testChangeSymbolToVarcharReleaseWriters() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-            drainWalQueue();
-            engine.releaseInactive();
-            ddl("alter table x alter column ik type varchar", sqlExecutionContext);
-            drainWalQueue();
-
-            insert("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
-            drainWalQueue();
-
-            assertSql("ik\nabc\n", "select ik from x limit -1");
-        });
-    }
-
-    @Test
     public void testChangeStringToIndexedSymbol() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -228,6 +212,22 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeSymbolToVarcharReleaseWriters() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            drainWalQueue();
+            engine.releaseInactive();
+            ddl("alter table x alter column ik type varchar", sqlExecutionContext);
+            drainWalQueue();
+
+            insert("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ik\nabc\n", "select ik from x limit -1");
+        });
+    }
+
+    @Test
     public void testChangeTypePreservesColumnOrder() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -302,6 +302,140 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select v from z",
                     "select v from x"
             );
+        });
+    }
+
+    @Test
+    public void testFixedSizeColumnEquivalentToCast() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            drainWalQueue();
+            final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP"};
+            final char[] col_names = {'l', 'f', 'i', 'j', 'e', 'd', 'k'};
+            char srcColName;
+            String srcType;
+            String dstType;
+
+            for (int i = 0, n = types.length; i < n; i++) {
+                for (int j = 0, m = types.length; j < m; j++) {
+                    // skip unsupported noop conversion
+                    if (i == j) {
+                        continue;
+                    }
+
+                    srcType = types[i];
+                    srcColName = col_names[i];
+                    dstType = types[j];
+
+                    LOG.info().$("checking `" + srcType + "` to `" + dstType + "` conversion");
+
+                    ddl("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
+                    insert("insert into y select " + srcColName + " as converted, " + srcColName + "::" + dstType + " as casted, " + srcColName + " as original from x", sqlExecutionContext);
+                    drainWalQueue();
+                    ddl("alter table y alter column converted type " + dstType, sqlExecutionContext);
+                    drainWalQueue();
+
+                    try {
+                        assertQuery(
+                                "count_distinct\tfirst\n1\ttrue\n",
+                                "select count_distinct('equivalent'), first(equivalent) from (select (converted = casted) as equivalent from y)",
+                                null,
+                                false,
+                                true
+                        );
+                        assertQuery("column\ttype\n" +
+                                "converted\t" + dstType + "\n" +
+                                "casted\t" + dstType + "\n" +
+                                "original\t" + srcType + "\n", "select \"column\", type from table_columns('y')", null, false, false);
+                    } catch (AssertionError e) {
+                        // if the column wasn't converted
+                        if (e.getMessage().contains("column")) {
+                            throw e;
+                        } else {
+                            // dump the difference in data
+                            assertSql("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n", "select converted, casted, original from y");
+                        }
+                    } finally {
+                        drop("drop table y", sqlExecutionContext);
+                        drainWalQueue();
+                    }
+                }
+
+            }
+        });
+    }
+
+    @Test
+    public void testFixedSizeColumnLongToInt() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            drainWalQueue();
+
+            ddl("create table y ( converted long, casted int, original long );", sqlExecutionContext);
+            insert("insert into y (converted, casted, original) values (9999999999999, 9999999999999::int, 9999999999999)", sqlExecutionContext);
+            drainWalQueue();
+            ddl("alter table y alter column converted type int", sqlExecutionContext);
+            drainWalQueue();
+
+            assertQuery("converted\tcasted\toriginal\n" +
+                    "1316134911\t1316134911\t9999999999999\n", "select * from y", null, true, true);
+
+        });
+    }
+
+    @Test
+    public void testFixedSizeColumnNullableBehaviour() throws Exception {
+        assertMemoryLeak(() -> {
+            drainWalQueue();
+            final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP"};
+            String srcType;
+            String dstType;
+
+            for (int i = 0, n = types.length; i < n; i++) {
+                for (int j = 0, m = types.length; j < m; j++) {
+                    // skip unsupported noop conversion
+                    if (i == j) {
+                        continue;
+                    }
+
+                    srcType = types[i];
+                    dstType = types[j];
+
+                    LOG.info().$("checking `" + srcType + "` to `" + dstType + "` conversion");
+
+                    ddl("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
+                    insert("insert into y (converted, casted, original) values (null, cast(null as " + srcType + ")::" + dstType + ", null)", sqlExecutionContext);
+                    drainWalQueue();
+                    ddl("alter table y alter column converted type " + dstType, sqlExecutionContext);
+                    drainWalQueue();
+
+                    try {
+                        assertQuery(
+                                "count_distinct\tfirst\n1\ttrue\n",
+                                "select count_distinct('equivalent'), first(equivalent) from (select (converted = casted) as equivalent from y)",
+                                null,
+                                false,
+                                true
+                        );
+                        assertQuery("column\ttype\n" +
+                                "converted\t" + dstType + "\n" +
+                                "casted\t" + dstType + "\n" +
+                                "original\t" + srcType + "\n", "select \"column\", type from table_columns('y')", null, false, false);
+                    } catch (AssertionError e) {
+                        // if the column wasn't converted
+                        if (e.getMessage().contains("column")) {
+                            throw e;
+                        } else {
+                            // dump the difference in data
+                            assertSql("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n", "select converted, casted, original from y");
+                        }
+                    } finally {
+                        drop("drop table y", sqlExecutionContext);
+                        drainWalQueue();
+                    }
+                }
+
+            }
         });
     }
 
