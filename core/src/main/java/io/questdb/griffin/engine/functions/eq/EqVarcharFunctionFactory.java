@@ -157,8 +157,8 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             final Utf8Sequence a = left.getVarcharA(rec);
             final Utf8Sequence b = cachedRuntimeConst;
-            if (a == null) {
-                return negated != (b == null);
+            if (a == null || b == null) {
+                return negated != (a == b);
             }
             return negated != Utf8s.equals(a, a.zeroPaddedSixPrefix(), b, cachedSixPrefix);
         }
