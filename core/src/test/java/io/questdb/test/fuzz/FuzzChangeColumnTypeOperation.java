@@ -84,6 +84,12 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     public static RecordMetadata generateColumnTypeChange(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd, RecordMetadata tableMetadata) {
         FuzzTransaction transaction = new FuzzTransaction();
         int startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
+
+        // guard against converting designated timestamp
+        while (startColumnIndex == tableMetadata.getTimestampIndex()) {
+            startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
+        }
+
         for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
             int columnIndex = (startColumnIndex + i) % tableMetadata.getColumnCount();
 
