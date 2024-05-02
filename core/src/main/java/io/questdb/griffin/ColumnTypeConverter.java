@@ -108,14 +108,11 @@ public class ColumnTypeConverter {
                 default:
                     throw CairoException.critical(0).put("Unknown return code from native call: ").put(succeeded);
             }
-        } catch (Exception ex) {
-            throw ex;
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipRows * srcColumnTypeSize, rowCount * srcColumnTypeSize, memoryTag);
             TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddressRaw, 0, rowCount * dstColumnTypeSize, memoryTag);
         }
     }
-
 
     private static boolean convertFromString(long skipRows, long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd, int dstColumnType, FilesFacade ff, long appendPageSize, SymbolMapWriterLite symbolMapWriter, ColumnConversionOffsetSink columnSizesSink) {
         long skipDataSize;

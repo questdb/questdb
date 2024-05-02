@@ -27,7 +27,6 @@
 #include <cassert>
 #include <type_traits>
 #include <cmath>
-#include <bit>
 
 /**
  * ColumnType enum, matching the Java definitions.
@@ -162,9 +161,7 @@ constexpr bool is_nullable() {
  * @tparam T2 the destination type
  * @param srcMem the source type mmap column
  * @param dstMem the destination type mmap column
- * @param srcNullable whether source is nullable
  * @param srcSentinel the source null sentinel
- * @param dstNullable whether destination is nullable
  * @param dstSentinel the destination null sentinel
  * @param rowCount the number of rows
  * @return

@@ -41,6 +41,10 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     private final int indexValueBlockCapacity;
     private final int newColumnType;
     private final int symbolCapacity;
+    private static final short[] numericColumnTypes = {
+            ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
+            ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP
+    };
 
     public FuzzChangeColumnTypeOperation(String columName, int newColumnType, int symbolCapacity, boolean indexFlag, int indexValueBlockCapacity, boolean cacheSymbolMap) {
         this.columName = columName;
@@ -65,6 +69,13 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
             case ColumnType.VARCHAR:
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.TIMESTAMP:
                 return true;
         }
         return false;
@@ -140,6 +151,19 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                 return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.VARCHAR;
             case ColumnType.VARCHAR:
                 return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.SYMBOL;
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.TIMESTAMP:
+                int nextColType = columnType;
+                while (nextColType == columnType) { // disallow noop conversion
+                    nextColType = numericColumnTypes[rnd.nextInt(numericColumnTypes.length)];
+                }
+                return nextColType;
+
         }
         return columnType;
     }
