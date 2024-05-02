@@ -6,19 +6,23 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class KqueueFileEventNotifier extends FileWatcher {
     private final int bufferSize;
+    private final AtomicBoolean closed = new AtomicBoolean();
     private final int dirFd;
     private final long eventList;
     private final long evtDir;
     private final long evtFile;
     private final int fileFd;
     private final int kq;
-    private boolean closed;
+    private final int readEndFd;
+    private final int writeEndFd;
 
     public KqueueFileEventNotifier(CharSequence filePath, FileEventCallback callback) throws FileWatcherException {
         super(filePath, callback);
-        
+
         try (Path p = new Path()) {
 
             p.of(filePath).$();
@@ -55,6 +59,12 @@ public class KqueueFileEventNotifier extends FileWatcher {
                 0
         );
 
+        long fds = KqueueAccessor.pipe();
+        this.readEndFd = (int) (fds >>> 32);
+        this.writeEndFd = (int) fds;
+        Files.bumpFileCount(this.readEndFd);
+        Files.bumpFileCount(this.writeEndFd);
+
         kq = KqueueAccessor.kqueue();
         if (kq < 0) {
             throw new FileWatcherException("kqueue", kq);
@@ -87,11 +97,19 @@ public class KqueueFileEventNotifier extends FileWatcher {
 
     @Override
     public void close() {
-        if (!closed) {
-            closed = true;
+        if (closed.compareAndSet(false, true)) {
+
+            if (KqueueAccessor.writePipe(writeEndFd) < 0) {
+                // todo: handle error
+            }
+
+            super.close();
+
             Files.close(kq);
             Files.close(fileFd);
             Files.close(dirFd);
+            Files.close(readEndFd);
+            Files.close(writeEndFd);
             Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             KqueueAccessor.evtFree(this.evtFile);
             KqueueAccessor.evtFree(this.evtDir);
@@ -107,12 +125,15 @@ public class KqueueFileEventNotifier extends FileWatcher {
                 eventList,
                 1
         );
-        if (closed) {
+        if (closed.get()) {
             return;
         }
         if (res < 0) {
             throw new FileWatcherException("kevent", res);
         }
+        // For now, we don't filter events down to the file,
+        // we trigger on every change in the directory
+        // todo: implement kqueue file filter
         callback.onFileEvent();
     }
 }
