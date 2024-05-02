@@ -172,7 +172,7 @@ auto convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, T1 srcSentinel,
     // if dst is nullable, then we have a sentinel
     // else the sentinel must be 0
     // i.e INT(NULL) -> BYTE(0)
-    assert(dstNullable == true || dstNullable == false && dstSentinel == 0);
+    assert(dstNullable == true || (dstNullable == false && dstSentinel == 0));
 
     for (size_t i = 0; i < rowCount; i++) {
         if constexpr (srcNullable) {
