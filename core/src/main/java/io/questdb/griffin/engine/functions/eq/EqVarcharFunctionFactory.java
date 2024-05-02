@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -58,22 +60,20 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        // Optimizations:
-        // 1. If one arg is a compile-time constant, cache its value
-        // 2. If one arg is not a column value, ensure it is the second argument because
-        //    the 1st argument chooses the optimal varchar column data access pattern
-
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
 
-        if (a.isConstant() && !b.isConstant()) {
+        if (a.isConstant()) {
             return createHalfConstantFunc(a, b);
         }
-        if (!a.isConstant() && b.isConstant()) {
+        if (b.isConstant()) {
             return createHalfConstantFunc(b, a);
         }
-        if (a.isRuntimeConstant() && !b.isRuntimeConstant()) {
-            return new Func(b, a);
+        if (a.isRuntimeConstant()) {
+            return new HalfRuntimeConstFunc(a, b);
+        }
+        if (b.isRuntimeConstant()) {
+            return new HalfRuntimeConstFunc(b, a);
         }
         return new Func(a, b);
     }
@@ -125,17 +125,14 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // important to compare A and B varchars in case
-            // these are columns of the same record
-            // records have re-usable character sequences
+            // getVarcharA/B returns a reusable sequence object.
+            // When using two at once, it's important to use both A and B.
             final Utf8Sequence a = left.getVarcharA(rec);
             final Utf8Sequence b = right.getVarcharB(rec);
-
             if (a == null) {
                 return negated != (b == null);
             }
-
-            return negated != Utf8s.equalsNc(a, b);
+            return negated != Utf8s.equals(a, b);
         }
 
         @Override
@@ -145,6 +142,41 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
             } else {
                 return "=";
             }
+        }
+    }
+
+    static class HalfRuntimeConstFunc extends AbstractEqBinaryFunction {
+        private Utf8Sequence cachedRuntimeConst;
+        private long cachedSixPrefix;
+
+        HalfRuntimeConstFunc(Function runtimeConst, Function arg) {
+            super(arg, runtimeConst);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final Utf8Sequence a = left.getVarcharA(rec);
+            final Utf8Sequence b = cachedRuntimeConst;
+            if (a == null) {
+                return negated != (b == null);
+            }
+            return negated != Utf8s.equals(a, a.zeroPaddedSixPrefix(), b, cachedSixPrefix);
+        }
+
+        @Override
+        public String getName() {
+            if (negated) {
+                return "!=";
+            } else {
+                return "=";
+            }
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            cachedRuntimeConst = right.getVarcharA(null);
+            cachedSixPrefix = cachedRuntimeConst != null ? cachedRuntimeConst.zeroPaddedSixPrefix() : 0L;
         }
     }
 
