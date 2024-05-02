@@ -248,20 +248,25 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             ddl("create table y as (select v from x)", sqlExecutionContext);
 
             Rnd rnd = new Rnd();
+            int currentType = ColumnType.VARCHAR;
             for (int i = 0; i < 10; i++) {
-                String type;
-                switch (rnd.nextPositiveInt() % 3) {
-                    case 0:
-                        type = "string";
-                        break;
-                    case 1:
-                        type = "varchar";
-                        break;
-                    default:
-                        type = "symbol";
-                        break;
-                }
 
+                int typeId = currentType;
+                while (typeId == currentType) {
+                    switch (rnd.nextPositiveInt() % 3) {
+                        case 0:
+                            typeId = ColumnType.STRING;
+                            break;
+                        case 1:
+                            typeId = ColumnType.SYMBOL;
+                            break;
+                        default:
+                            typeId = ColumnType.VARCHAR;
+                            break;
+                    }
+                }
+                String type = ColumnType.nameOf(typeId);
+                currentType = typeId;
                 ddl("alter table x alter column v type " + type, sqlExecutionContext);
 
                 assertSqlCursorsConvertedStrings(
