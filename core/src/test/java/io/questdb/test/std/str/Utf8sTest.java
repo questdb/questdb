@@ -126,6 +126,8 @@ public class Utf8sTest {
     @Test
     public void testEndsWith() {
         Assert.assertTrue(Utf8s.endsWith(utf8("фу бар баз"), utf8("баз")));
+        Assert.assertTrue(Utf8s.endsWith(utf8("foo bar baz"), utf8("oo bar baz")));
+        Assert.assertFalse(Utf8s.endsWith(utf8("foo bar baz"), utf8("oo bar bax")));
         Assert.assertTrue(Utf8s.endsWith(utf8("foo bar baz"), utf8("baz")));
         Assert.assertFalse(Utf8s.endsWith(utf8("foo bar baz"), utf8("bar")));
         Assert.assertTrue(Utf8s.endsWith(utf8("foo bar baz"), Utf8String.EMPTY));
