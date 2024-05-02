@@ -103,6 +103,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
             long hi,
             HttpMultipartContentListener listener
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        boolean firstDashRead = false;
         long _lo = lo;
         long ptr = lo;
         while (ptr < hi) {
@@ -139,6 +140,13 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             ptr++;
                             break;
                         case '-':
+                            // make sure that we set the status to DONE only after we read the second '-'
+                            if (!firstDashRead) {
+                                firstDashRead = true;
+                                // on the first '-' we just need to read the next byte
+                                ptr++;
+                                break;
+                            }
                             listener.onPartEnd();
                             state = DONE;
                             return true;
@@ -220,6 +228,9 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
 
         if (state == BODY) {
             onChunkWithRetryHandle(listener, _lo, ptr, BODY_BROKEN, ptr, true);
+        }
+        if (state == PRE_HEADERS) {
+            throw HttpException.instance("Malformed trailing boundary");
         }
 
         return false;
