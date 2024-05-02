@@ -1,9 +1,8 @@
 package io.questdb.test;
 
 import io.questdb.FileEventCallback;
-import io.questdb.FileEventNotifier;
-import io.questdb.FileEventNotifierException;
-import io.questdb.FileEventNotifierFactory;
+import io.questdb.FileWatcher;
+import io.questdb.FileWatcherFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
 import org.junit.Assert;
@@ -14,7 +13,7 @@ import java.io.File;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 
-public class FileEventNotifierTest extends AbstractTest {
+public class FileWatcherTest extends AbstractTest {
 
     private SOCountDownLatch threadLatch;
 
@@ -25,19 +24,14 @@ public class FileEventNotifierTest extends AbstractTest {
         final File targetFile = temp.newFile();
         SOCountDownLatch threadLatch = new SOCountDownLatch(1);
 
-        try (final FileEventNotifier dw = FileEventNotifierFactory.getFileWatcher(temp.getRoot().getAbsolutePath())) {
-            Assert.assertNotNull(dw);
-            FileChangedCallback callback = new FileChangedCallback(threadLatch);
+        try (final FileWatcher fw = FileWatcherFactory.getFileWatcher(
+                temp.getRoot().getAbsolutePath(),
+                new FileChangedCallback(threadLatch))) {
 
-            Thread thread = new Thread(() -> {
-                try {
-                    dw.waitForChange(callback);
+            fw.watch();
 
-                } catch (FileEventNotifierException exc) {
-                    Assert.fail(exc.getMessage());
-                }
-            });
-            thread.start();
+            // todo: figure out how to wait until the watch is ready...
+            Assert.fail("figure out how to wait until the watch is ready...");
 
             try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath(), StandardCharsets.UTF_8)) {
                 writer.println("hello");

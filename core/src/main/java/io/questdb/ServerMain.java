@@ -39,7 +39,8 @@ import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
-import io.questdb.cutlass.pgwire.*;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
@@ -267,9 +268,9 @@ public class ServerMain implements Closeable {
         if (config instanceof DynamicServerConfiguration) {
             try {
                 Path configPath = Path.of(cairoConfig.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
-                fileWatcher = new FileWatcher(
-                        ((DynamicServerConfiguration) config).getFileEventCallback(),
-                        FileEventNotifierFactory.getFileWatcher(configPath.toString())
+                fileWatcher = FileWatcherFactory.getFileWatcher(
+                        configPath.toString(),
+                        ((DynamicServerConfiguration) config).getFileEventCallback()
                 );
                 fileWatcher.watch();
             } catch (Exception exc) {

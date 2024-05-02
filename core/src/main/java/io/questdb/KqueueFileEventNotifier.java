@@ -6,17 +6,19 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
-public class KqueueFileEventNotifier implements FileEventNotifier {
+public class KqueueFileEventNotifier extends FileWatcher {
     private final int bufferSize;
-    private final long evtDir;
     private final int dirFd;
     private final long eventList;
+    private final long evtDir;
     private final long evtFile;
     private final int fileFd;
     private final int kq;
     private boolean closed;
 
-    public KqueueFileEventNotifier(CharSequence filePath) throws FileEventNotifierException {
+    public KqueueFileEventNotifier(CharSequence filePath, FileEventCallback callback) throws FileWatcherException {
+        super(filePath, callback);
+        
         try (Path p = new Path()) {
 
             p.of(filePath).$();
@@ -55,7 +57,7 @@ public class KqueueFileEventNotifier implements FileEventNotifier {
 
         kq = KqueueAccessor.kqueue();
         if (kq < 0) {
-            throw new FileEventNotifierException("kqueue", kq);
+            throw new FileWatcherException("kqueue", kq);
         }
         Files.bumpFileCount(this.kq);
 
@@ -69,7 +71,7 @@ public class KqueueFileEventNotifier implements FileEventNotifier {
                 1
         );
         if (fileRes < 0) {
-            throw new FileEventNotifierException("keventRegister (fileEvent)", fileRes);
+            throw new FileWatcherException("keventRegister (fileEvent)", fileRes);
         }
 
         int dirRes = KqueueAccessor.keventRegister(
@@ -78,7 +80,7 @@ public class KqueueFileEventNotifier implements FileEventNotifier {
                 1
         );
         if (dirRes < 0) {
-            throw new FileEventNotifierException("keventRegister (dirEvent)", dirRes);
+            throw new FileWatcherException("keventRegister (dirEvent)", dirRes);
         }
 
     }
@@ -96,8 +98,9 @@ public class KqueueFileEventNotifier implements FileEventNotifier {
         }
     }
 
+
     @Override
-    public void waitForChange(FileEventCallback callback) throws FileEventNotifierException {
+    protected void waitForChange() throws FileWatcherException {
         // Blocks until there is a change in the watched dir
         int res = KqueueAccessor.keventGetBlocking(
                 kq,
@@ -108,9 +111,8 @@ public class KqueueFileEventNotifier implements FileEventNotifier {
             return;
         }
         if (res < 0) {
-            throw new FileEventNotifierException("kevent", res);
+            throw new FileWatcherException("kevent", res);
         }
         callback.onFileEvent();
-
     }
 }

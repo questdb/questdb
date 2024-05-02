@@ -26,61 +26,63 @@ package io.questdb;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Misc;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.QuietCloseable;
 
-public class FileWatcher implements QuietCloseable {
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public abstract class FileWatcher implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(FileWatcher.class);
-    private final FileEventCallback callback;
-    private final FileEventNotifier notifier;
+    protected final FileEventCallback callback;
+    protected final AtomicBoolean closed = new AtomicBoolean();
+    protected final CharSequence filePath;
+    protected final AtomicBoolean started = new AtomicBoolean();
+    private final SOCountDownLatch latch = new SOCountDownLatch(1);
     private final Thread reloadThread;
-    private boolean closed;
 
     public FileWatcher(
-            FileEventCallback callback,
-            FileEventNotifier notifier
+            CharSequence filePath,
+            FileEventCallback callback
 
     ) {
         this.callback = callback;
-        this.notifier = notifier;
 
         if (this.callback == null) {
             throw new IllegalArgumentException("callback is null");
         }
 
-        if (this.notifier == null) {
-            throw new IllegalArgumentException("notifier is null");
+        this.filePath = filePath;
+        if (this.filePath == null || this.filePath.isEmpty()) {
+            throw new IllegalArgumentException("filePath is null or empty");
         }
+
         reloadThread = new Thread(() -> {
-
-            do {
-                if (closed) {
-                    return;
-                }
-                try {
-                    this.notifier.waitForChange(this.callback);
-                } catch (FileEventNotifierException exc) {
-                    LOG.error().$(exc).$();
-                    // todo: maybe exit this loop instead? because we need to rearm
-                }
-            } while (true);
-
+            try {
+                do {
+                    if (closed.get()) {
+                        return;
+                    }
+                    this.waitForChange();
+                } while (true);
+            } catch (FileWatcherException exc) {
+                LOG.error().$(exc).$();
+            } finally {
+                latch.countDown();
+                LOG.info().$("filewatcher thread closed").$();
+            }
         });
     }
 
-
     @Override
     public void close() {
-        if (!closed) {
-            Misc.free(notifier);
-        }
-        closed = true;
+        latch.await();
     }
 
     public void watch() {
-        if (reloadThread.getState() == Thread.State.NEW) {
+        if (started.compareAndSet(false, true)) {
             reloadThread.start();
         }
-
     }
+
+    protected abstract void waitForChange() throws FileWatcherException;
 }
