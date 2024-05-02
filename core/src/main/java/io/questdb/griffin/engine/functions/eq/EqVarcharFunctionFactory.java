@@ -36,6 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 public class EqVarcharFunctionFactory implements FunctionFactory {
 
@@ -88,10 +89,12 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
     static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final Utf8Sequence constant;
+        private final long constantSixPrefix;
 
         ConstCheckFunc(Function arg, @NotNull Utf8Sequence constant) {
             this.arg = arg;
             this.constant = constant;
+            this.constantSixPrefix = constant.zeroPaddedSixPrefix();
         }
 
         @Override
@@ -101,11 +104,8 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // argument order to equalsNc is important: the first argument can be either an inlined or
-            // a split varchar. That implementation should choose the data access pattern that is optimal
-            // for it, and the constant implementation can easily adapt to both patterns.
             final Utf8Sequence val = arg.getVarcharA(rec);
-            return negated != (val != null && Utf8s.equals(val, constant));
+            return negated != (val != null && Utf8s.equals(val, val.zeroPaddedSixPrefix(), constant, constantSixPrefix));
         }
 
         @Override

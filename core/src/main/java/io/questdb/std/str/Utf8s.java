@@ -167,9 +167,14 @@ public final class Utf8s {
      * @return true if the sequences contain equal strings, false otherwise
      */
     public static boolean equals(@NotNull DirectUtf8Sequence l, @NotNull Utf8String r) {
-        final int size = l.size();
-        return size == r.size() && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
-                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, size);
+        final int lSize = l.size();
+        return lSize == r.size() && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
+                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
+    }
+
+    public static boolean equals(@NotNull Utf8Sequence l, long lSixPrefix, @NotNull Utf8Sequence r, long rSixPrefix) {
+        final int lSize = l.size();
+        return lSize == r.size() && lSixPrefix == rSixPrefix && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
     }
 
     public static boolean equals(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
@@ -179,9 +184,9 @@ public final class Utf8s {
         if (l == null || r == null) {
             return false;
         }
-        final int size = l.size();
-        return size == r.size() && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
-                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, size);
+        final int lSize = l.size();
+        return lSize == r.size() && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
+                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
     }
 
     public static boolean equals(@NotNull Utf8Sequence l, int lLo, int lHi, @NotNull Utf8Sequence r, int rLo, int rHi) {
