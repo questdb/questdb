@@ -37,7 +37,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
 
     @Override
-    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
+    public void appendNull(MemoryA auxMem, MemoryA dataMem) {
         auxMem.putLong(dataMem.putNullStr());
     }
 

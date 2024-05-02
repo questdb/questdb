@@ -101,11 +101,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     /**
      * Appends UTF8 varchar type to the data and aux vectors.
      *
-     * @param dataMem data vector, contains UTF8 bytes
      * @param auxMem  aux vector, contains pointer to data vector, size, flags and statistics about UTF8 string
+     * @param dataMem data vector, contains UTF8 bytes
      * @param value   the UTF8 string to be stored
      */
-    public static void appendValue(MemoryA dataMem, MemoryA auxMem, @Nullable Utf8Sequence value) {
+    public static void appendValue(MemoryA auxMem, MemoryA dataMem, @Nullable Utf8Sequence value) {
         final long offset;
         if (value != null) {
             int size = value.size();
@@ -336,8 +336,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
-        appendValue(dataMem, auxMem, null);
+    public void appendNull(MemoryA auxMem, MemoryA dataMem) {
+        appendValue(auxMem, dataMem, null);
     }
 
     @Override

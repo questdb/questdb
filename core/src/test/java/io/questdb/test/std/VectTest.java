@@ -943,19 +943,19 @@ public class VectTest {
                 int len = i % maxLen;
 
                 if (i % nullModA == 0) {
-                    VarcharTypeDriver.appendValue(dataMemA, auxMemA, null);
+                    VarcharTypeDriver.appendValue(auxMemA, dataMemA, null);
                 } else {
                     utf8Sink.clear();
                     utf8Sink.repeat('a', len);
-                    VarcharTypeDriver.appendValue(dataMemA, auxMemA, utf8Sink);
+                    VarcharTypeDriver.appendValue(auxMemA, dataMemA, utf8Sink);
                 }
 
                 if (i % nullModB == 0) {
-                    VarcharTypeDriver.appendValue(dataMemB, auxMemB, null);
+                    VarcharTypeDriver.appendValue(auxMemB, dataMemB, null);
                 } else {
                     utf8Sink.clear();
                     utf8Sink.repeat('b', len);
-                    VarcharTypeDriver.appendValue(dataMemB, auxMemB, utf8Sink);
+                    VarcharTypeDriver.appendValue(auxMemB, dataMemB, utf8Sink);
                 }
                 index.add(i * 2); // rowA synthetic timestamp
                 index.add(i); // rowA index

@@ -156,7 +156,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
                 holder.setAllocator(allocator);
                 Assert.assertEquals(0, holder.size());
 
-                VarcharTypeDriver.appendValue(dataMem, auxMem, new Utf8String("foobarbaz"));
+                VarcharTypeDriver.appendValue(auxMem, dataMem, new Utf8String("foobarbaz"));
                 Utf8Sequence splitString = VarcharTypeDriver.getSplitValue(auxMem, dataMem, 0, 1);
 
                 holder.clearAndSet(splitString);

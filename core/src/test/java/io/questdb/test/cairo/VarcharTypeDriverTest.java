@@ -56,10 +56,10 @@ public class VarcharTypeDriverTest extends AbstractTest {
                         MemoryCMARW auxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                         MemoryCARW dataMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
                 ) {
-                    VarcharTypeDriver.appendValue(dataMem, auxMem, null);
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
                     String testStr = "foobarbaz - bazbarfoo";
                     int length = testStr.length();
-                    VarcharTypeDriver.appendValue(dataMem, auxMem, new Utf8String(testStr));
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, new Utf8String(testStr));
 
                     Assert.assertEquals(length, driver.getDataVectorSize(auxMem.addressOf(0), 0, 1));
 
@@ -121,7 +121,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     for (int i = 0; i < n; i++) {
                         utf8Sink.clear();
                         utf8Sink.repeat("a", len);
-                        VarcharTypeDriver.appendValue(dataMemA, auxMemA, utf8Sink);
+                        VarcharTypeDriver.appendValue(auxMemA, dataMemA, utf8Sink);
                         if (i >= auxLo) {
                             expectedOffsets.add(dataMemA.getAppendOffset());
                         }
@@ -178,7 +178,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     final int shift = -42;
                     expectedOffsets.clear();
                     for (int i = 0; i < n; i++) {
-                        VarcharTypeDriver.appendValue(dataMemA, auxMemA, null);
+                        VarcharTypeDriver.appendValue(auxMemA, dataMemA, null);
                         if (i >= auxLo) {
                             expectedOffsets.add(dataMemA.getAppendOffset());
                         }
@@ -229,15 +229,15 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     int len = rnd.nextInt(32);
                     switch (rnd.nextInt(3)) {
                         case 0: // null
-                            VarcharTypeDriver.appendValue(dataMemA, auxMemA, null);
+                            VarcharTypeDriver.appendValue(auxMemA, dataMemA, null);
                             break;
                         case 1: // ascii
                             utf8Sink.repeat("a", len);
-                            VarcharTypeDriver.appendValue(dataMemA, auxMemA, utf8Sink);
+                            VarcharTypeDriver.appendValue(auxMemA, dataMemA, utf8Sink);
                             break;
                         case 2: // non-ascii
                             utf8Sink.repeat("ы", len);
-                            VarcharTypeDriver.appendValue(dataMemA, auxMemA, utf8Sink);
+                            VarcharTypeDriver.appendValue(auxMemA, dataMemA, utf8Sink);
                             break;
                         default:
                             assert false;
@@ -281,15 +281,15 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     int len = rnd.nextInt(32);
                     switch (rnd.nextInt(3)) {
                         case 0: // null
-                            VarcharTypeDriver.appendValue(dataMemA, auxMemA, null);
+                            VarcharTypeDriver.appendValue(auxMemA, dataMemA, null);
                             break;
                         case 1: // ascii
                             utf8Sink.repeat("a", len);
-                            VarcharTypeDriver.appendValue(dataMemA, auxMemA, utf8Sink);
+                            VarcharTypeDriver.appendValue(auxMemA, dataMemA, utf8Sink);
                             break;
                         case 2: // non-ascii
                             utf8Sink.repeat("ы", len);
-                            VarcharTypeDriver.appendValue(dataMemA, auxMemA, utf8Sink);
+                            VarcharTypeDriver.appendValue(auxMemA, dataMemA, utf8Sink);
                             break;
                         default:
                             assert false;
@@ -333,7 +333,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
             for (int i = 0; i < n; i++) {
                 expectedUsedSize += VARCHAR_AUX_WIDTH_BYTES;
                 if (i % 15 == 0) {
-                    VarcharTypeDriver.appendValue(dataMem, auxMem, null);
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
                 } else {
                     utf8Sink.clear();
                     final int len = i % 20;
@@ -342,7 +342,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                     if (utf8Sink.size() > VARCHAR_MAX_BYTES_FULLY_INLINED) {
                         expectedUsedSize += utf8Sink.size();
                     }
-                    VarcharTypeDriver.appendValue(dataMem, auxMem, utf8Sink);
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
                 }
                 long actuallyUsedSize = (dataMem.getAppendOffset() + auxMem.getAppendOffset());
                 Assert.assertEquals(expectedUsedSize, actuallyUsedSize);
@@ -365,7 +365,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 for (int i = cut; i < n; i++) {
                     expectedUsedSize += 16;
                     if (i % 15 == 0) {
-                        VarcharTypeDriver.appendValue(dataMem, auxMem, null);
+                        VarcharTypeDriver.appendValue(auxMem, dataMem, null);
                     } else {
                         utf8Sink.clear();
                         final int len = i % 40;
@@ -374,7 +374,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
                         if (utf8Sink.size() > VARCHAR_MAX_BYTES_FULLY_INLINED) {
                             expectedUsedSize += utf8Sink.size();
                         }
-                        VarcharTypeDriver.appendValue(dataMem, auxMem, utf8Sink);
+                        VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
                     }
                     long actuallyUsedSize = (dataMem.getAppendOffset() + auxMem.getAppendOffset());
                     Assert.assertEquals(expectedUsedSize, actuallyUsedSize);

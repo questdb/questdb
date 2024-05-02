@@ -168,7 +168,7 @@ public class UnorderedVarcharMapBenchmark {
                 strGen.reset(seeds0[index], seeds1[index]);
                 int size = strGen.nextInt(MAX_SIZE);
                 strGen.nextUtf8AsciiStr(size, sink);
-                VarcharTypeDriver.appendValue(dataAppendMem, auxAppendMem, sink);
+                VarcharTypeDriver.appendValue(auxAppendMem, dataAppendMem, sink);
             }
         }
 

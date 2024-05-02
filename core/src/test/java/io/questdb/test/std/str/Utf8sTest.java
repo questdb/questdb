@@ -364,7 +364,7 @@ public class Utf8sTest {
             for (int i = 0; i < n; i++) {
                 boolean ascii = rnd.nextBoolean();
                 if (rnd.nextInt(10) == 0) {
-                    VarcharTypeDriver.appendValue(dataMem, auxMem, null);
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
                     expectedValues.add(null);
                 } else {
                     utf8Sink.clear();
@@ -379,7 +379,7 @@ public class Utf8sTest {
                         asciiBitSet.set(i);
                     }
                     expectedValues.add(utf8Sink.toString());
-                    VarcharTypeDriver.appendValue(dataMem, auxMem, utf8Sink);
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
                 }
                 expectedOffsets.add(dataMem.getAppendOffset());
             }
@@ -412,7 +412,7 @@ public class Utf8sTest {
             for (int i = 0; i < n; i++) {
                 utf8Sink.clear();
                 utf8Sink.repeat("a", len);
-                VarcharTypeDriver.appendValue(dataMem, auxMem, utf8Sink);
+                VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
                 expectedOffsets.add(dataMem.getAppendOffset());
             }
 
