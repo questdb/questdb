@@ -118,7 +118,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     };
     protected int partitionByDefault = PartitionBy.DAY;
-    protected boolean symbolAsFieldSupported;
     protected boolean useLegacyStringDefault = true;
 
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
@@ -250,7 +249,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         commitIntervalDefault = 2000;
         partitionByDefault = PartitionBy.DAY;
         disconnectOnError = false;
-        symbolAsFieldSupported = false;
         nf = NetworkFacadeImpl.INSTANCE;
     }
 

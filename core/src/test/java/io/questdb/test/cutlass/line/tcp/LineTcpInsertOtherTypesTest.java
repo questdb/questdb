@@ -944,31 +944,24 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "e\t1970-01-01T00:00:01.000000Z\n" +
                         "xxx\t1970-01-01T00:00:02.000000Z\n" +
                         "paff\t1970-01-01T00:00:03.000000Z\n" +
-                        "paff\"\t1970-01-01T00:00:05.000000Z\n" +
-                        "null\t1970-01-01T00:00:06.000000Z\n" +
-                        "yyy\t1970-01-01T00:00:07.000000Z\n" +
-                        "tt\"tt\"\t1970-01-01T00:00:09.000000Z\n" +
-                        "\"tt\"tt\t1970-01-01T00:00:10.000000Z\n" +
                         "tt\"tt\t1970-01-01T00:00:11.000000Z\n" +
                         "tt\"tt\" \n =, ,=\"\t1970-01-01T00:00:12.000000Z\n" +
-                        "A\t1970-01-01T00:00:13.000000Z\n" +
-                        "@plant2\t1970-01-01T00:00:14.000000Z\n" +
                         "\t1970-01-01T00:00:15.000000Z\n",
                 new CharSequence[]{
                         "\"e\"", // 1, valid
                         "\"xxx\"", // 2, valid
                         "\"paff\"", // 3, valid
-                        "\"paff", // 4, invalid
-                        "paff\"", // 5, valid
-                        "null", // 6, valid
-                        "yyy", // 7, valid
-                        "\"tt\"tt\"", // 8, discarded bad value
-                        "tt\"tt\"", // 9, valid
-                        "\"tt\"tt", // 10, valid
+                        "\"paff", // 4, no quotes, invalid
+                        "paff\"", // 5, no quotes, invalid
+                        "null", // 6, no quotes, invalid
+                        "yyy", // 7, no quotes, invalid
+                        "\"tt\"tt\"", // 8, no quotes, invalid
+                        "tt\"tt\"", // 9, no quotes, invalid
+                        "\"tt\"tt", // 10, no quotes, invalid
                         "\"tt\\\"tt\"", // 11, valid
                         "\"tt\\\"tt\\\" \\\n =, ,=\\\"\"", // 12, valid
-                        "A", // 13, valid
-                        "@plant2", // 14, valid
+                        "A", // 13, no quotes, invalid
+                        "@plant2", // 14, no quotes, invalid
                         "" // 15, valid null
                 },
                 false

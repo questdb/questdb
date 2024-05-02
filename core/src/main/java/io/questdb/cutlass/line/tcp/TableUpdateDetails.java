@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.MetadataService;
@@ -768,7 +769,7 @@ public class TableUpdateDetails implements Closeable {
                         latestKnownMetadata = deepCopyOfDense(writerAPI.getMetadata());
                         latestKnownMetadataVersion = writerAPI.getMetadataVersion();
                     } else {
-                        try (var meta = engine.getLegacyMetadata(tableToken)) {
+                        try (TableMetadata meta = engine.getLegacyMetadata(tableToken)) {
                             latestKnownMetadata = deepCopyOfDense(meta);
                             latestKnownMetadataVersion = meta.getMetadataVersion();
                         }

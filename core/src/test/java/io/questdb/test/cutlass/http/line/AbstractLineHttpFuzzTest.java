@@ -101,9 +101,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     private boolean exerciseTags = true;
     private int newColumnFactor = -1;
     private int nonAsciiValueFactor = -1;
-    private boolean sendStringsAsSymbols = false;
     private boolean sendSymbolsWithSpace = false;
-    private boolean symbolAsFieldSupported;
     private SOCountDownLatch threadPushFinished;
 
     public void ingest(CairoEngine engine, int port) {
@@ -130,7 +128,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     public void initFuzzParameters(
             int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
-            boolean diffCasesInColNames, boolean exerciseTags, boolean sendStringsAsSymbols, boolean sendSymbolsWithSpace,
+            boolean diffCasesInColNames, boolean exerciseTags, boolean sendSymbolsWithSpace,
             double columnConvertProb) {
         this.duplicatesFactor = duplicatesFactor;
         this.columnReorderingFactor = columnReorderingFactor;
@@ -139,9 +137,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         this.newColumnFactor = newColumnFactor;
         this.diffCasesInColNames = diffCasesInColNames;
         this.exerciseTags = exerciseTags;
-        this.sendStringsAsSymbols = sendStringsAsSymbols;
         this.sendSymbolsWithSpace = sendSymbolsWithSpace;
-        symbolAsFieldSupported = sendStringsAsSymbols;
         this.columnConvertProb = columnConvertProb;
     }
 
@@ -168,8 +164,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
             int httpPortRandom = 7000 + random.nextInt(1000);
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
-                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:" + httpPortRandom,
-                    PropertyKey.LINE_TCP_UNDOCUMENTED_SYMBOL_AS_FIELD_SUPPORTED.getEnvVarName(), Boolean.toString(symbolAsFieldSupported)
+                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:" + httpPortRandom
             )) {
                 Assert.assertEquals(0, tables.size());
                 for (int i = 0; i < numOfTables; i++) {
@@ -346,7 +341,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                 return valueBase + postfix;
             case STRING:
                 postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
-                return sendStringsAsSymbols ? valueBase + postfix : "\"" + valueBase + postfix + "\"";
+                return "\"" + valueBase + postfix + "\"";
             default:
                 return valueBase;
         }

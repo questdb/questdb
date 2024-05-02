@@ -276,7 +276,6 @@ public class LineTcpParser {
                         break;
                     } else if (isQuotedFieldValue) {
                         return getError(bufHi);
-                    } else if (entityLo == bufAt) {
                     }
 
                 default:
@@ -680,7 +679,7 @@ public class LineTcpParser {
                         return true;
                     }
                     type = ENTITY_TYPE_SYMBOL;
-                    return true;
+                    return false;
                 case 'n':
                     if (valueLen > 1) {
                         unit = ENTITY_UNIT_NANO;
@@ -693,7 +692,7 @@ public class LineTcpParser {
                     }
                     // fall through
                     type = ENTITY_TYPE_SYMBOL;
-                    return true;
+                    return false;
                 case 't':
                     if (valueLen > 1) {
                         unit = ENTITY_UNIT_MICRO;
@@ -717,6 +716,7 @@ public class LineTcpParser {
                             type = ENTITY_TYPE_BOOLEAN;
                         } else {
                             type = ENTITY_TYPE_SYMBOL;
+                            return false;
                         }
                     } else {
                         charSeq.of(value.lo(), value.hi(), !hasNonAscii);
@@ -728,6 +728,7 @@ public class LineTcpParser {
                             type = ENTITY_TYPE_BOOLEAN;
                         } else {
                             type = ENTITY_TYPE_SYMBOL;
+                            return false;
                         }
                     }
                     return true;
@@ -739,7 +740,7 @@ public class LineTcpParser {
                         return true;
                     }
                     type = ENTITY_TYPE_SYMBOL;
-                    return true;
+                    return false;
                 }
                 // fall through
                 default:
@@ -748,6 +749,7 @@ public class LineTcpParser {
                         type = ENTITY_TYPE_FLOAT;
                     } catch (NumericException ex) {
                         type = ENTITY_TYPE_SYMBOL;
+                        return false;
                     }
                     return true;
             }
@@ -762,6 +764,7 @@ public class LineTcpParser {
             } catch (NumericException notANumber) {
                 unit = ENTITY_UNIT_NONE;
                 type = ENTITY_TYPE_SYMBOL;
+                return false;
             }
             return true;
         }

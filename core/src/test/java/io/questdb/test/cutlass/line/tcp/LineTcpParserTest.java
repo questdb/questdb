@@ -55,7 +55,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "e");
 
         assertTypeComplete(LineTcpParser.ENTITY_TYPE_TAG, "\"errt\"");
-        assertTypeComplete(LineTcpParser.ENTITY_TYPE_SYMBOL, "errt");
+        assertError(LineTcpParser.ENTITY_TYPE_SYMBOL, "errt");
 
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "t");
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "T");

@@ -36,56 +36,56 @@ public class LineHttpReceiverFuzzTest extends AbstractLineHttpFuzzTest {
     @Test
     public void testAddColumns() throws Exception {
         initLoadParameters(15, 2, 2, 5, 75);
-        initFuzzParameters(-1, -1, -1, 4, -1, false, true, false, false, 0.05);
+        initFuzzParameters(-1, -1, -1, 4, -1, false, true, false, 0.05);
         runTest();
     }
 
     @Test
     public void testAddColumnsNoTagsStringsAsSymbol() throws Exception {
         initLoadParameters(15, 2, 2, 5, 75);
-        initFuzzParameters(-1, -1, -1, 4, -1, false, false, true, false, 0.05);
+        initFuzzParameters(-1, -1, -1, 4, -1, false, false, false, 0.05);
         runTest();
     }
 
     @Test
     public void testAddConvertColumns() throws Exception {
         initLoadParameters(15, 2, 2, 5, 75);
-        initFuzzParameters(-1, -1, -1, 4, -1, false, true, false, false, 0.05);
+        initFuzzParameters(-1, -1, -1, 4, -1, false, true, false, 0.05);
         runTest();
     }
 
     @Test
     public void testAllMixed() throws Exception {
         initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(3, 4, 5, 10, 5, true, true, true, false, 0.05);
+        initFuzzParameters(3, 4, 5, 10, 5, true, true, false, 0.05);
         runTest();
     }
 
     @Test
     public void testAllMixedSplitPart() throws Exception {
         initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 1, 50);
-        initFuzzParameters(-1, -1, -1, 10, -1, false, true, false, false, 0.05);
+        initFuzzParameters(-1, -1, -1, 10, -1, false, true, false, 0.05);
         runTest();
     }
 
     @Test
     public void testDuplicatesReorderingColumns() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, -1, -1, -1, true, true, false, false, 0.05);
+        initFuzzParameters(4, 4, -1, -1, -1, true, true, false, 0.05);
         runTest();
     }
 
     @Test
     public void testDuplicatesReorderingColumnsNoTagsStringsAsSymbol() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, -1, -1, -1, true, false, true, false, 0.05);
+        initFuzzParameters(4, 4, -1, -1, -1, true, false, false, 0.05);
         runTest();
     }
 
     @Test
     public void testDuplicatesReorderingColumnsSendSymbolsWithSpace() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, -1, -1, -1, true, true, false, false, 0.05);
+        initFuzzParameters(4, 4, -1, -1, -1, true, true, false, 0.05);
         runTest();
     }
 
@@ -98,35 +98,35 @@ public class LineHttpReceiverFuzzTest extends AbstractLineHttpFuzzTest {
     @Test
     public void testLoadNoTagsStringsAsSymbol() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 7, 12, 20);
-        initFuzzParameters(-1, -1, -1, -1, -1, false, false, true, false, 0.05);
+        initFuzzParameters(-1, -1, -1, -1, -1, false, false, false, 0.05);
         runTest();
     }
 
     @Test
     public void testReorderingAddSkipDuplicateColumnsWithNonAscii() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, 4, -1, 4, true, true, false, false, 0.05);
+        initFuzzParameters(4, 4, 4, -1, 4, true, true, false, 0.05);
         runTest();
     }
 
     @Test
     public void testReorderingAddSkipDuplicateColumnsWithNonAsciiNoTagsStringsAsSymbol() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, 4, -1, 4, true, false, true, false, 0.05);
+        initFuzzParameters(4, 4, 4, -1, 4, true, false, false, 0.05);
         runTest();
     }
 
     @Test
     public void testReorderingColumns() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(-1, 4, -1, -1, -1, false, true, false, false, 0.05);
+        initFuzzParameters(-1, 4, -1, -1, -1, false, true, false, 0.05);
         runTest();
     }
 
     @Test
     public void testReorderingColumnsNoTagsStringsAsSymbol() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(-1, 4, -1, -1, -1, false, false, true, false, 0.05);
+        initFuzzParameters(-1, 4, -1, -1, -1, false, false, false, 0.05);
         runTest();
     }
 

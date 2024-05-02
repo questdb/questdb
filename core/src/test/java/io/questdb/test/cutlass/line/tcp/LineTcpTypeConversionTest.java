@@ -190,8 +190,6 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                 "T\t2016-06-13T17:43:50.100411Z\n" +
                 "false\t2016-06-13T17:43:50.100412Z\n" +
                 "1465839830101500200t\t2016-06-13T17:43:50.100413Z\n" +
-                "questdb\t2016-06-13T17:43:50.100414Z\n" +
-                "q\t2016-06-13T17:43:50.100415Z\n" +
                 "questdbb\t2016-06-13T17:43:50.100416Z\n" +
                 "q\t2016-06-13T17:43:50.100417Z\n" +
                 "11111111-1111-1111-1111-111111111111\t2016-06-13T17:43:50.100427Z\n" +
@@ -218,10 +216,6 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                 "T\t2016-06-13T17:43:50.100411Z\n" +
                 "false\t2016-06-13T17:43:50.100412Z\n" +
                 "1465839830101500200t\t2016-06-13T17:43:50.100413Z\n" +
-                (symbolAsFieldSupported
-                        ? "questdb\t2016-06-13T17:43:50.100414Z\n" +
-                        "q\t2016-06-13T17:43:50.100415Z\n"
-                        : "") +
                 "questdbb\t2016-06-13T17:43:50.100416Z\n" +
                 "q\t2016-06-13T17:43:50.100417Z\n" +
                 "100\t2016-06-13T17:43:50.100418Z\n" +

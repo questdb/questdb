@@ -613,6 +613,30 @@ public class InfluxDBClientTest extends AbstractTest {
     }
 
     @Test
+    public void testSymbolsWithQuotes() throws Exception {
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
+        }})) {
+            serverMain.start();
+            try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
+                influxDB.setLogLevel(InfluxDB.LogLevel.FULL);
+
+                List<String> points = new ArrayList<>();
+                long milliTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T05:00:00.000001Z");
+                points.add("m1,tag1=\"value1\" f1=1i,y=12i " + milliTime);
+                influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.MICROSECONDS, points);
+            }
+
+            serverMain.awaitTable("m1");
+            assertSql(
+                    serverMain.getEngine(),
+                    "SELECT * FROM m1", "tag1\tf1\ty\ttimestamp\n" +
+                            "\"value1\"\t1\t12\t2022-02-24T05:00:00.000001Z\n"
+            );
+        }
+    }
+
+    @Test
     public void testTimestampPrecisionSupport() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
