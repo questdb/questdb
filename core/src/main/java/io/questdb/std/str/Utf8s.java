@@ -862,7 +862,7 @@ public final class Utf8s {
         final int lastChar = end - 1;
         for (int i = start; i < end; i++) {
             byte b = us.byteAt(i);
-            sink.put(b);
+            sink.putAny(b);
             if (b == unescapeAscii && i < lastChar && us.byteAt(i + 1) == unescapeAscii) {
                 i++;
             }

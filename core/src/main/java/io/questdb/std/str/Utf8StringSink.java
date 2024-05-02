@@ -102,18 +102,23 @@ public class Utf8StringSink implements MutableUtf8Sink {
 
     @Override
     public Utf8StringSink put(byte b) {
+        // if the below assertion fails, you should use one of the below methods instead of put(byte):
+        // - putAscii(char): if it is known that the input is ASCII
+        // - putAny(byte): if it is not known that the input is ASCII or non-ASCII
+        // use this method only if the input is definitely non-ASCII
+        assert b < 0 : "b is ascii";
         ascii = false;
         return putByte0(b);
     }
 
     @Override
-    public Utf8Sink putAny(byte b) {
+    public Utf8StringSink putAny(byte b) {
         ascii &= b >= 0;
         return putByte0(b);
     }
 
     @Override
-    public Utf8Sink putAscii(char c) {
+    public Utf8StringSink putAscii(char c) {
         return putByte0((byte) c);
     }
 

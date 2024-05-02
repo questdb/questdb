@@ -114,7 +114,6 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         // - putAscii(char): if it is known that the input is ASCII
         // - putAny(byte): if it is not known that the input is ASCII or non-ASCII
         // use this method only if the input is definitely non-ASCII
-        // it is all about setting the ascii flag
         assert b < 0 : "b is ascii";
         ascii = false;
         sink.put(b);
@@ -122,7 +121,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     }
 
     @Override
-    public Utf8Sink putAny(byte b) {
+    public DirectUtf8Sink putAny(byte b) {
         ascii &= b >= 0;
         sink.put(b);
         return this;

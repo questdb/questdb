@@ -173,16 +173,16 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     }
 
     /**
-     * Appends the specified range of UTF-8 bytes from the supplied sequence
-     * to this sink.
-     * <br/>
-     * For impls that care about the distinction between ASCII and non-ASCII:
-     * Assumes the sequence is non-ASCII and drops the `isAscii` status of this sink.
+     * Appends the specified range of UTF-8 bytes from the supplied sequence to this sink.
      */
     default Utf8Sink put(Utf8Sequence seq, int lo, int hi) {
         if (seq != null) {
-            for (int i = lo; i < hi; i++) {
-                put(seq.byteAt(i));
+            if (seq.isAscii()) {
+                putAscii(seq.asAsciiCharSequence(), lo, hi);
+            } else {
+                for (int i = lo; i < hi; i++) {
+                    putAny(seq.byteAt(i));
+                }
             }
         }
         return this;
