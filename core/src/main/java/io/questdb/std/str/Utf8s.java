@@ -32,6 +32,8 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
+
 /**
  * UTF-8 specific variant of the {@link Chars} utility.
  */
@@ -120,14 +122,13 @@ public final class Utf8s {
         return i;
     }
 
-    public static boolean endsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence ends) {
-        int size = ends.size();
-        if (size == 0) {
+    public static boolean endsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence endsWith) {
+        int endsWithSize = endsWith.size();
+        if (endsWithSize == 0) {
             return true;
         }
-
         int seqSize = seq.size();
-        return !(seqSize == 0 || seqSize < size) && equalsBytes(ends, seq, seqSize - size, seqSize);
+        return seqSize >= endsWithSize && equalSuffixBytes(seq, endsWith, seqSize, endsWithSize);
     }
 
     public static boolean endsWithAscii(@NotNull Utf8Sequence seq, @NotNull CharSequence endsAscii) {
@@ -166,8 +167,14 @@ public final class Utf8s {
      * @return true if the sequences contain equal strings, false otherwise
      */
     public static boolean equals(@NotNull DirectUtf8Sequence l, @NotNull Utf8String r) {
-        final int size = l.size();
-        return (size == r.size() && l.equalsAssumingSameSize(r, size));
+        final int lSize = l.size();
+        return lSize == r.size() && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
+                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
+    }
+
+    public static boolean equals(@NotNull Utf8Sequence l, long lSixPrefix, @NotNull Utf8Sequence r, long rSixPrefix) {
+        final int lSize = l.size();
+        return lSize == r.size() && lSixPrefix == rSixPrefix && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
     }
 
     public static boolean equals(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
@@ -177,8 +184,9 @@ public final class Utf8s {
         if (l == null || r == null) {
             return false;
         }
-        final int size = l.size();
-        return (size == r.size() && l.equalsAssumingSameSize(r, size));
+        final int lSize = l.size();
+        return lSize == r.size() && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
+                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
     }
 
     public static boolean equals(@NotNull Utf8Sequence l, int lLo, int lHi, @NotNull Utf8Sequence r, int rLo, int rHi) {
@@ -224,11 +232,10 @@ public final class Utf8s {
     }
 
     public static boolean equalsAscii(@NotNull CharSequence lAsciiSeq, @NotNull Utf8Sequence rSeq, int rLo, int rHi) {
-        int ll;
-        if ((ll = lAsciiSeq.length()) != rHi - rLo) {
+        int ll = lAsciiSeq.length();
+        if (ll != rHi - rLo) {
             return false;
         }
-
         for (int i = 0; i < ll; i++) {
             if (lAsciiSeq.charAt(i) != rSeq.byteAt(i + rLo)) {
                 return false;
@@ -277,18 +284,6 @@ public final class Utf8s {
             }
         }
         return true;
-    }
-
-    public static boolean equalsNc(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
-        if (l == null && r == null) {
-            return true;
-        }
-
-        if (l == null || r == null) {
-            return false;
-        }
-
-        return equals(l, r);
     }
 
     public static boolean equalsNcAscii(@NotNull CharSequence asciiSeq, @Nullable Utf8Sequence seq) {
@@ -733,9 +728,23 @@ public final class Utf8s {
         return h;
     }
 
-    public static boolean startsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence starts) {
-        final int size = starts.size();
-        return seq.size() >= size && equalsBytes(seq, starts, size);
+    /**
+     * Does not delegate to {@link #startsWith(Utf8Sequence, long, Utf8Sequence, long)} in order
+     * to prevent unneeded calculation of six-prefix when an earlier check fails.
+     */
+    public static boolean startsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence startsWith) {
+        final int startsWithSize = startsWith.size();
+        return startsWithSize == 0 || seq.size() >= startsWithSize && equalPrefixBytes(
+                seq, seq.zeroPaddedSixPrefix(), startsWith, startsWith.zeroPaddedSixPrefix(), startsWithSize
+        );
+    }
+
+    public static boolean startsWith(
+            @NotNull Utf8Sequence seq, long seqSixPrefix, @NotNull Utf8Sequence startsWith, long startsWithSixPrefix
+    ) {
+        final int startsWithSize = startsWith.size();
+        return startsWithSize == 0 || seq.size() >= startsWithSize &&
+                equalPrefixBytes(seq, seqSixPrefix, startsWith, startsWithSixPrefix, startsWithSize);
     }
 
     public static boolean startsWithAscii(@NotNull Utf8Sequence seq, @NotNull CharSequence asciiStarts) {
@@ -1175,6 +1184,21 @@ public final class Utf8s {
         return validateUtf8Decode4Bytes(lo, hi, b);
     }
 
+    private static boolean dataEquals(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r, int start, int limit) {
+        int i = start;
+        for (; i <= limit - Long.BYTES; i += Long.BYTES) {
+            if (l.longAt(i) != r.longAt(i)) {
+                return false;
+            }
+        }
+        for (; i < limit; i++) {
+            if (l.byteAt(i) != r.byteAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static int encodeUtf16Surrogate(@NotNull Utf8Sink sink, char c, @NotNull CharSequence in, int pos, int hi) {
         int dword;
         if (Character.isHighSurrogate(c)) {
@@ -1203,6 +1227,32 @@ public final class Utf8s {
         return pos;
     }
 
+    private static boolean equalPrefixBytes(
+            @NotNull Utf8Sequence l, long lSixPrefix, @NotNull Utf8Sequence r, long rSixPrefix, int prefixSize
+    ) {
+        long prefixMask = (1L << 8 * Math.min(VARCHAR_INLINED_PREFIX_BYTES, prefixSize)) - 1;
+        return ((lSixPrefix ^ rSixPrefix) & prefixMask) == 0
+                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, prefixSize);
+    }
+
+    private static boolean equalSuffixBytes(
+            @NotNull Utf8Sequence seq, @NotNull Utf8Sequence suffix, int seqSize, int suffixSize
+    ) {
+        int seqLo = seqSize - suffixSize;
+        int i = 0;
+        for (; i <= suffixSize - Long.BYTES; i += Long.BYTES) {
+            if (suffix.longAt(i) != seq.longAt(i + seqLo)) {
+                return false;
+            }
+        }
+        for (; i < suffixSize; i++) {
+            if (suffix.byteAt(i) != seq.byteAt(i + seqLo)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Left hand has to be lower-case.
     private static boolean equalsAsciiLowerCase(@NotNull Utf8Sequence lLC, @NotNull Utf8Sequence r, int size) {
         for (int i = 0; i < size; i++) {
@@ -1222,29 +1272,6 @@ public final class Utf8s {
 
         for (int i = 0; i < ls; i++) {
             if (lLC.byteAt(i) != toLowerCaseAscii(r.byteAt(i + rLo))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean equalsBytes(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r, int size) {
-        for (int i = 0; i < size; i++) {
-            if (l.byteAt(i) != r.byteAt(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean equalsBytes(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r, int rLo, int rHi) {
-        int lsize = l.size();
-        if (lsize != rHi - rLo) {
-            return false;
-        }
-
-        for (int i = 0; i < lsize; i++) {
-            if (l.byteAt(i) != r.byteAt(i + rLo)) {
                 return false;
             }
         }
