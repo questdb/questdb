@@ -85,11 +85,11 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
         return new ConstCheckFunc(varFunc, constValue);
     }
 
-    public static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final Utf8Sequence constant;
 
-        public ConstCheckFunc(Function arg, Utf8Sequence constant) {
+        ConstCheckFunc(Function arg, @NotNull Utf8Sequence constant) {
             this.arg = arg;
             this.constant = constant;
         }
@@ -118,8 +118,8 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func extends AbstractEqBinaryFunction {
-        public Func(Function left, Function right) {
+    static class Func extends AbstractEqBinaryFunction {
+        Func(Function left, Function right) {
             super(left, right);
         }
 
@@ -148,10 +148,10 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
 
-        public NullCheckFunc(Function arg) {
+        NullCheckFunc(Function arg) {
             this.arg = arg;
         }
 
