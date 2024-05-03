@@ -73,7 +73,7 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
                 return new VarcharConstant(quotedVal.toString());
             }
         }
-        return new QuoteIdentFunctionFactory.QuoteIdentFunction(arg);
+        return new QuoteIdentVarcharFunctionFactory.QuoteIdentVarcharFunction(arg);
     }
 
     static class QuoteIdentVarcharFunction extends VarcharFunction implements UnaryFunction {
