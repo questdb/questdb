@@ -808,6 +808,7 @@ io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory
 io.questdb.griffin.engine.functions.str.SubStringFunctionFactory
 io.questdb.griffin.engine.functions.str.SubStringVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.QuoteIdentFunctionFactory
+io.questdb.griffin.engine.functions.str.QuoteIdentVarcharFunctionFactory
 
 #starts_with()
 io.questdb.griffin.engine.functions.str.StartsWithStrFunctionFactory
@@ -816,6 +817,7 @@ io.questdb.griffin.engine.functions.str.StartsWithVarcharFunctionFactory
 # split_part()
 io.questdb.griffin.engine.functions.str.SplitPartFunctionFactory
 io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory
+io.questdb.griffin.engine.functions.str.SplitPartVarcharFunctionFactory
 
 # avg()
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
