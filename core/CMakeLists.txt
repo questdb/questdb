@@ -78,6 +78,7 @@ set(
         src/main/c/share/dedup.cpp
         src/main/c/share/byte_sink.cpp
         src/main/c/share/byte_sink.h
+        src/main/c/share/json.cpp
 )
 
 # JNI includes
@@ -343,12 +344,16 @@ endif (ARCH_AARCH64)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
 
+#simdjson
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/simdjson-cmake/CMakeLists.txt)
+
 if (OS_WINDOWS)
-    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc)
+    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc _simdjson)
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics)
 elseif (OS_DARWIN)
-    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++ _jemalloc)
+    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++ _jemalloc _simdjson)
 else ()
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics -ffunction-sections -fdata-sections)
-    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _jemalloc)
+    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _jemalloc _simdjson)
 endif ()
