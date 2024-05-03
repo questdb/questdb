@@ -42,7 +42,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 import java.util.Set;
 
-abstract class AbstractLogRecord implements LogRecord, Log {
+public abstract class AbstractLogRecord implements LogRecord, Log {
     private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
     protected final RingQueue<LogRecordUtf8Sink> advisoryRing;
     protected final Sequence advisorySeq;
@@ -176,6 +176,12 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     @Override
     public LogRecord $(long l) {
         sink().put(l);
+        return this;
+    }
+
+    @Override
+    public LogRecord $uuid(long lo, long hi) {
+        Numbers.appendUuid(lo, hi, this);
         return this;
     }
 
