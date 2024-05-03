@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
@@ -62,15 +63,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testColumnDoesNotExist() throws Exception {
-        Assume.assumeTrue(!walEnabled && partitioned);
-        assertFailure("alter table x alter column non_existing", 27, "column 'non_existing' does not exists in table 'x'");
-    }
-
-    @Test
-    public void testConversionInvalidToken() throws Exception {
-        Assume.assumeTrue(!walEnabled && partitioned);
-        assertFailure("alter table x alter column i type long abc", 39, "unexpected token [abc] while trying to change column type");
+    public void testCannotConvertToSameType() throws Exception {
+        assumeNonWal();
+        assertFailure("alter table x alter column d type double", 34, "column 'd' type is already 'DOUBLE'");
     }
 
     @Test
@@ -306,6 +301,148 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnDoesNotExist() throws Exception {
+        Assume.assumeTrue(!walEnabled && partitioned);
+        assertFailure("alter table x alter column non_existing", 27, "column 'non_existing' does not exists in table 'x'");
+    }
+
+    @Test
+    public void testConversionInvalidToken() throws Exception {
+        Assume.assumeTrue(!walEnabled && partitioned);
+        assertFailure("alter table x alter column i type long abc", 39, "unexpected token [abc] while trying to change column type");
+    }
+
+    @Test
+    public void testConvertDedupKeyColumnKeepsItDedup() throws Exception {
+        assumeWal();
+        assertMemoryLeak(() -> {
+            createX();
+
+            ddl("alter table x dedup enable upsert keys(timestamp, d)");
+            drainWalQueue();
+            checkDedupSet("x", "d", true);
+
+            ddl("alter table x alter column d type float");
+            drainWalQueue();
+            checkDedupSet("x", "d", true);
+
+            engine.releaseInactive();
+            checkDedupSet("x", "d", true);
+
+            insert("insert into x(d, timestamp) values(1.0, '2044-02-24')", sqlExecutionContext);
+            insert("insert into x(d, timestamp) values(1.0, '2044-02-25')", sqlExecutionContext);
+            insert("insert into x(d, timestamp) values(1.0, '2044-02-25')", sqlExecutionContext);
+            insert("insert into x(d, timestamp) values(1.2, '2044-02-25')", sqlExecutionContext);
+
+            drainWalQueue();
+
+            assertSql("timestamp\td\n" +
+                    "2044-02-24T00:00:00.000000Z\t1.0000\n" +
+                    "2044-02-25T00:00:00.000000Z\t1.2000\n" +
+                    "2044-02-25T00:00:00.000000Z\t1.0000\n", "select timestamp, d from x limit -3");
+        });
+    }
+
+    @Test
+    public void testConvertFailsWriterIsOk() throws Exception {
+        assumeNonWal();
+        assertMemoryLeak(() -> {
+            createX();
+
+            try (TableWriter writer = getWriter("x")) {
+                writer.changeColumnType("timestamp", ColumnType.INT, 0, false, false, 0, false, null);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot change column type, column is the designated timestamp");
+            }
+
+            try (TableWriter writer = getWriter("x")) {
+                writer.changeColumnType("d", ColumnType.DOUBLE, 0, false, false, 0, false, null);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot change column type, new type is the same as existing");
+            }
+
+            try (TableWriter writer = getWriter("x")) {
+                writer.changeColumnType("ik", ColumnType.DOUBLE, 0, false, false, 0, false, null);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "column conversion failed, see logs for details");
+            }
+
+            insert("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
+            assertSql("c\nabc\n", "select c from x limit -1");
+
+            engine.releaseInactive();
+
+            insert("insert into x(c, timestamp) values('def', now())", sqlExecutionContext);
+            assertSql("c\ndef\n", "select c from x limit -1");
+        });
+    }
+
+    @Test
+    public void testConvertFromSymbolToStringDedupFlagNotAllowed() throws Exception {
+        assumeWal();
+        assertMemoryLeak(() -> {
+            createX();
+
+            ddl("alter table x dedup enable upsert keys(timestamp, ik)");
+            drainWalQueue();
+            checkDedupSet("x", "ik", true);
+
+            try {
+                ddl("alter table x alter column ik type varchar");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot change type of deduplicated key column 'ik' to variable size type 'VARCHAR', deduplication is only supported for fixed size types");
+                Assert.assertEquals(35, ex.getPosition());
+            }
+
+            ddl("alter table x dedup disable");
+            drainWalQueue();
+
+            // In one go, enable dedup and change type
+            ddl("alter table x dedup enable upsert keys(timestamp, ik)");
+            ddl("alter table x alter column ik type varchar");
+            drainWalQueue();
+
+            checkDedupSet("x", "ik", false);
+
+            engine.releaseInactive();
+            checkDedupSet("x", "ik", false);
+
+            insert("insert into x(ik, d, timestamp) values('abc', 1.2, '2044-02-24')", sqlExecutionContext);
+            insert("insert into x(ik, d, timestamp) values('abc', 1.3, '2044-02-25')", sqlExecutionContext);
+            insert("insert into x(ik, d, timestamp) values('def', 1.4, '2044-02-25')", sqlExecutionContext);
+
+            drainWalQueue();
+
+            assertSql("timestamp\td\tik\n" +
+                    "2018-01-01T02:00:00.000000Z\t0.05601088107501384\tHYRX\n" +
+                    "2044-02-24T00:00:00.000000Z\t1.2\tabc\n" +
+                    "2044-02-25T00:00:00.000000Z\t1.4\tdef\n", "select timestamp, d, ik from x limit -3");
+        });
+    }
+
+    @Test
+    public void testConvertInvalidColumnFailsWriterIsOk() throws Exception {
+        assumeNonWal();
+        assertMemoryLeak(() -> {
+            createX();
+
+            try (TableWriter writer = getWriter("x")) {
+                writer.changeColumnType("non_existing", ColumnType.INT, 0, false, false, 0, false, null);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot change column type, column does not exists");
+            }
+
+            insert("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
+            assertSql("c\nabc\n", "select c from x limit -1");
+        });
+    }
+
+    @Test
     public void testFixedSizeColumnEquivalentToCast() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -441,13 +578,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testNewTypeInvalid() throws Exception {
-        Assume.assumeTrue(!walEnabled && partitioned);
+        assumeNonWal();
         assertFailure("alter table x alter column c type abracadabra", 34, "invalid type");
     }
 
     @Test
     public void testNewTypeMissing() throws Exception {
-        Assume.assumeTrue(!walEnabled && partitioned);
+        assumeNonWal();
         assertFailure("alter table x alter column c type", 33, "column type expected");
     }
 
@@ -455,33 +592,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testTimestampConversionInvalid() throws Exception {
         Assume.assumeTrue(!walEnabled && partitioned);
         assertFailure("alter table x alter column timestamp type long", 42, "cannot change type of designated timestamp column");
-    }
-
-    private void createX() throws SqlException {
-        ddl(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str(5,1024,2) c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(0, 1000000000) k," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_varchar(5,64,2) v" +
-                        " from long_sequence(1000)" +
-                        "), index(ik) timestamp (timestamp) " +
-                        (partitioned ? "PARTITION BY DAY " : "PARTITION BY NONE ") +
-                        (walEnabled ? "WAL" : (partitioned ? "BYPASS WAL" : ""))
-        );
     }
 
     @Test
@@ -527,12 +637,46 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         });
     }
 
+    private void assumeNonWal() {
+        Assume.assumeTrue("Test disabled during WAL run.", !walEnabled && partitioned);
+    }
+
     private void assumeWal() {
         Assume.assumeTrue("Test disabled during WAL run.", walEnabled);
     }
 
-    public enum Mode {
-        WITH_WAL, NO_WAL, NON_PARTITIONED
+    private void checkDedupSet(String tableName, String columnName, boolean value) {
+        try (TableWriter writer = getWriter(tableName)) {
+            int colIndex = writer.getMetadata().getColumnIndex(columnName);
+            Assert.assertEquals("dedup key flag mismatch column:" + columnName, value, writer.getMetadata().isDedupKey(colIndex));
+        }
+    }
+
+    private void createX() throws SqlException {
+        ddl(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str(5,1024,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_varchar(5,64,2) v" +
+                        " from long_sequence(1000)" +
+                        "), index(ik) timestamp (timestamp) " +
+                        (partitioned ? "PARTITION BY DAY " : "PARTITION BY NONE ") +
+                        (walEnabled ? "WAL" : (partitioned ? "BYPASS WAL" : ""))
+        );
     }
 
     private void testWalRollUncommittedConversion(int columnType, String columnCreateSql, String convertToTypeSql) throws SqlException, NumericException {
@@ -581,5 +725,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     true
             );
         }
+    }
+
+    public enum Mode {
+        WITH_WAL, NO_WAL, NON_PARTITIONED
     }
 }

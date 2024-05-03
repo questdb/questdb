@@ -101,11 +101,11 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     public void finishColumnConversion() {
-        if (partitionUpdated > -1) {
+        if (partitionUpdated > -1 && asyncProcessingErrorCount.get() == 0) {
             partitionUpdated = 0;
             purgingOperator.purge(path.trimTo(rootLen), tableWriter.getTableToken(), tableWriter.getPartitionBy(), tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(), tableWriter.getMetadata(), tableWriter.getTruncateVersion(), tableWriter.getTxn());
-            clear();
         }
+        clear();
     }
 
     private void clear() {

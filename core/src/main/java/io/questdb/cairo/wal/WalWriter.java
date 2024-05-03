@@ -1947,24 +1947,12 @@ public class WalWriter implements TableWriterAPI {
 
                                 if (segmentRowCount == 0) {
                                     openColumnFiles(columnName, newType, newColumnIndex, path.size());
-                                    LOG.info().$("==== open column files [path=").$(path).$(Files.SEPARATOR).$(segmentId)
-                                            .$(", columnName=").utf8(columnName)
-                                            .$(", from=").$(ColumnType.nameOf(existingColumnType))
-                                            .$(", to=").$(ColumnType.nameOf(newType))
-                                            .$(", segmentRowCount=").$(segmentRowCount)
-                                            .$(", currentTxnStartRowNum=").$(currentTxnStartRowNum)
-                                            .I$();
                                 }
                             }
                             if (securityContext != null) {
                                 ddlListener.onColumnTypeChanged(securityContext, metadata.getTableToken(), columnName, existingColumnType, newType);
                             }
                             path.trimTo(rootLen);
-                            LOG.info().$("changed column type in WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId)
-                                    .$(", columnName=").utf8(columnName)
-                                    .$(", from=").$(ColumnType.nameOf(existingColumnType))
-                                    .$(", to=").$(ColumnType.nameOf(newType))
-                                    .I$();
                         } else {
                             throw CairoException.critical(0).put("column '").put(columnName)
                                     .put("' was removed, cannot apply commit because of concurrent table definition change");

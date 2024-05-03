@@ -833,24 +833,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isSequential,
             SecurityContext securityContext
     ) {
+
+        int existingColIndex = metadata.getColumnIndexQuiet(columnName);
+        if (existingColIndex < 0) {
+            throw CairoException.nonCritical().put("cannot change column type, column does not exists [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+
+        if (existingColIndex == metadata.getTimestampIndex()) {
+            throw CairoException.nonCritical().put("cannot change column type, column is the designated timestamp [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+
+        int existingType = metadata.getColumnType(existingColIndex);
+        assert existingType > 0;
+
+        if (existingType == newType) {
+            // It only makes sense to change symbol parameters
+            // It has to be another type of ALTER command since it's non-structural change in WAL tables
+            throw CairoException.nonCritical().put("cannot change column type, new type is the same as existing [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+
         try {
-            int existingColIndex = metadata.getColumnIndexQuiet(columnName);
-            if (existingColIndex < 0) {
-                throw CairoException.nonCritical().put("cannot change column type, column does not exists [table=")
-                        .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-            }
-
-            if (existingColIndex == metadata.getTimestampIndex()) {
-                throw CairoException.nonCritical().put("cannot change column type, column is the designated timestamp [table=")
-                        .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-            }
-
-            int existingType = metadata.getColumnType(existingColIndex);
-            if (existingType < 0) {
-                throw CairoException.nonCritical().put("cannot change column type, column is deleted [table=")
-                        .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-            }
-
             commit();
 
             LOG.info().$("converting column [table=").$(tableToken).$(", column=").$(columnName)
@@ -858,13 +863,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
 
             boolean isDedupKey = metadata.isDedupKey(existingColIndex);
-            if (existingType == newType) {
-                // It only makes sense to change symbol parameters
-                // It has to be another type of ALTER command since it's non-structural change in WAL tables
-                throw CairoException.nonCritical().put("cannot change column type, new type is the same as existing [table=")
-                        .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-            }
-
+            boolean newColumnDedupKey = isDedupKey && !ColumnType.isVarSize(newType);
             int columnIndex = columnCount;
             long columnNameTxn = getTxn();
 
@@ -884,7 +883,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             getConvertOperator().convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
 
             // Column converted, add new one to _meta file and remove the existing column
-            addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, existingColIndex);
+            addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, newColumnDedupKey, columnNameTxn, existingColIndex);
 
             // close old column files
             freeColumnMemory(existingColIndex);
@@ -894,7 +893,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // remove old column to in-memory metadata object and add new one
             metadata.removeColumn(existingColIndex);
-            metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey);
+            metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, newColumnDedupKey);
 
             // open new column files
             if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
@@ -928,12 +927,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // commit transaction to _txn file
             bumpMetadataAndColumnStructureVersion();
 
-            // purge old column files
-            getConvertOperator().finishColumnConversion();
+            if (isDeduplicationEnabled() && !newColumnDedupKey && isDedupKey) {
+                // Converting a column that used to be a dedup column
+                // to a type that is not supported to be a dedup key (var size)
+                // effectively removes that column from being a dedup flag.
+                dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
+            }
         } catch (Throwable th) {
             LOG.error().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").$(columnName)
                     .$(", error=").$(th).I$();
+            throw th;
         } finally {
+            // clear temporaty resources
+            getConvertOperator().finishColumnConversion();
             path.trimTo(rootLen);
         }
     }
@@ -4669,6 +4675,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private CharSequence getColumnNameSafe(int columnIndex) {
+        try {
+            return metadata.getColumnName(columnIndex);
+        } catch (Throwable th) {
+            return "<unknown, index: " + columnIndex + ">";
+        }
+    }
+
     private ConvertOperatorImpl getConvertOperator() {
         if (convertOperatorImpl == null) {
             convertOperatorImpl = new ConvertOperatorImpl(configuration, this, columnVersionWriter, path, rootLen, getPurgingOperator(), messageBus);
@@ -4718,14 +4732,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long maxLagSize = configuration.getWalMaxLagSize();
         return (maxLagSize /
                 (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = TableUtils.estimateAvgRecordSize(metadata))));
-    }
-
-    private CharSequence getColumnNameSafe(int columnIndex) {
-        try {
-            return metadata.getColumnName(columnIndex);
-        } catch (Throwable th) {
-            return "<unknown, index: " + columnIndex + ">";
-        }
     }
 
     private void handleColumnTaskException(

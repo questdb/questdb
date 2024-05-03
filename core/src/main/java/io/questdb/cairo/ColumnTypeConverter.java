@@ -22,13 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo;
 
-import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryCMORImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.griffin.ColumnConversionOffsetSink;
+import io.questdb.griffin.ConvertersNative;
+import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ThreadLocal;
@@ -76,10 +78,10 @@ public class ColumnTypeConverter {
                 case ColumnType.VARCHAR:
                     return convertFromVarchar(skipRows, rowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, dstColumnType, ff, appendPageSize, symbolMapWriter, columnSizesSink);
                 default:
-                    throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
+                    throw unsupportedConversion(srcColumnType, dstColumnType);
             }
         } else {
-            throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
+            throw unsupportedConversion(srcColumnType, dstColumnType);
         }
     }
 
@@ -106,7 +108,7 @@ public class ColumnTypeConverter {
                 case ConvertersNative.ConversionError.NONE:
                     return true;
                 case ConvertersNative.ConversionError.UNSUPPORTED_CAST:
-                    throw CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
+                    throw unsupportedConversion(srcColumnType, dstColumnType);
                 default:
                     throw CairoException.critical(0).put("Unknown return code from native call: ").put(succeeded);
             }
@@ -153,7 +155,7 @@ public class ColumnTypeConverter {
                     convertStringToSymbol(skipDataSize, rowCount, dstFixFd, ff, symbolMapWriter, srcVarMem, columnSizesSink);
                     break;
                 default:
-                    throw CairoException.critical(0).put("Unsupported conversion from STRING to ").put(ColumnType.nameOf(dstColumnType));
+                    throw unsupportedConversion(ColumnType.STRING, dstColumnType);
             }
         } finally {
             srcVarMem.detachFdClose();
@@ -187,7 +189,7 @@ public class ColumnTypeConverter {
                     convertSymbolToVarchar(rowCount, symbolMapAddress, dstFixFd, dstVarFd, ff, appendPageSize, symbolTable, columnSizesSink);
                     break;
                 default:
-                    throw CairoException.critical(0).put("Unsupported conversion from SYMBOL to ").put(ColumnType.nameOf(dstColumnType));
+                    throw unsupportedConversion(ColumnType.SYMBOL, dstColumnType);
             }
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, symbolMapAddressRaw, skipRows * Integer.BYTES, rowCount * Integer.BYTES, memoryTag);
@@ -227,7 +229,7 @@ public class ColumnTypeConverter {
                     convertFromVarcharToSymbol(skipRows, skipRows + rowCount, dstFixFd, ff, symbolMapWriter, srcVarMem, srcFixMem, columnSizesSink);
                     break;
                 default:
-                    throw CairoException.critical(0).put("Unsupported conversion from VARCHAR to ").put(ColumnType.nameOf(dstColumnType));
+                    throw unsupportedConversion(ColumnType.VARCHAR, dstColumnType);
             }
         } finally {
             if (srcVarMem != null) {
@@ -236,6 +238,10 @@ public class ColumnTypeConverter {
             srcFixMem.detachFdClose();
         }
         return true;
+    }
+
+    private static CairoException unsupportedConversion(int srcColumnType, int dstColumnType) {
+        return CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
     }
 
     private static void convertFromVarcharToString(long rowLo, long rowHi, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize,

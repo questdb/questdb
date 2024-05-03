@@ -664,8 +664,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 columnNamePosition,
                                 columnName,
                                 tableMetadata,
-                                columnIndex
-                        );
+                                columnIndex,
+                                executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
                     }
@@ -834,7 +834,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int columnNamePosition,
             CharSequence columnName,
             TableRecordMetadata tableMetadata,
-            int columnIndex
+            int columnIndex,
+            SqlExecutionContext executionContext
     ) throws SqlException {
         AlterOperationBuilder changeColumn = alterOperationBuilder.ofColumnChangeType(
                 tableNamePosition,
@@ -842,6 +843,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableMetadata.getTableId()
         );
         int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition);
+        if (tableMetadata.isWalEnabled()
+                && ColumnType.isVarSize(newColumnType)
+                && !ColumnType.isVarSize(tableMetadata.getColumnType(columnIndex))
+        ) {
+            // This may remove deduplication from the column since var len columns don't support deduplication.
+            // Check for it.
+            try (TableReader reader = executionContext.getReader(tableToken)) {
+                if (reader.getMetadata().isDedupKey(columnIndex)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "cannot change type of deduplicated key column '").put(columnName)
+                            .put("' to variable size type '").put(ColumnType.nameOf(newColumnType))
+                            .put("', deduplication is only supported for fixed size types");
+                }
+            }
+        }
+
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
@@ -854,11 +870,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "column '").put(columnName)
                     .put("' type is already '").put(ColumnType.nameOf(existingColumnType)).put('\'');
         }
-        if (!isCompatibleCase(existingColumnType, newColumnType)) {
+        if (!isCompatibleColumnTypeChange(existingColumnType, newColumnType)) {
             throw SqlException.$(lexer.lastTokenPosition(), "incompatible column type change [existing=")
                     .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');
         }
         compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private boolean isCompatibleColumnTypeChange(int from, int to) {
+        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
     }
 
     private void alterTableColumnAddIndex(
