@@ -55,14 +55,14 @@ public class SplitPartVarcharFunctionFactoryTest extends AbstractFunctionFactory
     @Test
     public void testNegativeIndex() throws SqlException {
         assertQuery(
-                "split_part\n" + "def\n",
-                "select split_part('abc~@~def~@~ghi', '~@~', -2)",
+                "split_part\n" + "ghi\n",
+                "select split_part('abc~@~def~@~ghi'::varchar, '~@~'::varchar, -1)",
                 null,
                 true,
                 true);
         assertQuery(
                 "split_part\n" + "ghi\n",
-                "select split_part('abc,def,ghi,jkl', cast(',' as string), -2)",
+                "select split_part('abc,def,ghi,jkl'::varchar, cast(',' as varchar), -2)",
                 null,
                 true,
                 true);
@@ -84,13 +84,13 @@ public class SplitPartVarcharFunctionFactoryTest extends AbstractFunctionFactory
     public void testPositiveIndex() throws SqlException {
         assertQuery(
                 "split_part\n" + "def\n",
-                "select split_part('abc~@~def~@~ghi', '~@~', 2)",
+                "select split_part('abc~@~def~@~ghi::varchar', '~@~'::varchar, 2)",
                 null,
                 true,
                 true);
         assertQuery(
                 "split_part\n" + "def\n",
-                "select split_part('abc,def,ghi,jkl', cast(',' as string), 2)",
+                "select split_part('abc,def,ghi,jkl'::varchar, cast(',' as varchar), 2)",
                 null,
                 true,
                 true);
