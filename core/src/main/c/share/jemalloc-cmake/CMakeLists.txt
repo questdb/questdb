@@ -3,7 +3,7 @@ if (OS_WINDOWS)
 endif ()
 
 if (OS_LINUX)
-    # ThreadPool select job randomly, and there can be some threads that have been
+    # Thread pools select job randomly, and there can be some threads that have been
     # performed some memory-heavy tasks before and will be inactive for some time,
     # but until it becomes active again, the memory will not be freed since, by
     # default, each thread has its arena, but there should be no more than
@@ -16,9 +16,9 @@ if (OS_LINUX)
     # avoid spurious latencies and additional work associated with
     # MADV_DONTNEED. See
     # https://github.com/ClickHouse/ClickHouse/issues/11121 for motivation.
-    set(JEMALLOC_CONFIG_MALLOC_CONF "percpu_arena:percpu,oversize_threshold:0,muzzy_decay_ms:0,dirty_decay_ms:5000")
+    set(JEMALLOC_CONFIG_MALLOC_CONF "percpu_arena:percpu,muzzy_decay_ms:0,dirty_decay_ms:5000")
 else ()
-    set(JEMALLOC_CONFIG_MALLOC_CONF "oversize_threshold:0,muzzy_decay_ms:0,dirty_decay_ms:5000")
+    set(JEMALLOC_CONFIG_MALLOC_CONF "muzzy_decay_ms:0,dirty_decay_ms:5000")
 endif ()
 # CACHE variable is empty to allow changing defaults without the necessity
 # to purge cache
