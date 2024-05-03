@@ -82,6 +82,7 @@ public class ServerMain implements Closeable {
             final ServerConfiguration config = bootstrap.getConfiguration();
             config.init(engine, freeOnExit);
             Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
+            Unsafe.setRssMemLimit(config.getCairoConfiguration().getRssMemoryLimit());
             freeOnExit.register(config.getFactoryProvider());
             engine.load();
         } catch (Throwable th) {

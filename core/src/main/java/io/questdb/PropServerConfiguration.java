@@ -238,6 +238,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferLimit;
     private final int rollBufferSize;
     private final String root;
+    private final long rssMemoryLimit;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
@@ -564,6 +565,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         validateProperties(properties, configValidationStrict);
 
         this.writerMemoryLimit = getLongSize(properties, env, PropertyKey.WRITER_MEMORY_LIMIT, 0);
+        this.rssMemoryLimit = getLongSize(properties, env, PropertyKey.RSS_MEMORY_LIMIT, 0);
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
@@ -2371,6 +2373,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull String getRoot() {
             return root;
+        }
+
+        @Override
+        public long getRssMemoryLimit() {
+            return rssMemoryLimit;
         }
 
         @Override

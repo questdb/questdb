@@ -36,6 +36,7 @@ import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
+import static io.questdb.std.MemoryTag.NATIVE_DEFAULT;
 import static io.questdb.std.MemoryTag.NATIVE_O3;
 
 public final class Unsafe {
@@ -59,10 +60,11 @@ public final class Unsafe {
     private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
-    private static long WRITER_MEM_LIMIT = 0;
     //#if jdk.version!=8
     private static final Method implAddExports;
     //#endif
+    private static long RSS_MEM_LIMIT = 0;
+    private static long WRITER_MEM_LIMIT = 0;
 
     private Unsafe() {
     }
@@ -272,6 +274,10 @@ public final class Unsafe {
         }
     }
 
+    public static void setRssMemLimit(long limit) {
+        RSS_MEM_LIMIT = limit;
+    }
+
     public static void setWriterMemLimit(long limit) {
         WRITER_MEM_LIMIT = limit;
     }
@@ -294,6 +300,16 @@ public final class Unsafe {
     //#endif
 
     private static void checkAllocLimit(long size, int memoryTag) {
+        if (RSS_MEM_LIMIT > 0 && memoryTag >= NATIVE_DEFAULT) {
+            long usage = RSS_MEM_USED.get();
+            if (usage + size > RSS_MEM_LIMIT) {
+                throw CairoException.nonCritical().put("RSS memory limit exceeded [usage=")
+                        .put(usage)
+                        .put(", limit=").put(RSS_MEM_LIMIT)
+                        .put(", allocation=").put(size)
+                        .put(']');
+            }
+        }
         if (WRITER_MEM_LIMIT > 0 && memoryTag == NATIVE_O3 && COUNTERS[memoryTag].sum() + size > WRITER_MEM_LIMIT) {
             long usage = COUNTERS[memoryTag].sum();
             if (usage + size > WRITER_MEM_LIMIT) {
