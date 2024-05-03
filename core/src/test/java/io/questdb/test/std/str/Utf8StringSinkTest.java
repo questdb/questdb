@@ -172,6 +172,7 @@ public class Utf8StringSinkTest {
 
     @Test
     public void testUtf8Sequence() {
+        // non-ascii
         Utf8StringSink sink = new Utf8StringSink(4);
         final String str = "Здравей свят";
         final Utf8Sequence utf8str = new Utf8String(str);
@@ -180,7 +181,6 @@ public class Utf8StringSinkTest {
         byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
         TestUtils.assertEquals(expectedBytes, sink);
 
-        // non-ascii
         sink.clear();
         sink.put(utf8str, 2, 10);
         byte[] expectedBytes2 = "драв".getBytes(StandardCharsets.UTF_8);
