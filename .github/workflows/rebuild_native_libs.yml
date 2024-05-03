@@ -100,12 +100,14 @@ jobs:
         if: ${{ matrix.os == 'macos-14' }}
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-aarch64/
+          mkdir -p core/src/main/bin/darwin-aarch64/
           cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-aarch64/
           cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-aarch64/
       - name: Copy darwin-amd64 CXX Library to the final directory
         if: ${{ matrix.os == 'macos-13' }}
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-amd64/
+          mkdir -p core/src/main/bin/darwin-amd64/
           cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-amd64/
           cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-amd64/
       - name: Build Rust Library
@@ -117,13 +119,11 @@ jobs:
         if: ${{ matrix.os == 'macos-14' }}
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-aarch64/
-          mkdir -p core/src/main/bin/darwin-aarch64/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/darwin-aarch64/
       - name: Copy darwin-amd64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-13' }}
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-amd64/
-          mkdir -p core/src/main/bin/darwin-amd64/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/darwin-amd64/
       - name: Save darwin-aarch64 Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
