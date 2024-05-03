@@ -120,7 +120,7 @@ public class ConvertOperatorImpl implements Closeable {
         ff.close(dstVarFd);
     }
 
-    private void consumeConversionTasks(RingQueue<ColumnTask> queue, int queuedCount) {
+    private void consumeConversionTasks(RingQueue<ColumnTask> queue, int queuedCount, boolean checkStatus) {
         // This is work stealing, can run tasks from other table writers
         final Sequence subSeq = this.messageBus.getColumnTaskSubSeq();
         while (!countDownLatch.done(queuedCount)) {
@@ -132,7 +132,7 @@ public class ConvertOperatorImpl implements Closeable {
             }
         }
 
-        if (asyncProcessingErrorCount.get() > 0) {
+        if (checkStatus && asyncProcessingErrorCount.get() > 0) {
             throw CairoException.critical(0)
                     .put("column conversion failed, see logs for details [table=").put(tableWriter.getTableToken().getTableName())
                     .put(", tableDir=").put(tableWriter.getTableToken().getDirName())
@@ -162,6 +162,8 @@ public class ConvertOperatorImpl implements Closeable {
 
             int queueCount = 0;
             countDownLatch.reset();
+            asyncProcessingErrorCount.set(0);
+
             for (int partitionIndex = 0, n = tableWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
                 if (asyncProcessingErrorCount.get() == 0) {
                     try {
@@ -181,10 +183,10 @@ public class ConvertOperatorImpl implements Closeable {
                                 int srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
                                 try {
                                     long srcFds = openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen);
-                                    long dstFds = openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
-
                                     srcFixFd = Numbers.decodeLowInt(srcFds);
                                     srcVarFd = Numbers.decodeHighInt(srcFds);
+
+                                    long dstFds = openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
                                     dstFixFd = Numbers.decodeLowInt(dstFds);
                                     dstVarFd = Numbers.decodeHighInt(dstFds);
 
@@ -218,12 +220,18 @@ public class ConvertOperatorImpl implements Closeable {
                             }
                         }
                     } catch (Throwable th) {
+                        LOG.error().$("error converting column [at=").$(tableWriter.getTableToken().getDirNameUtf8())
+                                .$(", column=").$(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+                                .$(", to=").$(ColumnType.nameOf(newType))
+                                .$(", error=").$(th).I$();
                         asyncProcessingErrorCount.incrementAndGet();
+                        // wait all async tasks to finish to exit the method at known state
+                        consumeConversionTasks(messageBus.getColumnTaskQueue(), queueCount, false);
                         throw th;
                     }
                 }
             }
-            consumeConversionTasks(messageBus.getColumnTaskQueue(), queueCount);
+            consumeConversionTasks(messageBus.getColumnTaskQueue(), queueCount, true);
         } finally {
             path.trimTo(rootLen);
         }
@@ -290,8 +298,13 @@ public class ConvertOperatorImpl implements Closeable {
         long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         if (isVarSize(columnType)) {
             int fixedFd = TableUtils.openRO(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
-            int varFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
-            return Numbers.encodeLowHighInts(fixedFd, varFd);
+            try {
+                int varFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
+                return Numbers.encodeLowHighInts(fixedFd, varFd);
+            } catch (Throwable e) {
+                ff.close(fixedFd);
+                throw e;
+            }
         } else {
             int fixedFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
             return Numbers.encodeLowHighInts(fixedFd, -1);
@@ -302,8 +315,13 @@ public class ConvertOperatorImpl implements Closeable {
         long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         if (isVarSize(columnType)) {
             int fixedFd = TableUtils.openRW(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
-            int varFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
-            return Numbers.encodeLowHighInts(fixedFd, varFd);
+            try {
+                int varFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
+                return Numbers.encodeLowHighInts(fixedFd, varFd);
+            } catch (Throwable e) {
+                ff.close(fixedFd);
+                throw e;
+            }
         } else {
             int fixedFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             return Numbers.encodeLowHighInts(fixedFd, -1);

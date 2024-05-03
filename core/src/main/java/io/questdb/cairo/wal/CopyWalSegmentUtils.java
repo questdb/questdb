@@ -149,6 +149,12 @@ public class CopyWalSegmentUtils {
                         primaryColumn.getExtendSegmentSize(),
                         newColumnFiles
                 );
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.fsync(srcFixFd);
+                    ff.fsync(srcVarFd);
+                    ff.fsync(dstFixFd);
+                    ff.fsync(dstVarFd);
+                }
 
             } catch (Throwable th) {
                 LOG.critical().$("Failed to convert column [name=").$(newSegPath).$(", error=").$(th).I$();

@@ -76,6 +76,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     @Override
     public int detachFdClose() {
         int fd = this.fd;
+        this.fd = -1;
         close(false);
         return fd;
     }

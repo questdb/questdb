@@ -31,10 +31,13 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -44,6 +47,8 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(Parameterized.class)
 public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
@@ -377,6 +382,74 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             insert("insert into x(c, timestamp) values('def', now())", sqlExecutionContext);
             assertSql("c\ndef\n", "select c from x limit -1");
+        });
+    }
+
+    @Test
+    public void testConvertFailsOnColumnFileOpen() throws Exception {
+        assumeNonWal();
+        AtomicReference<String> fail = new AtomicReference<>();
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int openRO(LPSZ name) {
+                if (fail.get() != null && name.toString().endsWith(fail.get())) {
+                    fail.set(null);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (fail.get() != null && name.toString().endsWith(fail.get())) {
+                    fail.set(null);
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            createX();
+
+            fail.set("c.d.1");
+            try {
+                ddl("alter table x alter column c type varchar", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+            }
+
+            fail.set("c.i.1");
+            try {
+                ddl("alter table x alter column c type varchar", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+            }
+
+            fail.set("c.d");
+            try {
+                ddl("alter table x alter column c type varchar", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only");
+            }
+
+            fail.set("c.i");
+            try {
+                ddl("alter table x alter column c type varchar", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only");
+            }
+
+            fail.set(null);
+            ddl("alter table x alter column c type varchar", sqlExecutionContext);
+
+            insert("insert into x(c, timestamp) values('asdfadf', now())", sqlExecutionContext);
+            assertSql("c\nasdfadf\n", "select c from x limit -1");
         });
     }
 

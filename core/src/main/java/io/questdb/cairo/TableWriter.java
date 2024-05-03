@@ -855,6 +855,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
         }
 
+        ConvertOperatorImpl convertOperator = getConvertOperator();
         try {
             commit();
 
@@ -880,67 +881,69 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // maintain sparse list of symbol writers
                 symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
             }
-            getConvertOperator().convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
-
-            // Column converted, add new one to _meta file and remove the existing column
-            addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, newColumnDedupKey, columnNameTxn, existingColIndex);
-
-            // close old column files
-            freeColumnMemory(existingColIndex);
-
-            // remove symbol map writer or entry for such
-            removeSymbolMapWriter(existingColIndex);
-
-            // remove old column to in-memory metadata object and add new one
-            metadata.removeColumn(existingColIndex);
-            metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, newColumnDedupKey);
-
-            // open new column files
-            if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
-                long partitionTimestamp = txWriter.getLastPartitionTimestamp();
-                setStateForTimestamp(path, partitionTimestamp);
-                openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
-                setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
-                path.trimTo(rootLen);
-            }
-
-            // write index if necessary or remove the old one
-            // index must be created before column is initialised because
-            // it uses primary column object as temporary tool
-            if (isIndexed) {
-                SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
-                writeIndex(columnName, indexValueBlockCapacity, columnIndex, indexer);
-                // add / remove indexers
-                indexers.extendAndSet(columnIndex, indexer);
-                populateDenseIndexerList();
-            }
-
             try {
-                // open _meta file
-                openMetaFile(ff, path, rootLen, metaMem);
-                // remove _todo
-                clearTodoLog();
-            } catch (CairoException e) {
-                throwDistressException(e);
-            }
+                convertOperator.convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
 
-            // commit transaction to _txn file
-            bumpMetadataAndColumnStructureVersion();
+                // Column converted, add new one to _meta file and remove the existing column
+                addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, newColumnDedupKey, columnNameTxn, existingColIndex);
 
-            if (isDeduplicationEnabled() && !newColumnDedupKey && isDedupKey) {
-                // Converting a column that used to be a dedup column
-                // to a type that is not supported to be a dedup key (var size)
-                // effectively removes that column from being a dedup flag.
-                dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
+                // close old column files
+                freeColumnMemory(existingColIndex);
+
+                // remove symbol map writer or entry for such
+                removeSymbolMapWriter(existingColIndex);
+
+                // remove old column to in-memory metadata object and add new one
+                metadata.removeColumn(existingColIndex);
+                metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, newColumnDedupKey);
+
+                // open new column files
+                if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+                    long partitionTimestamp = txWriter.getLastPartitionTimestamp();
+                    setStateForTimestamp(path, partitionTimestamp);
+                    openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
+                    setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
+                    path.trimTo(rootLen);
+                }
+
+                // write index if necessary or remove the old one
+                // index must be created before column is initialised because
+                // it uses primary column object as temporary tool
+                if (isIndexed) {
+                    SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
+                    writeIndex(columnName, indexValueBlockCapacity, columnIndex, indexer);
+                    // add / remove indexers
+                    indexers.extendAndSet(columnIndex, indexer);
+                    populateDenseIndexerList();
+                }
+
+                try {
+                    // open _meta file
+                    openMetaFile(ff, path, rootLen, metaMem);
+                    // remove _todo
+                    clearTodoLog();
+                } catch (CairoException e) {
+                    throwDistressException(e);
+                }
+
+                // commit transaction to _txn file
+                bumpMetadataAndColumnStructureVersion();
+
+                if (isDeduplicationEnabled() && !newColumnDedupKey && isDedupKey) {
+                    // Converting a column that used to be a dedup column
+                    // to a type that is not supported to be a dedup key (var size)
+                    // effectively removes that column from being a dedup flag.
+                    dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
+                }
+            } finally {
+                // clear temp resources
+                convertOperator.finishColumnConversion();
+                path.trimTo(rootLen);
             }
         } catch (Throwable th) {
             LOG.error().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").$(columnName)
                     .$(", error=").$(th).I$();
             throw th;
-        } finally {
-            // clear temporaty resources
-            getConvertOperator().finishColumnConversion();
-            path.trimTo(rootLen);
         }
     }
 
