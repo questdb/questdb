@@ -42,7 +42,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 import java.util.Set;
 
-public abstract class AbstractLogRecord implements LogRecord, Log {
+abstract class AbstractLogRecord implements LogRecord, Log {
     private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
     protected final RingQueue<LogRecordUtf8Sink> advisoryRing;
     protected final Sequence advisorySeq;
