@@ -25,6 +25,7 @@
 package io.questdb.test.std.str;
 
 import io.questdb.std.str.GcUtf8String;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -44,6 +45,15 @@ public class Utf8StringSinkTest {
     }
 
     @Test
+    public void testCharSequence() {
+        Utf8StringSink sink = new Utf8StringSink(4);
+        final String str = "Здравей свят";
+        sink.put(str);
+        byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
+        TestUtils.assertEquals(expectedBytes, sink);
+    }
+
+    @Test
     public void testClear() {
         Utf8StringSink sink = new Utf8StringSink();
         final String str = "foobar";
@@ -51,23 +61,6 @@ public class Utf8StringSinkTest {
         for (int i = str.length(); i > -1; i--) {
             sink.clear(i);
             TestUtils.assertEquals(str.substring(0, i), sink);
-        }
-    }
-
-    @Test
-    public void testRepeatChar() {
-        int n = 10_000; // high enough to trigger multi-byte encoding
-        for (int i = 0; i < n; i++) {
-            Utf8StringSink sink = new Utf8StringSink();
-            char c = (char) ('a' + i);
-            int count = 10;
-            sink.repeat(c, count);
-
-            String expectedString = "";
-            for (int j = 0; j < count; j++) {
-                expectedString += c;
-            }
-            TestUtils.assertEquals(expectedString, sink);
         }
     }
 
@@ -90,6 +83,23 @@ public class Utf8StringSinkTest {
         sink.put(utf8Str);
         byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
         TestUtils.assertEquals(expectedBytes, sink);
+    }
+
+    @Test
+    public void testRepeatChar() {
+        int n = 10_000; // high enough to trigger multi-byte encoding
+        for (int i = 0; i < n; i++) {
+            Utf8StringSink sink = new Utf8StringSink();
+            char c = (char) ('a' + i);
+            int count = 10;
+            sink.repeat(c, count);
+
+            String expectedString = "";
+            for (int j = 0; j < count; j++) {
+                expectedString += c;
+            }
+            TestUtils.assertEquals(expectedString, sink);
+        }
     }
 
     @Test
@@ -128,12 +138,12 @@ public class Utf8StringSinkTest {
         final int initialCapacity = 4;
         Utf8StringSink sink = new Utf8StringSink(initialCapacity);
         for (int i = 0; i < 30; i++) {
-            sink.put((byte) ('a' + i)).put((byte) '\n');
+            sink.putAscii((char) ('a' + i)).putAscii('\n');
         }
         TestUtils.assertEquals(expected, sink.toString());
         sink.clear();
         for (int i = 0; i < 30; i++) {
-            sink.put((byte) ('a' + i)).put((byte) '\n');
+            sink.putAscii((char) ('a' + i)).putAscii('\n');
         }
         TestUtils.assertEquals(expected, sink.toString());
 
@@ -162,11 +172,28 @@ public class Utf8StringSinkTest {
 
     @Test
     public void testUtf8Sequence() {
+        // non-ascii
         Utf8StringSink sink = new Utf8StringSink(4);
         final String str = "Здравей свят";
-        sink.put(str);
+        final Utf8Sequence utf8str = new Utf8String(str);
+
+        sink.put(utf8str);
         byte[] expectedBytes = str.getBytes(StandardCharsets.UTF_8);
         TestUtils.assertEquals(expectedBytes, sink);
+
+        sink.clear();
+        sink.put(utf8str, 2, 10);
+        byte[] expectedBytes2 = "драв".getBytes(StandardCharsets.UTF_8);
+        TestUtils.assertEquals(expectedBytes2, sink);
+
+        // ascii
+        final String str2 = "abcdefgh";
+        final Utf8Sequence utf8str2 = new Utf8String(str2);
+
+        sink.clear();
+        sink.put(utf8str2, 2, 6);
+        byte[] expectedBytes3 = "cdef".getBytes(StandardCharsets.UTF_8);
+        TestUtils.assertEquals(expectedBytes3, sink);
     }
 
     private static void assertUtf8Encoding(Utf8StringSink sink, String s) {
