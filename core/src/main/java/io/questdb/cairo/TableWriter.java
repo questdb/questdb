@@ -2362,7 +2362,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         short columnTag = ColumnType.tagOf(columnType);
         if (ColumnType.isVarSize(columnTag)) {
             final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);
-            nullers.add(() -> typeDriver.appendNull(dataMem, auxMem));
+            nullers.add(() -> typeDriver.appendNull(auxMem, dataMem));
         } else {
             switch (columnTag) {
                 case ColumnType.BOOLEAN:
@@ -8520,8 +8520,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             utf8Sink.clear();
             utf8Sink.put(value);
             VarcharTypeDriver.appendValue(
-                    getPrimaryColumn(columnIndex),
-                    getSecondaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex), getPrimaryColumn(columnIndex),
                     utf8Sink
             );
             setRowValueNotNull(columnIndex);
@@ -8530,8 +8529,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         @Override
         public void putVarchar(int columnIndex, Utf8Sequence value) {
             VarcharTypeDriver.appendValue(
-                    getPrimaryColumn(columnIndex),
-                    getSecondaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex), getPrimaryColumn(columnIndex),
                     value
             );
             setRowValueNotNull(columnIndex);

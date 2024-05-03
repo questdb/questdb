@@ -448,6 +448,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
 
+    public static Utf8String utf8(CharSequence value) {
+        return value != null ? new Utf8String(value) : null;
+    }
+
     @Before
     public void setUp() {
         super.setUp();
@@ -1471,10 +1475,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 walApplyJob.run(0);
             }
         }
-    }
-
-    protected static Utf8Sequence utf8(CharSequence value) {
-        return value != null ? new Utf8String(value) : null;
     }
 
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {

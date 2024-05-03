@@ -53,6 +53,14 @@ public interface MemoryR extends Closeable {
 
     char getChar(long offset);
 
+    default DirectUtf8Sequence getDirectVarcharA(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
+    default DirectUtf8Sequence getDirectVarcharB(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
     double getDouble(long offset);
 
     float getFloat(long offset);
@@ -94,10 +102,6 @@ public interface MemoryR extends Closeable {
     CharSequence getStrB(long offset);
 
     int getStrLen(long offset);
-
-    DirectUtf8Sequence getVarcharA(long offset, int size, boolean ascii);
-
-    DirectUtf8Sequence getVarcharB(long offset, int size, boolean ascii);
 
     long offsetInPage(long offset);
 
