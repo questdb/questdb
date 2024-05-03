@@ -8,7 +8,7 @@ import io.questdb.std.str.Path;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class KqueueFileEventNotifier extends FileWatcher {
+public class KqueueFileWatcher extends FileWatcher {
     private final int bufferSize;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final int dirFd;
@@ -20,7 +20,7 @@ public class KqueueFileEventNotifier extends FileWatcher {
     private final int readEndFd;
     private final int writeEndFd;
 
-    public KqueueFileEventNotifier(CharSequence filePath, FileEventCallback callback) throws FileWatcherException {
+    public KqueueFileWatcher(CharSequence filePath, FileEventCallback callback) throws FileWatcherException {
         super(filePath, callback);
 
         try (Path p = new Path()) {
