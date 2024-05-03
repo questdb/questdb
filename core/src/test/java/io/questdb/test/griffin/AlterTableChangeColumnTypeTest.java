@@ -327,7 +327,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     srcColName = col_names[i];
                     dstType = types[j];
 
-                    LOG.info().$("checking `" + srcType + "` to `" + dstType + "` conversion");
+                    LOG.info().$("checking `" + srcType + "` to `" + dstType + "` conversion").$();
 
                     ddl("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
                     insert("insert into y select " + srcColName + " as converted, " + srcColName + "::" + dstType + " as casted, " + srcColName + " as original from x", sqlExecutionContext);
@@ -401,7 +401,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     srcType = types[i];
                     dstType = types[j];
 
-                    LOG.info().$("checking `" + srcType + "` to `" + dstType + "` conversion");
+                    LOG.info().$("checking `" + srcType + "` to `" + dstType + "` conversion").$();
 
                     ddl("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
                     insert("insert into y (converted, casted, original) values (null, cast(null as " + srcType + ")::" + dstType + ", null)", sqlExecutionContext);

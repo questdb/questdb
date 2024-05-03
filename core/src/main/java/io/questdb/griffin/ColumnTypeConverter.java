@@ -252,14 +252,14 @@ public class ColumnTypeConverter {
 
         try {
             for (long i = rowLo; i < rowHi; i++) {
-                Utf8Sequence utf8 = VarcharTypeDriver.getValue(i, srcVarMem, srcFixMem, 1);
+                Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
 
                 if (utf8 != null) {
                     sink.clear();
                     sink.put(utf8);
                     StringTypeDriver.appendValue(dstVarMem, dstFixMem, sink);
                 } else {
-                    StringTypeDriver.INSTANCE.appendNull(dstVarMem, dstFixMem);
+                    StringTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
                 }
             }
             columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
@@ -279,7 +279,7 @@ public class ColumnTypeConverter {
 
         try {
             for (long i = rowLo; i < rowHi; i++) {
-                Utf8Sequence utf8 = VarcharTypeDriver.getValue(i, srcVarMem, srcFixMem, 1);
+                Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
 
                 if (utf8 != null) {
                     sink.clear();
@@ -336,9 +336,9 @@ public class ColumnTypeConverter {
                     sink.clear();
                     sink.put(str);
 
-                    VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, sink);
+                    VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
                 } else {
-                    VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, null);
+                    VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, null);
                 }
             }
             columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
@@ -371,7 +371,7 @@ public class ColumnTypeConverter {
                 if (str != null) {
                     StringTypeDriver.appendValue(dstVarMem, dstFixMem, str);
                 } else {
-                    typeDriver.appendNull(dstVarMem, dstFixMem);
+                    typeDriver.appendNull(dstFixMem, dstVarMem);
                 }
             }
             columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
@@ -400,9 +400,9 @@ public class ColumnTypeConverter {
                 if (str != null) {
                     sink.clear();
                     sink.put(str);
-                    VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, sink);
+                    VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
                 } else {
-                    typeDriver.appendNull(dstVarMem, dstFixMem);
+                    typeDriver.appendNull(dstFixMem, dstVarMem);
                 }
             }
             columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
