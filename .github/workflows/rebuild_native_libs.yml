@@ -32,12 +32,12 @@ jobs:
           git status
       - name: Copy Rust Library to the final directory
         run: |
-          cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
+          cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows-amd64/libquestdbr.dll
       - name: Save Windows Rust Library to Cache
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/windows/libquestdbr.dll
+            core/src/main/resources/io/questdb/bin/windows-amd64/libquestdbr.dll
           key: nativelibs-windows-rust-${{ github.sha }}
           enableCrossOsArchive: true
   build-all-freebsd:
@@ -62,7 +62,9 @@ jobs:
             cmake --build build/release --config Release
             cd rust/qdbr
             cargo build --release
-            cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd/
+            cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd-amd64/
+            cp target/classes/io/questdb/bin-local/libquestdb.so ../../src/main/resources/io/questdb/bin/freebsd-amd64/
+            cp target/classes/io/questdb/bin-local/libjemalloc.so ../../src/main/bin/freebsd-amd64/
       - name: log git status
         run: |
           git status
@@ -70,8 +72,9 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/freebsd/libquestdb.so
-            core/src/main/resources/io/questdb/bin/freebsd/libquestdbr.so
+            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
+            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdbr.so
+            core/src/main/bin/freebsd-amd64/libjemalloc.so
           key: nativelibs-freebsd-${{ github.sha }}
   build-all-macos:
     strategy:
@@ -93,6 +96,18 @@ jobs:
           cd core
           cmake -B build/release -DCMAKE_BUILD_TYPE=Release
           cmake --build build/release --config Release
+      - name: Copy darwin-aarch64 CXX Library to the final directory
+        if: ${{ matrix.os == 'macos-14' }}
+        run: |
+          mkdir -p core/src/main/resources/io/questdb/bin/darwin-aarch64/
+          cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-aarch64/
+          cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-aarch64/
+      - name: Copy darwin-amd64 CXX Library to the final directory
+        if: ${{ matrix.os == 'macos-13' }}
+        run: |
+          mkdir -p core/src/main/resources/io/questdb/bin/darwin-amd64/
+          cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-amd64/
+          cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-amd64/
       - name: Build Rust Library
         run: |
           cd core/rust/qdbr
@@ -101,28 +116,30 @@ jobs:
       - name: Copy darwin-aarch64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-14' }}
         run: |
-          mkdir -p core/src/main/resources/io/questdb/bin/armosx/
-          cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/armosx/
+          mkdir -p core/src/main/resources/io/questdb/bin/darwin-aarch64/
+          cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/darwin-aarch64/
       - name: Copy darwin-amd64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-13' }}
         run: |
-          mkdir -p core/src/main/resources/io/questdb/bin/osx/
-          cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/osx/
+          mkdir -p core/src/main/resources/io/questdb/bin/darwin-amd64/
+          cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/darwin-amd64/
       - name: Save darwin-aarch64 Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/armosx/libquestdb.dylib
-            core/src/main/resources/io/questdb/bin/armosx/libquestdbr.dylib
+            core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
+            core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdbr.dylib
+            core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           key: nativelibs-armosx-${{ github.sha }}
       - name: Save darwin-amd64 Libraries to Cache
         if: ${{ matrix.os == 'macos-13' }}
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/osx/libquestdb.dylib
-            core/src/main/resources/io/questdb/bin/osx/libquestdbr.dylib
+            core/src/main/resources/io/questdb/bin/darwin-amd64/libquestdb.dylib
+            core/src/main/resources/io/questdb/bin/darwin-amd64/libquestdbr.dylib
+            core/src/main/bin/darwin-amd64/libjemalloc.dylib
           key: nativelibs-osx-${{ github.sha }}
   build-all-linux-amd64:
     runs-on: ubuntu-latest
