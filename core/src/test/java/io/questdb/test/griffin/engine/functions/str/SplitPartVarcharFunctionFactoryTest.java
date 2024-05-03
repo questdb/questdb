@@ -97,6 +97,12 @@ public class SplitPartVarcharFunctionFactoryTest extends AbstractFunctionFactory
     }
 
     @Test
+    public void testRuntimeConstant() throws SqlException {
+        assertQuery("split_part\nabc\n", "select split_part('abc,QuestDB,sql'::varchar, ',', (now() % 1 + 1)::int)",
+                "", true, false);
+    }
+
+    @Test
     public void testZeroIndex() {
         try {
             callCustomised(true, true, utf8("abc~@~def~@~ghi"), utf8("~@~"), 0);
