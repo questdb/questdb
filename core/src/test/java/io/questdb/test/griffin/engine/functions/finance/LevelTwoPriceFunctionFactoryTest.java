@@ -32,6 +32,17 @@ import org.junit.Test;
 public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void testInconvertibleTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            assertFailure("[20] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.", "select l2price(1.3, '31', 5)");
+            assertFailure("[23] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.", "select l2price(100, 1, '31abascsd')");
+            ddl("create table x as ( select rnd_str(1, 10, 0) as s from long_sequence(100) )");
+            drainWalQueue();
+            assertFailure("[23] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.", "select l2price(100, 1, s) from x");
+        });
+    }
+
+    @Test
     public void testLevelTwoPrice() throws Exception {
         assertQuery("l2price\n" +
                 "9.825714285714286\n", "select l2price(35, 8, 5.2, 23, 9.3, 42, 22.1)");
@@ -43,11 +54,6 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     @Test
     public void testLevelTwoPriceFailsWithEvenArgs() throws Exception {
         assertException("select l2price(35, 8);", 19, "l2price requires an odd number of arguments.");
-    }
-
-    @Test
-    public void testLevelTwoPriceReturnsNullWithNullTarget() throws Exception {
-        assertQuery("l2price\nnull\n", "select l2price(null, 8, 17.2);");
     }
 
     /**
@@ -67,6 +73,35 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                 + "null\n", "select l2price(999999, 5, 3.2, 12, 5.1, 10, 12.3, 67, 42.4, 38, 29.9, 39, 40.3, null, 5.1)");
         assertQuery("l2price\n"
                 + "21.408888888888885\n", "select l2price(45, 5, 3.2, 12, 5.1, 10, 12.3, 67, 42.4, 38, 29.9, 39, 40.3, null, 5.1)");
+    }
+
+    @Test
+    public void testLevelTwoPriceReturnsNullWithNullTarget() throws Exception {
+        assertQuery("l2price\nnull\n", "select l2price(null, 8, 17.2);");
+    }
+
+    @Test
+    public void testLevelTwoPriceUnrolled() throws Exception {
+        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1)"); // fail
+        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1)");  // win
+        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1)"); // fail
+        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1)"); // win
+        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1)"); // fail
+        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(15, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1)"); // fail
+        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(15, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(20, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)"); // fail
+        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(15, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(20, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
+        assertQuery("l2price\n1.0\n", "select l2price(25, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
     }
 
     @Test
@@ -127,48 +162,6 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "- l2price(14, bid_size, bid_value)" +
                             " as spread from x");
         });
-    }
-
-    @Test
-    public void testLevelTwoPriceUnrolled() throws Exception {
-        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1)"); // fail
-        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1)");  // win
-        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1)"); // fail
-        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1)"); // win
-        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1)"); // fail
-        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(15, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1)"); // fail
-        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(15, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(20, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\nnull\n", "select l2price(100, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)"); // fail
-        assertQuery("l2price\n1.0\n", "select l2price(5, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(10, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(15, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(20, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-        assertQuery("l2price\n1.0\n", "select l2price(25, 5, 1, 5, 1, 5, 1, 5, 1, 5, 1)");  // win
-    }
-
-    @Test
-    public void testInconvertibleTypes() throws Exception {
-        assertQuery("l2price\n5.0\n", "select l2price(1.3, '31', 5)");
-        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, '31abascsd')");
-        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, '31abascsd', 1)");
-        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, '31abascsd')");
-        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, '31abascsd', 1)");
-        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, '31abascsd')");
-        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, '31abascsd', 1)");
-        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, 1, 1, '31abascsd')");
-        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, 1, '31abascsd', 1)");
-        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, 1, 1, 1, 1, '31abascsd')");
-        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, 1, 1, 1, '31abascsd', 1)");
-        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, '31abascsd')");
-        assertFailure("inconvertible value: `31abascsd` [STRING -> DOUBLE]", "select l2price(100, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, '31abascsd', 1)");
-
     }
 
     @Override

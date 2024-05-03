@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.finance;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -50,12 +51,24 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             throw SqlException.position(argPositions.getLast()).put("l2price requires an odd number of arguments.");
         }
 
-        final int numberOfPairs = (args.size() - 1) / 2;
         final Function target = args.getQuick(0);
 
         if (target.isNullConstant()) {
             return target;
-       }
+        }
+
+        for (int i = 0, n = args.size(); i < n; i++) {
+            if (!allowedColumnType(args.getQuick(i).getType())) {
+                if (!args.getQuick(i).isNullConstant()) {
+                    throw SqlException.position(argPositions.getQuick(i))
+                            .put("l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `")
+                            .put(ColumnType.nameOf(args.getQuick(i).getType()))
+                            .put("`.");
+                }
+            }
+        }
+
+        final int numberOfPairs = (args.size() - 1) / 2;
 
         switch (numberOfPairs) {
             case 0:
@@ -75,6 +88,19 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
         return new L2PriceFunctionN(new ObjList<>(args));
     }
 
+    private static boolean allowedColumnType(int type) {
+        switch (type) {
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+                return true;
+            default:
+                return false;
+        }
+    }
 
     private abstract static class L2PriceBaseFunction extends DoubleFunction implements MultiArgFunction {
         protected final ObjList<Function> args;
