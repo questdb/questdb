@@ -100,11 +100,11 @@ if (OS_DARWIN)
     list(APPEND SRCS "${LIBRARY_DIR}/src/zone.c")
 endif ()
 
-add_library(_jemalloc ${SRCS})
+add_library(jemalloc SHARED ${SRCS})
 
 # First include jemalloc-cmake files, to override anything that jemalloc has.
-target_include_directories(_jemalloc SYSTEM PUBLIC "${LIBRARY_CMAKE_DIR}/include")
-target_include_directories(_jemalloc PRIVATE "${LIBRARY_DIR}/include")
+target_include_directories(jemalloc PUBLIC "${LIBRARY_CMAKE_DIR}/include")
+target_include_directories(jemalloc PUBLIC "${LIBRARY_DIR}/include")
 
 set(JEMALLOC_INCLUDE_PREFIX)
 # OS_
@@ -136,19 +136,19 @@ set(JEMALLOC_CMAKE_INCLUDE_PREFIX ${LIBRARY_CMAKE_DIR}/${JEMALLOC_INCLUDE_PREFIX
 configure_file(${JEMALLOC_CMAKE_INCLUDE_PREFIX}/jemalloc/internal/jemalloc_internal_defs.h.in
         ${JEMALLOC_CMAKE_INCLUDE_PREFIX}/jemalloc/internal/jemalloc_internal_defs.h)
 
-target_include_directories(_jemalloc SYSTEM PRIVATE
+target_include_directories(jemalloc PUBLIC
         "${CMAKE_CURRENT_BINARY_DIR}/${JEMALLOC_CMAKE_INCLUDE_PREFIX}/jemalloc/internal")
 
-target_include_directories(_jemalloc SYSTEM PRIVATE
+target_include_directories(jemalloc PUBLIC
         "${LIBRARY_CMAKE_DIR}/include")
 
-target_compile_definitions(_jemalloc PRIVATE -DJEMALLOC_NO_PRIVATE_NAMESPACE)
+target_compile_definitions(jemalloc PUBLIC -DJEMALLOC_NO_PRIVATE_NAMESPACE)
 
 # Because our coverage callbacks call malloc, and recursive call of malloc could not work.
-target_compile_options(_jemalloc PRIVATE ${WITHOUT_COVERAGE_FLAGS_LIST})
+target_compile_options(jemalloc PRIVATE ${WITHOUT_COVERAGE_FLAGS_LIST})
 
 if (CMAKE_BUILD_TYPE_UC STREQUAL "DEBUG")
-    target_compile_definitions(_jemalloc PRIVATE
+    target_compile_definitions(jemalloc PUBLIC
             -DJEMALLOC_DEBUG=1
             # Usage examples:
             # - MALLOC_CONF=log:.
@@ -156,17 +156,15 @@ if (CMAKE_BUILD_TYPE_UC STREQUAL "DEBUG")
             -DJEMALLOC_LOG=1)
 endif ()
 
-target_compile_definitions(_jemalloc PRIVATE -DJEMALLOC_PROF=1)
+target_compile_definitions(jemalloc PUBLIC -DJEMALLOC_PROF=1)
 
 # jemalloc provides support for two different libunwind flavors: the original HP libunwind and the one coming with gcc / g++ / libstdc++.
 # The latter is identified by `JEMALLOC_PROF_LIBGCC` and uses `_Unwind_Backtrace` method instead of `unw_backtrace`.
 # At the time ClickHouse uses LLVM libunwind which follows libgcc's way of backtracking.
 #
 # ClickHouse has to provide `unw_backtrace` method by the means of [commit 8e2b31e](https://github.com/ClickHouse/libunwind/commit/8e2b31e766dd502f6df74909e04a7dbdf5182eb1).
-#target_compile_definitions (_jemalloc PRIVATE -DJEMALLOC_PROF_LIBGCC=1)
-#target_link_libraries (_jemalloc PRIVATE unwind)
+#target_compile_definitions (jemalloc PRIVATE -DJEMALLOC_PROF_LIBGCC=1)
+#target_link_libraries (jemalloc PRIVATE unwind)
 
 # for RTLD_NEXT
-target_compile_options(_jemalloc PRIVATE -D_GNU_SOURCE)
-
-#add_library(ch_contrib::jemalloc ALIAS _jemalloc)
+target_compile_options(jemalloc PUBLIC -D_GNU_SOURCE)

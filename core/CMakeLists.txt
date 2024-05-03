@@ -20,19 +20,25 @@ endif ($ENV{JAVA_HOME})
 
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "^arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
     set(ARCH_AARCH64 1)
+    set(OUTPUT_ARCH aarch64)
 else ()
+    set(OUTPUT_ARCH amd64)
     set(ARCH_AMD64 1)
 endif ()
 
 if (APPLE)
     set(OS_DARWIN 1)
+    set(OUTPUT_OS_NAME darwin)
 elseif (UNIX)
     if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
+        set(OUTPUT_OS_NAME freebsd)
         set(OS_FREEBSD 1)
     elseif (CMAKE_SYSTEM_NAME MATCHES "Linux")
+        set(OUTPUT_OS_NAME linux)
         set(OS_LINUX 1)
     endif ()
 elseif (WIN32)
+    set(OUTPUT_OS_NAME windows)
     set(OS_WINDOWS 1)
 endif (APPLE)
 
@@ -85,11 +91,6 @@ include_directories($ENV{JAVA_HOME}/include/)
 
 if (OS_DARWIN)
     include_directories($ENV{JAVA_HOME}/include/darwin/)
-    if (ARCH_AARCH64)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armosx)
-    else ()
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/osx)
-    endif ()
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/osx/kqueue.c
@@ -101,11 +102,6 @@ if (OS_DARWIN)
 elseif (OS_FREEBSD)
     MESSAGE("Building for FreeBSD")
     include_directories($ENV{JAVA_HOME}/include/freebsd/)
-    if (ARCH_AARCH64)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armfreebsd)
-    else ()
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/freebsd)
-    endif ()
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/freebsd/kqueue.c
@@ -117,11 +113,6 @@ elseif (OS_FREEBSD)
 elseif (OS_LINUX)
     MESSAGE("Building for GNU/Linux")
     include_directories($ENV{JAVA_HOME}/include/linux/)
-    if (ARCH_AARCH64)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armlinux)
-    else ()
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/linux)
-    endif ()
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/share/net.c
@@ -136,7 +127,6 @@ endif ()
 
 if (OS_WINDOWS)
     include_directories($ENV{JAVA_HOME}/include/win32/)
-    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/windows)
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/windows/files.c
@@ -158,6 +148,8 @@ else ()
             src/main/c/share/os.c
     )
 endif ()
+
+set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/target/classes/io/questdb/bin-local/${OUTPUT_OS_NAME}-${OUTPUT_ARCH})
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT})
@@ -339,16 +331,14 @@ else ()
     )
 endif (ARCH_AARCH64)
 
-#jemalloc
-
-include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
-
 if (OS_WINDOWS)
     target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc)
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics)
 elseif (OS_DARWIN)
-    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++ _jemalloc)
+    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++)
 else ()
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics -ffunction-sections -fdata-sections)
-    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _jemalloc)
+    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc)
 endif ()
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
